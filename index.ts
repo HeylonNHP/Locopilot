@@ -3,7 +3,7 @@ import path from 'path';
 import { select, input, search } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import { TOOLS, handleToolCall, getToolSystemPrompt } from './tools.js';
+import { TOOLS, handleToolCall, getToolSystemPrompt, shouldNudgeForToolCall, getToolUseNudge } from './tools.js';
 import type { ToolCallArguments } from './tools.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
@@ -66,6 +66,8 @@ interface ChatApiResponse {
     done: boolean;
     done_reason?: string;
 }
+
+// moved to tools.ts
 
 // --- Functions ---
 
@@ -229,6 +231,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
 
         // Add the user message to history and send to /api/chat
         messages.push({ role: 'user', content: prompt });
+        let sentToolRetryNudge = false;
 
         try {
             // Tool-call loop: keep sending results back until the LLM has no more tool calls
@@ -257,6 +260,12 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                     }
                     // Loop again so the LLM can see the tool results and respond
                 } else {
+                    if (!sentToolRetryNudge && shouldNudgeForToolCall(assistantMessage.content)) {
+                        sentToolRetryNudge = true;
+                        messages.push({ role: 'user', content: getToolUseNudge() });
+                        continue;
+                    }
+
                     // No tool calls — this is the final reply
                     console.log(chalk.yellow('\nAI > ') + assistantMessage.content + '\n');
                     config.lastModel = currentModel;

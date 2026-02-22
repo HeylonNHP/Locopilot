@@ -248,10 +248,42 @@ export function getToolSystemPrompt(): string {
         '2. check_process_output(process_id)\n' +
         '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
         '   finished. Use this to check on commands that are still in progress.\n\n' +
+        'Tool-use policy:\n' +
+        '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
+        '- Do NOT ask the user for permission yourself; the application already prompts for approval.\n' +
+        '- Do NOT only print a shell snippet/code block when the task requires execution.\n' +
+        '- If run_command returns a process_id, periodically call check_process_output until completion.\n\n' +
         'When the user asks you to do something that involves the filesystem, the terminal,\n' +
         'running programs, or inspecting the system, use these tools rather than refusing\n' +
         'or guessing. Always prefer calling a tool over saying you cannot do something.\n' +
         'When a command completes, summarise its output clearly for the user.'
+    );
+}
+
+/**
+ * Heuristic to detect assistant replies that look like plain-text commands
+ * or permission requests instead of actual tool-calls. Kept here so the
+ * tools module fully describes its own runtime behaviour.
+ */
+export function shouldNudgeForToolCall(content: string): boolean {
+    const normalized = content.toLowerCase();
+    return (
+        normalized.trim() === '' ||
+        normalized.includes('```bash') ||
+        normalized.includes('```sh') ||
+        normalized.includes('would you like me to run') ||
+        normalized.includes('let me execute') ||
+        normalized.includes('executing...') ||
+        normalized.includes('i cannot access') ||
+        normalized.includes('i do not have access')
+    );
+}
+
+export function getToolUseNudge(): string {
+    return (
+        'Tool-use reminder: do not ask for permission and do not only print shell commands. ' +
+        'If terminal access is needed, call run_command directly now. ' +
+        'I (the app) will ask the human user for approval before execution.'
     );
 }
 
