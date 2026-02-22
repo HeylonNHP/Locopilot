@@ -1,8 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import { select, input, search } from '@inquirer/prompts';
-import axios, { AxiosError } from 'axios';
+import axios from 'axios';
 import chalk from 'chalk';
+import { TOOLS, handleToolCall } from './tools.js';
+import type { ToolCallArguments } from './tools.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 
@@ -35,23 +37,32 @@ interface TagsResponse {
     models: OllamaModel[];
 }
 
-interface GenerateResponse {
-    model: string;
-    created_at: string;
-    response: string;
-    done: boolean;
-    context?: number[];
-    total_duration?: number;
-    load_duration?: number;
-    prompt_eval_count?: number;
-    prompt_eval_duration?: number;
-    eval_count?: number;
-    eval_duration?: number;
-}
-
 interface SlashCommand {
     name: string;
     value: string;
+}
+
+// --- Ollama /api/chat types ---
+
+interface OllamaToolCall {
+    function: {
+        name: string;
+        arguments: ToolCallArguments;
+    };
+}
+
+interface ChatMessage {
+    role: 'system' | 'user' | 'assistant' | 'tool';
+    content: string;
+    tool_calls?: OllamaToolCall[];
+}
+
+interface ChatApiResponse {
+    model: string;
+    created_at: string;
+    message: ChatMessage;
+    done: boolean;
+    done_reason?: string;
 }
 
 // --- Functions ---
@@ -130,12 +141,34 @@ async function startChat(baseUrl: string, model: string): Promise<void> {
     let currentModel = model;
     let config = await loadConfig() || { baseUrl };
     const models = await getModels(baseUrl);
-    console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.\n`));
+    console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
+    console.log(chalk.dim('(Tool calling enabled — the AI may request to run terminal commands.)\n'));
 
     const slashCommands: SlashCommand[] = [
         { name: chalk.blue('/model') + ' - Switch LLM model', value: '/model' },
         { name: chalk.blue('/exit') + '  - Exit chat', value: '/exit' },
         { name: chalk.blue('/help') + '  - Show help', value: '/help' }
+    ];
+
+    // Persistent message history for the /api/chat endpoint.
+    // A system prompt is injected up-front so the model knows it has tool access.
+    const systemPrompt =
+        'You are Locopilot, a helpful AI assistant running inside a terminal application.\n' +
+        'You have access to the following tools that let you interact with the host machine:\n\n' +
+        '1. run_command(command, shell?, timeout_seconds?)\n' +
+        '   Execute a shell command on the host machine. The user will be asked to approve\n' +
+        '   it before it runs. Returns stdout/stderr when the command finishes, or partial\n' +
+        '   output plus a process_id if the command is still running after the timeout.\n\n' +
+        '2. check_process_output(process_id)\n' +
+        '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
+        '   finished. Use this to check on commands that are still in progress.\n\n' +
+        'When the user asks you to do something that involves the filesystem, the terminal,\n' +
+        'running programs, or inspecting the system, use these tools rather than refusing\n' +
+        'or guessing. Always prefer calling a tool over saying you cannot do something.\n' +
+        'When a command completes, summarise its output clearly for the user.';
+
+    const messages: ChatMessage[] = [
+        { role: 'system', content: systemPrompt },
     ];
 
     while (true) {
@@ -148,17 +181,17 @@ async function startChat(baseUrl: string, model: string): Promise<void> {
                     if (!inputArg) {
                         return [{ name: chalk.dim('Type a message or / for commands...'), value: '' }];
                     }
-                    
+
                     if (inputArg.startsWith('/')) {
                         const matches = slashCommands.filter(c => c.value.startsWith(inputArg));
                         if (matches.length > 0) return matches;
                     }
-                    
+
                     return [{ name: inputArg, value: inputArg }];
                 },
             });
-        } catch (e: any) {
-            if (e.name === 'ExitPromptError') break;
+        } catch (e: unknown) {
+            if (e instanceof Error && e.name === 'ExitPromptError') break;
             throw e;
         }
 
@@ -173,11 +206,9 @@ async function startChat(baseUrl: string, model: string): Promise<void> {
         }
 
         if (prompt.trim().startsWith('/model')) {
-            // Print available models
-            console.log(chalk.green(`\nAvailable models:`));
+            console.log(chalk.green('\nAvailable models:'));
             models.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
 
-            // Trigger model selector
             let selectedModel: string | null = null;
             try {
                 selectedModel = await select({
@@ -185,10 +216,10 @@ async function startChat(baseUrl: string, model: string): Promise<void> {
                     choices: models.map((m: string) => ({ name: m, value: m })),
                     pageSize: 10
                 });
-            } catch (e: any) {
-                if (e.name === 'ExitPromptError') {
+            } catch (e: unknown) {
+                if (e instanceof Error && e.name === 'ExitPromptError') {
                     console.log(chalk.yellow('Model selection cancelled.'));
-                    continue; // Stay with current model
+                    continue;
                 }
                 throw e;
             }
@@ -202,23 +233,48 @@ async function startChat(baseUrl: string, model: string): Promise<void> {
             continue;
         }
 
-        try {
-            const response = await axios.post<GenerateResponse>(`${baseUrl}/api/generate`, {
-                model: currentModel,
-                prompt: prompt,
-                stream: false
-            });
+        // Add the user message to history and send to /api/chat
+        messages.push({ role: 'user', content: prompt });
 
-            console.log(chalk.yellow('\nAI > ') + response.data.response + '\n');
-            // Save last used model after successful chat
-            config.lastModel = currentModel;
-            await saveConfig(config);
+        try {
+            // Tool-call loop: keep sending results back until the LLM has no more tool calls
+            while (true) {
+                const response = await axios.post<ChatApiResponse>(`${baseUrl}/api/chat`, {
+                    model: currentModel,
+                    messages,
+                    tools: TOOLS,
+                    stream: false,
+                });
+
+                const assistantMessage = response.data.message;
+                messages.push(assistantMessage);
+
+                if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+                    // Execute each tool call sequentially then feed results back
+                    for (const tc of assistantMessage.tool_calls) {
+                        const toolResult = await handleToolCall(
+                            tc.function.name,
+                            tc.function.arguments,
+                        );
+                        messages.push({ role: 'tool', content: toolResult });
+                    }
+                    // Loop again so the LLM can see the tool results and respond
+                } else {
+                    // No tool calls — this is the final reply
+                    console.log(chalk.yellow('\nAI > ') + assistantMessage.content + '\n');
+                    config.lastModel = currentModel;
+                    await saveConfig(config);
+                    break;
+                }
+            }
         } catch (error) {
             if (axios.isAxiosError(error)) {
-                console.error(chalk.red('Error during generation:'), error.message);
+                console.error(chalk.red('Error communicating with Ollama:'), error.message);
             } else {
                 console.error(chalk.red('An unexpected error occurred:'), error);
             }
+            // Remove the failed user message so conversation stays consistent
+            messages.pop();
         }
     }
 }
