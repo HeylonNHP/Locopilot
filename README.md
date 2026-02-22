@@ -17,6 +17,11 @@ A simple CLI tool to chat with a Large Language Model via Ollama.
     npm start
     ```
 
+## Configuration
+
+- **`config.json`**: This file is created automatically on the first run and is ignored by Git. It stores your Ollama connection details, the last model used, and the default context length (`num_ctx`).
+- **Context Length (`num_ctx`)**: The default context length is 65536. This setting is stored in your `config.json` and can be manually edited if needed.
+
 ## Features
 
 -   **Ollama Configuration**: On its first run, the tool will prompt for the Ollama host and port, which it saves to `config.json`.
