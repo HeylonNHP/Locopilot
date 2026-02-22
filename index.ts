@@ -1,23 +1,78 @@
 import fs from 'fs';
 import path from 'path';
 import { select, input, search } from '@inquirer/prompts';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import chalk from 'chalk';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 
-async function loadConfig() {
+// --- TypeScript Interfaces ---
+
+interface Config {
+    baseUrl: string;
+    lastModel?: string;
+}
+
+interface OllamaModelDetails {
+    parent_model: string;
+    format: string;
+    family: string;
+    families: string[] | null;
+    parameter_size: string;
+    quantization_level: string;
+}
+
+interface OllamaModel {
+    name: string;
+    model: string;
+    modified_at: string;
+    size: number;
+    digest: string;
+    details: OllamaModelDetails;
+}
+
+interface TagsResponse {
+    models: OllamaModel[];
+}
+
+interface GenerateResponse {
+    model: string;
+    created_at: string;
+    response: string;
+    done: boolean;
+    context?: number[];
+    total_duration?: number;
+    load_duration?: number;
+    prompt_eval_count?: number;
+    prompt_eval_duration?: number;
+    eval_count?: number;
+    eval_duration?: number;
+}
+
+interface SlashCommand {
+    name: string;
+    value: string;
+}
+
+// --- Functions ---
+
+async function loadConfig(): Promise<Config | null> {
     if (fs.existsSync(CONFIG_PATH)) {
-        return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+        try {
+            return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+        } catch (e) {
+            console.error(chalk.red('Error parsing config file.'));
+            return null;
+        }
     }
     return null;
 }
 
-async function saveConfig(config) {
+async function saveConfig(config: Config): Promise<void> {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
-async function setupOllama() {
+async function setupOllama(): Promise<Config> {
     let config = await loadConfig();
 
     while (true) {
@@ -32,7 +87,7 @@ async function setupOllama() {
 
         try {
             // Validate connection
-            await axios.get(`${config.baseUrl}/api/tags`, { timeout: 2000 });
+            await axios.get<TagsResponse>(`${config.baseUrl}/api/tags`, { timeout: 2000 });
             await saveConfig(config);
             return config;
         } catch (error) {
@@ -54,64 +109,55 @@ async function setupOllama() {
     }
 }
 
-async function getModels(baseUrl) {
+async function getModels(baseUrl: string): Promise<string[]> {
     try {
-        const response = await axios.get(`${baseUrl}/api/tags`);
-        let data = response.data;
+        const response = await axios.get<TagsResponse>(`${baseUrl}/api/tags`);
+        const data = response.data;
         
-        // If data is a string, try to parse it
-        if (typeof data === 'string') {
-            try {
-                data = JSON.parse(data);
-            } catch (e) {
-                console.error(chalk.red('Failed to parse Ollama API response.'));
-                return [];
-            }
-        }
-
         const models = data.models || [];
-        return models.map(m => m.name).sort();
+        return models.map((m: OllamaModel) => m.name).sort();
     } catch (error) {
-        console.error(chalk.red('Error fetching models:'), error.message);
+        if (axios.isAxiosError(error)) {
+            console.error(chalk.red('Error fetching models:'), error.message);
+        } else {
+            console.error(chalk.red('An unexpected error occurred:'), error);
+        }
         return [];
     }
 }
 
-async function startChat(baseUrl, model) {
+async function startChat(baseUrl: string, model: string): Promise<void> {
     let currentModel = model;
-    let config = await loadConfig();
+    let config = await loadConfig() || { baseUrl };
     const models = await getModels(baseUrl);
-    console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' to quit.\n`));
+    console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.\n`));
 
-    const slashCommands = [
+    const slashCommands: SlashCommand[] = [
         { name: chalk.blue('/model') + ' - Switch LLM model', value: '/model' },
         { name: chalk.blue('/exit') + '  - Exit chat', value: '/exit' },
         { name: chalk.blue('/help') + '  - Show help', value: '/help' }
     ];
 
     while (true) {
-        let prompt;
+        let prompt: string;
         try {
             prompt = await search({
                 message: chalk.cyan('You >'),
                 theme: { prefix: '' },
-                source: async (input) => {
-                    if (!input) {
+                source: async (inputArg: string | undefined) => {
+                    if (!inputArg) {
                         return [{ name: chalk.dim('Type a message or / for commands...'), value: '' }];
                     }
                     
-                    if (input.startsWith('/')) {
-                        const matches = slashCommands.filter(c => c.value.startsWith(input));
-                        // If we have slash matches, show them. 
-                        // We also add the raw input so they can hit enter on a partial command if they want.
+                    if (inputArg.startsWith('/')) {
+                        const matches = slashCommands.filter(c => c.value.startsWith(inputArg));
                         if (matches.length > 0) return matches;
                     }
                     
-                    // Fallback for free text or non-matching slashes
-                    return [{ name: input, value: input }];
+                    return [{ name: inputArg, value: inputArg }];
                 },
             });
-        } catch (e) {
+        } catch (e: any) {
             if (e.name === 'ExitPromptError') break;
             throw e;
         }
@@ -129,17 +175,17 @@ async function startChat(baseUrl, model) {
         if (prompt.trim().startsWith('/model')) {
             // Print available models
             console.log(chalk.green(`\nAvailable models:`));
-            models.forEach((m, i) => console.log(`  ${i + 1}. ${m}`));
+            models.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
 
             // Trigger model selector
-            let selectedModel = null;
+            let selectedModel: string | null = null;
             try {
                 selectedModel = await select({
                     message: 'Select a model to chat with:',
-                    choices: models.map(m => ({ name: m, value: m })),
+                    choices: models.map((m: string) => ({ name: m, value: m })),
                     pageSize: 10
                 });
-            } catch (e) {
+            } catch (e: any) {
                 if (e.name === 'ExitPromptError') {
                     console.log(chalk.yellow('Model selection cancelled.'));
                     continue; // Stay with current model
@@ -157,7 +203,7 @@ async function startChat(baseUrl, model) {
         }
 
         try {
-            const response = await axios.post(`${baseUrl}/api/generate`, {
+            const response = await axios.post<GenerateResponse>(`${baseUrl}/api/generate`, {
                 model: currentModel,
                 prompt: prompt,
                 stream: false
@@ -168,12 +214,16 @@ async function startChat(baseUrl, model) {
             config.lastModel = currentModel;
             await saveConfig(config);
         } catch (error) {
-            console.error(chalk.red('Error during generation:'), error.message);
+            if (axios.isAxiosError(error)) {
+                console.error(chalk.red('Error during generation:'), error.message);
+            } else {
+                console.error(chalk.red('An unexpected error occurred:'), error);
+            }
         }
     }
 }
 
-async function main() {
+async function main(): Promise<void> {
     const config = await setupOllama();
     if (!config) {
         // User chose to exit or connection setup failed
@@ -189,7 +239,7 @@ async function main() {
     }
 
     console.log(chalk.green(`Found ${models.length} models:`));
-    models.forEach((m, i) => console.log(`  ${i + 1}. ${m}`));
+    models.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
 
     let configData = await loadConfig();
     let selectedModel = configData && configData.lastModel && models.includes(configData.lastModel)
@@ -199,11 +249,11 @@ async function main() {
     if (!selectedModel) {
         selectedModel = await select({
             message: 'Select a model to chat with:',
-            choices: models.map(m => ({ name: m, value: m })),
+            choices: models.map((m: string) => ({ name: m, value: m })),
             pageSize: 10
         });
         // Save selected model as default
-        configData = configData || {};
+        configData = configData || { baseUrl: config.baseUrl };
         configData.lastModel = selectedModel;
         await saveConfig(configData);
     }
