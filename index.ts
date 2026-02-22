@@ -1,10 +1,15 @@
 import fs from 'fs';
 import path from 'path';
 import { select, input, search } from '@inquirer/prompts';
-import axios from 'axios';
 import chalk from 'chalk';
 import { TOOLS, handleToolCall, getToolSystemPrompt, shouldNudgeForToolCall, getToolUseNudge } from './tools.js';
-import type { ToolCallArguments } from './tools.js';
+import {
+    validateOllamaConnection,
+    fetchOllamaModels,
+    sendOllamaChat,
+    getOllamaApiErrorMessage,
+} from './ollamaApi.js';
+import type { ChatMessage, OllamaModel } from './ollamaApi.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const DEFAULT_NUM_CTX = 65536;
@@ -17,54 +22,9 @@ interface Config {
     numCtx?: number;
 }
 
-interface OllamaModelDetails {
-    parent_model: string;
-    format: string;
-    family: string;
-    families: string[] | null;
-    parameter_size: string;
-    quantization_level: string;
-}
-
-interface OllamaModel {
-    name: string;
-    model: string;
-    modified_at: string;
-    size: number;
-    digest: string;
-    details: OllamaModelDetails;
-}
-
-interface TagsResponse {
-    models: OllamaModel[];
-}
-
 interface SlashCommand {
     name: string;
     value: string;
-}
-
-// --- Ollama /api/chat types ---
-
-interface OllamaToolCall {
-    function: {
-        name: string;
-        arguments: ToolCallArguments;
-    };
-}
-
-interface ChatMessage {
-    role: 'system' | 'user' | 'assistant' | 'tool';
-    content: string;
-    tool_calls?: OllamaToolCall[];
-}
-
-interface ChatApiResponse {
-    model: string;
-    created_at: string;
-    message: ChatMessage;
-    done: boolean;
-    done_reason?: string;
 }
 
 // moved to tools.ts
@@ -102,7 +62,7 @@ async function setupOllama(): Promise<Config> {
 
         try {
             // Validate connection
-            await axios.get<TagsResponse>(`${config.baseUrl}/api/tags`, { timeout: 2000 });
+            await validateOllamaConnection(config.baseUrl, 2000);
             await saveConfig(config);
             return config;
         } catch (error) {
@@ -126,17 +86,10 @@ async function setupOllama(): Promise<Config> {
 
 async function getModels(baseUrl: string): Promise<string[]> {
     try {
-        const response = await axios.get<TagsResponse>(`${baseUrl}/api/tags`);
-        const data = response.data;
-        
-        const models = data.models || [];
+        const models = await fetchOllamaModels(baseUrl);
         return models.map((m: OllamaModel) => m.name).sort();
     } catch (error) {
-        if (axios.isAxiosError(error)) {
-            console.error(chalk.red('Error fetching models:'), error.message);
-        } else {
-            console.error(chalk.red('An unexpected error occurred:'), error);
-        }
+        console.error(chalk.red('Error fetching models:'), getOllamaApiErrorMessage(error));
         return [];
     }
 }
@@ -238,17 +191,14 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
         try {
             // Tool-call loop: keep sending results back until the LLM has no more tool calls
             while (true) {
-                const response = await axios.post<ChatApiResponse>(`${baseUrl}/api/chat`, {
+                const response = await sendOllamaChat(baseUrl, {
                     model: currentModel,
                     messages,
                     tools: TOOLS,
-                    stream: false,
-                    options: {
-                        num_ctx: numCtx,
-                    },
+                    numCtx,
                 });
 
-                const assistantMessage = response.data.message;
+                const assistantMessage = response.message;
                 messages.push(assistantMessage);
 
                 if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
@@ -293,11 +243,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                 }
             }
         } catch (error) {
-            if (axios.isAxiosError(error)) {
-                console.error(chalk.red('Error communicating with Ollama:'), error.message);
-            } else {
-                console.error(chalk.red('An unexpected error occurred:'), error);
-            }
+            console.error(chalk.red('Error communicating with Ollama:'), getOllamaApiErrorMessage(error));
             // Remove the failed user message so conversation stays consistent
             messages.pop();
         }
