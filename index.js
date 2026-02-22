@@ -102,12 +102,19 @@ async function startChat(baseUrl, model) {
                     pageSize: 10
                 });
             } catch (e) {
-                console.log(chalk.yellow('Model selection cancelled.'));
+                if (e.name === 'ExitPromptError') {
+                    console.log(chalk.yellow('Model selection cancelled.'));
+                    continue; // Stay with current model
+                }
+                throw e;
             }
-            currentModel = selectedModel;
-            config.lastModel = currentModel;
-            await saveConfig(config);
-            console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
+
+            if (selectedModel) {
+                currentModel = selectedModel;
+                config.lastModel = currentModel;
+                await saveConfig(config);
+                console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
+            }
             continue;
         }
 
