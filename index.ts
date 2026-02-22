@@ -7,12 +7,14 @@ import { TOOLS, handleToolCall, getToolSystemPrompt } from './tools.js';
 import type { ToolCallArguments } from './tools.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
+const DEFAULT_NUM_CTX = 65536;
 
 // --- TypeScript Interfaces ---
 
 interface Config {
     baseUrl: string;
     lastModel?: string;
+    numCtx?: number;
 }
 
 interface OllamaModelDetails {
@@ -137,11 +139,12 @@ async function getModels(baseUrl: string): Promise<string[]> {
     }
 }
 
-async function startChat(baseUrl: string, model: string): Promise<void> {
+async function startChat(baseUrl: string, model: string, numCtx: number): Promise<void> {
     let currentModel = model;
     let config = await loadConfig() || { baseUrl };
     const models = await getModels(baseUrl);
     console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
+    console.log(chalk.dim(`(Using context length num_ctx=${numCtx})`));
     console.log(chalk.dim('(Tool calling enabled — the AI may request to run terminal commands.)\n'));
 
     const slashCommands: SlashCommand[] = [
@@ -217,6 +220,7 @@ async function startChat(baseUrl: string, model: string): Promise<void> {
             if (selectedModel) {
                 currentModel = selectedModel;
                 config.lastModel = currentModel;
+                config.numCtx = numCtx;
                 await saveConfig(config);
                 console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
             }
@@ -234,6 +238,9 @@ async function startChat(baseUrl: string, model: string): Promise<void> {
                     messages,
                     tools: TOOLS,
                     stream: false,
+                    options: {
+                        num_ctx: numCtx,
+                    },
                 });
 
                 const assistantMessage = response.data.message;
@@ -253,6 +260,7 @@ async function startChat(baseUrl: string, model: string): Promise<void> {
                     // No tool calls — this is the final reply
                     console.log(chalk.yellow('\nAI > ') + assistantMessage.content + '\n');
                     config.lastModel = currentModel;
+                    config.numCtx = numCtx;
                     await saveConfig(config);
                     break;
                 }
@@ -291,6 +299,19 @@ async function main(): Promise<void> {
     let selectedModel = configData && configData.lastModel && models.includes(configData.lastModel)
         ? configData.lastModel
         : null;
+    const savedNumCtx = configData?.numCtx ?? DEFAULT_NUM_CTX;
+
+    const numCtxInput = await input({
+        message: 'Enter context length (num_ctx):',
+        default: String(savedNumCtx),
+        validate: (value: string) => {
+            const parsed = Number.parseInt(value, 10);
+            return Number.isInteger(parsed) && parsed > 0
+                ? true
+                : 'Please enter a positive integer.';
+        },
+    });
+    const selectedNumCtx = Number.parseInt(numCtxInput, 10);
 
     if (!selectedModel) {
         selectedModel = await select({
@@ -301,10 +322,16 @@ async function main(): Promise<void> {
         // Save selected model as default
         configData = configData || { baseUrl: config.baseUrl };
         configData.lastModel = selectedModel;
+        configData.numCtx = selectedNumCtx;
+        await saveConfig(configData);
+    } else {
+        configData = configData || { baseUrl: config.baseUrl };
+        configData.lastModel = selectedModel;
+        configData.numCtx = selectedNumCtx;
         await saveConfig(configData);
     }
 
-    await startChat(config.baseUrl, selectedModel);
+    await startChat(config.baseUrl, selectedModel, selectedNumCtx);
 }
 
 process.on('SIGINT', () => {
