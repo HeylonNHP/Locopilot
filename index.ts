@@ -232,6 +232,8 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
         // Add the user message to history and send to /api/chat
         messages.push({ role: 'user', content: prompt });
         let sentToolRetryNudge = false;
+        let emptyResponseRecoveryAttempts = 0;
+        const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
         try {
             // Tool-call loop: keep sending results back until the LLM has no more tool calls
@@ -260,14 +262,30 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                     }
                     // Loop again so the LLM can see the tool results and respond
                 } else {
-                    if (!sentToolRetryNudge && shouldNudgeForToolCall(assistantMessage.content)) {
+                    const assistantContent = assistantMessage.content?.trim() ?? '';
+
+                    if (assistantContent.length === 0 && emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
+                        emptyResponseRecoveryAttempts += 1;
+                        messages.push({
+                            role: 'user',
+                            content:
+                                'Your last response was empty. Provide a direct answer now. ' +
+                                'If commands are needed, call run_command. If commands already ran, summarize their output and errors.'
+                        });
+                        continue;
+                    }
+
+                    if (!sentToolRetryNudge && assistantContent.length > 0 && shouldNudgeForToolCall(assistantMessage.content)) {
                         sentToolRetryNudge = true;
                         messages.push({ role: 'user', content: getToolUseNudge() });
                         continue;
                     }
 
                     // No tool calls — this is the final reply
-                    console.log(chalk.yellow('\nAI > ') + assistantMessage.content + '\n');
+                    const finalContent = assistantContent.length > 0
+                        ? assistantMessage.content
+                        : '[No response content was returned by the model after tool execution.]';
+                    console.log(chalk.yellow('\nAI > ') + finalContent + '\n');
                     config.lastModel = currentModel;
                     config.numCtx = numCtx;
                     await saveConfig(config);
