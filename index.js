@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import inquirer from 'inquirer';
+import { select, input } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
 
@@ -23,22 +23,10 @@ async function setupOllama() {
     while (true) {
         if (!config) {
             console.log(chalk.blue('Initial Configuration Required'));
-            const answers = await inquirer.prompt([
-                {
-                    type: 'input',
-                    name: 'host',
-                    message: 'Enter Ollama host (e.g., localhost):',
-                    default: 'localhost'
-                },
-                {
-                    type: 'input',
-                    name: 'port',
-                    message: 'Enter Ollama port:',
-                    default: '11434'
-                }
-            ]);
+            const host = await input({ message: 'Enter Ollama host (e.g., localhost):', default: 'localhost' });
+            const port = await input({ message: 'Enter Ollama port:', default: '11434' });
             config = {
-                baseUrl: `http://${answers.host}:${answers.port}`
+                baseUrl: `http://${host}:${port}`
             };
         }
 
@@ -51,19 +39,14 @@ async function setupOllama() {
             console.error(chalk.red('\nCould not connect to Ollama at ' + config.baseUrl));
             console.error(chalk.yellow('Please check if Ollama is running and the address is correct.\n'));
             
-            const { action } = await inquirer.prompt([
-                {
-                    type: 'list',
-                    name: 'action',
-                    message: 'What would you like to do?',
-                    choices: [
-                        { name: 'Retry connection', value: 'retry' },
-                        { name: 'Edit configuration', value: 'edit' },
-                        { name: 'Exit', value: 'exit' }
-                    ]
-                }
-            ]);
-
+            const action = await select({
+                message: 'What would you like to do?',
+                choices: [
+                    { name: 'Retry connection', value: 'retry' },
+                    { name: 'Edit configuration', value: 'edit' },
+                    { name: 'Exit', value: 'exit' }
+                ]
+            });
             if (action === 'exit') process.exit(0);
             if (action === 'edit') config = null;
             // if retry, loop will continue with existing config
@@ -101,14 +84,7 @@ async function startChat(baseUrl, model) {
     console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' to quit.\n`));
 
     while (true) {
-        const { prompt } = await inquirer.prompt([
-            {
-                type: 'input',
-                name: 'prompt',
-                message: chalk.cyan('You >'),
-                prefix: ''
-            }
-        ]);
+        const prompt = await input({ message: chalk.cyan('You >'), theme: { prefix: '' } });
 
         if (prompt.toLowerCase() === 'exit') break;
 
@@ -120,30 +96,13 @@ async function startChat(baseUrl, model) {
             // Trigger model selector
             let selectedModel = null;
             try {
-                const result = await inquirer.prompt([
-                    {
-                        type: 'list',
-                        name: 'selectedModel',
-                        message: 'Select a model to chat with:',
-                        choices: models,
-                        pageSize: 10
-                    }
-                ]);
-                selectedModel = result.selectedModel;
+                selectedModel = await select({
+                    message: 'Select a model to chat with:',
+                    choices: models.map(m => ({ name: m, value: m })),
+                    pageSize: 10
+                });
             } catch (e) {
-                console.log(chalk.yellow('Interactive menu failed or was interrupted.'));
-            }
-            if (!selectedModel) {
-                // Fallback: prompt for model name
-                const { manualModel } = await inquirer.prompt([
-                    {
-                        type: 'input',
-                        name: 'manualModel',
-                        message: 'Type the model name you want to use:',
-                        validate: input => models.includes(input) ? true : 'Model name must match one of the listed models.'
-                    }
-                ]);
-                selectedModel = manualModel;
+                console.log(chalk.yellow('Model selection cancelled.'));
             }
             currentModel = selectedModel;
             config.lastModel = currentModel;
@@ -171,6 +130,11 @@ async function startChat(baseUrl, model) {
 
 async function main() {
     const config = await setupOllama();
+    if (!config) {
+        // User chose to exit or connection setup failed
+        console.log(chalk.yellow('Exiting Locopilot.'));
+        process.exit(0);
+    }
     console.log(chalk.blue('Fetching models from ' + config.baseUrl + '...'));
     const models = await getModels(config.baseUrl);
 
@@ -188,32 +152,11 @@ async function main() {
         : null;
 
     if (!selectedModel) {
-        try {
-            const result = await inquirer.prompt([
-                {
-                    type: 'list',
-                    name: 'selectedModel',
-                    message: 'Select a model to chat with:',
-                    choices: models,
-                    pageSize: 10
-                }
-            ]);
-            selectedModel = result.selectedModel;
-        } catch (e) {
-            console.log(chalk.yellow('Interactive menu failed or was interrupted.'));
-        }
-        if (!selectedModel) {
-            // Fallback: prompt for model name
-            const { manualModel } = await inquirer.prompt([
-                {
-                    type: 'input',
-                    name: 'manualModel',
-                    message: 'Type the model name you want to use:',
-                    validate: input => models.includes(input) ? true : 'Model name must match one of the listed models.'
-                }
-            ]);
-            selectedModel = manualModel;
-        }
+        selectedModel = await select({
+            message: 'Select a model to chat with:',
+            choices: models.map(m => ({ name: m, value: m })),
+            pageSize: 10
+        });
         // Save selected model as default
         configData = configData || {};
         configData.lastModel = selectedModel;
