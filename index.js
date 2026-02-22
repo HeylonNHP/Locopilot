@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { select, input } from '@inquirer/prompts';
+import { select, input, search } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
 
@@ -83,10 +83,48 @@ async function startChat(baseUrl, model) {
     const models = await getModels(baseUrl);
     console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' to quit.\n`));
 
-    while (true) {
-        const prompt = await input({ message: chalk.cyan('You >'), theme: { prefix: '' } });
+    const slashCommands = [
+        { name: chalk.blue('/model') + ' - Switch LLM model', value: '/model' },
+        { name: chalk.blue('/exit') + '  - Exit chat', value: '/exit' },
+        { name: chalk.blue('/help') + '  - Show help', value: '/help' }
+    ];
 
-        if (prompt.toLowerCase() === 'exit') break;
+    while (true) {
+        let prompt;
+        try {
+            prompt = await search({
+                message: chalk.cyan('You >'),
+                theme: { prefix: '' },
+                source: async (input) => {
+                    if (!input) {
+                        return [{ name: chalk.dim('Type a message or / for commands...'), value: '' }];
+                    }
+                    
+                    if (input.startsWith('/')) {
+                        const matches = slashCommands.filter(c => c.value.startsWith(input));
+                        // If we have slash matches, show them. 
+                        // We also add the raw input so they can hit enter on a partial command if they want.
+                        if (matches.length > 0) return matches;
+                    }
+                    
+                    // Fallback for free text or non-matching slashes
+                    return [{ name: input, value: input }];
+                },
+            });
+        } catch (e) {
+            if (e.name === 'ExitPromptError') break;
+            throw e;
+        }
+
+        if (!prompt || prompt.trim() === '') continue;
+        if (prompt.toLowerCase() === '/exit' || prompt.toLowerCase() === 'exit') break;
+
+        if (prompt.trim().startsWith('/help')) {
+            console.log(chalk.blue('\nAvailable Commands:'));
+            slashCommands.forEach(cmd => console.log(`  ${cmd.name}`));
+            console.log('');
+            continue;
+        }
 
         if (prompt.trim().startsWith('/model')) {
             // Print available models
