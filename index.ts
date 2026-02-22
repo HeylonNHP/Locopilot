@@ -3,7 +3,7 @@ import path from 'path';
 import { select, input, search } from '@inquirer/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
-import { TOOLS, handleToolCall } from './tools.js';
+import { TOOLS, handleToolCall, getToolSystemPrompt } from './tools.js';
 import type { ToolCallArguments } from './tools.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
@@ -151,21 +151,11 @@ async function startChat(baseUrl: string, model: string): Promise<void> {
     ];
 
     // Persistent message history for the /api/chat endpoint.
-    // A system prompt is injected up-front so the model knows it has tool access.
+    // The system prompt is built from a general section (defined here) combined with
+    // the tool-awareness section provided by the tools module.
     const systemPrompt =
-        'You are Locopilot, a helpful AI assistant running inside a terminal application.\n' +
-        'You have access to the following tools that let you interact with the host machine:\n\n' +
-        '1. run_command(command, shell?, timeout_seconds?)\n' +
-        '   Execute a shell command on the host machine. The user will be asked to approve\n' +
-        '   it before it runs. Returns stdout/stderr when the command finishes, or partial\n' +
-        '   output plus a process_id if the command is still running after the timeout.\n\n' +
-        '2. check_process_output(process_id)\n' +
-        '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
-        '   finished. Use this to check on commands that are still in progress.\n\n' +
-        'When the user asks you to do something that involves the filesystem, the terminal,\n' +
-        'running programs, or inspecting the system, use these tools rather than refusing\n' +
-        'or guessing. Always prefer calling a tool over saying you cannot do something.\n' +
-        'When a command completes, summarise its output clearly for the user.';
+        'You are Locopilot, a helpful AI assistant running inside a terminal application.\n\n' +
+        getToolSystemPrompt();
 
     const messages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },

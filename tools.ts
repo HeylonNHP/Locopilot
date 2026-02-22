@@ -233,6 +233,28 @@ export interface ToolCallArguments {
     process_id?: number;
 }
 
+/**
+ * Returns the tool-awareness section of the system prompt, describing the
+ * available tools and how the model should use them. Kept here so that the
+ * prompt stays in sync with the tool implementations automatically.
+ */
+export function getToolSystemPrompt(): string {
+    return (
+        'You have access to the following tools that let you interact with the host machine:\n\n' +
+        '1. run_command(command, shell?, timeout_seconds?)\n' +
+        '   Execute a shell command on the host machine. The user will be asked to approve\n' +
+        '   it before it runs. Returns stdout/stderr when the command finishes, or partial\n' +
+        `   output plus a process_id if still running after the timeout (default ${DEFAULT_TIMEOUT_MS / 1000}s).\n\n` +
+        '2. check_process_output(process_id)\n' +
+        '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
+        '   finished. Use this to check on commands that are still in progress.\n\n' +
+        'When the user asks you to do something that involves the filesystem, the terminal,\n' +
+        'running programs, or inspecting the system, use these tools rather than refusing\n' +
+        'or guessing. Always prefer calling a tool over saying you cannot do something.\n' +
+        'When a command completes, summarise its output clearly for the user.'
+    );
+}
+
 export async function handleToolCall(
     name: string,
     args: ToolCallArguments,
