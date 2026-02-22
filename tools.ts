@@ -18,6 +18,23 @@ import os from 'os';
 // Default time (ms) to wait for a command before returning partial output
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/**
+ * Strips ANSI escape codes and Carriage Returns from text.
+ * Carriage Returns (\r) in particular can cause the terminal cursor
+ * to move backwards and overwrite previous text, making parts of
+ * the output "disappear".
+ */
+export function sanitize(text: string): string {
+    return text
+        // Normalize line endings to LF
+        .replace(/\r\n/g, '\n')
+        // Remove remaining lone Carriage Returns that could overwrite text
+        .replace(/\r/g, '')
+        // Strip ANSI escape codes (colors, cursor moves, screen clears)
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
+}
+
 // --- Internal process registry ---
 
 interface ProcessEntry {
@@ -52,8 +69,11 @@ function buildOutput(
     processId: number | null,
 ): string {
     const parts: string[] = [];
-    if (entry.stdout) parts.push(`stdout:\n${entry.stdout}`);
-    if (entry.stderr) parts.push(`stderr:\n${entry.stderr}`);
+    const sanitizedStdout = sanitize(entry.stdout);
+    const sanitizedStderr = sanitize(entry.stderr);
+
+    if (sanitizedStdout) parts.push(`stdout:\n${sanitizedStdout}`);
+    if (sanitizedStderr) parts.push(`stderr:\n${sanitizedStderr}`);
     if (parts.length === 0) parts.push('(no output yet)');
 
     if (finished) {

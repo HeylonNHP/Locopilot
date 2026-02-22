@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { select, input, search } from '@inquirer/prompts';
 import chalk from 'chalk';
-import { TOOLS, handleToolCall, getToolSystemPrompt, shouldNudgeForToolCall, getToolUseNudge } from './tools.js';
+import { TOOLS, handleToolCall, getToolSystemPrompt, shouldNudgeForToolCall, getToolUseNudge, sanitize } from './tools.js';
 import {
     validateOllamaConnection,
     fetchOllamaModels,
@@ -232,9 +232,14 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                     }
 
                     // No tool calls — this is the final reply
-                    const finalContent = assistantContent.length > 0
+                    const rawContent = assistantContent.length > 0
                         ? assistantMessage.content
                         : '[No response content was returned by the model after tool execution.]';
+
+                    // Sanitize the final AI response to prevent control characters from
+                    // messing up the terminal UI.
+                    const finalContent = sanitize(rawContent).trim();
+
                     console.log(chalk.yellow('\nAI > ') + finalContent + '\n');
                     config.lastModel = currentModel;
                     config.numCtx = numCtx;
