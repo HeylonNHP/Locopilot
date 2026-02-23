@@ -70,3 +70,51 @@ Before starting a new task in the above plan, update progress in the plan.
 - Work through each checklist item systematically.
 - Keep communication concise and focused.
 - Follow development best practices.
+
+
+<!-- Feature documentation — keep this section up to date as the application evolves -->
+
+## Application overview
+
+Locopilot is a terminal-based chat client for Ollama. The developer's intent is to provide a lightweight, local-first AI assistant that runs entirely in the user's terminal with no cloud dependency. Key design goals:
+
+- **Local & private** — all inference runs through a locally hosted Ollama instance; no data leaves the machine.
+- **Minimal friction** — the user picks a host/port and model once; choices are persisted in `config.json` and re-used on the next run.
+- **Transparent AI actions** — the assistant can call tools (e.g. run terminal commands) but must never act without explicit user approval.
+- **Developer-friendly** — written in TypeScript/ESM; thin wrappers around Inquirer (prompts), Axios (HTTP), and Chalk (styling) keep the codebase easy to extend.
+
+When adding new features, preserve these intentions: keep the UX simple, keep side-effects visible and opt-in, and avoid introducing external services or hidden state.
+
+## Tool-calling / Command-execution
+
+Feature summary:
+- The assistant can request terminal commands via tool calls (tool name: `run_command`).
+- Each requested command MUST be shown to the user and requires explicit confirmation before execution. No command is executed automatically.
+- When the user confirms, the command is executed and its stdout/stderr is captured and returned to the model as the tool result so the assistant can continue the flow.
+- This flow protects against accidental or dangerous command execution and surfaces command outputs for transparency.
+
+Security / UX notes:
+- Treat command output as untrusted input; sanitize before printing or feeding back into prompts.
+- Avoid running commands that expose secrets or modify critical system state unless the user explicitly understands the risk.
+
+## LLM maintenance instruction (always keep up to date)
+
+- PURPOSE: This file documents developer intent, UX constraints, security notes, and tool behaviors. It exists so future LLMs and contributors can quickly understand the motivations behind design choices.
+
+- MANDATE FOR LLMS / MAINTAINERS:
+  - Whenever anything in this application changes (code, configuration, prompts, system prompt text, tool mappings, confirmation UX, dependencies, startup steps, or security controls), update this file to reflect the change.
+  - For each change, add a short entry that includes:
+    - File(s) changed (path)
+    - A one-line summary of what changed and why
+    - Any developer intent or UX rationale that future LLMs should preserve
+    - Any migration steps or notable side-effects (if applicable)
+
+- KEEP IT CONCISE: Entries should be short and follow the format above; prefer clarity over verbosity.
+
+- WHEN LLMS PROPOSE CHANGES:
+  - Before proposing or applying code changes that affect behavior, an LLM or automated agent MUST read this file and update it to reflect the intended outcome.
+  - If the LLM cannot confidently update this document (e.g., missing rationale), it should flag the change for a human reviewer instead of making an implementation-only edit.
+
+- DOCUMENT NEW TOOLS: If new tools are added (beyond `run_command`), document them here in the same format and include security notes and confirmation UX.
+
+(End of maintenance instructions)
