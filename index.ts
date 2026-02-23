@@ -27,8 +27,6 @@ interface SlashCommand {
     value: string;
 }
 
-// moved to tools.ts
-
 // --- Functions ---
 
 async function loadConfig(): Promise<Config | null> {
@@ -297,17 +295,13 @@ async function main(): Promise<void> {
             choices: models.map((m: string) => ({ name: m, value: m })),
             pageSize: 10
         });
-        // Save selected model as default
-        configData = configData || { baseUrl: config.baseUrl };
-        configData.lastModel = selectedModel;
-        configData.numCtx = selectedNumCtx;
-        await saveConfig(configData);
-    } else {
-        configData = configData || { baseUrl: config.baseUrl };
-        configData.lastModel = selectedModel;
-        configData.numCtx = selectedNumCtx;
-        await saveConfig(configData);
     }
+
+    // Persist selected model and context length
+    configData = configData || { baseUrl: config.baseUrl };
+    configData.lastModel = selectedModel;
+    configData.numCtx = selectedNumCtx;
+    await saveConfig(configData);
 
     await startChat(config.baseUrl, selectedModel, selectedNumCtx);
 }
