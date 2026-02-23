@@ -2,7 +2,16 @@ import fs from 'fs';
 import path from 'path';
 import { select, input, search } from '@inquirer/prompts';
 import chalk from 'chalk';
-import { TOOLS, handleToolCall, getToolSystemPrompt, shouldNudgeForToolCall, getToolUseNudge, sanitize } from './tools.js';
+import {
+    TOOLS,
+    handleToolCall,
+    getToolSystemPrompt,
+    shouldNudgeForToolCall,
+    getToolUseNudge,
+    sanitize,
+    setYoloMode,
+    isYolo,
+} from './tools.js';
 import {
     validateOllamaConnection,
     fetchOllamaModels,
@@ -20,6 +29,7 @@ interface Config {
     baseUrl: string;
     lastModel?: string;
     numCtx?: number;
+    yolo?: boolean;
 }
 
 interface SlashCommand {
@@ -98,7 +108,11 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
     const models = await getModels(baseUrl);
     console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
     console.log(chalk.dim(`(Using context length num_ctx=${numCtx})`));
-    console.log(chalk.dim('(Tool calling enabled — the AI may request to run terminal commands.)\n'));
+    if (isYolo()) {
+        console.log(chalk.red.bold('(YOLO mode enabled — terminal commands will execute automatically!)\n'));
+    } else {
+        console.log(chalk.dim('(Tool calling enabled — the AI may request to run terminal commands.)\n'));
+    }
 
     const slashCommands: SlashCommand[] = [
         { name: chalk.blue('/model') + ' - Switch LLM model', value: '/model' },
@@ -254,12 +268,44 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
 }
 
 async function main(): Promise<void> {
+    let yoloActive = process.argv.some(arg => arg === '--yolo' || arg === '-y') ||
+                     process.env.YOLO === 'true' ||
+                     process.env.YOLO === '1';
+
     const config = await setupOllama();
     if (!config) {
-        // User chose to exit or connection setup failed
         console.log(chalk.yellow('Exiting Locopilot.'));
         process.exit(0);
     }
+
+    let configData = await loadConfig();
+
+    if (!yoloActive) {
+        try {
+            const mode = await select({
+                message: 'Select execution mode:',
+                choices: [
+                    { name: 'Standard (Confirm all terminal commands)', value: 'standard' },
+                    { name: chalk.red.bold('YOLO') + '     (Automatic command execution - USE WITH CAUTION)', value: 'yolo' }
+                ],
+                default: configData?.yolo ? 'yolo' : 'standard'
+            });
+            yoloActive = mode === 'yolo';
+        } catch (e: unknown) {
+            if (e instanceof Error && e.name === 'ExitPromptError') {
+                process.exit(0);
+            }
+            throw e;
+        }
+    }
+
+    if (yoloActive) {
+        setYoloMode(true);
+        console.log(chalk.red.bold('\n⚠️  YOLO MODE ACTIVATED: Commands will execute automatically without confirmation. ⚠️\n'));
+    } else {
+        setYoloMode(false);
+    }
+
     console.log(chalk.blue('Fetching models from ' + config.baseUrl + '...'));
     const models = await getModels(config.baseUrl);
 
@@ -271,7 +317,7 @@ async function main(): Promise<void> {
     console.log(chalk.green(`Found ${models.length} models:`));
     models.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
 
-    let configData = await loadConfig();
+    configData = await loadConfig();
     let selectedModel = configData && configData.lastModel && models.includes(configData.lastModel)
         ? configData.lastModel
         : null;
@@ -301,6 +347,7 @@ async function main(): Promise<void> {
     configData = configData || { baseUrl: config.baseUrl };
     configData.lastModel = selectedModel;
     configData.numCtx = selectedNumCtx;
+    configData.yolo = yoloActive;
     await saveConfig(configData);
 
     await startChat(config.baseUrl, selectedModel, selectedNumCtx);

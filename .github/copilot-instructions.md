@@ -80,7 +80,7 @@ Locopilot is a terminal-based chat client for Ollama. The developer's intent is 
 
 - **Local & private** — all inference runs through a locally hosted Ollama instance; no data leaves the machine.
 - **Minimal friction** — the user picks a host/port and model once; choices are persisted in `config.json` and re-used on the next run.
-- **Transparent AI actions** — the assistant can call tools (e.g. run terminal commands) but must never act without explicit user approval.
+- **Transparent AI actions** — the assistant can call tools (e.g. run terminal commands) but must never act without explicit user approval, unless started in **YOLO mode** (via a startup prompt, command-line flag `--yolo`, or environment variable) which provides implicit consent for automatic execution.
 - **Developer-friendly** — written in TypeScript/ESM; thin wrappers around Inquirer (prompts), Axios (HTTP), and Chalk (styling) keep the codebase easy to extend.
 
 When adding new features, preserve these intentions: keep the UX simple, keep side-effects visible and opt-in, and avoid introducing external services or hidden state.
@@ -89,8 +89,12 @@ When adding new features, preserve these intentions: keep the UX simple, keep si
 
 Feature summary:
 - The assistant can request terminal commands via tool calls (tool name: `run_command`).
-- Each requested command MUST be shown to the user and requires explicit confirmation before execution. No command is executed automatically.
-- When the user confirms, the command is executed and its stdout/stderr is captured and returned to the model as the tool result so the assistant can continue the flow.
+- By default, each requested command MUST be shown to the user and requires explicit confirmation before execution.
+- If the application is in **YOLO mode**, the confirmation step is skipped and commands are executed automatically (the user provides implicit consent). YOLO mode can be enabled via:
+    - A startup menu prompt (persistent in `config.json`).
+    - The `--yolo` or `-y` command-line flag.
+    - The `YOLO=true` environment variable.
+- When the user confirms (or in YOLO mode), the command is executed and its stdout/stderr is captured and returned to the model as the tool result so the assistant can continue the flow.
 - This flow protects against accidental or dangerous command execution and surfaces command outputs for transparency.
 
 Security / UX notes:
@@ -116,5 +120,20 @@ Security / UX notes:
   - If the LLM cannot confidently update this document (e.g., missing rationale), it should flag the change for a human reviewer instead of making an implementation-only edit.
 
 - DOCUMENT NEW TOOLS: If new tools are added (beyond `run_command`), document them here in the same format and include security notes and confirmation UX.
+
+## Change History
+
+- 2026-02-23: Added YOLO mode menu option
+  - Files: `index.ts`, `README.md`, `.github/copilot-instructions.md`
+  - Summary: Added a startup menu to select between Standard and YOLO execution modes. The choice is persisted in `config.json`.
+  - Intent: Provide a reliable way to enable YOLO mode when command-line flags are consumed or ignored by the environment/shell.
+- 2026-02-23: Improved YOLO mode detection
+  - Files: `index.ts`, `tools.ts`, `README.md`
+  - Summary: Made YOLO mode detection more robust by adding support for `-y` shorthand and `YOLO` environment variable. Refactored `index.ts` to use a central `isYolo()` check from `tools.ts`.
+  - Intent: Resolve issues where some environments/shells (like PowerShell) or `npm` versions might not pass the `--yolo` flag correctly.
+- 2026-02-23: Fixed TS2451 redeclaration error
+  - Files: `index.ts`
+  - Summary: Removed redundant `let` keyword for `configData` variable in `main` function.
+  - Intent: Fix a regression introduced in the previous update that prevented compilation.
 
 (End of maintenance instructions)

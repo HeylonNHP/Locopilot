@@ -50,8 +50,16 @@ interface ProcessEntry {
 
 const processRegistry = new Map<number, ProcessEntry>();
 let nextProcessId = 1;
+let isYoloMode = false;
 
 // --- Helpers ---
+
+/**
+ * Returns true if YOLO mode is currently enabled.
+ */
+export function isYolo(): boolean {
+    return isYoloMode;
+}
 
 function defaultShell(): string {
     return os.platform() === 'win32' ? 'powershell' : 'bash';
@@ -165,24 +173,36 @@ export const TOOLS: OllamaTool[] = [
 
 // --- Tool handlers ---
 
+/**
+ * Enables or disables YOLO mode. In YOLO mode, commands requested by the
+ * AI are executed automatically without user confirmation.
+ */
+export function setYoloMode(enabled: boolean): void {
+    isYoloMode = enabled;
+}
+
 async function runCommand(
     command: string,
     shell: string = defaultShell(),
     timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<string> {
-    // Show the user what the AI wants to run and ask for confirmation
-    console.log(chalk.yellow('\n[Tool Call] The AI wants to run the following command:'));
+    // Show the user what the AI wants to run
+    console.log(chalk.yellow(`\n[Tool Call] The AI ${isYoloMode ? 'is executing' : 'wants to run'} the following command:`));
     console.log(chalk.bold(`  Shell:   ${shell}`));
     console.log(chalk.bold(`  Command: ${command}\n`));
 
     let approved = false;
-    try {
-        approved = await confirm({ message: 'Allow this command to run?', default: false });
-    } catch (e: unknown) {
-        if (e instanceof Error && e.name === 'ExitPromptError') {
-            return '[Command rejected: user exited prompt]';
+    if (isYoloMode) {
+        approved = true;
+    } else {
+        try {
+            approved = await confirm({ message: 'Allow this command to run?', default: false });
+        } catch (e: unknown) {
+            if (e instanceof Error && e.name === 'ExitPromptError') {
+                return '[Command rejected: user exited prompt]';
+            }
+            throw e;
         }
-        throw e;
     }
 
     if (!approved) {
@@ -262,15 +282,21 @@ export function getToolSystemPrompt(): string {
     return (
         'You have access to the following tools that let you interact with the host machine:\n\n' +
         '1. run_command(command, shell?, timeout_seconds?)\n' +
-        '   Execute a shell command on the host machine. The user will be asked to approve\n' +
-        '   it before it runs. Returns stdout/stderr when the command finishes, or partial\n' +
+        '   Execute a shell command on the host machine. ' +
+        (isYoloMode
+            ? 'The command will run automatically with user consent.'
+            : 'The user will be asked to approve it before it runs.') + '\n' +
+        '   Returns stdout/stderr when the command finishes, or partial\n' +
         `   output plus a process_id if still running after the timeout (default ${DEFAULT_TIMEOUT_MS / 1000}s).\n\n` +
         '2. check_process_output(process_id)\n' +
         '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
         '   finished. Use this to check on commands that are still in progress.\n\n' +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
-        '- Do NOT ask the user for permission yourself; the application already prompts for approval.\n' +
+        '- Do NOT ask the user for permission yourself; ' +
+        (isYoloMode
+            ? 'the user has already provided implicit consent via YOLO mode.'
+            : 'the application already prompts for approval.') + '\n' +
         '- Do NOT only print a shell snippet/code block when the task requires execution.\n' +
         '- If run_command returns a process_id, periodically call check_process_output until completion.\n\n' +
         'When the user asks you to do something that involves the filesystem, the terminal,\n' +
@@ -303,7 +329,9 @@ export function getToolUseNudge(): string {
     return (
         'Tool-use reminder: do not ask for permission and do not only print shell commands. ' +
         'If terminal access is needed, call run_command directly now. ' +
-        'I (the app) will ask the human user for approval before execution.'
+        (isYoloMode
+            ? 'The command will execute automatically.'
+            : 'I (the app) will ask the human user for approval before execution.')
     );
 }
 
