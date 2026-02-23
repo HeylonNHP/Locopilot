@@ -156,6 +156,13 @@ Security / UX notes:
 
 - DOCUMENT NEW TOOLS: If new tools are added (beyond `run_command`), document them here in the same format and include security notes and confirmation UX.
 
+- **Web search tool** (`web_search`):
+    - Changed `queries` parameter from `string` to `array` in the tool schema to encourage LLMs to provide multiple explicit queries properly.
+    - Updated `parseQueriesInput` in `tools.ts` to handle actual arrays, JSON-encoded arrays, and strings separated by newlines, commas, or semicolons.
+    - Updated tool description and system prompt to explicitly encourage using 2-3 queries for complex tasks.
+    - Improved automated query derivation in `webSearchTool.ts` to split prompts on "and", "or", commas, and semicolons.
+    - This ensures more effective search coverage even with "lazy" model inputs.
+
 ## Change History
 
 - 2026-02-23: Added minimal `web_search` tool (no page summarization)

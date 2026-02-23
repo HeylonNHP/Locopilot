@@ -155,7 +155,7 @@ export class WebSearchTool {
         if (!prompt) return [];
 
         const baseCandidates = prompt
-            .split(/\n|[?.!]/g)
+            .split(/\n|[?.!]| and | or |;|,/g)
             .map((segment) => segment.trim())
             .filter((segment) => segment.length > 0);
 

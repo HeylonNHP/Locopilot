@@ -181,6 +181,9 @@ export interface OllamaToolParameter {
     type: string;
     description: string;
     enum?: string[];
+    items?: {
+        type: string;
+    };
 }
 
 export interface OllamaTool {
@@ -272,9 +275,11 @@ export const TOOLS: OllamaTool[] = [
                             'User request text for deriving search queries if explicit queries are not supplied.',
                     },
                     queries: {
-                        type: 'string',
+                        type: 'array',
+                        items: { type: 'string' },
                         description:
-                            'Optional JSON-encoded array of explicit search queries to run, for example: ["foo", "bar"].',
+                            'Optional list of explicit search queries to run, for example: ["Cairns Lagoon opening hours", "Cairns Lagoon facts", "Cairns Lagoon entry fee"]. ' +
+                            'Provide multiple distinct queries to improve search coverage and obtain diverse information.',
                     },
                     max_queries: {
                         type: 'number',
@@ -314,7 +319,8 @@ export function setWebSearchConfig(config: ToolWebSearchConfig): void {
 function parseQueriesInput(raw: unknown): string[] {
     if (Array.isArray(raw)) {
         return raw
-            .map((item) => String(item).trim())
+            .flatMap((item) => String(item).split(/\n|,|;/))
+            .map((item) => item.trim())
             .filter((item) => item.length > 0);
     }
 
@@ -323,9 +329,9 @@ function parseQueriesInput(raw: unknown): string[] {
         if (!trimmed) return [];
         if (!trimmed.startsWith('[')) {
             return trimmed
-                .split('\n')
-                .map((line) => line.trim())
-                .filter((line) => line.length > 0);
+                .split(/\n|,|;/)
+                .map((item) => item.trim())
+                .filter((item) => item.length > 0);
         }
 
         try {
@@ -482,8 +488,9 @@ export function getToolSystemPrompt(): string {
         '   finished. Use this to check on commands that are still in progress.\n\n' +
         '3. web_search(prompt?, queries?, max_queries?, results_per_query?)\n' +
         '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
-        '   Use this when external web context is needed. Provide explicit queries when\n' +
-        '   possible; otherwise provide prompt and let the tool derive queries.\n\n' +
+        '   Use this when external web context is needed. Provide explicit queries as\n' +
+        '   an array when possible; aim for 2-3 distinct queries for complex requests\n' +
+        '   to ensure comprehensive coverage. The tool will respect the max_queries limit.\n\n' +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- Do NOT ask the user for permission yourself; ' +
