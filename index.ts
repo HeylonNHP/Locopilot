@@ -12,9 +12,10 @@ import {
     setYoloMode,
     setWebSearchConfig,
     isYolo,
-    requestInterrupt,
     clearInterrupt,
     isInterruptRequested,
+    installKeyInterruptListener,
+    removeKeyInterruptListener,
 } from './tools.js';
 import {
     validateOllamaConnection,
@@ -238,16 +239,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
         let emptyResponseRecoveryAttempts = 0;
         const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
-        // While the tool-call loop is running, intercept Ctrl+C so it
-        // interrupts the AI loop instead of exiting the process.
-        // We use a named function so we can remove this exact listener later,
-        // leaving every other SIGINT listener (including Node's default exit
-        // handler) completely untouched.
-        const sigintHandler = () => {
-            console.log(chalk.yellow('\n\n⚠  Interrupt requested — stopping AI loop after current step...\n'));
-            requestInterrupt();
-        };
-        process.on('SIGINT', sigintHandler);
+        installKeyInterruptListener('Ctrl+X');
 
         try {
             // Tool-call loop: keep sending results back until the LLM has no more tool calls
@@ -336,8 +328,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
             // Remove the failed user message so conversation stays consistent
             messages.pop();
         } finally {
-            // Remove our interrupt handler — normal Ctrl+C behaviour resumes.
-            process.off('SIGINT', sigintHandler);
+            removeKeyInterruptListener();
         }
     }
 }

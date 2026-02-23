@@ -14,6 +14,7 @@ import type { ChildProcess } from 'child_process';
 import { confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import os from 'os';
+import readline from 'readline';
 import { WebSearchTool, type WebSearchSettings, type WebSearchToolArgs } from './webSearchTool.js';
 
 // Default time (ms) to wait for a command before returning partial output
@@ -74,6 +75,10 @@ let interruptRequested = false;
 // cancelled from outside without waiting for the process to finish naturally.
 let activeInterruptResolve: ((result: string) => void) | null = null;
 
+let keyInterruptListener: ((s: string, k: readline.Key) => void) | null = null;
+let prevRawMode: boolean | null = null;
+let currentInterruptKeySpec = 'Ctrl+X';
+
 /**
  * Request an interrupt. If a command is currently executing its child process
  * will be killed and the pending promise resolved immediately. The tool-call
@@ -86,6 +91,76 @@ export function requestInterrupt(): void {
         activeInterruptResolve('[Interrupted by user.]');
         activeInterruptResolve = null;
     }
+}
+
+/**
+ * Returns a human-readable hint about how to interrupt the AI loop.
+ */
+export function getInterruptHint(): string {
+    return `Press ${chalk.bold(currentInterruptKeySpec)} to interrupt the AI loop.`;
+}
+
+/**
+ * Installs a keypress listener that calls requestInterrupt() when a specific
+ * key combination is pressed. This is used to provide an alternative to
+ * Ctrl+C which many users find themselves pressing accidentally.
+ *
+ * NOTE: only works in TTY environments.
+ */
+export function installKeyInterruptListener(keySpec = 'Ctrl+X'): void {
+    if (!process.stdin.isTTY) return;
+
+    currentInterruptKeySpec = keySpec;
+    const spec = keySpec.toLowerCase();
+    const isCtrl = spec.startsWith('ctrl+');
+    const keyName = isCtrl ? spec.slice(5) : spec;
+
+    readline.emitKeypressEvents(process.stdin);
+
+    // Save current raw mode and enable it so we get keypresses immediately.
+    // setRawMode(true) disables the OS TTY processing that converts Ctrl+C → SIGINT,
+    // so we must handle Ctrl+C manually inside the keypress listener.
+    prevRawMode = process.stdin.isRaw;
+    process.stdin.setRawMode(true);
+    // Ensure stdin is flowing so keypress events are emitted between Inquirer prompts.
+    process.stdin.resume();
+
+    keyInterruptListener = (str: string, key: readline.Key) => {
+        if (!key) return;
+
+        // Raw mode suppresses the OS SIGINT for Ctrl+C, so re-raise it manually
+        // so the normal top-level exit handler fires (i.e. Ctrl+C still kills the app).
+        if (key.ctrl && key.name === 'c') {
+            process.kill(process.pid, 'SIGINT');
+            return;
+        }
+
+        const match = isCtrl
+            ? (key.ctrl && key.name === keyName)
+            : (key.name === keyName || str === keySpec);
+
+        if (match) {
+            console.log(chalk.yellow(`\n[${keySpec} pressed — interrupting AI loop...]\n`));
+            requestInterrupt();
+        }
+    };
+
+    process.stdin.on('keypress', keyInterruptListener);
+}
+
+/**
+ * Removes the keypress listener and restores the previous TTY raw mode.
+ */
+export function removeKeyInterruptListener(): void {
+    if (!process.stdin.isTTY || !keyInterruptListener) return;
+
+    process.stdin.off('keypress', keyInterruptListener);
+    if (prevRawMode !== null) {
+        process.stdin.setRawMode(prevRawMode);
+    }
+
+    keyInterruptListener = null;
+    prevRawMode = null;
 }
 
 /** Clears the interrupt flag. Call this at the start of every new user turn. */
@@ -390,7 +465,7 @@ async function runCommand(
 
     const processId = nextProcessId++;
     console.log(chalk.dim(`Running command (process_id=${processId})...\n`));
-    console.log(chalk.dim('(Press Ctrl+C at any time to interrupt the AI loop.)\n'));
+    console.log(chalk.dim(`(${getInterruptHint()})\n`));
 
     const entry: ProcessEntry = {
         process: null as unknown as ChildProcess, // assigned immediately below

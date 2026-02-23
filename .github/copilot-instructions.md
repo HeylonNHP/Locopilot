@@ -161,10 +161,15 @@ Security / UX notes:
     - Updated `parseQueriesInput` in `tools.ts` to handle actual arrays, JSON-encoded arrays, and strings separated by newlines, commas, or semicolons.
     - Updated tool description and system prompt to explicitly encourage using 2-3 queries for complex tasks.
     - Improved automated query derivation in `webSearchTool.ts` to split prompts on "and", "or", commas, and semicolons.
-    - This ensures more effective search coverage even with "lazy" model inputs.
-
+    - This ensures more effective search coverage even with "lazy" model inputs.- [x] **Alternate interrupt key** (default: `Ctrl+X`):
+    - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
+    - Summary: Added a `keypress` listener (defaulting to `Ctrl+X`) that interrupts the AI tool-call loop without exiting the application. `Ctrl+C` retains its normal behavior (exits Locopilot) at all times.
+    - Intent: Prevent accidental closures of Locopilot when the user only wants to stop a looping or long-running AI task. Because `setRawMode(true)` suppresses the OS SIGINT signal for Ctrl+C, the keypress listener re-raises SIGINT via `process.kill(process.pid, 'SIGINT')` so the top-level exit handler fires normally.
 ## Change History
 
+- 2026-02-24: Added alternate `Ctrl+X` interrupt key
+  - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added `installKeyInterruptListener` / `removeKeyInterruptListener` in `tools.ts`. `Ctrl+X` interrupts the AI loop; `Ctrl+C` exits the app as normal at all times. Because `setRawMode(true)` suppresses OS SIGINT, the keypress listener re-raises it via `process.kill(process.pid, 'SIGINT')` when Ctrl+C is pressed.
 - 2026-02-23: Added minimal `web_search` tool (no page summarization)
   - Files: `webSearchTool.ts` (new), `tools.ts`, `index.ts`, `README.md`, `.github/copilot-instructions.md`
   - Summary: Added DuckDuckGo-backed web search with configurable max queries/results per query, readability-based text extraction, and live terminal progress logs.
