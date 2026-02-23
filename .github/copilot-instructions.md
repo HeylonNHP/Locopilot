@@ -101,6 +101,21 @@ Security / UX notes:
 - Treat command output as untrusted input; sanitize before printing or feeding back into prompts.
 - Avoid running commands that expose secrets or modify critical system state unless the user explicitly understands the risk.
 
+## Conversation compaction (/compact)
+
+Feature summary:
+- The user can type `/compact` at any time during a chat session to shrink the conversation history.
+- The currently selected model is asked to summarise the full history down to its most important parts (decisions, facts, commands, results, file paths, code). Conversational filler is discarded.
+- A preamble is prepended to the summary so the model knows it is reading a condensed record rather than a live transcript.
+- The summarised history replaces the live message array in-place; the original system prompt is always preserved verbatim.
+- After compaction, stats are printed: old vs new message count, old vs new character count, and the percentage reduction.
+- The new history is always expected to be smaller than the old one; if the model returns an empty summary, compaction is aborted with an error.
+
+Implementation notes:
+- All compaction logic lives in `compact.ts` (`compactHistory`, `printCompactStats`).
+- `index.ts` handles the `/compact` slash command, calls `compactHistory`, and splices the result back into the live `messages` array.
+- No tools are passed during the summarisation call (tools are not needed for this task).
+
 ## LLM maintenance instruction (always keep up to date)
 
 - PURPOSE: This file documents developer intent, UX constraints, security notes, and tool behaviors. It exists so future LLMs and contributors can quickly understand the motivations behind design choices.
@@ -137,3 +152,10 @@ Security / UX notes:
   - Intent: Fix a regression introduced in the previous update that prevented compilation.
 
 (End of maintenance instructions)
+
+## Change History
+
+- 2026-02-23: Added `/compact` conversation compaction feature
+  - Files: `compact.ts` (new), `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a `/compact` slash command that summarises the conversation history via the LLM, replaces the live history in-place, and prints before/after stats.
+  - Intent: Reduce context window consumption during long sessions without losing important context. The model is always told it is reading a summary so it does not get confused.

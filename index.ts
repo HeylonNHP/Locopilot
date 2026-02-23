@@ -19,6 +19,7 @@ import {
     getOllamaApiErrorMessage,
 } from './ollamaApi.js';
 import type { ChatMessage, OllamaModel } from './ollamaApi.js';
+import { compactHistory, printCompactStats } from './compact.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const DEFAULT_NUM_CTX = 65536;
@@ -115,9 +116,10 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
     }
 
     const slashCommands: SlashCommand[] = [
-        { name: chalk.blue('/model') + ' - Switch LLM model', value: '/model' },
-        { name: chalk.blue('/exit') + '  - Exit chat', value: '/exit' },
-        { name: chalk.blue('/help') + '  - Show help', value: '/help' }
+        { name: chalk.blue('/model') + '   - Switch LLM model', value: '/model' },
+        { name: chalk.blue('/compact') + ' - Summarise conversation history to save context', value: '/compact' },
+        { name: chalk.blue('/exit') + '    - Exit chat', value: '/exit' },
+        { name: chalk.blue('/help') + '    - Show help', value: '/help' }
     ];
 
     // Persistent message history for the /api/chat endpoint.
@@ -190,6 +192,23 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                 config.numCtx = numCtx;
                 await saveConfig(config);
                 console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
+            }
+            continue;
+        }
+
+        if (prompt.trim().startsWith('/compact')) {
+            if (messages.length <= 1) {
+                console.log(chalk.yellow('Nothing to compact yet — the conversation history is empty.\n'));
+                continue;
+            }
+            try {
+                const result = await compactHistory(baseUrl, currentModel, messages, numCtx);
+                printCompactStats(result.stats);
+                // Replace live history in-place
+                messages.length = 0;
+                messages.push(...result.newMessages);
+            } catch (err) {
+                console.error(chalk.red('Compaction failed:'), getOllamaApiErrorMessage(err));
             }
             continue;
         }
