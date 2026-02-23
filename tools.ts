@@ -52,6 +52,41 @@ const processRegistry = new Map<number, ProcessEntry>();
 let nextProcessId = 1;
 let isYoloMode = false;
 
+// --- Interrupt support ---
+
+// Set to true by requestInterrupt(); cleared by clearInterrupt().
+// The tool-call loop in index.ts checks this between tool invocations.
+let interruptRequested = false;
+
+// Resolvers registered by the currently running runCommand call so it can be
+// cancelled from outside without waiting for the process to finish naturally.
+let activeInterruptResolve: ((result: string) => void) | null = null;
+
+/**
+ * Request an interrupt. If a command is currently executing its child process
+ * will be killed and the pending promise resolved immediately. The tool-call
+ * loop in index.ts should check isInterruptRequested() after each tool
+ * invocation and break early when true.
+ */
+export function requestInterrupt(): void {
+    interruptRequested = true;
+    if (activeInterruptResolve) {
+        activeInterruptResolve('[Interrupted by user.]');
+        activeInterruptResolve = null;
+    }
+}
+
+/** Clears the interrupt flag. Call this at the start of every new user turn. */
+export function clearInterrupt(): void {
+    interruptRequested = false;
+    activeInterruptResolve = null;
+}
+
+/** Returns true if an interrupt has been requested for the current turn. */
+export function isInterruptRequested(): boolean {
+    return interruptRequested;
+}
+
 // --- Helpers ---
 
 /**
@@ -62,13 +97,31 @@ export function isYolo(): boolean {
 }
 
 function defaultShell(): string {
-    return os.platform() === 'win32' ? 'powershell' : 'bash';
+    // Always use powershell on Windows regardless of which shell launched Node,
+    // so the LLM inherits the right default even when started from cmd or bash.
+    if (os.platform() === 'win32') return 'powershell';
+    // On other platforms prefer the user's $SHELL, falling back to bash.
+    const loginShell = os.userInfo().shell;
+    if (loginShell) {
+        return loginShell.split('/').pop() ?? 'bash';
+    }
+    return 'bash';
 }
 
-function shellArgs(shell: string): [string, string] {
-    if (shell === 'powershell') return ['powershell', '-Command'];
-    if (shell === 'cmd')        return ['cmd', '/C'];
-    return [shell, '-c'];
+function shellBinary(shell: string): string {
+    if (shell === 'powershell') return 'powershell';
+    if (shell === 'cmd')        return 'cmd';
+    return shell; // bash, sh, zsh, fish, etc.
+}
+
+function shellStdinArgs(shell: string): string[] {
+    // Arguments that put the shell into "read commands from stdin" mode.
+    // Passing the command via stdin avoids all argv re-tokenisation, so
+    // pipelines, curly braces, quoted paths, and other special characters
+    // are parsed exactly as the LLM wrote them.
+    if (shell === 'powershell') return ['-NoProfile', '-NonInteractive', '-Command', '-'];
+    if (shell === 'cmd')        return [];          // cmd reads stdin when given no /C argument
+    return [];                                      // bash/sh/zsh/fish read stdin with no extra flags
 }
 
 function buildOutput(
@@ -82,10 +135,18 @@ function buildOutput(
 
     if (sanitizedStdout) parts.push(`stdout:\n${sanitizedStdout}`);
     if (sanitizedStderr) parts.push(`stderr:\n${sanitizedStderr}`);
-    if (parts.length === 0) parts.push('(no output yet)');
+    if (parts.length === 0) parts.push('(no output)');
 
     if (finished) {
-        parts.push(`exit_code: ${entry.exitCode ?? 'unknown'}`);
+        const code = entry.exitCode ?? 'unknown';
+        if (code !== 0) {
+            parts.push(
+                `exit_code: ${code} (COMMAND FAILED — review stderr above and try a corrected command; ` +
+                `do not repeat the same command unchanged)`
+            );
+        } else {
+            parts.push(`exit_code: ${code}`);
+        }
     } else {
         parts.push(`status: still running (process_id=${processId})`);
         parts.push('Use check_process_output to get updated output.');
@@ -212,6 +273,7 @@ async function runCommand(
 
     const processId = nextProcessId++;
     console.log(chalk.dim(`Running command (process_id=${processId})...\n`));
+    console.log(chalk.dim('(Press Ctrl+C at any time to interrupt the AI loop.)\n'));
 
     const entry: ProcessEntry = {
         process: null as unknown as ChildProcess, // assigned immediately below
@@ -225,20 +287,63 @@ async function runCommand(
     };
     processRegistry.set(processId, entry);
 
-    const [shellBin, shellFlag] = shellArgs(shell);
-    const child = spawn(shellBin, [shellFlag, command], { stdio: 'pipe' });
+    // Determine the effective shell we will actually invoke. On Windows we
+    // prefer PowerShell even if a POSIX shell like 'bash' was requested by the
+    // model (this prevents accidental use of incompatible shells when the
+    // user is running PowerShell). On other platforms we honour the model's
+    // requested shell.
+    const requestedShell = (shell || defaultShell()).toLowerCase();
+    let effectiveShell = requestedShell;
+    if (os.platform() === 'win32') {
+        // If the model requested a POSIX-style shell on Windows, override to
+        // powershell and warn so the model understands the environment.
+        const posixShells = new Set(['bash', 'sh', 'zsh', 'ksh', 'fish']);
+        if (posixShells.has(requestedShell) && requestedShell !== 'powershell') {
+            console.log(chalk.yellow(`Warning: requested shell '${requestedShell}' is not native on Windows; using 'powershell' instead.`));
+            effectiveShell = 'powershell';
+        }
+    }
+
+    // Use effectiveShell in the printed output so it's clear what will run.
+    console.log(chalk.bold(`  Shell:   ${effectiveShell}`));
+    console.log(chalk.bold(`  Command: ${command}\n`));
+
+    // All shells receive the command through stdin rather than as an argv token.
+    // Passing via argv causes the shell to re-tokenise the string, which breaks
+    // pipelines, curly-brace blocks (PowerShell), and quoted paths with spaces.
+    // Stdin is read verbatim, so the command executes exactly as the LLM wrote it.
+    //
+    //   PowerShell  →  powershell -NoProfile -NonInteractive -Command -
+    //   cmd         →  cmd           (reads stdin when no /C argument is given)
+    //   bash/sh/zsh →  bash          (reads stdin when no -c argument is given)
+    const bin  = shellBinary(effectiveShell);
+    const args = shellStdinArgs(effectiveShell);
+    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin!.write(command + '\n');
+    child.stdin!.end();
     entry.process = child;
 
-    child.stdout.on('data', (chunk: Buffer) => { entry.stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk: Buffer) => { entry.stderr += chunk.toString(); });
+    child.stdout?.on('data', (chunk: Buffer) => { entry.stdout += chunk.toString(); });
+    child.stderr?.on('data', (chunk: Buffer) => { entry.stderr += chunk.toString(); });
 
     return new Promise<string>((resolve) => {
+        // Register this resolve so requestInterrupt() can fire it externally.
+        activeInterruptResolve = (result: string) => {
+            clearTimeout(timer);
+            try { child.kill(); } catch { /* already dead */ }
+            entry.done = true;
+            entry.exitCode = -1;
+            resolve(result);
+        };
+
         const timer = setTimeout(() => {
+            activeInterruptResolve = null;
             // Still running after timeout – return partial output so the LLM can check back
             resolve(buildOutput(entry, false, processId));
         }, timeoutMs);
 
         child.on('close', (code) => {
+            activeInterruptResolve = null;
             clearTimeout(timer);
             entry.done = true;
             entry.exitCode = code;
@@ -247,6 +352,7 @@ async function runCommand(
         });
 
         child.on('error', (err) => {
+            activeInterruptResolve = null;
             clearTimeout(timer);
             entry.done = true;
             entry.exitCode = -1;
@@ -298,7 +404,10 @@ export function getToolSystemPrompt(): string {
             ? 'the user has already provided implicit consent via YOLO mode.'
             : 'the application already prompts for approval.') + '\n' +
         '- Do NOT only print a shell snippet/code block when the task requires execution.\n' +
-        '- If run_command returns a process_id, periodically call check_process_output until completion.\n\n' +
+        '- If run_command returns a process_id, periodically call check_process_output until completion.\n' +
+        `- The default shell on this machine is '${defaultShell()}'. Always use commands appropriate for that shell.\n` +
+        '- If a command exits with a non-zero exit code, read the stderr carefully, correct the command, and try again.\n' +
+        '  Do NOT give up or tell the user it failed after a single attempt — diagnose and retry with a fixed command.\n\n' +
         'When the user asks you to do something that involves the filesystem, the terminal,\n' +
         'running programs, or inspecting the system, use these tools rather than refusing\n' +
         'or guessing. Always prefer calling a tool over saying you cannot do something.\n' +

@@ -11,6 +11,9 @@ import {
     sanitize,
     setYoloMode,
     isYolo,
+    requestInterrupt,
+    clearInterrupt,
+    isInterruptRequested,
 } from './tools.js';
 import {
     validateOllamaConnection,
@@ -20,6 +23,7 @@ import {
 } from './ollamaApi.js';
 import type { ChatMessage, OllamaModel } from './ollamaApi.js';
 import { compactHistory, printCompactStats } from './compact.js';
+import { summarizeCommandError } from './errorSummary.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const DEFAULT_NUM_CTX = 65536;
@@ -215,13 +219,32 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
 
         // Add the user message to history and send to /api/chat
         messages.push({ role: 'user', content: prompt });
+        clearInterrupt();
         let sentToolRetryNudge = false;
         let emptyResponseRecoveryAttempts = 0;
         const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
+        // While the tool-call loop is running, intercept Ctrl+C so it
+        // interrupts the AI loop instead of exiting the process.
+        // We use a named function so we can remove this exact listener later,
+        // leaving every other SIGINT listener (including Node's default exit
+        // handler) completely untouched.
+        const sigintHandler = () => {
+            console.log(chalk.yellow('\n\n⚠  Interrupt requested — stopping AI loop after current step...\n'));
+            requestInterrupt();
+        };
+        process.on('SIGINT', sigintHandler);
+
         try {
             // Tool-call loop: keep sending results back until the LLM has no more tool calls
             while (true) {
+                if (isInterruptRequested()) {
+                    console.log(chalk.yellow('AI loop interrupted by user.\n'));
+                    // Remove the last user message so the conversation stays consistent
+                    messages.pop();
+                    break;
+                }
+
                 const response = await sendOllamaChat(baseUrl, {
                     model: currentModel,
                     messages,
@@ -240,6 +263,15 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                             tc.function.arguments,
                         );
                         messages.push({ role: 'tool', content: toolResult });
+
+                        // If the command failed, have the LLM summarize the error for the user
+                        if (tc.function.name === 'run_command' && toolResult.includes('(COMMAND FAILED')) {
+                            const errorSummary = await summarizeCommandError(baseUrl, currentModel, toolResult, numCtx);
+                            console.log(chalk.red('AI Error Summary: ') + chalk.yellow(errorSummary) + '\n');
+                        }
+
+                        // Check for interrupt after each individual tool call
+                        if (isInterruptRequested()) break;
                     }
                     // Loop again so the LLM can see the tool results and respond
                 } else {
@@ -282,6 +314,9 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
             console.error(chalk.red('Error communicating with Ollama:'), getOllamaApiErrorMessage(error));
             // Remove the failed user message so conversation stays consistent
             messages.pop();
+        } finally {
+            // Remove our interrupt handler — normal Ctrl+C behaviour resumes.
+            process.off('SIGINT', sigintHandler);
         }
     }
 }
