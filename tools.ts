@@ -14,6 +14,7 @@ import type { ChildProcess } from 'child_process';
 import { confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import os from 'os';
+import { WebSearchTool, type WebSearchSettings, type WebSearchToolArgs } from './webSearchTool.js';
 
 // Default time (ms) to wait for a command before returning partial output
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -51,6 +52,15 @@ interface ProcessEntry {
 const processRegistry = new Map<number, ProcessEntry>();
 let nextProcessId = 1;
 let isYoloMode = false;
+
+const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
+    maxQueries: 3,
+    resultsPerQuery: 3,
+    requestTimeoutMs: 12_000,
+    perPageCharLimit: 2_500,
+};
+
+let webSearchSettings: WebSearchSettings = { ...DEFAULT_WEB_SEARCH_SETTINGS };
 
 const isWindows = os.platform() === 'win32';
 
@@ -186,6 +196,11 @@ export interface OllamaTool {
     };
 }
 
+export interface ToolWebSearchConfig {
+    maxQueries: number;
+    resultsPerQuery: number;
+}
+
 export const TOOLS: OllamaTool[] = [
     {
         type: 'function',
@@ -241,6 +256,41 @@ export const TOOLS: OllamaTool[] = [
             },
         },
     },
+    {
+        type: 'function',
+        function: {
+            name: 'web_search',
+            description:
+                'Searches the web using DuckDuckGo and returns extracted page text from top results. ' +
+                'Use this when current chat context is not enough and external sources are required.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    prompt: {
+                        type: 'string',
+                        description:
+                            'User request text for deriving search queries if explicit queries are not supplied.',
+                    },
+                    queries: {
+                        type: 'string',
+                        description:
+                            'Optional JSON-encoded array of explicit search queries to run, for example: ["foo", "bar"].',
+                    },
+                    max_queries: {
+                        type: 'number',
+                        description:
+                            'Maximum number of queries to run for this call. Uses configured default when omitted.',
+                    },
+                    results_per_query: {
+                        type: 'number',
+                        description:
+                            'Number of DuckDuckGo results to fetch per query. Uses configured default when omitted.',
+                    },
+                },
+                required: [],
+            },
+        },
+    },
 ];
 
 // --- Tool handlers ---
@@ -251,6 +301,56 @@ export const TOOLS: OllamaTool[] = [
  */
 export function setYoloMode(enabled: boolean): void {
     isYoloMode = enabled;
+}
+
+export function setWebSearchConfig(config: ToolWebSearchConfig): void {
+    webSearchSettings = {
+        ...webSearchSettings,
+        maxQueries: Math.max(1, Math.floor(config.maxQueries)),
+        resultsPerQuery: Math.max(1, Math.floor(config.resultsPerQuery)),
+    };
+}
+
+function parseQueriesInput(raw: unknown): string[] {
+    if (Array.isArray(raw)) {
+        return raw
+            .map((item) => String(item).trim())
+            .filter((item) => item.length > 0);
+    }
+
+    if (typeof raw === 'string') {
+        const trimmed = raw.trim();
+        if (!trimmed) return [];
+        if (!trimmed.startsWith('[')) {
+            return trimmed
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+        }
+
+        try {
+            const parsed = JSON.parse(trimmed) as unknown;
+            if (Array.isArray(parsed)) {
+                return parsed
+                    .map((item) => String(item).trim())
+                    .filter((item) => item.length > 0);
+            }
+        } catch {
+            return [];
+        }
+    }
+
+    return [];
+}
+
+async function runWebSearch(args: WebSearchToolArgs): Promise<string> {
+    const tool = new WebSearchTool({
+        settings: webSearchSettings,
+        onProgress: (message) => {
+            console.log(chalk.dim(message));
+        },
+    });
+    return tool.run(args);
 }
 
 async function runCommand(
@@ -356,6 +456,10 @@ export interface ToolCallArguments {
     shell?: string;
     timeout_seconds?: number;
     process_id?: number;
+    prompt?: string;
+    queries?: string[] | string;
+    max_queries?: number;
+    results_per_query?: number;
 }
 
 /**
@@ -376,6 +480,10 @@ export function getToolSystemPrompt(): string {
         '2. check_process_output(process_id)\n' +
         '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
         '   finished. Use this to check on commands that are still in progress.\n\n' +
+        '3. web_search(prompt?, queries?, max_queries?, results_per_query?)\n' +
+        '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
+        '   Use this when external web context is needed. Provide explicit queries when\n' +
+        '   possible; otherwise provide prompt and let the tool derive queries.\n\n' +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- Do NOT ask the user for permission yourself; ' +
@@ -441,6 +549,30 @@ export async function handleToolCall(
                 return '[Error: missing required argument "process_id"]';
             }
             return checkProcessOutput(args.process_id);
+        }
+
+        case 'web_search': {
+            const parsedQueries = parseQueriesInput(args.queries);
+            const webArgs: WebSearchToolArgs = {};
+
+            if (typeof args.prompt === 'string' && args.prompt.trim().length > 0) {
+                webArgs.prompt = args.prompt;
+            }
+            if (parsedQueries.length > 0) {
+                webArgs.queries = parsedQueries;
+            }
+            if (args.max_queries !== undefined) {
+                webArgs.max_queries = args.max_queries;
+            }
+            if (args.results_per_query !== undefined) {
+                webArgs.results_per_query = args.results_per_query;
+            }
+
+            if (!webArgs.prompt && (!webArgs.queries || webArgs.queries.length === 0)) {
+                return '[Error: web_search requires either "prompt" or "queries"]';
+            }
+
+            return runWebSearch(webArgs);
         }
 
         default:

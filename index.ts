@@ -10,6 +10,7 @@ import {
     getToolUseNudge,
     sanitize,
     setYoloMode,
+    setWebSearchConfig,
     isYolo,
     requestInterrupt,
     clearInterrupt,
@@ -27,6 +28,8 @@ import { summarizeCommandError } from './errorSummary.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const DEFAULT_NUM_CTX = 65536;
+const DEFAULT_WEB_SEARCH_MAX_QUERIES = 3;
+const DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY = 3;
 
 // --- TypeScript Interfaces ---
 
@@ -35,6 +38,10 @@ interface Config {
     lastModel?: string;
     numCtx?: number;
     yolo?: boolean;
+    webSearch?: {
+        maxQueries: number;
+        resultsPerQuery: number;
+    };
 }
 
 interface SlashCommand {
@@ -117,6 +124,13 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
         console.log(chalk.red.bold('(YOLO mode enabled — terminal commands will execute automatically!)\n'));
     } else {
         console.log(chalk.dim('(Tool calling enabled — the AI may request to run terminal commands.)\n'));
+    }
+    if (config.webSearch) {
+        console.log(
+            chalk.dim(
+                `(Web search defaults: maxQueries=${config.webSearch.maxQueries}, resultsPerQuery=${config.webSearch.resultsPerQuery})\n`,
+            ),
+        );
     }
 
     const slashCommands: SlashCommand[] = [
@@ -396,6 +410,30 @@ async function main(): Promise<void> {
     });
     const selectedNumCtx = Number.parseInt(numCtxInput, 10);
 
+    const savedWebSearch = configData?.webSearch;
+    const webSearchMaxQueriesInput = await input({
+        message: 'Web search setting: max queries per tool call:',
+        default: String(savedWebSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES),
+        validate: (value: string) => {
+            const parsed = Number.parseInt(value, 10);
+            return Number.isInteger(parsed) && parsed > 0
+                ? true
+                : 'Please enter a positive integer.';
+        },
+    });
+    const webSearchResultsPerQueryInput = await input({
+        message: 'Web search setting: results per query:',
+        default: String(savedWebSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY),
+        validate: (value: string) => {
+            const parsed = Number.parseInt(value, 10);
+            return Number.isInteger(parsed) && parsed > 0
+                ? true
+                : 'Please enter a positive integer.';
+        },
+    });
+    const selectedWebSearchMaxQueries = Number.parseInt(webSearchMaxQueriesInput, 10);
+    const selectedWebSearchResultsPerQuery = Number.parseInt(webSearchResultsPerQueryInput, 10);
+
     if (!selectedModel) {
         selectedModel = await select({
             message: 'Select a model to chat with:',
@@ -409,7 +447,16 @@ async function main(): Promise<void> {
     configData.lastModel = selectedModel;
     configData.numCtx = selectedNumCtx;
     configData.yolo = yoloActive;
+    configData.webSearch = {
+        maxQueries: selectedWebSearchMaxQueries,
+        resultsPerQuery: selectedWebSearchResultsPerQuery,
+    };
     await saveConfig(configData);
+
+    setWebSearchConfig({
+        maxQueries: configData.webSearch.maxQueries,
+        resultsPerQuery: configData.webSearch.resultsPerQuery,
+    });
 
     await startChat(config.baseUrl, selectedModel, selectedNumCtx);
 }

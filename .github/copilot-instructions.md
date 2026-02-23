@@ -121,6 +121,21 @@ Implementation notes:
 - `index.ts` handles the `/compact` slash command, calls `compactHistory`, and splices the result back into the live `messages` array.
 - No tools are passed during the summarisation call (tools are not needed for this task).
 
+## Web search tool (`web_search`)
+
+Feature summary:
+- The assistant can call `web_search` to pull external web context from DuckDuckGo results.
+- The tool accepts either explicit queries or a prompt from which queries are derived.
+- Query count and results-per-query are configurable by the user and persisted in `config.json` under `webSearch`.
+- For each result URL, Locopilot fetches the page HTML, extracts main text using `@mozilla/readability`, and falls back to `cheerio` extraction when needed.
+- The tool currently returns extracted page text directly (no LLM summarization step) to keep latency lower and reduce extra model calls.
+- The terminal UI prints progress updates while web search is running.
+
+Security / UX notes:
+- Treat fetched page text as untrusted input and sanitize before rendering or reusing.
+- Web requests reveal the local machine IP to remote sites; keep this behavior transparent to users.
+- Keep implementation modular (`webSearchTool.ts`) so extraction and future summarization can be changed independently.
+
 ## LLM maintenance instruction (always keep up to date)
 
 - PURPOSE: This file documents developer intent, UX constraints, security notes, and tool behaviors. It exists so future LLMs and contributors can quickly understand the motivations behind design choices.
@@ -142,6 +157,11 @@ Implementation notes:
 - DOCUMENT NEW TOOLS: If new tools are added (beyond `run_command`), document them here in the same format and include security notes and confirmation UX.
 
 ## Change History
+
+- 2026-02-23: Added minimal `web_search` tool (no page summarization)
+  - Files: `webSearchTool.ts` (new), `tools.ts`, `index.ts`, `README.md`, `.github/copilot-instructions.md`
+  - Summary: Added DuckDuckGo-backed web search with configurable max queries/results per query, readability-based text extraction, and live terminal progress logs.
+  - Intent: Provide optional external context with minimal runtime overhead; keep architecture flexible for future summary-based output instead of full page text.
 
 - 2026-02-23: Include AI error summary in conversation history
   - Files: `index.ts`, `.github/copilot-instructions.md`
