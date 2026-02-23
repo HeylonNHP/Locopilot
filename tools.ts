@@ -52,6 +52,8 @@ const processRegistry = new Map<number, ProcessEntry>();
 let nextProcessId = 1;
 let isYoloMode = false;
 
+const isWindows = os.platform() === 'win32';
+
 // --- Interrupt support ---
 
 // Set to true by requestInterrupt(); cleared by clearInterrupt().
@@ -99,29 +101,38 @@ export function isYolo(): boolean {
 function defaultShell(): string {
     // Always use powershell on Windows regardless of which shell launched Node,
     // so the LLM inherits the right default even when started from cmd or bash.
-    if (os.platform() === 'win32') return 'powershell';
+    if (isWindows) return 'powershell';
     // On other platforms prefer the user's $SHELL, falling back to bash.
     const loginShell = os.userInfo().shell;
-    if (loginShell) {
-        return loginShell.split('/').pop() ?? 'bash';
+    return loginShell ? (loginShell.split('/').pop() ?? 'bash') : 'bash';
+}
+
+/**
+ * Determines the effective shell to use, accounting for platform-specific overrides.
+ */
+function getEffectiveShell(requestedShell?: string): string {
+    const shell = (requestedShell || defaultShell()).toLowerCase();
+    if (isWindows) {
+        // If the model requested a POSIX-style shell on Windows, override to
+        // powershell and warn so the model understands the environment.
+        const posixShells = new Set(['bash', 'sh', 'zsh', 'ksh', 'fish']);
+        if (posixShells.has(shell) && shell !== 'powershell') {
+            console.log(chalk.yellow(`Warning: requested shell '${shell}' is not native on Windows; using 'powershell' instead.`));
+            return 'powershell';
+        }
     }
-    return 'bash';
+    return shell;
 }
 
-function shellBinary(shell: string): string {
-    if (shell === 'powershell') return 'powershell';
-    if (shell === 'cmd')        return 'cmd';
-    return shell; // bash, sh, zsh, fish, etc.
-}
-
-function shellStdinArgs(shell: string): string[] {
-    // Arguments that put the shell into "read commands from stdin" mode.
-    // Passing the command via stdin avoids all argv re-tokenisation, so
-    // pipelines, curly braces, quoted paths, and other special characters
-    // are parsed exactly as the LLM wrote them.
-    if (shell === 'powershell') return ['-NoProfile', '-NonInteractive', '-Command', '-'];
-    if (shell === 'cmd')        return [];          // cmd reads stdin when given no /C argument
-    return [];                                      // bash/sh/zsh/fish read stdin with no extra flags
+/**
+ * Returns spawning configuration (binary and stdin flags) for a given shell.
+ */
+function getShellConfig(shell: string): { bin: string; args: string[] } {
+    if (shell === 'powershell') {
+        return { bin: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', '-'] };
+    }
+    // cmd, bash, sh, zsh, fish, etc. all read stdin with no extra flags
+    return { bin: shell === 'cmd' ? 'cmd' : shell, args: [] };
 }
 
 function buildOutput(
@@ -244,18 +255,18 @@ export function setYoloMode(enabled: boolean): void {
 
 async function runCommand(
     command: string,
-    shell: string = defaultShell(),
+    shell?: string,
     timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<string> {
+    const effectiveShell = getEffectiveShell(shell);
+
     // Show the user what the AI wants to run
     console.log(chalk.yellow(`\n[Tool Call] The AI ${isYoloMode ? 'is executing' : 'wants to run'} the following command:`));
-    console.log(chalk.bold(`  Shell:   ${shell}`));
+    console.log(chalk.bold(`  Shell:   ${effectiveShell}`));
     console.log(chalk.bold(`  Command: ${command}\n`));
 
-    let approved = false;
-    if (isYoloMode) {
-        approved = true;
-    } else {
+    let approved = isYoloMode;
+    if (!approved) {
         try {
             approved = await confirm({ message: 'Allow this command to run?', default: false });
         } catch (e: unknown) {
@@ -278,7 +289,7 @@ async function runCommand(
     const entry: ProcessEntry = {
         process: null as unknown as ChildProcess, // assigned immediately below
         command,
-        shell,
+        shell: effectiveShell,
         stdout: '',
         stderr: '',
         startedAt: new Date(),
@@ -287,53 +298,29 @@ async function runCommand(
     };
     processRegistry.set(processId, entry);
 
-    // Determine the effective shell we will actually invoke. On Windows we
-    // prefer PowerShell even if a POSIX shell like 'bash' was requested by the
-    // model (this prevents accidental use of incompatible shells when the
-    // user is running PowerShell). On other platforms we honour the model's
-    // requested shell.
-    const requestedShell = (shell || defaultShell()).toLowerCase();
-    let effectiveShell = requestedShell;
-    if (os.platform() === 'win32') {
-        // If the model requested a POSIX-style shell on Windows, override to
-        // powershell and warn so the model understands the environment.
-        const posixShells = new Set(['bash', 'sh', 'zsh', 'ksh', 'fish']);
-        if (posixShells.has(requestedShell) && requestedShell !== 'powershell') {
-            console.log(chalk.yellow(`Warning: requested shell '${requestedShell}' is not native on Windows; using 'powershell' instead.`));
-            effectiveShell = 'powershell';
-        }
-    }
+    const config = getShellConfig(effectiveShell);
+    const child = spawn(config.bin, config.args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    entry.process = child;
 
-    // Use effectiveShell in the printed output so it's clear what will run.
-    console.log(chalk.bold(`  Shell:   ${effectiveShell}`));
-    console.log(chalk.bold(`  Command: ${command}\n`));
-
-    // All shells receive the command through stdin rather than as an argv token.
-    // Passing via argv causes the shell to re-tokenise the string, which breaks
-    // pipelines, curly-brace blocks (PowerShell), and quoted paths with spaces.
-    // Stdin is read verbatim, so the command executes exactly as the LLM wrote it.
-    //
-    //   PowerShell  →  powershell -NoProfile -NonInteractive -Command -
-    //   cmd         →  cmd           (reads stdin when no /C argument is given)
-    //   bash/sh/zsh →  bash          (reads stdin when no -c argument is given)
-    const bin  = shellBinary(effectiveShell);
-    const args = shellStdinArgs(effectiveShell);
-    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     child.stdin!.write(command + '\n');
     child.stdin!.end();
-    entry.process = child;
 
     child.stdout?.on('data', (chunk: Buffer) => { entry.stdout += chunk.toString(); });
     child.stderr?.on('data', (chunk: Buffer) => { entry.stderr += chunk.toString(); });
 
     return new Promise<string>((resolve) => {
-        // Register this resolve so requestInterrupt() can fire it externally.
-        activeInterruptResolve = (result: string) => {
+        const finalize = (code: number, result?: string) => {
+            activeInterruptResolve = null;
             clearTimeout(timer);
-            try { child.kill(); } catch { /* already dead */ }
             entry.done = true;
-            entry.exitCode = -1;
-            resolve(result);
+            entry.exitCode = code;
+            resolve(result || buildOutput(entry, true, null));
+        };
+
+        // Register interrupt handler
+        activeInterruptResolve = (result: string) => {
+            try { child.kill(); } catch { /* already dead */ }
+            finalize(-1, result);
         };
 
         const timer = setTimeout(() => {
@@ -343,21 +330,13 @@ async function runCommand(
         }, timeoutMs);
 
         child.on('close', (code) => {
-            activeInterruptResolve = null;
-            clearTimeout(timer);
-            entry.done = true;
-            entry.exitCode = code;
             console.log(chalk.dim(`Command (process_id=${processId}) finished with exit code ${code}.\n`));
-            resolve(buildOutput(entry, true, null));
+            finalize(code ?? 0);
         });
 
         child.on('error', (err) => {
-            activeInterruptResolve = null;
-            clearTimeout(timer);
-            entry.done = true;
-            entry.exitCode = -1;
             entry.stderr += `\nSpawn error: ${err.message}`;
-            resolve(buildOutput(entry, true, null));
+            finalize(-1);
         });
     });
 }

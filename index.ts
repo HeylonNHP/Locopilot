@@ -268,6 +268,13 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                         if (tc.function.name === 'run_command' && toolResult.includes('(COMMAND FAILED')) {
                             const errorSummary = await summarizeCommandError(baseUrl, currentModel, toolResult, numCtx);
                             console.log(chalk.red('AI Error Summary: ') + chalk.yellow(errorSummary) + '\n');
+                            
+                            // Include the error summary in the conversation history as a user nudge
+                            // to help the model reason about the failure in the next turn.
+                            messages.push({
+                                role: 'user',
+                                content: `Command failed. AI Error Analysis: ${errorSummary}\nPlease analyze the failure and propose a correction.`
+                            });
                         }
 
                         // Check for interrupt after each individual tool call

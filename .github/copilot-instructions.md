@@ -98,7 +98,7 @@ Feature summary:
 - This flow protects against accidental or dangerous command execution and surfaces command outputs for transparency.
 - **Effective shell selection:** On Windows, Locopilot prefers the platform-native PowerShell even if the model requests a POSIX shell (bash/sh/zsh). When a POSIX shell is requested on Windows, Locopilot overrides it to `powershell` and prints a warning so the model can adapt. On non-Windows platforms the model's requested shell is honoured.
 - **Exact execution via stdin:** To avoid shell re-tokenisation and quoting problems (which break pipelines, brace blocks, and complex quoted paths), Locopilot passes the command to the invoked shell via stdin (for example, `powershell -Command -` and piping the script in). This ensures the command runs character-for-character as the model proposed.
-- **Failure visibility & retry guidance:** When a command exits with a non-zero exit code, the tool result explicitly labels the output as a failed command (including `exit_code` and any captured `stderr`) so the model can diagnose and propose a corrected command rather than giving up. In addition, Locopilot uses the LLM to provide a brief technical summary of the error directly to the user for immediate feedback.
+- **Failure visibility & retry guidance:** When a command exits with a non-zero exit code, the tool result explicitly labels the output as a failed command (including `exit_code` and any captured `stderr`) so the model can diagnose and propose a corrected command rather than giving up. In addition, Locopilot uses the LLM to provide a brief technical summary of the error directly to the user for immediate feedback, and this summary is also pushed back into the conversation history as a user nudge to help the model fix the error.
 - **Interrupt:** The user can press `Ctrl+C` at any time while the AI tool-call loop is active to interrupt it. If a command is currently running, its child process is killed immediately. The loop stops cleanly after the current step and the conversation history is left consistent. Outside the tool-call loop, `Ctrl+C` exits the application as normal.
 
 Security / UX notes:
@@ -143,6 +143,10 @@ Implementation notes:
 
 ## Change History
 
+- 2026-02-23: Include AI error summary in conversation history
+  - Files: `index.ts`, `.github/copilot-instructions.md`
+  - Summary: The AI-generated error summary for failed commands is now pushed into the `messages` array as a user-role nudge.
+  - Intent: Help the LLM reasoning about command failures by providing an explicit analysis of the error in its context.
 - 2026-02-23: Added AI error summarization for failed commands
   - Files: `errorSummary.ts` (new), `index.ts`, `.github/copilot-instructions.md`
   - Summary: When a `run_command` tool call fails (non-zero exit code), Locopilot now calls the LLM to summarize the error and prints this summary to the terminal.
@@ -159,11 +163,6 @@ Implementation notes:
   - Files: `index.ts`
   - Summary: Removed redundant `let` keyword for `configData` variable in `main` function.
   - Intent: Fix a regression introduced in the previous update that prevented compilation.
-
-(End of maintenance instructions)
-
-## Change History
-
 - 2026-02-23: Added `/compact` conversation compaction feature
   - Files: `compact.ts` (new), `index.ts`, `.github/copilot-instructions.md`
   - Summary: Added a `/compact` slash command that summarises the conversation history via the LLM, replaces the live history in-place, and prints before/after stats.
@@ -172,7 +171,9 @@ Implementation notes:
   - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
   - Summary: Added `requestInterrupt`, `clearInterrupt`, and `isInterruptRequested` to `tools.ts`. The SIGINT handler in `index.ts` is temporarily replaced during the tool-call loop so Ctrl+C fires `requestInterrupt()` (killing any running child process) instead of exiting the app. The loop breaks cleanly and the conversation history is left consistent.
   - Intent: Let the user escape a stuck or looping AI without losing their session or corrupting history.
-- 2026-02-23: Document effective shell selection and stdin-piping execution
-  - Files: `README.md`, `.github/copilot-instructions.md`
-  - Summary: Updated documentation to specify effective shell selection on Windows (preferring PowerShell) and stdin-piping execution for all shells to avoid re-tokenisation issues. Explicit non-zero exit code handling is also documented.
-  - Intent: Ensure users understand the shell execution model and its benefits, and provide guidance on interpreting non-zero exit codes.
+- 2026-02-23: Refactored tools.ts to improve DRYness
+  - Files: `tools.ts`
+  - Summary: Consolidated shell resolution and configuration logic. Extracted redundant process completion and interrupt handling logic into a shared helper within the runCommand promise.
+  - Intent: Improve maintainability and reduce code duplication in the tool execution layer.
+
+(End of maintenance instructions)
