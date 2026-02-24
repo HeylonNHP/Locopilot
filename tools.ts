@@ -13,6 +13,7 @@ import chalk from 'chalk';
 import readline from 'readline';
 import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSettings, type WebSearchToolArgs } from './webSearchTool.js';
 import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from './runCommandTool.js';
+import { detectUncertainty } from './uncertaintyDetector.js';
 
 /**
  * Strips ANSI escape codes and Carriage Returns from text.
@@ -424,9 +425,25 @@ export function shouldNudgeForToolCall(content: string): boolean {
     );
 }
 
+export async function shouldNudgeForToolCallWithModel(
+    content: string,
+    baseUrl: string,
+    model: string,
+    numCtx: number,
+): Promise<boolean> {
+    if (shouldNudgeForToolCall(content)) {
+        return true;
+    }
+
+    const uncertainty = await detectUncertainty(baseUrl, model, content, numCtx);
+    return uncertainty.nudge && uncertainty.confidence >= 0.6;
+}
+
 export function getToolUseNudge(): string {
     return (
-        'Tool-use reminder: do not ask for permission and do not only print shell commands. ' +
+        'Tool-use reminder: your previous response appears uncertain or incomplete. ' +
+        'If you are not entirely certain, call web_search now and then answer using the fetched evidence. ' +
+        'Do not use result_N placeholders; cite full URLs inline. ' +
         'If terminal access is needed, call run_command directly now. ' +
         (isYoloMode
             ? 'The command will execute automatically.'

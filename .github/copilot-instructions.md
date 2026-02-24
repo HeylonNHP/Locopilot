@@ -189,6 +189,11 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-02-24: Added model-based uncertainty detection for tool nudging
+  - Files: `uncertaintyDetector.ts` (new), `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a lightweight LLM pass that analyzes only the assistant's latest reply and returns structured uncertainty signals (`nudge`, `confidence`, `reasons`) used to decide whether to inject a tool-use nudge.
+  - Intent: Increase web/tool usage when the assistant appears uncertain while keeping added token/context overhead very small by analyzing only the most recent assistant response.
+
 - 2026-02-24: Added streamed assistant text rendering from Ollama
   - Files: `ollamaApi.ts`, `index.ts`, `README.md`, `.github/copilot-instructions.md`
   - Summary: Added NDJSON streaming support for `/api/chat` and rendered assistant text incrementally in the terminal while generation is in progress.

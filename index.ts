@@ -6,7 +6,7 @@ import {
     TOOLS,
     handleToolCall,
     getToolSystemPrompt,
-    shouldNudgeForToolCall,
+    shouldNudgeForToolCallWithModel,
     getToolUseNudge,
     sanitize,
     setYoloMode,
@@ -386,7 +386,11 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                         continue;
                     }
 
-                    if (!sentToolRetryNudge && assistantContent.length > 0 && shouldNudgeForToolCall(assistantMessage.content)) {
+                    if (
+                        !sentToolRetryNudge &&
+                        assistantContent.length > 0 &&
+                        await shouldNudgeForToolCallWithModel(assistantMessage.content, baseUrl, currentModel, numCtx)
+                    ) {
                         sentToolRetryNudge = true;
                         messages.push({ role: 'user', content: getToolUseNudge() });
                         continue;
