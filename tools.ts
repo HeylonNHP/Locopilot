@@ -412,9 +412,31 @@ export function getToolSystemPrompt(): string {
  * tools module fully describes its own runtime behaviour.
  */
 export function shouldNudgeForToolCall(content: string): boolean {
-    const normalized = content.toLowerCase();
+    const normalized = content.toLowerCase().trim();
+
+    // Short confirmations / acknowledgements are not uncertainty signals.
+    // Avoid nudging on brief replies like "Understood", "Got it", "Thanks", etc.
+    if (normalized.length > 0 && normalized.length < 60) {
+        const ackPatterns = [
+            'understood',
+            'got it',
+            'i will keep that in mind',
+            'will keep that in mind',
+            'gotcha',
+            'ok',
+            'okay',
+            'thanks',
+            'thank you'
+        ];
+        for (const p of ackPatterns) {
+            if (normalized === p || normalized.startsWith(p + ' ') || normalized.startsWith(p + '.')) {
+                return false;
+            }
+        }
+    }
+
     return (
-        normalized.trim() === '' ||
+        normalized === '' ||
         normalized.includes('```bash') ||
         normalized.includes('```sh') ||
         normalized.includes('would you like me to run') ||
@@ -436,7 +458,8 @@ export async function shouldNudgeForToolCallWithModel(
     }
 
     const uncertainty = await detectUncertainty(baseUrl, model, content, numCtx);
-    return uncertainty.nudge && uncertainty.confidence >= 0.6;
+    // Raise the confidence threshold to reduce false positives.
+    return uncertainty.nudge && uncertainty.confidence >= 0.75;
 }
 
 export function getToolUseNudge(): string {

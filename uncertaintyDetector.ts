@@ -61,9 +61,10 @@ export async function detectUncertainty(
             role: 'system',
             content:
                 'You detect uncertainty in an assistant reply. Return JSON only with this exact shape: ' +
-                '{"nudge": boolean, "confidence": number, "reasons": string[]}. ' +
-                'Set nudge=true when the reply contains hedging, guessing, uncertainty, or lack of verification. ' +
-                'confidence must be between 0 and 1. Keep reasons short.',
+                    '{"nudge": boolean, "confidence": number, "reasons": string[]}. ' +
+                    'Set nudge=true when the reply contains hedging, guessing, uncertainty, or lack of verification. ' +
+                    'Do NOT set nudge=true for short acknowledgements such as "Understood", "Got it", "Thanks", "Okay", or similar confirmation phrases — these are not uncertainty signals. ' +
+                    'confidence must be between 0 and 1. Keep reasons short.',
         },
         {
             role: 'user',
