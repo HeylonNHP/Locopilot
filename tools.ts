@@ -265,7 +265,8 @@ export const TOOLS: OllamaTool[] = [
             name: 'web_search',
             description:
                 'Searches the web using DuckDuckGo and returns extracted page text from top results. ' +
-                'Use this when current chat context is not enough and external sources are required.',
+                'When using these results in your final answer, you MUST cite the full result URL(s) ' +
+                'inline immediately after the relevant sentence(s). Do NOT use result_N placeholders.',
             parameters: {
                 type: 'object',
                 properties: {

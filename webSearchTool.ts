@@ -131,6 +131,7 @@ export class WebSearchTool {
         this.progress('Web search: completed.');
         return [
             'web_search_results:',
+            'REMINDER: When citing these results, use the REAL URLs (e.g. https://example.com) immediately after the relevant text. Do NOT use result_N placeholders or special tags.',
             `queries_used: ${queries.length}`,
             `results_per_query_requested: ${effectiveResultsPerQuery}`,
             '',
@@ -274,6 +275,12 @@ export function getToolPrompt(): string {
         '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
         '   Use this when external web context is needed. Provide explicit queries as\n' +
         '   an array when possible; aim for 2-3 distinct queries for complex requests\n' +
-        '   to ensure comprehensive coverage. The tool will respect the max_queries limit.\n\n'
+        '   to ensure comprehensive coverage. The tool will respect the max_queries limit.\n\n' +
+        '   CITATION RULES:\n' +
+        '   When referencing a search result, always include the full result URL inline immediately\n' +
+        '   after the referenced sentence. Avoid generic "result_N" placeholders or special\n' +
+        '   tags. Format examples:\n' +
+        '   - Guzman y Gomez has multiple locations in Townsville. (https://guzmanygomez.com.au/locations)\n' +
+        '   - Zambrero was founded in 2005. (https://www.productreview.com.au/listings/zambrero)\n\n'
     );
 }
