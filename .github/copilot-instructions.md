@@ -165,8 +165,16 @@ Security / UX notes:
     - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
     - Summary: Added a `keypress` listener (defaulting to `Ctrl+X`) that interrupts the AI tool-call loop without exiting the application. `Ctrl+C` retains its normal behavior (exits Locopilot) at all times.
     - Intent: Prevent accidental closures of Locopilot when the user only wants to stop a looping or long-running AI task. Because `setRawMode(true)` suppresses the OS SIGINT signal for Ctrl+C, the keypress listener re-raises SIGINT via `process.kill(process.pid, 'SIGINT')` so the top-level exit handler fires normally.
+- [x] **Refactored run_command tool** (`runCommandTool.ts`):
+    - Files: `runCommandTool.ts` (new), `tools.ts`
+    - Summary: Extracted command execution logic, process registry, and shell resolution into `runCommandTool.ts`.
+    - Intent: Keep `tools.ts` focused on common tool-calling orchestration and schemas while isolating concrete tool implementations.
 ## Change History
 
+- 2026-02-24: Refactored `run_command` logic to `runCommandTool.ts`
+  - Files: `runCommandTool.ts`, `tools.ts`
+  - Summary: Moved process registry, shell resolution, and command execution logic to a dedicated module. 
+  - Intent: Improve modularity and follow existing pattern established by `webSearchTool.ts`.
 - 2026-02-24: Added alternate `Ctrl+X` interrupt key
   - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
   - Summary: Added `installKeyInterruptListener` / `removeKeyInterruptListener` in `tools.ts`. `Ctrl+X` interrupts the AI loop; `Ctrl+C` exits the app as normal at all times. Because `setRawMode(true)` suppresses OS SIGINT, the keypress listener re-raises it via `process.kill(process.pid, 'SIGINT')` when Ctrl+C is pressed.
