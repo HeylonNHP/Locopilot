@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { createInterface } from 'readline';
 import type { ToolCallArguments } from './tools.js';
 
 export interface OllamaModelDetails {
@@ -73,6 +74,54 @@ export async function sendOllamaChat(
     });
 
     return response.data;
+}
+
+export async function* sendOllamaChatStream(
+    baseUrl: string,
+    params: {
+        model: string;
+        messages: ChatMessage[];
+        tools: unknown[];
+        numCtx: number;
+        signal?: AbortSignal;
+    },
+): AsyncGenerator<ChatApiResponse> {
+    const requestConfig: { responseType: 'stream'; signal?: AbortSignal } = {
+        responseType: 'stream',
+    };
+    if (params.signal) {
+        requestConfig.signal = params.signal;
+    }
+
+    const response = await axios.post<NodeJS.ReadableStream>(`${baseUrl}/api/chat`, {
+        model: params.model,
+        messages: params.messages,
+        tools: params.tools,
+        stream: true,
+        options: {
+            num_ctx: params.numCtx,
+        },
+    }, requestConfig);
+
+    const lineReader = createInterface({
+        input: response.data as NodeJS.ReadableStream,
+        crlfDelay: Infinity,
+    });
+
+    try {
+        for await (const line of lineReader) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            try {
+                yield JSON.parse(trimmed) as ChatApiResponse;
+            } catch {
+                continue;
+            }
+        }
+    } finally {
+        lineReader.close();
+    }
 }
 
 export function getOllamaApiErrorMessage(error: unknown): string {

@@ -16,11 +16,13 @@ import {
     isInterruptRequested,
     installKeyInterruptListener,
     removeKeyInterruptListener,
+    registerInterruptHandler,
+    unregisterInterruptHandler,
 } from './tools.js';
 import {
     validateOllamaConnection,
     fetchOllamaModels,
-    sendOllamaChat,
+    sendOllamaChatStream,
     getOllamaApiErrorMessage,
 } from './ollamaApi.js';
 import type { ChatMessage, OllamaModel } from './ollamaApi.js';
@@ -267,14 +269,70 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
 
                 refreshTokenStatus('AI is responding...');
 
-                const response = await sendOllamaChat(baseUrl, {
-                    model: currentModel,
-                    messages,
-                    tools: TOOLS,
-                    numCtx,
+                const streamAbortController = new AbortController();
+                const streamedToolCalls: NonNullable<ChatMessage['tool_calls']> = [];
+                let streamedAssistantContent = '';
+                let printedAssistantPrefix = false;
+                let interruptedDuringStream = false;
+
+                registerInterruptHandler(() => {
+                    streamAbortController.abort();
                 });
 
-                const assistantMessage = response.message;
+                try {
+                    for await (const chunk of sendOllamaChatStream(baseUrl, {
+                        model: currentModel,
+                        messages,
+                        tools: TOOLS,
+                        numCtx,
+                        signal: streamAbortController.signal,
+                    })) {
+                        if (isInterruptRequested()) {
+                            interruptedDuringStream = true;
+                            streamAbortController.abort();
+                            break;
+                        }
+
+                        const chunkContent = chunk.message.content ?? '';
+                        if (chunkContent.length > 0) {
+                            if (!printedAssistantPrefix) {
+                                clearLiveStatus();
+                                process.stdout.write(chalk.yellow('\nAI > '));
+                                printedAssistantPrefix = true;
+                            }
+                            process.stdout.write(sanitize(chunkContent));
+                            streamedAssistantContent += chunkContent;
+                        }
+
+                        if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
+                            streamedToolCalls.push(...chunk.message.tool_calls);
+                        }
+                    }
+                } catch (error) {
+                    if (isInterruptRequested()) {
+                        interruptedDuringStream = true;
+                    } else {
+                        throw error;
+                    }
+                } finally {
+                    unregisterInterruptHandler();
+                }
+
+                if (interruptedDuringStream) {
+                    if (printedAssistantPrefix) process.stdout.write('\n');
+                    continue;
+                }
+
+                if (printedAssistantPrefix) {
+                    process.stdout.write('\n\n');
+                }
+
+                const assistantMessage: ChatMessage = {
+                    role: 'assistant',
+                    content: streamedAssistantContent,
+                    ...(streamedToolCalls.length > 0 ? { tool_calls: streamedToolCalls } : {}),
+                };
+
                 messages.push(assistantMessage);
                 refreshTokenStatus('AI response received.');
 

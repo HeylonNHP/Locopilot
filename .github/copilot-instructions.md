@@ -189,6 +189,11 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-02-24: Added streamed assistant text rendering from Ollama
+  - Files: `ollamaApi.ts`, `index.ts`, `README.md`, `.github/copilot-instructions.md`
+  - Summary: Added NDJSON streaming support for `/api/chat` and rendered assistant text incrementally in the terminal while generation is in progress.
+  - Intent: Improve responsiveness and user confidence on slower models by showing progress before the full response is complete.
+
 - 2026-02-24: Added live token meter for AI/tool loop
   - Files: `index.ts`, `tools.ts`, `runCommandTool.ts`, `tokenizer.ts` (new), `statusLine.ts` (new), `package.json`, `README.md`, `.github/copilot-instructions.md`
   - Summary: Added a live terminal status line showing estimated token usage during AI responses and tool execution, backed by local token counting via `@dqbd/tiktoken` and phase-based progress updates.
