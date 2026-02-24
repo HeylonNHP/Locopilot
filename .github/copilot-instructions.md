@@ -127,22 +127,30 @@ Feature summary:
 - The assistant can call `web_search` to pull external web context from DuckDuckGo results.
 - The tool accepts either explicit queries or a prompt from which queries are derived.
 - Query count and results-per-query are configurable by the user and persisted in `config.json` under `webSearch`.
-- For each result URL, Locopilot fetches the page HTML, extracts main text using `@mozilla/readability`, and falls back to `cheerio` extraction when needed.
+- For each result URL, Locopilot fetches the page HTML and extracts main text using a shared extractor logic (`htmlExtractor.ts`).
 - The tool currently returns extracted page text directly (no LLM summarization step) to keep latency lower and reduce extra model calls.
 - The terminal UI prints progress updates while web search is running.
 
 Security / UX notes:
 - Treat fetched page text as untrusted input and sanitize before rendering or reusing.
 - Web requests reveal the local machine IP to remote sites; keep this behavior transparent to users.
-- Keep implementation modular (`webSearchTool.ts`) so extraction and future summarization can be changed independently.
+- Keep implementation modular (`tools/webSearchTool.ts`) and use shared extraction utilities (`tools/htmlExtractor.ts`).
 
 ## Direct URL tool (`fetch_url`)
 
 Feature summary:
 - The assistant can call `fetch_url` to fetch content from a specific HTTP/HTTPS URL.
 - This enables deeper browsing by following links discovered from `web_search` results or revisiting a known page directly.
-- The tool extracts main page text using `@mozilla/readability` with a `cheerio` fallback, matching the existing web extraction approach.
+- The tool extracts main page text using the shared `htmlExtractor.ts` logic.
 - The tool returns extracted text directly (no additional LLM summarization pass) to keep latency lower.
+
+## Shared HTML extraction (`htmlExtractor.ts`)
+
+- Centralizes logic for text extraction from HTML pages.
+- Tries `@mozilla/readability` first for clean article extraction.
+- Falls back to `cheerio`-based extraction (main/article/body tags) if readability fails.
+- Handles title extraction and basic text normalization (`cleanText`).
+- Exports `DEFAULT_USER_AGENT` used for all tool-initiated web requests.
 
 Security / UX notes:
 - Treat fetched page text as untrusted input and sanitize before rendering or reusing.
@@ -201,6 +209,11 @@ Security / UX notes:
     - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
 
 ## Change History
+
+- 2026-02-25: Refactored web tools for DRYness
+  - Files: `tools/webSearchTool.ts`, `tools/fetchUrlTool.ts`, `tools/htmlExtractor.ts` (new), `tools.ts`
+  - Summary: Moved web-related tools into a `tools/` directory and extracted shared HTML extraction logic into `htmlExtractor.ts`. Updated imports across the project.
+  - Intent: Eliminate deep logic duplication between `web_search` and `fetch_url` tools and improve code organization.
 
 - 2026-02-24: Added `fetch_url` direct page fetch tool
   - Files: `fetchUrlTool.ts` (new), `tools.ts`, `README.md`, `.github/copilot-instructions.md`

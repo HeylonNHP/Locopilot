@@ -1,10 +1,8 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { JSDOM } from 'jsdom';
-import { Readability } from '@mozilla/readability';
+import { cleanText, extractMainText, DEFAULT_USER_AGENT } from './htmlExtractor.js';
 
 const DUCKDUCKGO_HTML_SEARCH_URL = 'https://duckduckgo.com/html/';
-const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
 
 export interface WebSearchSettings {
     maxQueries: number;
@@ -41,15 +39,6 @@ export interface WebSearchOptions {
 function clampToPositiveInt(value: number, fallback: number): number {
     if (!Number.isFinite(value) || value <= 0) return fallback;
     return Math.floor(value);
-}
-
-function cleanText(text: string): string {
-    return text
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-        .replace(/[ \t]+/g, ' ')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
 }
 
 function parseDuckDuckGoRedirect(href: string): string {
@@ -220,10 +209,7 @@ export class WebSearchTool {
             });
 
             const html = response.data;
-            const readabilityText = this.extractWithReadability(html, result.url);
-            const fallbackText = this.extractWithCheerio(html);
-            const chosen = readabilityText.length >= fallbackText.length ? readabilityText : fallbackText;
-            const text = chosen.slice(0, this.settings.perPageCharLimit);
+            const text = extractMainText(html, result.url).slice(0, this.settings.perPageCharLimit);
 
             return {
                 url: result.url,
@@ -240,29 +226,6 @@ export class WebSearchTool {
                 text: `(failed to fetch page: ${reason})`,
             };
         }
-    }
-
-    private extractWithReadability(html: string, pageUrl: string): string {
-        try {
-            const dom = new JSDOM(html, { url: pageUrl });
-            const article = new Readability(dom.window.document).parse();
-            return cleanText(article?.textContent ?? '');
-        } catch {
-            return '';
-        }
-    }
-
-    private extractWithCheerio(html: string): string {
-        const $ = cheerio.load(html);
-        $('script, style, noscript').remove();
-
-        const mainCandidate = cleanText($('main').text());
-        if (mainCandidate.length > 0) return mainCandidate;
-
-        const articleCandidate = cleanText($('article').text());
-        if (articleCandidate.length > 0) return articleCandidate;
-
-        return cleanText($('body').text());
     }
 }
 

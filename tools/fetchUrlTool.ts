@@ -1,10 +1,6 @@
 import axios from 'axios';
-import * as cheerio from 'cheerio';
-import { JSDOM } from 'jsdom';
-import { Readability } from '@mozilla/readability';
+import { extractMainText, extractTitle, DEFAULT_USER_AGENT } from './htmlExtractor.js';
 import type { WebSearchSettings } from './webSearchTool.js';
-
-const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
 
 export interface FetchUrlToolArgs {
     url?: string;
@@ -13,15 +9,6 @@ export interface FetchUrlToolArgs {
 export interface FetchUrlOptions {
     settings: WebSearchSettings;
     onProgress?: (message: string) => void;
-}
-
-function cleanText(text: string): string {
-    return text
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-        .replace(/[ \t]+/g, ' ')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
 }
 
 export class FetchUrlTool {
@@ -66,11 +53,8 @@ export class FetchUrlTool {
 
             const finalUrl = response.request?.res?.responseUrl || url;
             const html = response.data;
-            const title = this.extractTitle(html, finalUrl);
-            const readabilityText = this.extractWithReadability(html, finalUrl);
-            const fallbackText = this.extractWithCheerio(html);
-            const chosen = readabilityText.length >= fallbackText.length ? readabilityText : fallbackText;
-            const text = chosen.slice(0, this.settings.perPageCharLimit);
+            const title = extractTitle(html, finalUrl);
+            const text = extractMainText(html, finalUrl).slice(0, this.settings.perPageCharLimit);
 
             this.progress('Fetch URL: completed.');
 
@@ -92,38 +76,6 @@ export class FetchUrlTool {
 
     private progress(message: string): void {
         if (this.onProgress) this.onProgress(message);
-    }
-
-    private extractTitle(html: string, pageUrl: string): string {
-        try {
-            const dom = new JSDOM(html, { url: pageUrl });
-            return cleanText(dom.window.document.title || '');
-        } catch {
-            return '';
-        }
-    }
-
-    private extractWithReadability(html: string, pageUrl: string): string {
-        try {
-            const dom = new JSDOM(html, { url: pageUrl });
-            const article = new Readability(dom.window.document).parse();
-            return cleanText(article?.textContent ?? '');
-        } catch {
-            return '';
-        }
-    }
-
-    private extractWithCheerio(html: string): string {
-        const $ = cheerio.load(html);
-        $('script, style, noscript').remove();
-
-        const mainCandidate = cleanText($('main').text());
-        if (mainCandidate.length > 0) return mainCandidate;
-
-        const articleCandidate = cleanText($('article').text());
-        if (articleCandidate.length > 0) return articleCandidate;
-
-        return cleanText($('body').text());
     }
 }
 
