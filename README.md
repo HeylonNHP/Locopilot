@@ -45,6 +45,7 @@ A simple CLI tool to chat with a Large Language Model via Ollama.
 -   **Model Selection**: Automatically fetches available models from your Ollama instance and lets you choose one.
 -   **Execution Mode**: At startup, you can choose between **Standard** mode (where you must approve every command) and **YOLO** mode (where commands run automatically).
 -   **Chat**: Simple chat interface in the terminal. Type `exit` to quit.
+-   **Live Token Meter**: While the AI is responding or running tools, a live status line shows estimated context usage (`tokens_used / num_ctx`) so you can see how close you are to the context limit.
  -   **Tool Calling (Terminal Commands)**: LLMs that support native tool/function calling can request to run terminal commands on the host via Ollama. When an LLM requests a command:
          - By default, the user is always prompted to approve the command before it runs.
          - In **YOLO mode**, commands run automatically with implicit consent.

@@ -26,6 +26,8 @@ import {
 import type { ChatMessage, OllamaModel } from './ollamaApi.js';
 import { compactHistory, printCompactStats } from './compact.js';
 import { summarizeCommandError } from './errorSummary.js';
+import { countMessagesTokens } from './tokenizer.js';
+import { updateLiveStatus, clearLiveStatus } from './statusLine.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const DEFAULT_NUM_CTX = 65536;
@@ -152,6 +154,16 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
         { role: 'system', content: systemPrompt },
     ];
 
+    const refreshTokenStatus = (phase: string) => {
+        const tokensUsed = countMessagesTokens(messages, currentModel);
+        updateLiveStatus({
+            phase,
+            tokensUsed,
+            tokenLimit: numCtx,
+            model: currentModel,
+        });
+    };
+
     while (true) {
         let prompt: string;
         try {
@@ -234,6 +246,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
 
         // Add the user message to history and send to /api/chat
         messages.push({ role: 'user', content: prompt });
+        refreshTokenStatus('AI request queued...');
         clearInterrupt();
         let sentToolRetryNudge = false;
         let emptyResponseRecoveryAttempts = 0;
@@ -245,11 +258,14 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
             // Tool-call loop: keep sending results back until the LLM has no more tool calls
             while (true) {
                 if (isInterruptRequested()) {
+                    clearLiveStatus();
                     console.log(chalk.yellow('AI loop interrupted by user.\n'));
                     // Remove the last user message so the conversation stays consistent
                     messages.pop();
                     break;
                 }
+
+                refreshTokenStatus('AI is responding...');
 
                 const response = await sendOllamaChat(baseUrl, {
                     model: currentModel,
@@ -260,19 +276,27 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
 
                 const assistantMessage = response.message;
                 messages.push(assistantMessage);
+                refreshTokenStatus('AI response received.');
 
                 if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
                     // Execute each tool call sequentially then feed results back
                     for (const tc of assistantMessage.tool_calls) {
+                        refreshTokenStatus(`Tool call: ${tc.function.name}`);
                         const toolResult = await handleToolCall(
                             tc.function.name,
                             tc.function.arguments,
+                            (message) => {
+                                refreshTokenStatus(message);
+                            },
                         );
                         messages.push({ role: 'tool', content: toolResult });
+                        refreshTokenStatus(`Tool result: ${tc.function.name}`);
 
                         // If the command failed, have the LLM summarize the error for the user
                         if (tc.function.name === 'run_command' && toolResult.includes('(COMMAND FAILED')) {
+                            refreshTokenStatus('Summarizing command error...');
                             const errorSummary = await summarizeCommandError(baseUrl, currentModel, toolResult, numCtx);
+                            clearLiveStatus();
                             console.log(chalk.red('AI Error Summary: ') + chalk.yellow(errorSummary) + '\n');
                             
                             // Include the error summary in the conversation history as a user nudge
@@ -281,6 +305,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                                 role: 'user',
                                 content: `Command failed. AI Error Analysis: ${errorSummary}\nPlease analyze the failure and propose a correction.`
                             });
+                            refreshTokenStatus('Retry requested after command failure.');
                         }
 
                         // Check for interrupt after each individual tool call
@@ -316,6 +341,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                     // messing up the terminal UI.
                     const finalContent = sanitize(rawContent).trim();
 
+                    clearLiveStatus();
                     console.log(chalk.yellow('\nAI > ') + finalContent + '\n');
                     config.lastModel = currentModel;
                     config.numCtx = numCtx;
@@ -324,10 +350,12 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                 }
             }
         } catch (error) {
+            clearLiveStatus();
             console.error(chalk.red('Error communicating with Ollama:'), getOllamaApiErrorMessage(error));
             // Remove the failed user message so conversation stays consistent
             messages.pop();
         } finally {
+            clearLiveStatus();
             removeKeyInterruptListener();
         }
     }

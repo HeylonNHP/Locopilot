@@ -136,6 +136,19 @@ Security / UX notes:
 - Web requests reveal the local machine IP to remote sites; keep this behavior transparent to users.
 - Keep implementation modular (`webSearchTool.ts`) so extraction and future summarization can be changed independently.
 
+## Live token meter
+
+Feature summary:
+- Locopilot now shows a one-line live token meter while the AI request/tool loop is active.
+- The meter displays estimated context usage as `used_tokens / num_ctx` plus a percentage.
+- Status updates occur across phases (AI waiting, tool execution, error summarization) and are redrawn in-place using `readline` so the terminal stays compact.
+- Token counting uses a local tokenizer (`@dqbd/tiktoken`) with model-based selection when possible and a fallback encoding.
+
+Security / UX notes:
+- Counts are local estimates and may differ slightly from Ollama's internal model tokenization.
+- The status line is cleared before final AI/user-facing logs to avoid output corruption.
+- Keep updates lightweight to avoid interfering with interactive prompts.
+
 ## LLM maintenance instruction (always keep up to date)
 
 - PURPOSE: This file documents developer intent, UX constraints, security notes, and tool behaviors. It exists so future LLMs and contributors can quickly understand the motivations behind design choices.
@@ -175,6 +188,11 @@ Security / UX notes:
     - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
 
 ## Change History
+
+- 2026-02-24: Added live token meter for AI/tool loop
+  - Files: `index.ts`, `tools.ts`, `runCommandTool.ts`, `tokenizer.ts` (new), `statusLine.ts` (new), `package.json`, `README.md`, `.github/copilot-instructions.md`
+  - Summary: Added a live terminal status line showing estimated token usage during AI responses and tool execution, backed by local token counting via `@dqbd/tiktoken` and phase-based progress updates.
+  - Intent: Help users track context-window pressure in real time and avoid sudden truncation/context-limit surprises in long sessions.
 
 - 2026-02-24: Refactored `run_command` logic to `runCommandTool.ts`
   - Files: `runCommandTool.ts`, `tools.ts`

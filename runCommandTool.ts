@@ -100,6 +100,7 @@ export async function runCommand(
     command: string,
     shell?: string,
     timeoutMs: number = DEFAULT_TIMEOUT_MS,
+    onProgress?: (message: string) => void,
 ): Promise<string> {
     const currentYolo = isYolo();
     const effectiveShell = getEffectiveShell(shell);
@@ -151,6 +152,12 @@ export async function runCommand(
 
     child.stdout?.on('data', (chunk: Buffer) => { entry.stdout += chunk.toString(); });
     child.stderr?.on('data', (chunk: Buffer) => { entry.stderr += chunk.toString(); });
+    child.stdout?.on('data', () => {
+        onProgress?.('run_command: receiving stdout...');
+    });
+    child.stderr?.on('data', () => {
+        onProgress?.('run_command: receiving stderr...');
+    });
 
     return new Promise<string>((resolve) => {
         const finalize = (code: number, result?: string) => {
@@ -170,16 +177,19 @@ export async function runCommand(
         const timer = setTimeout(() => {
             unregisterInterruptHandler();
             // Still running after timeout – return partial output so the LLM can check back
+            onProgress?.('run_command: still running, returning partial output...');
             resolve(buildOutput(entry, false, processId));
         }, timeoutMs);
 
         child.on('close', (code) => {
             console.log(chalk.dim(`Command (process_id=${processId}) finished with exit code ${code}.\n`));
+            onProgress?.('run_command: completed.');
             finalize(code ?? 0);
         });
 
         child.on('error', (err) => {
             entry.stderr += `\nSpawn error: ${err.message}`;
+            onProgress?.('run_command: spawn error.');
             finalize(-1);
         });
     });

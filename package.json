@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@dqbd/tiktoken": "^1.0.22",
     "@inquirer/prompts": "^8.2.1",
     "@mozilla/readability": "^0.6.0",
     "axios": "^1.13.5",

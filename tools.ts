@@ -349,11 +349,15 @@ function parseQueriesInput(raw: unknown): string[] {
     return [];
 }
 
-async function runWebSearch(args: WebSearchToolArgs): Promise<string> {
+async function runWebSearch(
+    args: WebSearchToolArgs,
+    onProgress?: (message: string) => void,
+): Promise<string> {
     const tool = new WebSearchTool({
         settings: webSearchSettings,
         onProgress: (message) => {
             console.log(chalk.dim(message));
+            onProgress?.(message);
         },
     });
     return tool.run(args);
@@ -432,6 +436,7 @@ export function getToolUseNudge(): string {
 export async function handleToolCall(
     name: string,
     args: ToolCallArguments,
+    onProgress?: (message: string) => void,
 ): Promise<string> {
     switch (name) {
         case 'run_command': {
@@ -439,7 +444,7 @@ export async function handleToolCall(
             const timeoutMs = args.timeout_seconds !== undefined
                 ? args.timeout_seconds * 1000
                 : DEFAULT_TIMEOUT_MS;
-            return runCommand(args.command, args.shell, timeoutMs);
+            return runCommand(args.command, args.shell, timeoutMs, onProgress);
         }
 
         case 'check_process_output': {
@@ -470,7 +475,7 @@ export async function handleToolCall(
                 return '[Error: web_search requires either "prompt" or "queries"]';
             }
 
-            return runWebSearch(webArgs);
+            return runWebSearch(webArgs, onProgress);
         }
 
         default:
