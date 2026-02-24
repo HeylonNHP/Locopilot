@@ -104,13 +104,14 @@ export async function runCommand(
 ): Promise<string> {
     const currentYolo = isYolo();
     const effectiveShell = getEffectiveShell(shell);
+    const approvedYolo = currentYolo;
 
     // Show the user what the AI wants to run
-    console.log(chalk.yellow(`\n[Tool Call] The AI ${currentYolo ? 'is executing' : 'wants to run'} the following command:`));
-    console.log(chalk.bold(`  Shell:   ${effectiveShell}`));
-    console.log(chalk.bold(`  Command: ${command}\n`));
+    console.log(chalk.cyan(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`));
+    console.log(`${chalk.bold('  Shell:')}   ${chalk.dim(effectiveShell)}`);
+    console.log(`${chalk.bold('  Command:')} ${chalk.green(command)}\n`);
 
-    let approved = currentYolo;
+    let approved = approvedYolo;
     if (!approved) {
         try {
             approved = await confirm({ message: 'Allow this command to run?', default: false });
@@ -123,13 +124,12 @@ export async function runCommand(
     }
 
     if (!approved) {
-        console.log(chalk.red('Command rejected by user.\n'));
+        console.log(chalk.red('  Command rejected by user.\n'));
         return '[Command was rejected by the user.]';
     }
 
     const processId = nextProcessId++;
-    console.log(chalk.dim(`Running command (process_id=${processId})...\n`));
-    console.log(chalk.dim(`(${getInterruptHint()})\n`));
+    console.log(chalk.dim(`  Running (id=${processId})... (${getInterruptHint()})\n`));
 
     const entry: ProcessEntry = {
         process: null as unknown as ChildProcess, // assigned immediately below
@@ -182,7 +182,7 @@ export async function runCommand(
         }, timeoutMs);
 
         child.on('close', (code) => {
-            console.log(chalk.dim(`Command (process_id=${processId}) finished with exit code ${code}.\n`));
+            console.log('\n' + chalk.dim(`  Process ${processId} exited with code ${code}.\n`));
             onProgress?.('run_command: completed.');
             finalize(code ?? 0);
         });

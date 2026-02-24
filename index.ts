@@ -281,6 +281,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                 if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
                     // Execute each tool call sequentially then feed results back
                     for (const tc of assistantMessage.tool_calls) {
+                        clearLiveStatus();
                         refreshTokenStatus(`Tool call: ${tc.function.name}`);
                         const toolResult = await handleToolCall(
                             tc.function.name,
@@ -289,6 +290,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                                 refreshTokenStatus(message);
                             },
                         );
+                        clearLiveStatus();
                         messages.push({ role: 'tool', content: toolResult });
                         refreshTokenStatus(`Tool result: ${tc.function.name}`);
 
