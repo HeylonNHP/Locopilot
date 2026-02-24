@@ -13,7 +13,6 @@ import chalk from 'chalk';
 import readline from 'readline';
 import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSettings, type WebSearchToolArgs } from './webSearchTool.js';
 import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from './runCommandTool.js';
-import { detectUncertainty } from './uncertaintyDetector.js';
 
 /**
  * Strips ANSI escape codes and Carriage Returns from text.
@@ -449,17 +448,11 @@ export function shouldNudgeForToolCall(content: string): boolean {
 
 export async function shouldNudgeForToolCallWithModel(
     content: string,
-    baseUrl: string,
-    model: string,
-    numCtx: number,
+    _baseUrl: string,
+    _model: string,
+    _numCtx: number,
 ): Promise<boolean> {
-    if (shouldNudgeForToolCall(content)) {
-        return true;
-    }
-
-    const uncertainty = await detectUncertainty(baseUrl, model, content, numCtx);
-    // Raise the confidence threshold to reduce false positives.
-    return uncertainty.nudge && uncertainty.confidence >= 0.75;
+    return shouldNudgeForToolCall(content);
 }
 
 export function getToolUseNudge(): string {

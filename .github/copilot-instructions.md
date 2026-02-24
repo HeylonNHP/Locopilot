@@ -189,6 +189,16 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-02-24: Removed uncertainty detector
+  - Files: `uncertaintyDetector.ts` (deleted), `tools.ts`, `.github/copilot-instructions.md`
+  - Summary: Removed the model-based uncertainty detector and simplified `shouldNudgeForToolCallWithModel` to use deterministic heuristics only.
+  - Intent: Reduce overhead and eliminate inconsistent model-based nudges while maintaining basic tool-use guidance.
+
+- 2026-02-24: Updated /compact to use token counts
+  - Files: `compact.ts`, `tokenizer.ts`
+  - Summary: Replaced message and character counts in `/compact` with token counts and removed the redundant message count line.
+  - Intent: Provide more relevant context usage information and clean up the UI.
+
 - 2026-02-24: Added model-based uncertainty detection for tool nudging
   - Files: `uncertaintyDetector.ts` (new), `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
   - Summary: Added a lightweight LLM pass that analyzes only the assistant's latest reply and returns structured uncertainty signals (`nudge`, `confidence`, `reasons`) used to decide whether to inject a tool-use nudge.
