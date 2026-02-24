@@ -11,8 +11,8 @@
 
 import chalk from 'chalk';
 import readline from 'readline';
-import { WebSearchTool, type WebSearchSettings, type WebSearchToolArgs } from './webSearchTool.js';
-import { runCommand, checkProcessOutput, defaultShell, DEFAULT_TIMEOUT_MS } from './runCommandTool.js';
+import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSettings, type WebSearchToolArgs } from './webSearchTool.js';
+import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from './runCommandTool.js';
 
 /**
  * Strips ANSI escape codes and Carriage Returns from text.
@@ -380,21 +380,8 @@ export interface ToolCallArguments {
 export function getToolSystemPrompt(): string {
     return (
         'You have access to the following tools that let you interact with the host machine:\n\n' +
-        '1. run_command(command, shell?, timeout_seconds?)\n' +
-        '   Execute a shell command on the host machine. ' +
-        (isYoloMode
-            ? 'The command will run automatically with user consent.'
-            : 'The user will be asked to approve it before it runs.') + '\n' +
-        '   Returns stdout/stderr when the command finishes, or partial\n' +
-        `   output plus a process_id if still running after the timeout (default ${DEFAULT_TIMEOUT_MS / 1000}s).\n\n` +
-        '2. check_process_output(process_id)\n' +
-        '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
-        '   finished. Use this to check on commands that are still in progress.\n\n' +
-        '3. web_search(prompt?, queries?, max_queries?, results_per_query?)\n' +
-        '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
-        '   Use this when external web context is needed. Provide explicit queries as\n' +
-        '   an array when possible; aim for 2-3 distinct queries for complex requests\n' +
-        '   to ensure comprehensive coverage. The tool will respect the max_queries limit.\n\n' +
+        getRunCommandPrompt(isYoloMode) +
+        getWebSearchPrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- Do NOT ask the user for permission yourself; ' +

@@ -264,3 +264,16 @@ export class WebSearchTool {
         return cleanText($('body').text());
     }
 }
+
+/**
+ * Returns the web_search tool section for the system prompt.
+ */
+export function getToolPrompt(): string {
+    return (
+        '3. web_search(prompt?, queries?, max_queries?, results_per_query?)\n' +
+        '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
+        '   Use this when external web context is needed. Provide explicit queries as\n' +
+        '   an array when possible; aim for 2-3 distinct queries for complex requests\n' +
+        '   to ensure comprehensive coverage. The tool will respect the max_queries limit.\n\n'
+    );
+}

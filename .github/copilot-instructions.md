@@ -169,6 +169,11 @@ Security / UX notes:
     - Files: `runCommandTool.ts` (new), `tools.ts`
     - Summary: Extracted command execution logic, process registry, and shell resolution into `runCommandTool.ts`.
     - Intent: Keep `tools.ts` focused on common tool-calling orchestration and schemas while isolating concrete tool implementations.
+- [x] **Modularized tool-specific system prompts**:
+    - Files: `runCommandTool.ts`, `webSearchTool.ts`, `tools.ts`
+    - Summary: Moved the string blocks describing each tool from `getToolSystemPrompt()` in `tools.ts` into exported `getToolPrompt()` functions within their respective tool files.
+    - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
+
 ## Change History
 
 - 2026-02-24: Refactored `run_command` logic to `runCommandTool.ts`

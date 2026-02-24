@@ -192,3 +192,21 @@ export function checkProcessOutput(processId: number): string {
     }
     return buildOutput(entry, entry.done, entry.done ? null : processId);
 }
+
+/**
+ * Returns the run_command and check_process_output tool section for the system prompt.
+ */
+export function getToolPrompt(isYolo: boolean): string {
+    return (
+        '1. run_command(command, shell?, timeout_seconds?)\n' +
+        '   Execute a shell command on the host machine. ' +
+        (isYolo
+            ? 'The command will run automatically with user consent.'
+            : 'The user will be asked to approve it before it runs.') + '\n' +
+        '   Returns stdout/stderr when the command finishes, or partial\n' +
+        `   output plus a process_id if still running after the timeout (default ${DEFAULT_TIMEOUT_MS / 1000}s).\n\n` +
+        '2. check_process_output(process_id)\n' +
+        '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
+        '   finished. Use this to check on commands that are still in progress.\n\n'
+    );
+}
