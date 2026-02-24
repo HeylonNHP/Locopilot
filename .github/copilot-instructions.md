@@ -113,7 +113,7 @@ Feature summary:
 - The currently selected model is asked to summarise the full history down to its most important parts (decisions, facts, commands, results, file paths, code). Conversational filler is discarded.
 - A preamble is prepended to the summary so the model knows it is reading a condensed record rather than a live transcript.
 - The summarised history replaces the live message array in-place; the original system prompt is always preserved verbatim.
-- After compaction, stats are printed: old vs new message count, old vs new character count, and the percentage reduction.
+- After compaction, stats are printed: old vs new token count and the percentage reduction.
 - The new history is always expected to be smaller than the old one; if the model returns an empty summary, compaction is aborted with an error.
 
 Implementation notes:
@@ -135,6 +135,19 @@ Security / UX notes:
 - Treat fetched page text as untrusted input and sanitize before rendering or reusing.
 - Web requests reveal the local machine IP to remote sites; keep this behavior transparent to users.
 - Keep implementation modular (`webSearchTool.ts`) so extraction and future summarization can be changed independently.
+
+## Direct URL tool (`fetch_url`)
+
+Feature summary:
+- The assistant can call `fetch_url` to fetch content from a specific HTTP/HTTPS URL.
+- This enables deeper browsing by following links discovered from `web_search` results or revisiting a known page directly.
+- The tool extracts main page text using `@mozilla/readability` with a `cheerio` fallback, matching the existing web extraction approach.
+- The tool returns extracted text directly (no additional LLM summarization pass) to keep latency lower.
+
+Security / UX notes:
+- Treat fetched page text as untrusted input and sanitize before rendering or reusing.
+- Only `http`/`https` URLs are accepted.
+- Reuse existing timeout and text-limit settings to keep behavior predictable across web tools.
 
 ## Live token meter
 
@@ -188,6 +201,11 @@ Security / UX notes:
     - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
 
 ## Change History
+
+- 2026-02-24: Added `fetch_url` direct page fetch tool
+  - Files: `fetchUrlTool.ts` (new), `tools.ts`, `README.md`, `.github/copilot-instructions.md`
+  - Summary: Added a new `fetch_url(url)` tool that retrieves and extracts text from a specific URL so the model can follow links or revisit known pages without a new search.
+  - Intent: Improve depth and continuity of web-based reasoning while reusing existing extraction behavior and safety guardrails.
 
 - 2026-02-24: Removed uncertainty detector
   - Files: `uncertaintyDetector.ts` (deleted), `tools.ts`, `.github/copilot-instructions.md`

@@ -12,6 +12,7 @@
 import chalk from 'chalk';
 import readline from 'readline';
 import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSettings, type WebSearchToolArgs } from './webSearchTool.js';
+import { FetchUrlTool, getToolPrompt as getFetchUrlPrompt, type FetchUrlToolArgs } from './fetchUrlTool.js';
 import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from './runCommandTool.js';
 
 /**
@@ -297,6 +298,25 @@ export const TOOLS: OllamaTool[] = [
             },
         },
     },
+    {
+        type: 'function',
+        function: {
+            name: 'fetch_url',
+            description:
+                'Fetches content from one specific URL and returns extracted page text. ' +
+                'Use this to follow links discovered during web_search or to revisit a known page directly.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    url: {
+                        type: 'string',
+                        description: 'A full http or https URL to fetch, for example: https://example.com/article',
+                    },
+                },
+                required: ['url'],
+            },
+        },
+    },
 ];
 
 // --- Tool handlers ---
@@ -364,6 +384,20 @@ async function runWebSearch(
     return tool.run(args);
 }
 
+async function runFetchUrl(
+    args: FetchUrlToolArgs,
+    onProgress?: (message: string) => void,
+): Promise<string> {
+    const tool = new FetchUrlTool({
+        settings: webSearchSettings,
+        onProgress: (message) => {
+            console.log(chalk.dim(message));
+            onProgress?.(message);
+        },
+    });
+    return tool.run(args);
+}
+
 // --- Public dispatcher ---
 
 export interface ToolCallArguments {
@@ -375,6 +409,7 @@ export interface ToolCallArguments {
     queries?: string[] | string;
     max_queries?: number;
     results_per_query?: number;
+    url?: string;
 }
 
 /**
@@ -387,6 +422,7 @@ export function getToolSystemPrompt(): string {
         'You have access to the following tools that let you interact with the host machine:\n\n' +
         getRunCommandPrompt(isYoloMode) +
         getWebSearchPrompt() +
+        getFetchUrlPrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- Do NOT ask the user for permission yourself; ' +
@@ -510,6 +546,14 @@ export async function handleToolCall(
             }
 
             return runWebSearch(webArgs, onProgress);
+        }
+
+        case 'fetch_url': {
+            const fetchArgs: FetchUrlToolArgs = {};
+            if (typeof args.url === 'string') {
+                fetchArgs.url = args.url;
+            }
+            return runFetchUrl(fetchArgs, onProgress);
         }
 
         default:

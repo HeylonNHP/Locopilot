@@ -58,6 +58,9 @@ A simple CLI tool to chat with a Large Language Model via Ollama.
         - Per query, it fetches top results, downloads each page, and extracts readable text using `@mozilla/readability` with a `cheerio` fallback.
         - It returns extracted text snippets (not LLM-generated summaries) to reduce latency and avoid extra context overhead.
         - Progress is printed in the terminal while web search is running.
+    -   **Tool Calling (Direct URL Fetch)**: LLMs can call `fetch_url` to fetch and extract text from a specific URL.
+        - Useful for following links discovered during `web_search` or revisiting a previously fetched page.
+        - Uses the same extraction approach (`@mozilla/readability` + `cheerio` fallback) and returns extracted page text.
 
 ### Tool Calling: safety and usage
 
@@ -68,6 +71,7 @@ A simple CLI tool to chat with a Large Language Model via Ollama.
     - `run_command(command, shell?, timeout_seconds?)` — run a shell command (`bash`/`powershell`/`cmd` etc.).
     - `check_process_output(process_id)` — poll the current stdout/stderr and completion status for a previously started command.
     - `web_search(prompt?, queries?, max_queries?, results_per_query?)` — search DuckDuckGo and return extracted page text from fetched results.
+    - `fetch_url(url)` — fetch and extract text from one specific HTTP/HTTPS page URL.
 
 Example interaction:
 
@@ -84,7 +88,7 @@ Note: tool-calling is an advanced feature. Always review requested commands befo
 
 - `web_search` currently returns extracted page text directly, without AI summarization.
 - This behavior keeps runtime lighter for local models and helps conserve context budget.
-- The implementation is modular (`webSearchTool.ts`) so future updates can swap full-page text for summaries if desired.
+- The implementations are modular (`webSearchTool.ts`, `fetchUrlTool.ts`) so extraction behavior can be improved consistently over time.
 
 ## Requirements
 
