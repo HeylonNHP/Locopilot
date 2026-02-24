@@ -14,6 +14,7 @@
 import chalk from 'chalk';
 import { sendOllamaChat } from './ollamaApi.js';
 import type { ChatMessage } from './ollamaApi.js';
+import { countMessagesTokens } from './tokenizer.js';
 
 // The instruction sent to the LLM when asking it to compact the history.
 const COMPACT_SYSTEM_PROMPT =
@@ -39,20 +40,11 @@ const SUMMARY_PREAMBLE =
 export interface CompactResult {
     /** The new, compacted message array that should replace the live history. */
     newMessages: ChatMessage[];
-    /** Token/character counts for display purposes. */
+    /** Token counts for display purposes. */
     stats: {
-        oldCharCount: number;
-        newCharCount: number;
-        oldMessageCount: number;
-        newMessageCount: number;
+        oldTokenCount: number;
+        newTokenCount: number;
     };
-}
-
-/**
- * Counts the total characters across all message content fields.
- */
-function totalChars(messages: ChatMessage[]): number {
-    return messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
 }
 
 /**
@@ -70,8 +62,7 @@ export async function compactHistory(
     messages: ChatMessage[],
     numCtx: number,
 ): Promise<CompactResult> {
-    const oldCharCount = totalChars(messages);
-    const oldMessageCount = messages.length;
+    const oldTokenCount = countMessagesTokens(messages, model);
 
     // Separate the system prompt from the rest of the history so we can
     // preserve it verbatim in the compacted result.
@@ -121,16 +112,13 @@ export async function compactHistory(
         },
     ];
 
-    const newCharCount = totalChars(newMessages);
-    const newMessageCount = newMessages.length;
+    const newTokenCount = countMessagesTokens(newMessages, model);
 
     return {
         newMessages,
         stats: {
-            oldCharCount,
-            newCharCount,
-            oldMessageCount,
-            newMessageCount,
+            oldTokenCount,
+            newTokenCount,
         },
     };
 }
@@ -139,24 +127,18 @@ export async function compactHistory(
  * Prints a human-readable compaction report to the terminal.
  */
 export function printCompactStats(stats: CompactResult['stats']): void {
-    const charSaved = stats.oldCharCount - stats.newCharCount;
-    const ratio = stats.oldCharCount > 0
-        ? ((charSaved / stats.oldCharCount) * 100).toFixed(1)
+    const tokensSaved = stats.oldTokenCount - stats.newTokenCount;
+    const ratio = stats.oldTokenCount > 0
+        ? ((tokensSaved / stats.oldTokenCount) * 100).toFixed(1)
         : '0.0';
 
     console.log(chalk.green('\n── Compaction complete ──────────────────────────'));
     console.log(
-        chalk.white('  Messages : ') +
-        chalk.red(String(stats.oldMessageCount)) +
+        chalk.white('  Tokens   : ') +
+        chalk.red(String(stats.oldTokenCount)) +
         chalk.white(' → ') +
-        chalk.green(String(stats.newMessageCount)),
-    );
-    console.log(
-        chalk.white('  Chars    : ') +
-        chalk.red(String(stats.oldCharCount)) +
-        chalk.white(' → ') +
-        chalk.green(String(stats.newCharCount)) +
-        chalk.dim(` (−${charSaved} chars, ${ratio}% reduction)`),
+        chalk.green(String(stats.newTokenCount)) +
+        chalk.dim(` (−${tokensSaved} tokens, ${ratio}% reduction)`),
     );
     console.log(chalk.green('─────────────────────────────────────────────────\n'));
 }
