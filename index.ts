@@ -430,7 +430,7 @@ async function startChat(
                 }
 
                 if (interruptedDuringStream) {
-                    if (streamedAssistantContent.length > 0) {
+                    if (streamedAssistantContent.trim().length > 0) {
                         clearLiveStatus();
                         process.stdout.write(chalk.yellow('\nAI (interrupted) > '));
                         process.stdout.write(renderMarkdown(sanitize(streamedAssistantContent)));
@@ -439,7 +439,7 @@ async function startChat(
                     continue;
                 }
 
-                if (streamedAssistantContent.length > 0) {
+                if (streamedAssistantContent.trim().length > 0) {
                     clearLiveStatus();
                     process.stdout.write(chalk.yellow('\nAI > '));
                     process.stdout.write(renderMarkdown(sanitize(streamedAssistantContent)));
@@ -505,17 +505,18 @@ async function startChat(
                         continue;
                     }
 
-                    // No tool calls — this is the final reply
-                    const rawContent = assistantContent.length > 0
-                        ? assistantMessage.content
-                        : '[No response content was returned by the model after tool execution.]';
+                    // No tool calls — this is the final reply.
+                    // If content was already printed during the streaming/interrupted blocks above,
+                    // we don't print it again. We only print here if content was empty and we
+                    // are showing the fallback message.
+                    if (assistantContent.length === 0) {
+                        const fallbackContent = '[No response content was returned by the model after tool execution.]';
+                        clearLiveStatus();
+                        process.stdout.write(chalk.yellow('\nAI > '));
+                        process.stdout.write(renderMarkdown(sanitize(fallbackContent)));
+                        process.stdout.write('\n');
+                    }
 
-                    // Sanitize the final AI response to prevent control characters from
-                    // messing up the terminal UI.
-                    const finalContent = sanitize(rawContent).trim();
-
-                    clearLiveStatus();
-                    console.log(chalk.yellow('\nAI > ') + finalContent + '\n');
                     config.lastModel = currentModel;
                     config.numCtx = numCtx;
                     await saveConfig(config);
