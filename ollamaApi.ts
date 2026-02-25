@@ -124,8 +124,35 @@ export async function* sendOllamaChatStream(
     }
 }
 
-export function getOllamaApiErrorMessage(error: unknown): string {
+export async function getOllamaApiErrorMessage(error: unknown): Promise<string> {
     if (axios.isAxiosError(error)) {
+        if (error.response?.data) {
+            const data = error.response.data;
+
+            // If it's a stream (IncomingMessage in Node), try to read it
+            if (typeof data.on === 'function') {
+                try {
+                    const chunks: Buffer[] = [];
+                    for await (const chunk of data) {
+                        chunks.push(chunk);
+                    }
+                    const body = Buffer.concat(chunks).toString();
+                    try {
+                        const json = JSON.parse(body);
+                        if (json.error) return `${error.message}: ${json.error}`;
+                    } catch {
+                        if (body.trim()) return `${error.message}: ${body.trim()}`;
+                    }
+                } catch {
+                    // Fallback to error.message if reading stream fails
+                }
+            } else if (typeof data === 'object' && data.error) {
+                // If it's already an object (non-streaming requests)
+                return `${error.message}: ${data.error}`;
+            } else if (typeof data === 'string' && data.trim()) {
+                return `${error.message}: ${data.trim()}`;
+            }
+        }
         return error.message;
     }
 

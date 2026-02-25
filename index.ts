@@ -114,7 +114,7 @@ async function getModels(baseUrl: string): Promise<string[]> {
         const models = await fetchOllamaModels(baseUrl);
         return models.map((m: OllamaModel) => m.name).sort();
     } catch (error) {
-        console.error(chalk.red('Error fetching models:'), getOllamaApiErrorMessage(error));
+        console.error(chalk.red('Error fetching models:'), await getOllamaApiErrorMessage(error));
         return [];
     }
 }
@@ -241,7 +241,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                 messages.length = 0;
                 messages.push(...result.newMessages);
             } catch (err) {
-                console.error(chalk.red('Compaction failed:'), getOllamaApiErrorMessage(err));
+                console.error(chalk.red('Compaction failed:'), await getOllamaApiErrorMessage(err));
             }
             continue;
         }
@@ -415,7 +415,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
             }
         } catch (error) {
             clearLiveStatus();
-            console.error(chalk.red('Error communicating with Ollama:'), getOllamaApiErrorMessage(error));
+            console.error(chalk.red('Error communicating with Ollama:'), await getOllamaApiErrorMessage(error));
             // Remove the failed user message so conversation stays consistent
             messages.pop();
         } finally {
