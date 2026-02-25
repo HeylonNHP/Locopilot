@@ -1,6 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { cleanText, extractMainText, DEFAULT_USER_AGENT } from './htmlExtractor.js';
+import { cleanText, fetchAndExtract, DEFAULT_USER_AGENT } from './htmlExtractor.js';
 
 const DUCKDUCKGO_HTML_SEARCH_URL = 'https://duckduckgo.com/html/';
 
@@ -198,24 +198,13 @@ export class WebSearchTool {
 
     private async fetchAndExtractText(result: DuckDuckGoResult): Promise<ExtractedPage | null> {
         try {
-            const response = await axios.get<string>(result.url, {
-                timeout: this.settings.requestTimeoutMs,
-                headers: {
-                    'User-Agent': DEFAULT_USER_AGENT,
-                    Accept: 'text/html,application/xhtml+xml',
-                },
-                responseType: 'text',
-                maxRedirects: 5,
-            });
-
-            const html = response.data;
-            const text = extractMainText(html, result.url).slice(0, this.settings.perPageCharLimit);
+            const extracted = await fetchAndExtract(result.url, this.settings);
 
             return {
                 url: result.url,
                 title: result.title,
                 snippet: result.snippet,
-                text: text || '(no extractable text)',
+                text: extracted.text || '(no extractable text)',
             };
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);

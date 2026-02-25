@@ -1,6 +1,12 @@
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import * as cheerio from 'cheerio';
+import axios from 'axios';
+
+export interface WebExtractionSettings {
+    requestTimeoutMs: number;
+    perPageCharLimit: number;
+}
 
 export interface ExtractResult {
     title: string;
@@ -86,3 +92,28 @@ export function extractMainText(html: string, url: string): string {
 }
 
 export const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
+
+/**
+ * Common fetch + extraction logic shared by web tools.
+ */
+export async function fetchAndExtract(
+    url: string,
+    settings: WebExtractionSettings
+): Promise<{ title: string; text: string; finalUrl: string }> {
+    const response = await axios.get<string>(url, {
+        timeout: settings.requestTimeoutMs,
+        headers: {
+            'User-Agent': DEFAULT_USER_AGENT,
+            Accept: 'text/html,application/xhtml+xml',
+        },
+        responseType: 'text',
+        maxRedirects: 5,
+    });
+
+    const finalUrl = response.request?.res?.responseUrl || url;
+    const html = response.data;
+    const title = extractTitle(html, finalUrl);
+    const text = extractMainText(html, finalUrl).slice(0, settings.perPageCharLimit);
+
+    return { title, text, finalUrl };
+}

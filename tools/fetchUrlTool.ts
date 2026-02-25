@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { extractMainText, extractTitle, DEFAULT_USER_AGENT } from './htmlExtractor.js';
+import { fetchAndExtract } from './htmlExtractor.js';
 import type { WebSearchSettings } from './webSearchTool.js';
 
 export interface FetchUrlToolArgs {
@@ -41,28 +40,15 @@ export class FetchUrlTool {
         this.progress(`Fetch URL: loading ${url}...`);
 
         try {
-            const response = await axios.get<string>(url, {
-                timeout: this.settings.requestTimeoutMs,
-                headers: {
-                    'User-Agent': DEFAULT_USER_AGENT,
-                    Accept: 'text/html,application/xhtml+xml',
-                },
-                responseType: 'text',
-                maxRedirects: 5,
-            });
-
-            const finalUrl = response.request?.res?.responseUrl || url;
-            const html = response.data;
-            const title = extractTitle(html, finalUrl);
-            const text = extractMainText(html, finalUrl).slice(0, this.settings.perPageCharLimit);
+            const result = await fetchAndExtract(url, this.settings);
 
             this.progress('Fetch URL: completed.');
 
             return [
                 'fetch_url_result:',
-                `url: ${finalUrl}`,
-                `title: ${title || '(untitled)'}`,
-                `text:\n${text || '(no extractable text)'}`,
+                `url: ${result.finalUrl}`,
+                `title: ${result.title || '(untitled)'}`,
+                `text:\n${result.text || '(no extractable text)'}`,
             ].join('\n');
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
