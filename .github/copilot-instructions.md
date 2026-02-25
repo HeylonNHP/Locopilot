@@ -106,6 +106,20 @@ Security / UX notes:
 - Avoid running commands that expose secrets or modify critical system state unless the user explicitly understands the risk.
 - The interrupt mechanism (`requestInterrupt`, `clearInterrupt`, `isInterruptRequested`) lives in `tools.ts`. The SIGINT handler is swapped in/out around the tool-call loop in `index.ts` so it never interferes with normal exit behaviour.
 
+## Markdown rendering
+
+Feature summary:
+- AI responses are rendered into terminal-friendly ANSI sequences using `marked` and `marked-terminal`.
+- Supports headings, bold/italic text, lists, code blocks, and tables.
+- Because rendering requires the full markdown context (especially for tables), responses are buffered and displayed all at once instead of being streamed character-by-character.
+- While the AI is generating, the live status line updates with the character count to provide a sense of progress.
+- Raw assistant text is sanitized (to remove any AI-generated ANSI codes) before being passed to the renderer.
+
+Implementation notes:
+- Rendering logic is isolated in `markdownRenderer.ts`.
+- `index.ts` handles buffering the stream into `streamedAssistantContent` and calls `renderMarkdown()` before printing.
+- If a response is interrupted, the partial content is still rendered to show what was received.
+
 ## Session / conversation history (SQLite)
 
 Feature summary:
@@ -230,6 +244,11 @@ Security / UX notes:
     - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
 
 ## Change History
+
+- 2026-02-25: Added Markdown rendering for AI responses
+  - Files: `markdownRenderer.ts` (new), `index.ts`, `package.json`, `.github/copilot-instructions.md`
+  - Summary: Integrated `marked` and `marked-terminal` to render AI responses with support for tables, bold text, and code blocks. Switched from live streaming to buffered rendering for better layout consistency.
+  - Intent: Improve terminal readability of complex AI outputs without losing progress visibility (character count is shown in status line).
 
 - 2026-02-25: Added SQLite session persistence
   - Files: `history.ts` (new), `index.ts`, `package.json`, `.github/copilot-instructions.md`

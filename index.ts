@@ -28,6 +28,7 @@ import {
 import type { ChatMessage, OllamaModel } from './ollamaApi.js';
 import { compactHistory, printCompactStats } from './compact.js';
 import { summarizeCommandError } from './errorSummary.js';
+import { renderMarkdown } from './markdownRenderer.js';
 import {
     createSession,
     renameSession,
@@ -383,7 +384,6 @@ async function startChat(
                 const streamAbortController = new AbortController();
                 const streamedToolCalls: NonNullable<ChatMessage['tool_calls']> = [];
                 let streamedAssistantContent = '';
-                let printedAssistantPrefix = false;
                 let interruptedDuringStream = false;
 
                 registerInterruptHandler(() => {
@@ -406,13 +406,8 @@ async function startChat(
 
                         const chunkContent = chunk.message.content ?? '';
                         if (chunkContent.length > 0) {
-                            if (!printedAssistantPrefix) {
-                                clearLiveStatus();
-                                process.stdout.write(chalk.yellow('\nAI > '));
-                                printedAssistantPrefix = true;
-                            }
-                            process.stdout.write(sanitize(chunkContent));
                             streamedAssistantContent += chunkContent;
+                            refreshTokenStatus(`AI is responding... (${streamedAssistantContent.length} chars)`);
                         }
 
                         if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
@@ -430,12 +425,20 @@ async function startChat(
                 }
 
                 if (interruptedDuringStream) {
-                    if (printedAssistantPrefix) process.stdout.write('\n');
+                    if (streamedAssistantContent.length > 0) {
+                        clearLiveStatus();
+                        process.stdout.write(chalk.yellow('\nAI (interrupted) > '));
+                        process.stdout.write(renderMarkdown(sanitize(streamedAssistantContent)));
+                        process.stdout.write('\n');
+                    }
                     continue;
                 }
 
-                if (printedAssistantPrefix) {
-                    process.stdout.write('\n\n');
+                if (streamedAssistantContent.length > 0) {
+                    clearLiveStatus();
+                    process.stdout.write(chalk.yellow('\nAI > '));
+                    process.stdout.write(renderMarkdown(sanitize(streamedAssistantContent)));
+                    process.stdout.write('\n');
                 }
 
                 const assistantMessage: ChatMessage = {
