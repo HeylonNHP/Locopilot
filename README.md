@@ -36,7 +36,7 @@ A simple CLI tool to chat with a Large Language Model via Ollama.
 ## Configuration
 
 - **`config.json`**: This file is created automatically on the first run and is ignored by Git. It stores your Ollama connection details, the last model used, the default context length (`num_ctx`), your YOLO mode preference, and web-search defaults.
-- **Context Length (`num_ctx`)**: The default context length is 65536. This setting is stored in your `config.json` and can be manually edited if needed.
+- **Context Length (`num_ctx`)**: The default context length is 131072 (128k). This setting is stored in your `config.json` and can be manually edited if needed.
 - **Web Search Defaults**: You can configure max queries per web-search call and results per query at startup. These are persisted in `config.json`.
 
 ## Features

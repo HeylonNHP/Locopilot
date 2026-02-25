@@ -32,7 +32,7 @@ import { countMessagesTokens } from './tokenizer.js';
 import { updateLiveStatus, clearLiveStatus } from './statusLine.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
-const DEFAULT_NUM_CTX = 65536;
+const DEFAULT_NUM_CTX = 131072;
 const DEFAULT_WEB_SEARCH_MAX_QUERIES = 3;
 const DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY = 3;
 
