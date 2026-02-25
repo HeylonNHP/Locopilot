@@ -441,55 +441,9 @@ export function getToolSystemPrompt(): string {
     );
 }
 
-/**
- * Heuristic to detect assistant replies that look like plain-text commands
- * or permission requests instead of actual tool-calls. Kept here so the
- * tools module fully describes its own runtime behaviour.
- */
-export function shouldNudgeForToolCall(content: string): boolean {
-    const normalized = content.toLowerCase().trim();
-
-    // Short confirmations / acknowledgements are not uncertainty signals.
-    // Avoid nudging on brief replies like "Understood", "Got it", "Thanks", etc.
-    if (normalized.length > 0 && normalized.length < 60) {
-        const ackPatterns = [
-            'understood',
-            'got it',
-            'i will keep that in mind',
-            'will keep that in mind',
-            'gotcha',
-            'ok',
-            'okay',
-            'thanks',
-            'thank you'
-        ];
-        for (const p of ackPatterns) {
-            if (normalized === p || normalized.startsWith(p + ' ') || normalized.startsWith(p + '.')) {
-                return false;
-            }
-        }
-    }
-
-    return (
-        normalized === '' ||
-        normalized.includes('```bash') ||
-        normalized.includes('```sh') ||
-        normalized.includes('would you like me to run') ||
-        normalized.includes('let me execute') ||
-        normalized.includes('executing...') ||
-        normalized.includes('i cannot access') ||
-        normalized.includes('i do not have access')
-    );
-}
-
-export async function shouldNudgeForToolCallWithModel(
-    content: string,
-    _baseUrl: string,
-    _model: string,
-    _numCtx: number,
-): Promise<boolean> {
-    return shouldNudgeForToolCall(content);
-}
+// Automatic nudging was removed in favour of a manual `/nudge` command.
+// The manual nudge is implemented in `index.ts` and the user-facing
+// reminder text is provided by `getToolUseNudge()` below.
 
 export function getToolUseNudge(): string {
     return (

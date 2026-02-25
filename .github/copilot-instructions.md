@@ -245,6 +245,11 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-02-26: Replaced automatic nudging with manual /nudge command
+  - Files: `index.ts`, `tools.ts`, `.github/copilot-instructions.md`
+  - Summary: Removed the heuristic-based automatic tool-use nudging and introduced a manual `/nudge` slash command.
+  - Intent: Provide users with more control over when to prompt the AI for tool usage, reducing unsolicited "nudge" messages while keeping the feature available on demand.
+
 - 2026-02-25: Added Markdown rendering for AI responses
   - Files: `markdownRenderer.ts` (new), `index.ts`, `package.json`, `.github/copilot-instructions.md`
   - Summary: Integrated `marked` and `marked-terminal` to render AI responses with support for tables, bold text, and code blocks. Switched from live streaming to buffered rendering for better layout consistency.

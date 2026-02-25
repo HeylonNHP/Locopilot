@@ -6,7 +6,6 @@ import {
     TOOLS,
     handleToolCall,
     getToolSystemPrompt,
-    shouldNudgeForToolCallWithModel,
     getToolUseNudge,
     sanitize,
     setYoloMode,
@@ -160,6 +159,7 @@ async function startChat(
         { name: chalk.blue('/compact') + '  - Summarise conversation history to save context', value: '/compact' },
         { name: chalk.blue('/sessions') + ' - List and switch to a previous conversation', value: '/sessions' },
         { name: chalk.blue('/delete') + '   - Delete a saved conversation', value: '/delete' },
+        { name: chalk.blue('/nudge') + '    - Manually remind the AI to use tools', value: '/nudge' },
         { name: chalk.blue('/exit') + '     - Exit chat', value: '/exit' },
         { name: chalk.blue('/help') + '     - Show help', value: '/help' }
     ];
@@ -349,14 +349,19 @@ async function startChat(
             continue;
         }
 
-        // Add the user message to history and send to /api/chat
-        messages.push({ role: 'user', content: prompt });
+        if (prompt.trim().startsWith('/nudge')) {
+            messages.push({ role: 'user', content: getToolUseNudge() });
+            console.log(chalk.dim('\n[Manual nudge sent to AI...]\n'));
+        } else {
+            // Add the user message to history and send to /api/chat
+            messages.push({ role: 'user', content: prompt });
 
-        // Name the session from the first user message.
-        if (!sessionNamed) {
-            sessionNamed = true;
-            const name = prompt.trim().slice(0, 60);
-            renameSession(currentSessionId, name);
+            // Name the session from the first user message.
+            if (!sessionNamed) {
+                sessionNamed = true;
+                const name = prompt.trim().slice(0, 60);
+                renameSession(currentSessionId, name);
+            }
         }
 
         refreshTokenStatus('AI request queued...');
@@ -497,16 +502,6 @@ async function startChat(
                                 'Your last response was empty. Provide a direct answer now. ' +
                                 'If commands are needed, call run_command. If commands already ran, summarize their output and errors.'
                         });
-                        continue;
-                    }
-
-                    if (
-                        !sentToolRetryNudge &&
-                        assistantContent.length > 0 &&
-                        await shouldNudgeForToolCallWithModel(assistantMessage.content, baseUrl, currentModel, numCtx)
-                    ) {
-                        sentToolRetryNudge = true;
-                        messages.push({ role: 'user', content: getToolUseNudge() });
                         continue;
                     }
 
