@@ -47,3 +47,6 @@ build/
 
 # Local config (Ollama host/port, lastModel)
 config.json
+
+# Local SQLite database
+locopilot.db*
