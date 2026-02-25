@@ -28,6 +28,15 @@ import {
 import type { ChatMessage, OllamaModel } from './ollamaApi.js';
 import { compactHistory, printCompactStats } from './compact.js';
 import { summarizeCommandError } from './errorSummary.js';
+import {
+    createSession,
+    renameSession,
+    listSessions,
+    deleteSession,
+    updateSessionMessages,
+    loadSessionMessages,
+} from './history.js';
+import type { Session } from './history.js';
 import { countMessagesTokens } from './tokenizer.js';
 import { updateLiveStatus, clearLiveStatus } from './statusLine.js';
 
@@ -119,8 +128,15 @@ async function getModels(baseUrl: string): Promise<string[]> {
     }
 }
 
-async function startChat(baseUrl: string, model: string, numCtx: number): Promise<void> {
+async function startChat(
+    baseUrl: string,
+    model: string,
+    numCtx: number,
+    sessionId: number,
+    preloadedMessages?: import('./ollamaApi.js').ChatMessage[],
+): Promise<void> {
     let currentModel = model;
+    let currentSessionId = sessionId;
     let config = await loadConfig() || { baseUrl };
     const models = await getModels(baseUrl);
     console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
@@ -139,10 +155,12 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
     }
 
     const slashCommands: SlashCommand[] = [
-        { name: chalk.blue('/model') + '   - Switch LLM model', value: '/model' },
-        { name: chalk.blue('/compact') + ' - Summarise conversation history to save context', value: '/compact' },
-        { name: chalk.blue('/exit') + '    - Exit chat', value: '/exit' },
-        { name: chalk.blue('/help') + '    - Show help', value: '/help' }
+        { name: chalk.blue('/model') + '    - Switch LLM model', value: '/model' },
+        { name: chalk.blue('/compact') + '  - Summarise conversation history to save context', value: '/compact' },
+        { name: chalk.blue('/sessions') + ' - List and switch to a previous conversation', value: '/sessions' },
+        { name: chalk.blue('/delete') + '   - Delete a saved conversation', value: '/delete' },
+        { name: chalk.blue('/exit') + '     - Exit chat', value: '/exit' },
+        { name: chalk.blue('/help') + '     - Show help', value: '/help' }
     ];
 
     // Persistent message history for the /api/chat endpoint.
@@ -152,9 +170,15 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
         'You are Locopilot, a helpful AI assistant running inside a terminal application.\n\n' +
         getToolSystemPrompt();
 
-    const messages: ChatMessage[] = [
-        { role: 'system', content: systemPrompt },
-    ];
+    const messages: ChatMessage[] = preloadedMessages && preloadedMessages.length > 0
+        ? [...preloadedMessages]
+        : [{ role: 'system', content: systemPrompt }];
+
+    // Whether the session name has been set from the first user message.
+    let sessionNamed = preloadedMessages !== undefined && preloadedMessages.length > 0;
+
+    // Persists the current in-memory message list to the database.
+    const saveSession = () => updateSessionMessages(currentSessionId, messages);
 
     const refreshTokenStatus = (phase: string) => {
         const tokensUsed = countMessagesTokens(messages, currentModel);
@@ -237,17 +261,103 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
             try {
                 const result = await compactHistory(baseUrl, currentModel, messages, numCtx);
                 printCompactStats(result.stats);
-                // Replace live history in-place
+                // Replace live history in-place and persist.
                 messages.length = 0;
                 messages.push(...result.newMessages);
+                saveSession();
             } catch (err) {
                 console.error(chalk.red('Compaction failed:'), await getOllamaApiErrorMessage(err));
             }
             continue;
         }
 
+        if (prompt.trim().startsWith('/sessions')) {
+            const sessions = listSessions();
+            if (sessions.length === 0) {
+                console.log(chalk.yellow('No saved sessions yet.\n'));
+                continue;
+            }
+            // Save current state before switching.
+            saveSession();
+            let picked: number | null = null;
+            try {
+                picked = await select<number>({
+                    message: 'Select a session to switch to:',
+                    choices: sessions.map((s: Session) => ({
+                        name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
+                        value: s.id,
+                    })),
+                    pageSize: 15,
+                });
+            } catch (e: unknown) {
+                if (e instanceof Error && e.name === 'ExitPromptError') {
+                    console.log(chalk.yellow('Session switch cancelled.'));
+                    continue;
+                }
+                throw e;
+            }
+            if (picked !== null) {
+                const loaded = loadSessionMessages(picked);
+                messages.length = 0;
+                messages.push(...loaded);
+                currentSessionId = picked;
+                sessionNamed = true;
+                const pickedSession = sessions.find((s: Session) => s.id === picked);
+                console.log(chalk.green(`\nSwitched to session: ${pickedSession?.name ?? picked}\n`));
+            }
+            continue;
+        }
+
+        if (prompt.trim().startsWith('/delete')) {
+            const sessions = listSessions();
+            if (sessions.length === 0) {
+                console.log(chalk.yellow('No saved sessions to delete.\n'));
+                continue;
+            }
+            let toDelete: number | null = null;
+            try {
+                toDelete = await select<number>({
+                    message: 'Select a session to delete:',
+                    choices: sessions.map((s: Session) => ({
+                        name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
+                        value: s.id,
+                    })),
+                    pageSize: 15,
+                });
+            } catch (e: unknown) {
+                if (e instanceof Error && e.name === 'ExitPromptError') {
+                    console.log(chalk.yellow('Deletion cancelled.'));
+                    continue;
+                }
+                throw e;
+            }
+            if (toDelete !== null) {
+                const target = sessions.find((s: Session) => s.id === toDelete);
+                deleteSession(toDelete);
+                console.log(chalk.green(`\nDeleted session: ${target?.name ?? toDelete}\n`));
+                // If the deleted session was active, start a fresh one.
+                if (toDelete === currentSessionId) {
+                    const newId = createSession('New Session', currentModel);
+                    currentSessionId = newId;
+                    sessionNamed = false;
+                    messages.length = 0;
+                    messages.push({ role: 'system', content: systemPrompt });
+                    console.log(chalk.dim('Started a new session.\n'));
+                }
+            }
+            continue;
+        }
+
         // Add the user message to history and send to /api/chat
         messages.push({ role: 'user', content: prompt });
+
+        // Name the session from the first user message.
+        if (!sessionNamed) {
+            sessionNamed = true;
+            const name = prompt.trim().slice(0, 60);
+            renameSession(currentSessionId, name);
+        }
+
         refreshTokenStatus('AI request queued...');
         clearInterrupt();
         let sentToolRetryNudge = false;
@@ -264,6 +374,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                     console.log(chalk.yellow('AI loop interrupted by user.\n'));
                     // Remove the last user message so the conversation stays consistent
                     messages.pop();
+                    saveSession();
                     break;
                 }
 
@@ -410,6 +521,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
                     config.lastModel = currentModel;
                     config.numCtx = numCtx;
                     await saveConfig(config);
+                    saveSession();
                     break;
                 }
             }
@@ -418,6 +530,7 @@ async function startChat(baseUrl: string, model: string, numCtx: number): Promis
             console.error(chalk.red('Error communicating with Ollama:'), await getOllamaApiErrorMessage(error));
             // Remove the failed user message so conversation stays consistent
             messages.pop();
+            saveSession();
         } finally {
             clearLiveStatus();
             removeKeyInterruptListener();
@@ -541,7 +654,43 @@ async function main(): Promise<void> {
         resultsPerQuery: configData.webSearch.resultsPerQuery,
     });
 
-    await startChat(config.baseUrl, selectedModel, selectedNumCtx);
+    // ── Session management ──────────────────────────────────────────────
+    const savedSessions = listSessions();
+    let startingSessionId: number;
+    let startingMessages: ChatMessage[] | undefined;
+
+    if (savedSessions.length > 0) {
+        let sessionChoice: 'new' | number;
+        try {
+            sessionChoice = await select<'new' | number>({
+                message: 'Start a new conversation or resume a previous one?',
+                choices: [
+                    { name: chalk.green('+ New conversation'), value: 'new' },
+                    ...savedSessions.slice(0, 10).map((s: Session) => ({
+                        name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
+                        value: s.id as 'new' | number,
+                    })),
+                ],
+                pageSize: 12,
+            });
+        } catch (e: unknown) {
+            if (e instanceof Error && e.name === 'ExitPromptError') process.exit(0);
+            throw e;
+        }
+
+        if (sessionChoice === 'new') {
+            startingSessionId = createSession('New Session', selectedModel);
+        } else {
+            startingSessionId = sessionChoice;
+            startingMessages = loadSessionMessages(startingSessionId);
+            console.log(chalk.dim(`Resuming session [${startingSessionId}] with ${startingMessages.length} messages.`));
+        }
+    } else {
+        startingSessionId = createSession('New Session', selectedModel);
+    }
+    // ────────────────────────────────────────────────────────────────────
+
+    await startChat(config.baseUrl, selectedModel, selectedNumCtx, startingSessionId, startingMessages);
 }
 
 process.on('SIGINT', () => {

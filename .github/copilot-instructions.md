@@ -106,6 +106,27 @@ Security / UX notes:
 - Avoid running commands that expose secrets or modify critical system state unless the user explicitly understands the risk.
 - The interrupt mechanism (`requestInterrupt`, `clearInterrupt`, `isInterruptRequested`) lives in `tools.ts`. The SIGINT handler is swapped in/out around the tool-call loop in `index.ts` so it never interferes with normal exit behaviour.
 
+## Session / conversation history (SQLite)
+
+Feature summary:
+- All conversations are automatically persisted to `locopilot.db` (SQLite, WAL mode) in the working directory.
+- On startup the user is prompted to start a new conversation or resume one of the ten most-recent saved sessions.
+- Sessions are auto-named from the first user message (up to 60 characters) and display the model name and last-updated timestamp.
+- `/sessions` — lists all saved sessions and lets the user switch to any of them mid-chat; the current session is saved before switching.
+- `/delete`   — lists all saved sessions and lets the user delete any one; if the active session is deleted a fresh session is started automatically.
+- After every complete AI response, after every interrupt/error recovery, and after every `/compact`, the full message array for the active session is written to the database via `updateSessionMessages`.
+
+Implementation notes:
+- All SQLite logic lives in `history.ts` (`createSession`, `renameSession`, `listSessions`, `deleteSession`, `updateSessionMessages`, `loadSessionMessages`).
+- `index.ts` holds a `saveSession()` closure that calls `updateSessionMessages(currentSessionId, messages)` at each save point.
+- `better-sqlite3` is used for synchronous, dependency-light database access; its types are in `@types/better-sqlite3`.
+- The active session id is held in `let currentSessionId` inside `startChat`; switching sessions reassigns this variable in-place and replaces the live `messages` array.
+
+Security / UX notes:
+- `locopilot.db` is a plain file stored locally; it inherits whatever filesystem permissions the working directory has.
+- Do not store secrets or credentials in conversation messages if you are concerned about local file security.
+- Deleting a session is permanent and irreversible; no confirmation prompt is currently shown — consider adding one if sessions become large.
+
 ## Conversation compaction (/compact)
 
 Feature summary:
@@ -209,6 +230,11 @@ Security / UX notes:
     - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
 
 ## Change History
+
+- 2026-02-25: Added SQLite session persistence
+  - Files: `history.ts` (new), `index.ts`, `package.json`, `.github/copilot-instructions.md`
+  - Summary: Added `history.ts` backed by `better-sqlite3` to persist conversation sessions. Startup now offers new-or-resume; `/sessions` and `/delete` slash commands added. Messages are saved after each complete AI exchange, interrupt, error, and compaction.
+  - Intent: Allow users to revisit previous conversations across application restarts without manual export/import.
 
 - 2026-02-25: Refactored web tools for DRYness
   - Files: `tools/webSearchTool.ts`, `tools/fetchUrlTool.ts`, `tools/htmlExtractor.ts` (new), `tools.ts`
