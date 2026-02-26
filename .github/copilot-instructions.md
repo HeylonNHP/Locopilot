@@ -245,6 +245,11 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-02-26: Kept slash autocomplete while removing duplicate prompt echo
+  - Files: `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Restored `@inquirer/prompts` `search`-based input for slash-command autocomplete and applied theme overrides to suppress the prompt's final "done" echo line.
+  - Intent: Preserve command discoverability and fast slash selection without showing the user's typed message twice in the terminal.
+
 - 2026-02-26: Replaced automatic nudging with manual /nudge command
   - Files: `index.ts`, `tools.ts`, `.github/copilot-instructions.md`
   - Summary: Removed the heuristic-based automatic tool-use nudging and introduced a manual `/nudge` slash command.

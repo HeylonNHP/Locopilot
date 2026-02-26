@@ -196,7 +196,14 @@ async function startChat(
         try {
             prompt = await search({
                 message: chalk.cyan('You >'),
-                theme: { prefix: '' },
+                theme: {
+                    prefix: { idle: '', done: '' },
+                    style: {
+                        message: (text: string, status: 'idle' | 'done' | 'loading') =>
+                            status === 'done' ? '' : text,
+                        answer: () => '',
+                    },
+                },
                 source: async (inputArg: string | undefined) => {
                     if (!inputArg) {
                         return [{ name: chalk.dim('Type a message or / for commands...'), value: '' }];
