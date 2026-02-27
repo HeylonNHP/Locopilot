@@ -318,7 +318,10 @@ async function startChat(
                 currentSessionId = picked;
                 sessionNamed = true;
                 const pickedSession = sessions.find((s: Session) => s.id === picked);
-                console.log(chalk.green(`\nSwitched to session: ${pickedSession?.name ?? picked}\n`));
+                if (pickedSession) {
+                    currentModel = pickedSession.model;
+                }
+                console.log(chalk.green(`\nSwitched to session: ${pickedSession?.name ?? picked} (Model: ${currentModel})\n`));
             }
             continue;
         }
@@ -378,6 +381,7 @@ async function startChat(
             }
         }
 
+        const historyLengthBeforeTurn = messages.length - 1;
         refreshTokenStatus('AI request queued...');
         clearInterrupt();
         let sentToolRetryNudge = false;
@@ -392,8 +396,8 @@ async function startChat(
                 if (isInterruptRequested()) {
                     clearLiveStatus();
                     console.log(chalk.yellow('AI loop interrupted by user.\n'));
-                    // Remove the last user message so the conversation stays consistent
-                    messages.pop();
+                    // Roll back history to before the turn started
+                    messages.length = historyLengthBeforeTurn;
                     saveSession();
                     break;
                 }
@@ -541,8 +545,8 @@ async function startChat(
         } catch (error) {
             clearLiveStatus();
             console.error(chalk.red('Error communicating with Ollama:'), await getOllamaApiErrorMessage(error));
-            // Remove the failed user message so conversation stays consistent
-            messages.pop();
+            // Roll back history to before the turn started so conversation stays consistent
+            messages.length = historyLengthBeforeTurn;
             saveSession();
         } finally {
             clearLiveStatus();
@@ -692,6 +696,15 @@ async function main(): Promise<void> {
             startingSessionId = createSession('New Session', selectedModel);
         } else {
             startingSessionId = sessionChoice;
+            const resumedSession = savedSessions.find(s => s.id === startingSessionId);
+            if (resumedSession) {
+                if (models.includes(resumedSession.model)) {
+                    selectedModel = resumedSession.model;
+                } else {
+                    console.log(chalk.yellow(`\n⚠️ Resumed session used model '${resumedSession.model}', which is not currently available.`));
+                    console.log(chalk.yellow(`Continuing with '${selectedModel}' instead.\n`));
+                }
+            }
             startingMessages = loadSessionMessages(startingSessionId);
             console.log(chalk.dim(`Resuming session [${startingSessionId}] with ${startingMessages.length} messages.`));
         }
