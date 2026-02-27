@@ -233,14 +233,21 @@ async function startChat(
         }
 
         if (prompt.trim().startsWith('/model')) {
+            console.log(chalk.blue('\nRefreshing models from Ollama...'));
+            const latestModels = await getModels(baseUrl);
+            if (latestModels.length === 0) {
+                console.log(chalk.red('No models found. Please pull a model first.'));
+                continue;
+            }
+
             console.log(chalk.green('\nAvailable models:'));
-            models.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
+            latestModels.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
 
             let selectedModel: string | null = null;
             try {
                 selectedModel = await select({
                     message: 'Select a model to chat with:',
-                    choices: models.map((m: string) => ({ name: m, value: m })),
+                    choices: latestModels.map((m: string) => ({ name: m, value: m })),
                     pageSize: 10
                 });
             } catch (e: unknown) {
