@@ -545,15 +545,12 @@ async function startChat(
 }
 
 async function main(): Promise<void> {
+    const yoloEnv = process.env.YOLO?.toLowerCase();
     let yoloActive = process.argv.some(arg => arg === '--yolo' || arg === '-y') ||
-                     process.env.YOLO === 'true' ||
-                     process.env.YOLO === '1';
+                     yoloEnv === 'true' ||
+                     yoloEnv === '1';
 
     const config = await setupOllama();
-    if (!config) {
-        console.log(chalk.yellow('Exiting Locopilot.'));
-        process.exit(0);
-    }
 
     let configData = await loadConfig();
 
