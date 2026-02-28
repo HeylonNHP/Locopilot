@@ -453,7 +453,10 @@ async function startChat(
                         process.stdout.write(renderMarkdown(sanitize(streamedAssistantContent)));
                         process.stdout.write('\n');
                     }
-                    continue;
+                    // Roll back history to before the turn started and break out of the loop
+                    messages.length = historyLengthBeforeTurn;
+                    saveSession();
+                    break;
                 }
 
                 if (streamedAssistantContent.trim().length > 0) {
