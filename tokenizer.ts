@@ -2,14 +2,19 @@ import { encoding_for_model, get_encoding, Tiktoken } from '@dqbd/tiktoken';
 import type { ChatMessage } from './ollamaApi.js';
 
 let encoder: Tiktoken | null = null;
+let currentEncoderModel: string | null = null;
 
 function getEncoder(model: string): Tiktoken {
-    if (encoder) return encoder;
+    if (encoder && currentEncoderModel === model) return encoder;
 
     try {
         encoder = encoding_for_model(model as Parameters<typeof encoding_for_model>[0]);
+        currentEncoderModel = model;
     } catch {
-        encoder = get_encoding('cl100k_base');
+        if (!encoder) {
+            encoder = get_encoding('cl100k_base');
+            currentEncoderModel = 'cl100k_base';
+        }
     }
 
     return encoder;
