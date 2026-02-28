@@ -245,6 +245,11 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-02-28: Fixed multiple technical bugs and performance issues
+  - Files: `index.ts`, `tokenizer.ts`, `history.ts`, `tools/htmlExtractor.ts`, `tools/webSearchTool.ts`
+  - Summary: Fixed dead variables, interrupt guards, token encoder staleness, session JSON parsing, and redundant HTML extraction. Corrected string concatenation in web search system prompt.
+  - Intent: Improve application stability, accuracy of token counts, and performance of web tool execution.
+
 - 2026-02-26: Kept slash autocomplete while removing duplicate prompt echo
   - Files: `index.ts`, `.github/copilot-instructions.md`
   - Summary: Restored `@inquirer/prompts` `search`-based input for slash-command autocomplete and applied theme overrides to suppress the prompt's final "done" echo line.
