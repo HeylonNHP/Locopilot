@@ -31,6 +31,19 @@ export interface OllamaToolCall {
     };
 }
 
+export interface OllamaToolDefinition {
+    type: 'function';
+    function: {
+        name: string;
+        description: string;
+        parameters: {
+            type: 'object';
+            properties: Record<string, unknown>;
+            required?: string[];
+        };
+    };
+}
+
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
@@ -45,6 +58,29 @@ export interface ChatApiResponse {
     done_reason?: string;
 }
 
+interface ChatParams {
+    model: string;
+    messages: ChatMessage[];
+    tools: OllamaToolDefinition[];
+    numCtx: number;
+}
+
+export interface StreamChatParams extends ChatParams {
+    signal?: AbortSignal;
+}
+
+function buildChatPayload(params: ChatParams, stream: boolean) {
+    return {
+        model: params.model,
+        messages: params.messages,
+        tools: params.tools,
+        stream,
+        options: {
+            num_ctx: params.numCtx,
+        },
+    };
+}
+
 export async function validateOllamaConnection(baseUrl: string, timeoutMs: number = 2000): Promise<void> {
     await axios.get<TagsResponse>(`${baseUrl}/api/tags`, { timeout: timeoutMs });
 }
@@ -56,35 +92,19 @@ export async function fetchOllamaModels(baseUrl: string): Promise<OllamaModel[]>
 
 export async function sendOllamaChat(
     baseUrl: string,
-    params: {
-        model: string;
-        messages: ChatMessage[];
-        tools: unknown[];
-        numCtx: number;
-    },
+    params: ChatParams,
 ): Promise<ChatApiResponse> {
-    const response = await axios.post<ChatApiResponse>(`${baseUrl}/api/chat`, {
-        model: params.model,
-        messages: params.messages,
-        tools: params.tools,
-        stream: false,
-        options: {
-            num_ctx: params.numCtx,
-        },
-    });
+    const response = await axios.post<ChatApiResponse>(
+        `${baseUrl}/api/chat`,
+        buildChatPayload(params, false),
+    );
 
     return response.data;
 }
 
 export async function* sendOllamaChatStream(
     baseUrl: string,
-    params: {
-        model: string;
-        messages: ChatMessage[];
-        tools: unknown[];
-        numCtx: number;
-        signal?: AbortSignal;
-    },
+    params: StreamChatParams,
 ): AsyncGenerator<ChatApiResponse> {
     const requestConfig: { responseType: 'stream'; signal?: AbortSignal } = {
         responseType: 'stream',
@@ -93,15 +113,11 @@ export async function* sendOllamaChatStream(
         requestConfig.signal = params.signal;
     }
 
-    const response = await axios.post<NodeJS.ReadableStream>(`${baseUrl}/api/chat`, {
-        model: params.model,
-        messages: params.messages,
-        tools: params.tools,
-        stream: true,
-        options: {
-            num_ctx: params.numCtx,
-        },
-    }, requestConfig);
+    const response = await axios.post<NodeJS.ReadableStream>(
+        `${baseUrl}/api/chat`,
+        buildChatPayload(params, true),
+        requestConfig,
+    );
 
     const lineReader = createInterface({
         input: response.data as NodeJS.ReadableStream,
