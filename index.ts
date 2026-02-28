@@ -138,7 +138,6 @@ async function startChat(
     let currentModel = model;
     let currentSessionId = sessionId;
     let config = await loadConfig() || { baseUrl };
-    const models = await getModels(baseUrl);
     console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
     console.log(chalk.dim(`(Using context length num_ctx=${numCtx})`));
     if (isYolo()) {
