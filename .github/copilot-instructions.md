@@ -245,6 +245,11 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-02-28: Extracted slash command logic into `slashCommands.ts`
+  - Files: `slashCommands.ts` (new), `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Moved all slash-command handlers, the `SLASH_COMMANDS` array, `COMMAND_HANDLERS` registry, and shared utilities (`withExitGuard`, `replaceMessages`, `getModels`) plus the `Config`, `ChatContext`, `SlashCommand`, and `SlashHandler` types into a dedicated `slashCommands.ts` module. Updated `index.ts` to import from the new module.
+  - Intent: Reduce `index.ts` line count and improve separation of concerns by isolating command definitions and their handlers.
+
 - 2026-02-28: Refactored slash commands into a registry and fixed regressions
   - Files: `index.ts`, `.github/copilot-instructions.md`
   - Summary: Moved slash-command handling (`/model`, `/compact`, `/sessions`, `/delete`, `/nudge`, `/help`, `/exit`) into a command-handler registry with shared chat context. Fixed post-refactor TypeScript issues (duplicate `historyLengthBeforeTurn` declaration and safe command parsing).
