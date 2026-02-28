@@ -63,6 +63,22 @@ interface SlashCommand {
     value: string;
 }
 
+interface ChatContext {
+    baseUrl: string;
+    currentModel: string;
+    numCtx: number;
+    messages: ChatMessage[];
+    currentSessionId: number;
+    config: Config;
+    systemPrompt: string;
+    saveSession: () => void;
+    refreshTokenStatus: (phase: string) => void;
+    updateModel: (model: string) => Promise<void>;
+    updateSession: (sessionId: number, messages: ChatMessage[], sessionNamed: boolean) => void;
+}
+
+type SlashHandler = (ctx: ChatContext) => Promise<boolean | 'break'>;
+
 // --- Functions ---
 
 async function loadConfig(): Promise<Config | null> {
@@ -80,6 +96,178 @@ async function loadConfig(): Promise<Config | null> {
 async function saveConfig(config: Config): Promise<void> {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
+
+// --- Command Handlers ---
+
+const HELP_HANDLER: SlashHandler = async (ctx) => {
+    console.log(chalk.blue('\nAvailable Commands:'));
+    SLASH_COMMANDS.forEach(cmd => console.log(`  ${cmd.name}`));
+    console.log('');
+    return true;
+};
+
+const MODEL_HANDLER: SlashHandler = async (ctx) => {
+    console.log(chalk.blue('\nRefreshing models from Ollama...'));
+    const latestModels = await getModels(ctx.baseUrl);
+    if (latestModels.length === 0) {
+        console.log(chalk.red('No models found. Please pull a model first.'));
+        return true;
+    }
+
+    console.log(chalk.green('\nAvailable models:'));
+    latestModels.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
+
+    let selectedModel: string | null = null;
+    try {
+        selectedModel = await select({
+            message: 'Select a model to chat with:',
+            choices: latestModels.map((m: string) => ({ name: m, value: m })),
+            pageSize: 10
+        });
+    } catch (e: unknown) {
+        if (e instanceof Error && e.name === 'ExitPromptError') {
+            console.log(chalk.yellow('Model selection cancelled.'));
+            return true;
+        }
+        throw e;
+    }
+
+    if (selectedModel) {
+        await ctx.updateModel(selectedModel);
+    }
+    return true;
+};
+
+const COMPACT_HANDLER: SlashHandler = async (ctx) => {
+    if (ctx.messages.length <= 1) {
+        console.log(chalk.yellow('Nothing to compact yet — the conversation history is empty.\n'));
+        return true;
+    }
+    try {
+        ctx.refreshTokenStatus('AI request queued for compaction...');
+        const result = await compactHistory(
+            ctx.baseUrl,
+            ctx.currentModel,
+            ctx.messages,
+            ctx.numCtx,
+            (status) => ctx.refreshTokenStatus(status),
+        );
+        clearLiveStatus();
+        printCompactStats(result.stats);
+        
+        // Re-initialize message array while keeping reference
+        ctx.messages.length = 0;
+        ctx.messages.push(...result.newMessages);
+        ctx.saveSession();
+    } catch (err) {
+        clearLiveStatus();
+        console.error(chalk.red('Compaction failed:'), await getOllamaApiErrorMessage(err));
+    }
+    return true;
+};
+
+const SESSIONS_HANDLER: SlashHandler = async (ctx) => {
+    const sessions = listSessions();
+    if (sessions.length === 0) {
+        console.log(chalk.yellow('No saved sessions yet.\n'));
+        return true;
+    }
+    // Save current state before switching.
+    ctx.saveSession();
+    let picked: number | null = null;
+    try {
+        picked = await select<number>({
+            message: 'Select a session to switch to:',
+            choices: sessions.map((s: Session) => ({
+                name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
+                value: s.id,
+            })),
+            pageSize: 15,
+        });
+    } catch (e: unknown) {
+        if (e instanceof Error && e.name === 'ExitPromptError') {
+            console.log(chalk.yellow('Session switch cancelled.'));
+            return true;
+        }
+        throw e;
+    }
+    if (picked !== null) {
+        const loaded = loadSessionMessages(picked);
+        const pickedSession = sessions.find((s: Session) => s.id === picked);
+        if (pickedSession) {
+            await ctx.updateModel(pickedSession.model);
+        }
+        ctx.updateSession(picked, loaded, true);
+        console.log(chalk.green(`\nSwitched to session: ${pickedSession?.name ?? picked} (Model: ${ctx.currentModel})\n`));
+    }
+    return true;
+};
+
+const DELETE_HANDLER: SlashHandler = async (ctx) => {
+    const sessions = listSessions();
+    if (sessions.length === 0) {
+        console.log(chalk.yellow('No saved sessions to delete.\n'));
+        return true;
+    }
+    let toDelete: number | null = null;
+    try {
+        toDelete = await select<number>({
+            message: 'Select a session to delete:',
+            choices: sessions.map((s: Session) => ({
+                name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
+                value: s.id,
+            })),
+            pageSize: 15,
+        });
+    } catch (e: unknown) {
+        if (e instanceof Error && e.name === 'ExitPromptError') {
+            console.log(chalk.yellow('Deletion cancelled.'));
+            return true;
+        }
+        throw e;
+    }
+    if (toDelete !== null) {
+        const target = sessions.find((s: Session) => s.id === toDelete);
+        deleteSession(toDelete);
+        console.log(chalk.green(`\nDeleted session: ${target?.name ?? toDelete}\n`));
+        // If the deleted session was active, start a fresh one.
+        if (toDelete === ctx.currentSessionId) {
+            const newId = createSession('New Session', ctx.currentModel);
+            const freshMessages: ChatMessage[] = [{ role: 'system', content: ctx.systemPrompt }];
+            ctx.updateSession(newId, freshMessages, false);
+            console.log(chalk.dim('Started a new session.\n'));
+        }
+    }
+    return true;
+};
+
+const NUDGE_HANDLER: SlashHandler = async (ctx) => {
+    ctx.messages.push({ role: 'user', content: getToolUseNudge() });
+    console.log(chalk.dim('\n[Manual nudge sent to AI...]\n'));
+    return false; // Continue with AI generation loop
+};
+
+const EXIT_HANDLER: SlashHandler = async () => 'break';
+
+const SLASH_COMMANDS: SlashCommand[] = [
+    { name: chalk.blue('/model') + '    - Switch LLM model', value: '/model' },
+    { name: chalk.blue('/compact') + '  - Summarise conversation history to save context', value: '/compact' },
+    { name: chalk.blue('/sessions') + ' - List and switch to a previous conversation', value: '/sessions' },
+    { name: chalk.blue('/delete') + '   - Delete a saved conversation', value: '/delete' },
+    { name: chalk.blue('/nudge') + '    - Manually remind the AI to use tools', value: '/nudge' },
+    { name: chalk.blue('/exit') + '     - Exit chat', value: '/exit' },
+    { name: chalk.blue('/help') + '     - Show help', value: '/help' }
+];
+
+const COMMAND_HANDLERS: Record<string, SlashHandler> = {
+    '/model': MODEL_HANDLER,
+    '/compact': COMPACT_HANDLER,
+    '/sessions': SESSIONS_HANDLER,
+    '/delete': DELETE_HANDLER,
+    '/nudge': NUDGE_HANDLER,
+    '/exit': EXIT_HANDLER,
+    '/help': HELP_HANDLER
+};
 
 async function setupOllama(): Promise<Config> {
     let config = await loadConfig();
@@ -153,24 +341,11 @@ async function startChat(
         );
     }
 
-    const slashCommands: SlashCommand[] = [
-        { name: chalk.blue('/model') + '    - Switch LLM model', value: '/model' },
-        { name: chalk.blue('/compact') + '  - Summarise conversation history to save context', value: '/compact' },
-        { name: chalk.blue('/sessions') + ' - List and switch to a previous conversation', value: '/sessions' },
-        { name: chalk.blue('/delete') + '   - Delete a saved conversation', value: '/delete' },
-        { name: chalk.blue('/nudge') + '    - Manually remind the AI to use tools', value: '/nudge' },
-        { name: chalk.blue('/exit') + '     - Exit chat', value: '/exit' },
-        { name: chalk.blue('/help') + '     - Show help', value: '/help' }
-    ];
-
-    // Persistent message history for the /api/chat endpoint.
-    // The system prompt is built from a general section (defined here) combined with
-    // the tool-awareness section provided by the tools module.
     const systemPrompt =
         'You are Locopilot, a helpful AI assistant running inside a terminal application.\n\n' +
         getToolSystemPrompt();
 
-    const messages: ChatMessage[] = preloadedMessages && preloadedMessages.length > 0
+    let messages: ChatMessage[] = preloadedMessages && preloadedMessages.length > 0
         ? [...preloadedMessages]
         : [{ role: 'system', content: systemPrompt }];
 
@@ -180,8 +355,33 @@ async function startChat(
     // Persists the current in-memory message list to the database.
     const saveSession = () => updateSessionMessages(currentSessionId, messages);
 
+    const context: ChatContext = {
+        get baseUrl() { return baseUrl; },
+        get currentModel() { return currentModel; },
+        get numCtx() { return numCtx; },
+        get messages() { return messages; },
+        get currentSessionId() { return currentSessionId; },
+        get config() { return config; },
+        get systemPrompt() { return systemPrompt; },
+        saveSession,
+        refreshTokenStatus: (phase: string) => refreshTokenStatus(phase),
+        updateModel: async (model: string) => {
+            currentModel = model;
+            config.lastModel = currentModel;
+            config.numCtx = numCtx;
+            await saveConfig(config);
+            console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
+        },
+        updateSession: (sessionId: number, newMessages: ChatMessage[], isNamed: boolean) => {
+            messages.length = 0;
+            messages.push(...newMessages);
+            currentSessionId = sessionId;
+            sessionNamed = isNamed;
+        }
+    };
+
     let lastCompactWarningTokens = 0;
-    const refreshTokenStatus = (phase: string) => {
+    function refreshTokenStatus(phase: string) {
         const tokensUsed = countMessagesTokens(messages, currentModel);
         updateLiveStatus({
             phase,
@@ -204,7 +404,7 @@ async function startChat(
             }
         }
         // ─────────────────────────────────────────────────────────────
-    };
+    }
 
     while (true) {
         let prompt: string;
@@ -225,7 +425,7 @@ async function startChat(
                     }
 
                     if (inputArg.startsWith('/')) {
-                        const matches = slashCommands.filter(c => c.value.startsWith(inputArg));
+                        const matches = SLASH_COMMANDS.filter(c => c.value.startsWith(inputArg));
                         if (matches.length > 0) return matches;
                     }
 
@@ -238,167 +438,24 @@ async function startChat(
         }
 
         if (!prompt || prompt.trim() === '') continue;
-        if (prompt.toLowerCase() === '/exit' || prompt.toLowerCase() === 'exit') break;
+        if (prompt.toLowerCase() === 'exit') break;
 
-        if (prompt.trim().startsWith('/help')) {
-            console.log(chalk.blue('\nAvailable Commands:'));
-            slashCommands.forEach(cmd => console.log(`  ${cmd.name}`));
-            console.log('');
-            continue;
-        }
-
-        if (prompt.trim().startsWith('/model')) {
-            console.log(chalk.blue('\nRefreshing models from Ollama...'));
-            const latestModels = await getModels(baseUrl);
-            if (latestModels.length === 0) {
-                console.log(chalk.red('No models found. Please pull a model first.'));
+        // Handle slash commands via registry
+        const [cmdName = ''] = prompt.trim().split(/\s+/);
+        const normalizedCmdName = cmdName.toLowerCase();
+        if (normalizedCmdName.startsWith('/')) {
+            const handler = COMMAND_HANDLERS[normalizedCmdName];
+            if (handler) {
+                const result = await handler(context);
+                if (result === 'break') break;
+                if (result === true) continue;
+                // If false, it falls through to the AI turn (like /nudge)
+            } else {
+                console.log(chalk.red(`\nUnknown command: ${normalizedCmdName}`));
                 continue;
             }
-
-            console.log(chalk.green('\nAvailable models:'));
-            latestModels.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
-
-            let selectedModel: string | null = null;
-            try {
-                selectedModel = await select({
-                    message: 'Select a model to chat with:',
-                    choices: latestModels.map((m: string) => ({ name: m, value: m })),
-                    pageSize: 10
-                });
-            } catch (e: unknown) {
-                if (e instanceof Error && e.name === 'ExitPromptError') {
-                    console.log(chalk.yellow('Model selection cancelled.'));
-                    continue;
-                }
-                throw e;
-            }
-
-            if (selectedModel) {
-                currentModel = selectedModel;
-                config.lastModel = currentModel;
-                config.numCtx = numCtx;
-                await saveConfig(config);
-                console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
-            }
-            continue;
-        }
-
-        if (prompt.trim().startsWith('/compact')) {
-            if (messages.length <= 1) {
-                console.log(chalk.yellow('Nothing to compact yet — the conversation history is empty.\n'));
-                continue;
-            }
-            try {
-                refreshTokenStatus('AI request queued for compaction...');
-                const result = await compactHistory(
-                    baseUrl,
-                    currentModel,
-                    messages,
-                    numCtx,
-                    (status) => refreshTokenStatus(status),
-                );
-                clearLiveStatus();
-                printCompactStats(result.stats);
-                // Replace live history in-place and persist.
-                messages.length = 0;
-                messages.push(...result.newMessages);
-                saveSession();
-            } catch (err) {
-                clearLiveStatus();
-                console.error(chalk.red('Compaction failed:'), await getOllamaApiErrorMessage(err));
-            }
-            continue;
-        }
-
-        if (prompt.trim().startsWith('/sessions')) {
-            const sessions = listSessions();
-            if (sessions.length === 0) {
-                console.log(chalk.yellow('No saved sessions yet.\n'));
-                continue;
-            }
-            // Save current state before switching.
-            saveSession();
-            let picked: number | null = null;
-            try {
-                picked = await select<number>({
-                    message: 'Select a session to switch to:',
-                    choices: sessions.map((s: Session) => ({
-                        name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
-                        value: s.id,
-                    })),
-                    pageSize: 15,
-                });
-            } catch (e: unknown) {
-                if (e instanceof Error && e.name === 'ExitPromptError') {
-                    console.log(chalk.yellow('Session switch cancelled.'));
-                    continue;
-                }
-                throw e;
-            }
-            if (picked !== null) {
-                const loaded = loadSessionMessages(picked);
-                messages.length = 0;
-                messages.push(...loaded);
-                currentSessionId = picked;
-                sessionNamed = true;
-                const pickedSession = sessions.find((s: Session) => s.id === picked);
-                if (pickedSession) {
-                    currentModel = pickedSession.model;
-                    // Persist switched model to config.
-                    config.lastModel = currentModel;
-                    config.numCtx = numCtx;
-                    await saveConfig(config);
-                }
-                console.log(chalk.green(`\nSwitched to session: ${pickedSession?.name ?? picked} (Model: ${currentModel})\n`));
-            }
-            continue;
-        }
-
-        if (prompt.trim().startsWith('/delete')) {
-            const sessions = listSessions();
-            if (sessions.length === 0) {
-                console.log(chalk.yellow('No saved sessions to delete.\n'));
-                continue;
-            }
-            let toDelete: number | null = null;
-            try {
-                toDelete = await select<number>({
-                    message: 'Select a session to delete:',
-                    choices: sessions.map((s: Session) => ({
-                        name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
-                        value: s.id,
-                    })),
-                    pageSize: 15,
-                });
-            } catch (e: unknown) {
-                if (e instanceof Error && e.name === 'ExitPromptError') {
-                    console.log(chalk.yellow('Deletion cancelled.'));
-                    continue;
-                }
-                throw e;
-            }
-            if (toDelete !== null) {
-                const target = sessions.find((s: Session) => s.id === toDelete);
-                deleteSession(toDelete);
-                console.log(chalk.green(`\nDeleted session: ${target?.name ?? toDelete}\n`));
-                // If the deleted session was active, start a fresh one.
-                if (toDelete === currentSessionId) {
-                    const newId = createSession('New Session', currentModel);
-                    currentSessionId = newId;
-                    sessionNamed = false;
-                    messages.length = 0;
-                    messages.push({ role: 'system', content: systemPrompt });
-                    console.log(chalk.dim('Started a new session.\n'));
-                }
-            }
-            continue;
-        }
-
-        if (prompt.trim().startsWith('/nudge')) {
-            messages.push({ role: 'user', content: getToolUseNudge() });
-            console.log(chalk.dim('\n[Manual nudge sent to AI...]\n'));
         } else {
-            // Add the user message to history and send to /api/chat
+            // Standard user message
             messages.push({ role: 'user', content: prompt });
 
             // Name the session from the first user message.

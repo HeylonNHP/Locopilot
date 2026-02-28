@@ -245,6 +245,11 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-02-28: Refactored slash commands into a registry and fixed regressions
+  - Files: `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Moved slash-command handling (`/model`, `/compact`, `/sessions`, `/delete`, `/nudge`, `/help`, `/exit`) into a command-handler registry with shared chat context. Fixed post-refactor TypeScript issues (duplicate `historyLengthBeforeTurn` declaration and safe command parsing).
+  - Intent: Keep the main chat loop focused and make command behaviors modular, testable, and easier to extend without re-growing conditional blocks.
+
 - 2026-02-28: Fixed multiple technical bugs and performance issues
   - Files: `index.ts`, `tokenizer.ts`, `history.ts`, `tools/htmlExtractor.ts`, `tools/webSearchTool.ts`
   - Summary: Fixed dead variables, interrupt guards, token encoder staleness, session JSON parsing, and redundant HTML extraction. Corrected string concatenation in web search system prompt.
