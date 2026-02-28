@@ -45,6 +45,11 @@ const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const DEFAULT_NUM_CTX = 131072;
 const DEFAULT_WEB_SEARCH_MAX_QUERIES = 3;
 const DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY = 3;
+const SESSION_NAME_MAX_LENGTH = 60;
+const COMPACT_WARNING_THRESHOLD_PCT = 85;
+const COMPACT_WARNING_TOKEN_INTERVAL = 500;
+const OLLAMA_CONNECT_TIMEOUT_MS = 2000;
+const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
 // --- TypeScript Interfaces ---
 
@@ -300,7 +305,7 @@ async function setupOllama(initialConfig: Config | null): Promise<Config> {
 
         try {
             // Validate connection
-            await validateOllamaConnection(config.baseUrl, 2000);
+            await validateOllamaConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
             await saveConfig(config);
             return config;
         } catch (error) {
@@ -412,7 +417,7 @@ async function startChat(
         if (numCtx > 0) {
             const percentage = (tokensUsed / numCtx) * 100;
             // Only warn if >85% full and we haven't warned in the last 500 tokens
-            if (percentage >= 85 && (tokensUsed - lastCompactWarningTokens) > 500) {
+            if (percentage >= COMPACT_WARNING_THRESHOLD_PCT && (tokensUsed - lastCompactWarningTokens) > COMPACT_WARNING_TOKEN_INTERVAL) {
                 lastCompactWarningTokens = tokensUsed;
                 clearLiveStatus();
                 console.log(
@@ -479,7 +484,7 @@ async function startChat(
             // Name the session from the first user message.
             if (!sessionNamed) {
                 sessionNamed = true;
-                const name = prompt.trim().slice(0, 60);
+                const name = prompt.trim().slice(0, SESSION_NAME_MAX_LENGTH);
                 renameSession(currentSessionId, name);
             }
         }
@@ -488,7 +493,6 @@ async function startChat(
         refreshTokenStatus('AI request queued...');
         clearInterrupt();
         let emptyResponseRecoveryAttempts = 0;
-        const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
         installKeyInterruptListener('Ctrl+X');
 
