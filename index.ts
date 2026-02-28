@@ -25,7 +25,7 @@ import {
     sendOllamaChatStream,
     getOllamaApiErrorMessage,
 } from './ollamaApi.js';
-import type { ChatMessage, OllamaModel } from './ollamaApi.js';
+import type { ChatMessage, OllamaModel, OllamaToolCall } from './ollamaApi.js';
 import { compactHistory, printCompactStats } from './compact.js';
 import { summarizeCommandError } from './errorSummary.js';
 import { renderMarkdown } from './markdownRenderer.js';
@@ -522,7 +522,7 @@ async function startChat(
                 refreshTokenStatus('AI is responding...');
 
                 const streamAbortController = new AbortController();
-                const streamedToolCalls: NonNullable<ChatMessage['tool_calls']> = [];
+                const streamedToolCalls: OllamaToolCall[] = [];
                 let streamedAssistantContent = '';
                 let interruptedDuringStream = false;
 
@@ -584,11 +584,23 @@ async function startChat(
                     process.stdout.write('\n');
                 }
 
-                const assistantMessage: ChatMessage = {
-                    role: 'assistant',
-                    content: streamedAssistantContent,
-                    ...(streamedToolCalls.length > 0 ? { tool_calls: streamedToolCalls } : {}),
-                };
+                let assistantMessage: ChatMessage;
+                if (streamedToolCalls.length > 0) {
+                    const [firstToolCall, ...restToolCalls] = streamedToolCalls;
+                    if (!firstToolCall) {
+                        throw new Error('Invariant violation: streamedToolCalls was expected to be non-empty.');
+                    }
+                    assistantMessage = {
+                        role: 'assistant',
+                        content: streamedAssistantContent,
+                        tool_calls: [firstToolCall, ...restToolCalls],
+                    };
+                } else {
+                    assistantMessage = {
+                        role: 'assistant',
+                        content: streamedAssistantContent,
+                    };
+                }
 
                 messages.push(assistantMessage);
                 refreshTokenStatus('AI response received.');
