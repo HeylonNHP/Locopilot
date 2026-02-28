@@ -180,6 +180,7 @@ async function startChat(
     // Persists the current in-memory message list to the database.
     const saveSession = () => updateSessionMessages(currentSessionId, messages);
 
+    let lastCompactWarningTokens = 0;
     const refreshTokenStatus = (phase: string) => {
         const tokensUsed = countMessagesTokens(messages, currentModel);
         updateLiveStatus({
@@ -188,6 +189,21 @@ async function startChat(
             tokenLimit: numCtx,
             model: currentModel,
         });
+
+        // ── Suggestion #7: Auto-compact warning (once every 500 tokens after 85%) 
+        if (numCtx > 0) {
+            const percentage = (tokensUsed / numCtx) * 100;
+            // Only warn if >85% full and we haven't warned in the last 500 tokens
+            if (percentage >= 85 && (tokensUsed - lastCompactWarningTokens) > 500) {
+                lastCompactWarningTokens = tokensUsed;
+                clearLiveStatus();
+                console.log(
+                    chalk.yellow.bold(`\n⚠️  Context is ${percentage.toFixed(0)}% full (${tokensUsed}/${numCtx}). `) +
+                    chalk.yellow(`Consider running `) + chalk.cyan(`/compact`) + chalk.yellow(` to save tokens.\n`)
+                );
+            }
+        }
+        // ─────────────────────────────────────────────────────────────
     };
 
     while (true) {
