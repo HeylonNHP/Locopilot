@@ -384,7 +384,6 @@ async function startChat(
         const historyLengthBeforeTurn = messages.length - 1;
         refreshTokenStatus('AI request queued...');
         clearInterrupt();
-        let sentToolRetryNudge = false;
         let emptyResponseRecoveryAttempts = 0;
         const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
@@ -490,7 +489,7 @@ async function startChat(
                         refreshTokenStatus(`Tool result: ${tc.function.name}`);
 
                         // If the command failed, have the LLM summarize the error for the user
-                        if (tc.function.name === 'run_command' && toolResult.includes('(COMMAND FAILED')) {
+                        if (tc.function.name === 'run_command' && toolResult.includes('(COMMAND FAILED') && !isInterruptRequested()) {
                             refreshTokenStatus('Summarizing command error...');
                             const errorSummary = await summarizeCommandError(baseUrl, currentModel, toolResult, numCtx);
                             clearLiveStatus();
