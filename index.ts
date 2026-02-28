@@ -109,6 +109,14 @@ async function saveConfig(config: Config): Promise<void> {
 }
 
 /**
+ * Safely replaces all elements in an array while maintaining the reference.
+ */
+function replaceMessages(target: ChatMessage[], newMessages: ChatMessage[]): void {
+    target.length = 0;
+    target.push(...newMessages);
+}
+
+/**
  * Executes a function and catches @inquirer/prompts' ExitPromptError (Ctrl+C).
  * Returns the result or null if the user cancelled.
  */
@@ -181,8 +189,7 @@ const COMPACT_HANDLER: SlashHandler = async (ctx) => {
         printCompactStats(result.stats);
         
         // Re-initialize message array while keeping reference
-        ctx.messages.length = 0;
-        ctx.messages.push(...result.newMessages);
+        replaceMessages(ctx.messages, result.newMessages);
         ctx.saveSession();
     } catch (err) {
         clearLiveStatus();
@@ -401,8 +408,7 @@ async function startChat(
             console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
         },
         updateSession: (sessionId: number, newMessages: ChatMessage[], isNamed: boolean) => {
-            messages.length = 0;
-            messages.push(...newMessages);
+            replaceMessages(messages, newMessages);
             currentSessionId = sessionId;
             sessionNamed = isNamed;
         }
