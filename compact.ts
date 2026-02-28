@@ -121,6 +121,13 @@ export async function compactHistory(
 
     const newTokenCount = countMessagesTokens(newMessages, model);
 
+    if (newTokenCount >= oldTokenCount && oldTokenCount > 0) {
+        throw new Error(
+            `Compaction failed to reduce history size (old: ${oldTokenCount}, new: ${newTokenCount} tokens). ` +
+            'Aborting to avoid increasing context usage.'
+        );
+    }
+
     return {
         newMessages,
         stats: {
