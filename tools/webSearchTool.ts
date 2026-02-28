@@ -26,6 +26,7 @@ interface DuckDuckGoResult {
 
 interface ExtractedPage {
     url: string;
+    finalUrl: string;
     title: string;
     snippet: string;
     text: string;
@@ -95,7 +96,9 @@ export class WebSearchTool {
                 );
 
                 const extracted = await this.fetchAndExtractText(result);
-                if (extracted) pages.push(extracted);
+                if (extracted) {
+                    pages.push(extracted);
+                }
             }
 
             const resultLines: string[] = [
@@ -104,10 +107,15 @@ export class WebSearchTool {
             ];
 
             for (const [index, page] of pages.entries()) {
+                const urlLines = [`result_${index + 1}_source_url: ${page.url}`];
+                if (page.finalUrl !== page.url) {
+                    urlLines.push(`result_${index + 1}_final_url: ${page.finalUrl}`);
+                }
+
                 resultLines.push(
                     [
                         `result_${index + 1}_title: ${page.title || '(untitled)'}`,
-                        `result_${index + 1}_url: ${page.url}`,
+                        ...urlLines,
                         `result_${index + 1}_snippet: ${page.snippet || '(none)'}`,
                         `result_${index + 1}_text:\n${page.text || '(no extractable text)'}`,
                     ].join('\n'),
@@ -202,6 +210,7 @@ export class WebSearchTool {
 
             return {
                 url: result.url,
+                finalUrl: extracted.finalUrl,
                 title: result.title,
                 snippet: result.snippet,
                 text: extracted.text || '(no extractable text)',
@@ -210,6 +219,7 @@ export class WebSearchTool {
             const reason = error instanceof Error ? error.message : String(error);
             return {
                 url: result.url,
+                finalUrl: result.url,
                 title: result.title,
                 snippet: result.snippet,
                 text: `(failed to fetch page: ${reason})`,

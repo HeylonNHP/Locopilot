@@ -14,6 +14,12 @@ export interface ExtractResult {
 }
 
 /**
+ * Threshold for Readability extraction; if the resulting text is shorter
+ * than this, we consider it a possible failure and try a fallback.
+ */
+const MIN_READABILITY_LENGTH = 200;
+
+/**
  * Strips extra whitespace, normalizes line endings, and trims.
  */
 export function cleanText(text: string): string {
@@ -94,13 +100,13 @@ export function extractMainText(html: string, url: string): string {
     const readabilityText = extractWithReadability(html, url);
     
     // If readability returned something decent, use it and skip cheerio.
-    if (readabilityText && readabilityText.length > 200) {
+    if (readabilityText && readabilityText.length > MIN_READABILITY_LENGTH) {
         return readabilityText;
     }
 
     const fallbackText = extractWithCheerio(html);
     
-    // If readability got something but it was very short (less than 200 chars),
+    // If readability got something but it was very short (less than threshold),
     // and cheerio got more, prefer cheerio.
     if (readabilityText && readabilityText.length >= fallbackText.length) {
         return readabilityText;
