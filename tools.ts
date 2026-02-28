@@ -57,7 +57,8 @@ let activeInterruptHandler: ((result: string) => void) | null = null;
 
 let keyInterruptListener: ((s: string, k: readline.Key) => void) | null = null;
 let prevRawMode: boolean | null = null;
-let currentInterruptKeySpec = 'Ctrl+X';
+const DEFAULT_INTERRUPT_KEY_SPEC = 'Ctrl+X';
+let currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
 
 /**
  * Request an interrupt. If a tool is currently executing its work
@@ -147,7 +148,10 @@ export function installKeyInterruptListener(keySpec = 'Ctrl+X'): void {
  * Removes the keypress listener and restores the previous TTY raw mode.
  */
 export function removeKeyInterruptListener(): void {
-    if (!process.stdin.isTTY || !keyInterruptListener) return;
+    if (!process.stdin.isTTY || !keyInterruptListener) {
+        currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
+        return;
+    }
 
     process.stdin.off('keypress', keyInterruptListener);
     if (prevRawMode !== null) {
@@ -156,6 +160,7 @@ export function removeKeyInterruptListener(): void {
 
     keyInterruptListener = null;
     prevRawMode = null;
+    currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
 }
 
 /** Clears the interrupt flag. Call this at the start of every new user turn. */
@@ -337,7 +342,39 @@ export function setWebSearchConfig(config: ToolWebSearchConfig): void {
     };
 }
 
+function parseFiniteNumber(value: unknown): number | null {
+    if (typeof value !== 'number') return null;
+    return Number.isFinite(value) ? value : null;
+}
+
+function parsePositiveInteger(
+    value: unknown,
+    min = 1,
+    max = Number.MAX_SAFE_INTEGER,
+): number | null {
+    const parsed = parseFiniteNumber(value);
+    if (parsed === null) return null;
+    const floored = Math.floor(parsed);
+    if (floored < min || floored > max) return null;
+    return floored;
+}
+
+function parsePositiveTimeoutMs(seconds: unknown): number | null {
+    const parsedSeconds = parseFiniteNumber(seconds);
+    if (parsedSeconds === null || parsedSeconds <= 0) return null;
+    const ms = Math.floor(parsedSeconds * 1000);
+    if (!Number.isFinite(ms) || ms < 1) return null;
+    return Math.min(ms, 3_600_000);
+}
+
 function parseQueriesInput(raw: unknown): string[] {
+    const splitAndNormalize = (value: string): string[] => {
+        return value
+            .split(/\n|,|;/)
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0);
+    };
+
     if (Array.isArray(raw)) {
         return raw
             .flatMap((item) => String(item).split(/\n|,|;/))
@@ -349,10 +386,7 @@ function parseQueriesInput(raw: unknown): string[] {
         const trimmed = raw.trim();
         if (!trimmed) return [];
         if (!trimmed.startsWith('[')) {
-            return trimmed
-                .split(/\n|,|;/)
-                .map((item) => item.trim())
-                .filter((item) => item.length > 0);
+            return splitAndNormalize(trimmed);
         }
 
         try {
@@ -363,8 +397,10 @@ function parseQueriesInput(raw: unknown): string[] {
                     .filter((item) => item.length > 0);
             }
         } catch {
-            return [];
+            return splitAndNormalize(trimmed);
         }
+
+        return splitAndNormalize(trimmed);
     }
 
     return [];
@@ -465,9 +501,14 @@ export async function handleToolCall(
     switch (name) {
         case 'run_command': {
             if (!args.command) return '[Error: missing required argument "command"]';
-            const timeoutMs = args.timeout_seconds !== undefined
-                ? args.timeout_seconds * 1000
-                : DEFAULT_TIMEOUT_MS;
+            let timeoutMs = DEFAULT_TIMEOUT_MS;
+            if (args.timeout_seconds !== undefined) {
+                const parsedTimeoutMs = parsePositiveTimeoutMs(args.timeout_seconds);
+                if (parsedTimeoutMs === null) {
+                    return '[Error: invalid argument "timeout_seconds" (expected a positive finite number)]';
+                }
+                timeoutMs = parsedTimeoutMs;
+            }
             return runCommand(args.command, args.shell, timeoutMs, onProgress);
         }
 
@@ -489,10 +530,18 @@ export async function handleToolCall(
                 webArgs.queries = parsedQueries;
             }
             if (args.max_queries !== undefined) {
-                webArgs.max_queries = args.max_queries;
+                const parsedMaxQueries = parsePositiveInteger(args.max_queries, 1, 10);
+                if (parsedMaxQueries === null) {
+                    return '[Error: invalid argument "max_queries" (expected an integer between 1 and 10)]';
+                }
+                webArgs.max_queries = parsedMaxQueries;
             }
             if (args.results_per_query !== undefined) {
-                webArgs.results_per_query = args.results_per_query;
+                const parsedResultsPerQuery = parsePositiveInteger(args.results_per_query, 1, 10);
+                if (parsedResultsPerQuery === null) {
+                    return '[Error: invalid argument "results_per_query" (expected an integer between 1 and 10)]';
+                }
+                webArgs.results_per_query = parsedResultsPerQuery;
             }
 
             if (!webArgs.prompt && (!webArgs.queries || webArgs.queries.length === 0)) {
@@ -503,10 +552,12 @@ export async function handleToolCall(
         }
 
         case 'fetch_url': {
-            const fetchArgs: FetchUrlToolArgs = {};
-            if (typeof args.url === 'string') {
-                fetchArgs.url = args.url;
+            if (typeof args.url !== 'string' || args.url.trim().length === 0) {
+                return '[Error: missing required argument "url"]';
             }
+            const fetchArgs: FetchUrlToolArgs = {
+                url: args.url,
+            };
             return runFetchUrl(fetchArgs, onProgress);
         }
 

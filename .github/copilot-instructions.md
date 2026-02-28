@@ -245,6 +245,26 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-03-01: Aligned `fetch_url` required-arg validation in dispatcher
+  - Files: `tools.ts`, `.github/copilot-instructions.md`
+  - Summary: Added an explicit `url` presence check in `handleToolCall` for `fetch_url` so missing/blank input returns `[Error: missing required argument "url"]` before tool execution.
+  - Intent: Keep tool dispatch behavior consistent with other handlers and provide clearer, immediate argument errors.
+
+- 2026-03-01: Reset interrupt key hint on listener removal
+  - Files: `tools.ts`, `.github/copilot-instructions.md`
+  - Summary: Updated `removeKeyInterruptListener` to reset `currentInterruptKeySpec` back to the default (`Ctrl+X`) even when no listener is active.
+  - Intent: Prevent stale interrupt hints from persisting between listener lifecycles and keep `getInterruptHint()` accurate.
+
+- 2026-02-28: Hardened `parseQueriesInput` fallback behavior
+  - Files: `tools.ts`, `.github/copilot-instructions.md`
+  - Summary: Updated `parseQueriesInput` so malformed or non-array JSON-like `queries` input no longer returns an empty list silently; it now falls back to plain delimiter-based parsing.
+  - Intent: Preserve usable query text from imperfect model/tool arguments and avoid accidental loss of search intent.
+
+- 2026-02-28: Validated numeric tool arguments from LLM tool calls
+  - Files: `tools.ts`, `.github/copilot-instructions.md`
+  - Summary: Added strict validation/coercion for `timeout_seconds`, `max_queries`, and `results_per_query` in `handleToolCall`. Invalid, non-finite, and out-of-range values now return explicit tool errors instead of passing through.
+  - Intent: Prevent malformed numeric arguments (e.g., `NaN`, negatives, infinity) from causing broken timeouts or unpredictable web tool behavior.
+
 - 2026-02-28: Extracted slash command logic into `slashCommands.ts`
   - Files: `slashCommands.ts` (new), `index.ts`, `.github/copilot-instructions.md`
   - Summary: Moved all slash-command handlers, the `SLASH_COMMANDS` array, `COMMAND_HANDLERS` registry, and shared utilities (`withExitGuard`, `replaceMessages`, `getModels`) plus the `Config`, `ChatContext`, `SlashCommand`, and `SlashHandler` types into a dedicated `slashCommands.ts` module. Updated `index.ts` to import from the new module.
@@ -359,5 +379,20 @@ Security / UX notes:
   - Files: `tools.ts`
   - Summary: Consolidated shell resolution and configuration logic. Extracted redundant process completion and interrupt handling logic into a shared helper within the runCommand promise.
   - Intent: Improve maintainability and reduce code duplication in the tool execution layer.
+
+- 2026-02-28: Added stdin error handling for `run_command`
+  - Files: `runCommandTool.ts`, `.github/copilot-instructions.md`
+  - Summary: Added explicit handling for missing stdin streams, asynchronous stdin errors, and synchronous stdin write/end failures when sending shell commands.
+  - Intent: Prevent unhandled EPIPE-like failures and ensure command execution errors are surfaced as tool results instead of crashing or hanging.
+
+- 2026-02-28: Fixed `cmd` shell configuration for stdin execution
+  - Files: `runCommandTool.ts`, `.github/copilot-instructions.md`
+  - Summary: Updated `getShellConfig` to use `cmd.exe` with `/D /Q` so stdin-fed scripts execute more predictably and with cleaner output on Windows.
+  - Intent: Keep command execution behavior consistent across shells while preserving the exact-via-stdin design.
+
+- 2026-02-28: Added elapsed time to command tool output
+  - Files: `runCommandTool.ts`, `.github/copilot-instructions.md`
+  - Summary: `buildOutput` now reports `elapsed_seconds` for both running and completed commands.
+  - Intent: Give the model and user clearer runtime context when polling long-running commands or diagnosing slow executions.
 
 (End of maintenance instructions)

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import os from 'os';
@@ -62,8 +62,15 @@ function getShellConfig(shell: string): { bin: string; args: string[] } {
     if (shell === 'powershell') {
         return { bin: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', '-'] };
     }
-    // cmd, bash, sh, zsh, fish, etc. all read stdin with no extra flags
-    return { bin: shell === 'cmd' ? 'cmd' : shell, args: [] };
+
+    // cmd.exe needs explicit flags for predictable stdin-driven script execution.
+    // /D disables AutoRun; /Q turns echo off for cleaner output.
+    if (shell === 'cmd' || shell === 'cmd.exe') {
+        return { bin: 'cmd.exe', args: ['/D', '/Q'] };
+    }
+
+    // bash, sh, zsh, fish, etc. can read commands directly from stdin.
+    return { bin: shell, args: [] };
 }
 
 function buildOutput(
@@ -74,12 +81,15 @@ function buildOutput(
     const parts: string[] = [];
     const sanitizedStdout = sanitize(entry.stdout);
     const sanitizedStderr = sanitize(entry.stderr);
+    const elapsedMs = Math.max(0, Date.now() - entry.startedAt.getTime());
+    const elapsedSeconds = (elapsedMs / 1000).toFixed(2);
 
     if (sanitizedStdout) parts.push(`stdout:\n${sanitizedStdout}`);
     if (sanitizedStderr) parts.push(`stderr:\n${sanitizedStderr}`);
     if (parts.length === 0) parts.push('(no output)');
 
     if (finished) {
+        parts.push(`elapsed_seconds: ${elapsedSeconds}`);
         const code = entry.exitCode ?? 'unknown';
         if (code !== 0) {
             parts.push(
@@ -90,10 +100,33 @@ function buildOutput(
             parts.push(`exit_code: ${code}`);
         }
     } else {
+        parts.push(`elapsed_seconds: ${elapsedSeconds}`);
         parts.push(`status: still running (process_id=${processId})`);
         parts.push('Use check_process_output to get updated output.');
     }
     return parts.join('\n');
+}
+
+function killProcessTree(child: ChildProcess): void {
+    const pid = child.pid;
+    if (!pid) return;
+
+    if (isWindows) {
+        try {
+            spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+            return;
+        } catch {
+            try { child.kill(); } catch { /* already dead */ }
+            return;
+        }
+    }
+
+    try {
+        process.kill(-pid, 'SIGTERM');
+        return;
+    } catch {
+        try { child.kill('SIGTERM'); } catch { /* already dead */ }
+    }
 }
 
 export async function runCommand(
@@ -144,11 +177,11 @@ export async function runCommand(
     processRegistry.set(processId, entry);
 
     const config = getShellConfig(effectiveShell);
-    const child = spawn(config.bin, config.args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(config.bin, config.args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: !isWindows,
+    });
     entry.process = child;
-
-    child.stdin!.write(command + '\n');
-    child.stdin!.end();
 
     child.stdout?.on('data', (chunk: Buffer) => { entry.stdout += chunk.toString(); });
     child.stderr?.on('data', (chunk: Buffer) => { entry.stderr += chunk.toString(); });
@@ -160,24 +193,38 @@ export async function runCommand(
     });
 
     return new Promise<string>((resolve) => {
+        let settled = false;
+        let returnedPartial = false;
         const finalize = (code: number, result?: string) => {
+            if (settled) return;
+            settled = true;
+
             unregisterInterruptHandler();
             clearTimeout(timer);
             entry.done = true;
             entry.exitCode = code;
+            if (!returnedPartial) {
+                processRegistry.delete(processId);
+            }
             resolve(result || buildOutput(entry, true, null));
         };
 
         // Register interrupt handler
         registerInterruptHandler((result: string) => {
-            try { child.kill(); } catch { /* already dead */ }
+            killProcessTree(child);
             finalize(-1, result);
         });
 
         const timer = setTimeout(() => {
-            unregisterInterruptHandler();
+            if (settled) return;
             // Still running after timeout – return partial output so the LLM can check back
             onProgress?.('run_command: still running, returning partial output...');
+            returnedPartial = true;
+            
+            // We don't unregister interrupt handler here because the process 
+            // is still running and the user might still want to interrupt it 
+            // while we are waiting for the next LLM turn.
+            // However, buildOutput needs to know it's not "finished" in the exit sense.
             resolve(buildOutput(entry, false, processId));
         }, timeoutMs);
 
@@ -192,6 +239,28 @@ export async function runCommand(
             onProgress?.('run_command: spawn error.');
             finalize(-1);
         });
+
+        if (!child.stdin) {
+            entry.stderr += '\nSpawn error: shell stdin is not available.';
+            onProgress?.('run_command: stdin unavailable.');
+            finalize(-1);
+            return;
+        }
+
+        child.stdin.on('error', (err) => {
+            entry.stderr += `\nstdin error: ${err.message}`;
+            onProgress?.('run_command: stdin error.');
+            finalize(-1);
+        });
+
+        try {
+            child.stdin.write(command + '\n');
+            child.stdin.end();
+        } catch (err: unknown) {
+            entry.stderr += `\nstdin write error: ${err instanceof Error ? err.message : String(err)}`;
+            onProgress?.('run_command: stdin write failure.');
+            finalize(-1);
+        }
     });
 }
 
@@ -200,7 +269,14 @@ export function checkProcessOutput(processId: number): string {
     if (!entry) {
         return `[No process found with process_id=${processId}]`;
     }
-    return buildOutput(entry, entry.done, entry.done ? null : processId);
+
+    if (entry.done) {
+        const output = buildOutput(entry, true, null);
+        processRegistry.delete(processId);
+        return output;
+    }
+
+    return buildOutput(entry, false, processId);
 }
 
 /**
