@@ -63,15 +63,25 @@ export function extractWithReadability(html: string, url: string): string | null
 export function extractWithCheerio(html: string): string {
     try {
         const $ = cheerio.load(html);
-        $('script, style, noscript').remove();
+        $('script, style, noscript, nav, footer, header').remove();
 
-        const mainCandidate = cleanText($('main').text());
-        if (mainCandidate.length > 0) return mainCandidate;
+        // ── Priority-based selector candidates ───────────────────────
+        const selectors = [
+            'main',
+            'article',
+            'div[role="main"]',
+            '#content',
+            '.post-content',
+            '.article-content',
+            'body'
+        ];
 
-        const articleCandidate = cleanText($('article').text());
-        if (articleCandidate.length > 0) return articleCandidate;
+        for (const selector of selectors) {
+            const candidate = cleanText($(selector).text());
+            if (candidate.length > 50) return candidate;
+        }
 
-        return cleanText($('body').text());
+        return '';
     } catch {
         return '';
     }
