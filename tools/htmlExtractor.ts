@@ -50,7 +50,8 @@ export function extractWithReadability(html: string, url: string): string | null
     try {
         const dom = new JSDOM(html, { url });
         const article = new Readability(dom.window.document).parse();
-        return cleanText(article?.textContent ?? '');
+        const text = cleanText(article?.textContent ?? '');
+        return text.length > 0 ? text : null;
     } catch {
         return null;
     }
