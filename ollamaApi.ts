@@ -48,7 +48,7 @@ export interface OllamaToolDefinition {
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
-    tool_calls?: OllamaToolCall[];
+    tool_calls?: [OllamaToolCall, ...OllamaToolCall[]];
 }
 
 export interface ChatApiResponse {
