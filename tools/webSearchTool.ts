@@ -230,8 +230,8 @@ export function getToolPrompt(): string {
         '   to ensure comprehensive coverage. The tool will respect the max_queries limit.\n\n' +
         '   CITATION RULES:\n' +
         '   When referencing a search result, always include the full result URL inline immediately\n' +
-        '   after the referenced sentence. Avoid generic "result_N" placeholders or special\n+        ' +
-        'tags. Format examples:\n' +
+        '   after the referenced sentence. Avoid generic "result_N" placeholders or special\n' +
+        '   tags. Format examples:\n' +
         '   - Guzman y Gomez has multiple locations in Townsville. (https://guzmanygomez.com.au/locations)\n' +
         '   - Zambrero was founded in 2005. (https://www.productreview.com.au/listings/zambrero)\n\n'
     );
