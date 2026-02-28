@@ -51,6 +51,8 @@ const COMPACT_WARNING_TOKEN_INTERVAL = 500;
 const OLLAMA_CONNECT_TIMEOUT_MS = 2000;
 const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
+let cleanupBeforeExit: (() => void) | null = null;
+
 // --- TypeScript Interfaces ---
 
 interface Config {
@@ -377,6 +379,9 @@ async function startChat(
 
     // Persists the current in-memory message list to the database.
     const saveSession = () => updateSessionMessages(currentSessionId, messages);
+
+    // Register cleanup for SIGINT (Ctrl+C)
+    cleanupBeforeExit = saveSession;
 
     const context: ChatContext = {
         get baseUrl() { return baseUrl; },
@@ -826,6 +831,9 @@ async function main(): Promise<void> {
 }
 
 process.on('SIGINT', () => {
+    if (cleanupBeforeExit) {
+        cleanupBeforeExit();
+    }
     console.log('\nExiting Locopilot.');
     process.exit(0);
 });
