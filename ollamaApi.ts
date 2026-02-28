@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { createInterface } from 'readline';
+import { Readable } from 'stream';
 import type { ToolCallArguments } from './tools.js';
 
 export interface OllamaModelDetails {
@@ -145,8 +146,8 @@ export async function getOllamaApiErrorMessage(error: unknown): Promise<string> 
         if (error.response?.data) {
             const data = error.response.data;
 
-            // If it's a stream (IncomingMessage in Node), try to read it
-            if (typeof data.on === 'function') {
+            // If it's a stream, try to read it
+            if (data instanceof Readable) {
                 try {
                     const chunks: Buffer[] = [];
                     for await (const chunk of data) {
