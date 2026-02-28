@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { readFile, writeFile, access } from 'fs/promises';
 import path from 'path';
 import { select, input, search } from '@inquirer/prompts';
 import chalk from 'chalk';
@@ -82,19 +83,37 @@ type SlashHandler = (ctx: ChatContext) => Promise<boolean | 'break'>;
 // --- Functions ---
 
 async function loadConfig(): Promise<Config | null> {
-    if (fs.existsSync(CONFIG_PATH)) {
-        try {
-            return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-        } catch (e) {
-            console.error(chalk.red('Error parsing config file.'));
-            return null;
+    try {
+        await access(CONFIG_PATH);
+        const data = await readFile(CONFIG_PATH, 'utf8');
+        return JSON.parse(data);
+    } catch (e) {
+        // If file doesn't exist (ENOENT), return null silently.
+        // For other errors (parsing), log it.
+        if (e && (e as any).code !== 'ENOENT') {
+            console.error(chalk.red('Error reading or parsing config file.'));
         }
+        return null;
     }
-    return null;
 }
 
 async function saveConfig(config: Config): Promise<void> {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
+}
+
+/**
+ * Executes a function and catches @inquirer/prompts' ExitPromptError (Ctrl+C).
+ * Returns the result or null if the user cancelled.
+ */
+async function withExitGuard<T>(fn: () => Promise<T>): Promise<T | null> {
+    try {
+        return await fn();
+    } catch (e: unknown) {
+        if (e instanceof Error && e.name === 'ExitPromptError') {
+            return null;
+        }
+        throw e;
+    }
 }
 
 // --- Command Handlers ---
@@ -118,18 +137,17 @@ const MODEL_HANDLER: SlashHandler = async (ctx) => {
     latestModels.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
 
     let selectedModel: string | null = null;
-    try {
-        selectedModel = await select({
+    selectedModel = await withExitGuard(async () => {
+        return await select({
             message: 'Select a model to chat with:',
             choices: latestModels.map((m: string) => ({ name: m, value: m })),
             pageSize: 10
         });
-    } catch (e: unknown) {
-        if (e instanceof Error && e.name === 'ExitPromptError') {
-            console.log(chalk.yellow('Model selection cancelled.'));
-            return true;
-        }
-        throw e;
+    });
+
+    if (selectedModel === null) {
+        console.log(chalk.yellow('Model selection cancelled.'));
+        return true;
     }
 
     if (selectedModel) {
@@ -174,9 +192,8 @@ const SESSIONS_HANDLER: SlashHandler = async (ctx) => {
     }
     // Save current state before switching.
     ctx.saveSession();
-    let picked: number | null = null;
-    try {
-        picked = await select<number>({
+    const picked = await withExitGuard(async () => {
+        return await select<number>({
             message: 'Select a session to switch to:',
             choices: sessions.map((s: Session) => ({
                 name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
@@ -184,13 +201,13 @@ const SESSIONS_HANDLER: SlashHandler = async (ctx) => {
             })),
             pageSize: 15,
         });
-    } catch (e: unknown) {
-        if (e instanceof Error && e.name === 'ExitPromptError') {
-            console.log(chalk.yellow('Session switch cancelled.'));
-            return true;
-        }
-        throw e;
+    });
+
+    if (picked === null) {
+        console.log(chalk.yellow('Session switch cancelled.'));
+        return true;
     }
+
     if (picked !== null) {
         const loaded = loadSessionMessages(picked);
         const pickedSession = sessions.find((s: Session) => s.id === picked);
@@ -209,9 +226,8 @@ const DELETE_HANDLER: SlashHandler = async (ctx) => {
         console.log(chalk.yellow('No saved sessions to delete.\n'));
         return true;
     }
-    let toDelete: number | null = null;
-    try {
-        toDelete = await select<number>({
+    const toDelete = await withExitGuard(async () => {
+        return await select<number>({
             message: 'Select a session to delete:',
             choices: sessions.map((s: Session) => ({
                 name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
@@ -219,13 +235,13 @@ const DELETE_HANDLER: SlashHandler = async (ctx) => {
             })),
             pageSize: 15,
         });
-    } catch (e: unknown) {
-        if (e instanceof Error && e.name === 'ExitPromptError') {
-            console.log(chalk.yellow('Deletion cancelled.'));
-            return true;
-        }
-        throw e;
+    });
+
+    if (toDelete === null) {
+        console.log(chalk.yellow('Deletion cancelled.'));
+        return true;
     }
+
     if (toDelete !== null) {
         const target = sessions.find((s: Session) => s.id === toDelete);
         deleteSession(toDelete);
@@ -269,8 +285,8 @@ const COMMAND_HANDLERS: Record<string, SlashHandler> = {
     '/help': HELP_HANDLER
 };
 
-async function setupOllama(): Promise<Config> {
-    let config = await loadConfig();
+async function setupOllama(initialConfig: Config | null): Promise<Config> {
+    let config = initialConfig;
 
     while (true) {
         if (!config) {
@@ -291,15 +307,17 @@ async function setupOllama(): Promise<Config> {
             console.error(chalk.red('\nCould not connect to Ollama at ' + config.baseUrl));
             console.error(chalk.yellow('Please check if Ollama is running and the address is correct.\n'));
             
-            const action = await select({
-                message: 'What would you like to do?',
-                choices: [
-                    { name: 'Retry connection', value: 'retry' },
-                    { name: 'Edit configuration', value: 'edit' },
-                    { name: 'Exit', value: 'exit' }
-                ]
+            const action = await withExitGuard(async () => {
+                return await select({
+                    message: 'What would you like to do?',
+                    choices: [
+                        { name: 'Retry connection', value: 'retry' },
+                        { name: 'Edit configuration', value: 'edit' },
+                        { name: 'Exit', value: 'exit' }
+                    ]
+                });
             });
-            if (action === 'exit') process.exit(0);
+            if (action === 'exit' || action === null) process.exit(0);
             if (action === 'edit') config = null;
             // if retry, loop will continue with existing config
         }
@@ -317,15 +335,15 @@ async function getModels(baseUrl: string): Promise<string[]> {
 }
 
 async function startChat(
-    baseUrl: string,
     model: string,
     numCtx: number,
     sessionId: number,
+    config: Config,
     preloadedMessages?: import('./ollamaApi.js').ChatMessage[],
 ): Promise<void> {
     let currentModel = model;
     let currentSessionId = sessionId;
-    let config = await loadConfig() || { baseUrl };
+    const baseUrl = config.baseUrl;
     console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
     console.log(chalk.dim(`(Using context length num_ctx=${numCtx})`));
     if (isYolo()) {
@@ -648,27 +666,25 @@ async function main(): Promise<void> {
                      yoloEnv === 'true' ||
                      yoloEnv === '1';
 
-    const config = await setupOllama();
-
-    let configData = await loadConfig();
+    let config = await loadConfig();
+    config = await setupOllama(config);
 
     if (!yoloActive) {
-        try {
-            const mode = await select({
+        const mode = await withExitGuard(async () => {
+            return await select({
                 message: 'Select execution mode:',
                 choices: [
                     { name: 'Standard (Confirm all terminal commands)', value: 'standard' },
                     { name: chalk.red.bold('YOLO') + '     (Automatic command execution - USE WITH CAUTION)', value: 'yolo' }
                 ],
-                default: configData?.yolo ? 'yolo' : 'standard'
+                default: config?.yolo ? 'yolo' : 'standard'
             });
-            yoloActive = mode === 'yolo';
-        } catch (e: unknown) {
-            if (e instanceof Error && e.name === 'ExitPromptError') {
-                process.exit(0);
-            }
-            throw e;
+        });
+
+        if (mode === null) {
+            process.exit(0);
         }
+        yoloActive = mode === 'yolo';
     }
 
     if (yoloActive) {
@@ -689,11 +705,10 @@ async function main(): Promise<void> {
     console.log(chalk.green(`Found ${models.length} models:`));
     models.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
 
-    configData = await loadConfig();
-    let selectedModel = configData && configData.lastModel && models.includes(configData.lastModel)
-        ? configData.lastModel
+    let selectedModel = config.lastModel && models.includes(config.lastModel)
+        ? config.lastModel
         : null;
-    const savedNumCtx = configData?.numCtx ?? DEFAULT_NUM_CTX;
+    const savedNumCtx = config.numCtx ?? DEFAULT_NUM_CTX;
 
     const numCtxInput = await input({
         message: 'Enter context length (num_ctx):',
@@ -707,7 +722,7 @@ async function main(): Promise<void> {
     });
     const selectedNumCtx = Number.parseInt(numCtxInput, 10);
 
-    const savedWebSearch = configData?.webSearch;
+    const savedWebSearch = config.webSearch;
     const webSearchMaxQueriesInput = await input({
         message: 'Web search setting: max queries per tool call:',
         default: String(savedWebSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES),
@@ -732,34 +747,32 @@ async function main(): Promise<void> {
     const selectedWebSearchResultsPerQuery = Number.parseInt(webSearchResultsPerQueryInput, 10);
 
     if (!selectedModel) {
-        try {
-            selectedModel = await select({
+        selectedModel = await withExitGuard(async () => {
+            return await select({
                 message: 'Select a model to chat with:',
                 choices: models.map((m: string) => ({ name: m, value: m })),
                 pageSize: 10
             });
-        } catch (e: unknown) {
-            if (e instanceof Error && e.name === 'ExitPromptError') {
-                process.exit(0);
-            }
-            throw e;
+        });
+
+        if (selectedModel === null) {
+            process.exit(0);
         }
     }
 
     // Persist selected model and context length
-    configData = configData || { baseUrl: config.baseUrl };
-    configData.lastModel = selectedModel;
-    configData.numCtx = selectedNumCtx;
-    configData.yolo = yoloActive;
-    configData.webSearch = {
+    config.lastModel = selectedModel;
+    config.numCtx = selectedNumCtx;
+    config.yolo = yoloActive;
+    config.webSearch = {
         maxQueries: selectedWebSearchMaxQueries,
         resultsPerQuery: selectedWebSearchResultsPerQuery,
     };
-    await saveConfig(configData);
+    await saveConfig(config);
 
     setWebSearchConfig({
-        maxQueries: configData.webSearch.maxQueries,
-        resultsPerQuery: configData.webSearch.resultsPerQuery,
+        maxQueries: config.webSearch.maxQueries,
+        resultsPerQuery: config.webSearch.resultsPerQuery,
     });
 
     // ── Session management ──────────────────────────────────────────────
@@ -768,9 +781,8 @@ async function main(): Promise<void> {
     let startingMessages: ChatMessage[] | undefined;
 
     if (savedSessions.length > 0) {
-        let sessionChoice: 'new' | number;
-        try {
-            sessionChoice = await select<'new' | number>({
+        const sessionChoice = await withExitGuard(async () => {
+            return await select<'new' | number>({
                 message: 'Start a new conversation or resume a previous one?',
                 choices: [
                     { name: chalk.green('+ New conversation'), value: 'new' },
@@ -781,13 +793,12 @@ async function main(): Promise<void> {
                 ],
                 pageSize: 12,
             });
-        } catch (e: unknown) {
-            if (e instanceof Error && e.name === 'ExitPromptError') process.exit(0);
-            throw e;
-        }
+        });
+
+        if (sessionChoice === null) process.exit(0);
 
         if (sessionChoice === 'new') {
-            startingSessionId = createSession('New Session', selectedModel);
+            startingSessionId = createSession('New Session', selectedModel as string);
         } else {
             startingSessionId = sessionChoice;
             const resumedSession = savedSessions.find(s => s.id === startingSessionId);
@@ -803,11 +814,11 @@ async function main(): Promise<void> {
             console.log(chalk.dim(`Resuming session [${startingSessionId}] with ${startingMessages.length} messages.`));
         }
     } else {
-        startingSessionId = createSession('New Session', selectedModel);
+        startingSessionId = createSession('New Session', selectedModel as string);
     }
     // ────────────────────────────────────────────────────────────────────
 
-    await startChat(config.baseUrl, selectedModel, selectedNumCtx, startingSessionId, startingMessages);
+    await startChat(selectedModel as string, selectedNumCtx, startingSessionId, config, startingMessages);
 }
 
 process.on('SIGINT', () => {
