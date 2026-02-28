@@ -646,11 +646,18 @@ async function main(): Promise<void> {
     const selectedWebSearchResultsPerQuery = Number.parseInt(webSearchResultsPerQueryInput, 10);
 
     if (!selectedModel) {
-        selectedModel = await select({
-            message: 'Select a model to chat with:',
-            choices: models.map((m: string) => ({ name: m, value: m })),
-            pageSize: 10
-        });
+        try {
+            selectedModel = await select({
+                message: 'Select a model to chat with:',
+                choices: models.map((m: string) => ({ name: m, value: m })),
+                pageSize: 10
+            });
+        } catch (e: unknown) {
+            if (e instanceof Error && e.name === 'ExitPromptError') {
+                process.exit(0);
+            }
+            throw e;
+        }
     }
 
     // Persist selected model and context length
