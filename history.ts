@@ -162,7 +162,13 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
     }[];
 
     return rows.map(row => {
-        const toolCalls = JSON.parse(row.tool_calls);
+        let toolCalls = [];
+        try {
+            toolCalls = JSON.parse(row.tool_calls);
+        } catch {
+            // Fallback for corrupted JSON
+            toolCalls = [];
+        }
         const msg: ChatMessage = {
             role: row.role as ChatMessage['role'],
             content: row.content,
