@@ -81,10 +81,16 @@ export function extractWithCheerio(html: string): string {
  */
 export function extractMainText(html: string, url: string): string {
     const readabilityText = extractWithReadability(html, url);
+    
+    // If readability returned something decent, use it and skip cheerio.
+    if (readabilityText && readabilityText.length > 200) {
+        return readabilityText;
+    }
+
     const fallbackText = extractWithCheerio(html);
     
-    // If readability returned something decent, use it. 
-    // Otherwise fallback to whatever cheerio got.
+    // If readability got something but it was very short (less than 200 chars),
+    // and cheerio got more, prefer cheerio.
     if (readabilityText && readabilityText.length >= fallbackText.length) {
         return readabilityText;
     }
