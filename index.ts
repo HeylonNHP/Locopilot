@@ -273,13 +273,22 @@ async function startChat(
                 continue;
             }
             try {
-                const result = await compactHistory(baseUrl, currentModel, messages, numCtx);
+                refreshTokenStatus('AI request queued for compaction...');
+                const result = await compactHistory(
+                    baseUrl,
+                    currentModel,
+                    messages,
+                    numCtx,
+                    (status) => refreshTokenStatus(status),
+                );
+                clearLiveStatus();
                 printCompactStats(result.stats);
                 // Replace live history in-place and persist.
                 messages.length = 0;
                 messages.push(...result.newMessages);
                 saveSession();
             } catch (err) {
+                clearLiveStatus();
                 console.error(chalk.red('Compaction failed:'), await getOllamaApiErrorMessage(err));
             }
             continue;

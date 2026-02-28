@@ -12,7 +12,7 @@
  */
 
 import chalk from 'chalk';
-import { sendOllamaChat } from './ollamaApi.js';
+import { sendOllamaChatStream } from './ollamaApi.js';
 import type { ChatMessage } from './ollamaApi.js';
 import { countMessagesTokens } from './tokenizer.js';
 
@@ -55,12 +55,14 @@ export interface CompactResult {
  * @param model     - Model name to use for summarisation
  * @param messages  - Current conversation history (should include system prompt)
  * @param numCtx    - Context length to pass to the API
+ * @param onProgress - Optional callback for live progress updates
  */
 export async function compactHistory(
     baseUrl: string,
     model: string,
     messages: ChatMessage[],
     numCtx: number,
+    onProgress?: (message: string) => void,
 ): Promise<CompactResult> {
     const oldTokenCount = countMessagesTokens(messages, model);
 
@@ -87,16 +89,21 @@ export async function compactHistory(
         },
     ];
 
-    console.log(chalk.dim('\nRequesting summary from model — please wait...\n'));
-
-    const response = await sendOllamaChat(baseUrl, {
+    let summary = '';
+    for await (const chunk of sendOllamaChatStream(baseUrl, {
         model,
         messages: summarisationMessages,
         tools: [],   // No tools needed for summarisation
         numCtx,
-    });
+    })) {
+        const content = chunk.message.content ?? '';
+        if (content.length > 0) {
+            summary += content;
+            onProgress?.(`AI is summarizing... (${summary.length} chars)`);
+        }
+    }
 
-    const summary = response.message.content?.trim() ?? '';
+    summary = summary.trim();
 
     if (!summary) {
         throw new Error('The model returned an empty summary. Compaction aborted.');
