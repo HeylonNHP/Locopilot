@@ -319,6 +319,10 @@ async function startChat(
                 const pickedSession = sessions.find((s: Session) => s.id === picked);
                 if (pickedSession) {
                     currentModel = pickedSession.model;
+                    // Persist switched model to config.
+                    config.lastModel = currentModel;
+                    config.numCtx = numCtx;
+                    await saveConfig(config);
                 }
                 console.log(chalk.green(`\nSwitched to session: ${pickedSession?.name ?? picked} (Model: ${currentModel})\n`));
             }
