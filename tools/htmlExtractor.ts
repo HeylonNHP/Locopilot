@@ -1,4 +1,4 @@
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import * as cheerio from 'cheerio';
 import axios from 'axios';
@@ -36,7 +36,10 @@ export function cleanText(text: string): string {
  */
 export function extractTitle(html: string, url?: string): string {
     try {
-        const dom = new JSDOM(html, { url });
+        const dom = new JSDOM(html, { 
+            url,
+            virtualConsole: new VirtualConsole() // Suppress CSS parsing errors
+        });
         const doc = dom.window.document;
         const title =
             doc.querySelector('title')?.textContent?.trim() ||
@@ -54,7 +57,10 @@ export function extractTitle(html: string, url?: string): string {
  */
 export function extractWithReadability(html: string, url: string): string | null {
     try {
-        const dom = new JSDOM(html, { url });
+        const dom = new JSDOM(html, { 
+            url,
+            virtualConsole: new VirtualConsole() // Suppress CSS parsing errors
+        });
         const article = new Readability(dom.window.document).parse();
         const text = cleanText(article?.textContent ?? '');
         return text.length > 0 ? text : null;
