@@ -16,12 +16,12 @@ import {
 } from './tools.js';
 import {
     validateOllamaConnection,
-    sendOllamaChatStream,
     getOllamaApiErrorMessage,
 } from './ollamaApi.js';
 import type { ChatMessage } from './ollamaApi.js';
 import { summarizeCommandError } from './errorSummary.js';
 import { printAIResponse, streamAIResponse } from './aiResponseRenderer.js';
+import type { StreamAIResponseParams } from './aiResponseRenderer.js';
 import {
     createSession,
     renameSession,
@@ -284,24 +284,19 @@ async function startChat(
                     break;
                 }
 
-                const streamAbortController = new AbortController();
+                const streamParams: StreamAIResponseParams = {
+                    model: currentModel,
+                    messages,
+                    tools: TOOLS,
+                    numCtx,
+                };
                 const {
                     content: streamedAssistantContent,
                     toolCalls: streamedToolCalls,
                     interrupted: interruptedDuringStream,
-                } = await streamAIResponse(
-                    sendOllamaChatStream(baseUrl, {
-                        model: currentModel,
-                        messages,
-                        tools: TOOLS,
-                        numCtx,
-                        signal: streamAbortController.signal,
-                    }),
-                    {
-                        abortController: streamAbortController,
-                        onStatusUpdate: refreshTokenStatus,
-                    },
-                );
+                } = await streamAIResponse(baseUrl, streamParams, {
+                    onStatusUpdate: refreshTokenStatus,
+                });
 
                 if (interruptedDuringStream) {
                     // Roll back history to before the turn started and break out of the loop

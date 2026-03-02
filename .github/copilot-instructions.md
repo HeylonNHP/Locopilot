@@ -109,16 +109,16 @@ Security / UX notes:
 ## Markdown rendering
 
 Feature summary:
-- AI responses are rendered into terminal-friendly ANSI sequences using `marked` and `marked-terminal`.
-- Supports headings, bold/italic text, lists, code blocks, and tables.
-- Because rendering requires the full markdown context (especially for tables), responses are buffered and displayed all at once instead of being streamed character-by-character.
-- While the AI is generating, the live status line updates with the character count to provide a sense of progress.
-- Raw assistant text is sanitized (to remove any AI-generated ANSI codes) before being passed to the renderer.
+- `printAIResponse` renders pre-built strings (e.g. fallback messages) using `marked` and `marked-terminal` for ANSI-formatted headings, bold/italic text, lists, code blocks, and tables.
+- Live model responses are streamed directly to the terminal chunk-by-chunk via `streamAIResponse` — markdown rendering is intentionally skipped during streaming because `marked` requires the full text to correctly format tables and fenced code blocks.
+- The `AI >` label is printed before the first content chunk; if the stream is interrupted an inline `(interrupted)` suffix is written.
+- While the AI is generating, the status line shows the live character count to indicate progress.
+- Raw assistant text in `printAIResponse` is sanitized (to remove any AI-generated ANSI codes) before being passed to the renderer.
 
 Implementation notes:
 - Rendering logic is isolated in `markdownRenderer.ts`.
-- `index.ts` handles buffering the stream into `streamedAssistantContent` and calls `renderMarkdown()` before printing.
-- If a response is interrupted, the partial content is still rendered to show what was received.
+- `aiResponseRenderer.ts` exposes both `printAIResponse` (static render) and `streamAIResponse` (live stream). `index.ts` uses `streamAIResponse` for the main chat loop and `printAIResponse` only for fallback strings.
+- If a response is interrupted during streaming, the partial content already visible on-screen is sufficient; no re-render is attempted.
 
 ## Session / conversation history (SQLite)
 
@@ -244,6 +244,11 @@ Security / UX notes:
     - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
 
 ## Change History
+
+- 2026-03-02: Moved to true streaming output in `aiResponseRenderer.ts`
+  - Files: `aiResponseRenderer.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: `streamAIResponse` now owns the full turn lifecycle — it creates the `AbortController` and `sendOllamaChatStream` call internally. The caller only passes `(baseUrl, params, { onStatusUpdate })`. Text chunks are written to the terminal immediately as each NDJSON chunk arrives (no more buffering), giving a real-time "model is typing" effect. The `AI >` label is printed on the first chunk, and an inline `(interrupted)` suffix is appended if the stream is cut short. `printAIResponse` is kept for pre-built/fallback strings and still uses markdown rendering.
+  - Intent: Eliminate the blank-wait before any output appears; make the call-site in `index.ts` as simple as possible by hiding all stream/abort plumbing inside the renderer where it belongs. Markdown rendering during live streaming is intentionally omitted (same trade-off as the Ollama CLI) since `marked` requires the full text for tables and code blocks.
 
 - 2026-03-02: Centralised AI response rendering into `aiResponseRenderer.ts`
   - Files: `aiResponseRenderer.ts` (new), `index.ts`, `.github/copilot-instructions.md`

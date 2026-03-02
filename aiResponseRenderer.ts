@@ -3,15 +3,18 @@
  *
  * Centralised helpers for rendering AI responses in the terminal.
  *
- * `printAIResponse`   – synchronously prints a finished AI message with the
- *                       correct prefix label, markdown rendering, and status
- *                       line cleanup.
+ * `printAIResponse`   – prints a pre-built AI message string with the correct
+ *                       label, markdown rendering, and status line cleanup.
+ *                       Use this for fallback/error messages where you already
+ *                       have the full text.
  *
- * `streamAIResponse`  – consumes an Ollama streaming response, shows live
- *                       progress on the status line, wires up the interrupt
- *                       handler, and delegates final rendering to
- *                       `printAIResponse`.  Returns the accumulated content,
- *                       tool calls, and whether the stream was cut short.
+ * `streamAIResponse`  – owns the full lifecycle of a single AI turn: creates
+ *                       the HTTP stream, manages the interrupt handler, writes
+ *                       each text chunk directly to the terminal as it arrives
+ *                       (true streaming output — no buffering), and returns the
+ *                       accumulated content + tool calls + interrupted flag to
+ *                       the caller.  The caller only needs to supply the chat
+ *                       parameters and a status-update callback.
  */
 
 import chalk from 'chalk';
@@ -23,17 +26,24 @@ import {
     registerInterruptHandler,
     unregisterInterruptHandler,
 } from './tools.js';
-import type { ChatApiResponse, OllamaToolCall } from './ollamaApi.js';
+import { sendOllamaChatStream } from './ollamaApi.js';
+import type { OllamaToolCall, OllamaToolDefinition, ChatMessage } from './ollamaApi.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** Chat parameters forwarded to the Ollama API. */
+export interface StreamAIResponseParams {
+    model: string;
+    messages: ChatMessage[];
+    tools: OllamaToolDefinition[];
+    numCtx: number;
+}
+
 export interface StreamAIResponseOptions {
-    /** AbortController whose `.abort()` is called on interrupt. */
-    abortController: AbortController;
     /**
-     * Callback invoked after each content chunk.  Receives a human-readable
-     * phase string such as `"AI is responding... (342 chars)"`.  Typically
-     * wired to `refreshTokenStatus`.
+     * Callback invoked on each status phase change.  Receives a human-readable
+     * string such as `"AI is responding... (342 chars)"`.  Typically wired to
+     * `refreshTokenStatus`.
      */
     onStatusUpdate: (status: string) => void;
 }
@@ -50,13 +60,16 @@ export interface StreamAIResponseResult {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Renders a finished AI response to the terminal.
+ * Renders a pre-built AI response string to the terminal.
  *
  * Clears any live status line, prints the appropriate prefix label, renders
  * the content as markdown (sanitized), and writes a trailing newline.
  *
- * @param content     - The AI's response text.
- * @param opts.interrupted - When true, prints the "(interrupted)" label variant.
+ * Use this for cases where you already have the complete text (e.g. a fallback
+ * message).  For live model output prefer `streamAIResponse`.
+ *
+ * @param content          - The text to display.
+ * @param opts.interrupted - When true, uses the "(interrupted)" label variant.
  */
 export function printAIResponse(
     content: string,
@@ -72,34 +85,49 @@ export function printAIResponse(
 }
 
 /**
- * Consumes an Ollama chat stream, updating the status line with progress,
- * handling user interrupts, and rendering the final output via
- * `printAIResponse`.
+ * Streams an AI response directly to the terminal as it arrives.
  *
- * The function sets the initial `"AI is responding..."` status itself so
- * callers do not need a separate `refreshTokenStatus` call before invoking it.
+ * Opens the Ollama chat stream internally, wires up the interrupt handler, and
+ * writes each content chunk to stdout the moment it is received — the user sees
+ * the model "type" in real time.  When the stream ends (or is interrupted) a
+ * final newline is written and the function returns.
  *
- * Only calls `printAIResponse` when there is actual content to display — tool-
- * call-only responses (no text) are returned silently.
+ * The `"AI is responding..."` status is set at the start; the char-count
+ * suffix is kept up-to-date via `onStatusUpdate` while streaming proceeds.
  *
- * @param stream - The async iterable returned by `sendOllamaChatStream`.
- * @param opts   - Abort controller and status update callback.
- * @returns Accumulated content, tool calls, and interrupted flag.
+ * Tool-call-only responses (no text content) produce no terminal output.
+ *
+ * @param baseUrl - Ollama base URL (e.g. `http://localhost:11434`).
+ * @param params  - Model, messages, tools, and context length.
+ * @param opts    - Status-update callback.
+ * @returns Accumulated content, tool calls, and whether the stream was cut short.
  */
 export async function streamAIResponse(
-    stream: AsyncIterable<ChatApiResponse>,
+    baseUrl: string,
+    params: StreamAIResponseParams,
     opts: StreamAIResponseOptions,
 ): Promise<StreamAIResponseResult> {
-    const { abortController, onStatusUpdate } = opts;
+    const { onStatusUpdate } = opts;
 
     let content = '';
     const toolCalls: OllamaToolCall[] = [];
     let interrupted = false;
+    let headerPrinted = false;
 
     onStatusUpdate('AI is responding...');
 
+    const abortController = new AbortController();
+
     registerInterruptHandler(() => {
         abortController.abort();
+    });
+
+    const stream = sendOllamaChatStream(baseUrl, {
+        model: params.model,
+        messages: params.messages,
+        tools: params.tools,
+        numCtx: params.numCtx,
+        signal: abortController.signal,
     });
 
     try {
@@ -112,8 +140,19 @@ export async function streamAIResponse(
 
             const chunkContent = chunk.message.content ?? '';
             if (chunkContent.length > 0) {
+                if (!headerPrinted) {
+                    // Kill the status-line timer before writing any content.
+                    // draw() uses readline.cursorTo(0) + clearLine(0) which targets
+                    // the *current* line — if we leave the timer running it will
+                    // overwrite the streamed AI text every 120 ms.
+                    clearLiveStatus();
+                    process.stdout.write(chalk.yellow('\nAI > '));
+                    headerPrinted = true;
+                }
                 content += chunkContent;
-                onStatusUpdate(`AI is responding... (${content.length} chars)`);
+                process.stdout.write(chunkContent);
+                // Do NOT call onStatusUpdate here — restarting the timer while
+                // content is mid-line would cause the status draw to erase it.
             }
 
             if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
@@ -130,8 +169,12 @@ export async function streamAIResponse(
         unregisterInterruptHandler();
     }
 
-    if (content.trim().length > 0) {
-        printAIResponse(content, { interrupted });
+    if (headerPrinted) {
+        if (interrupted) {
+            // Append an inline note so the user can see the stream was cut short.
+            process.stdout.write(chalk.yellow(' (interrupted)'));
+        }
+        process.stdout.write('\n');
     }
 
     return { content, toolCalls, interrupted };
