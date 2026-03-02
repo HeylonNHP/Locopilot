@@ -6,7 +6,6 @@ import {
     TOOLS,
     handleToolCall,
     getToolSystemPrompt,
-    sanitize,
     setYoloMode,
     setWebSearchConfig,
     isYolo,
@@ -14,17 +13,15 @@ import {
     isInterruptRequested,
     installKeyInterruptListener,
     removeKeyInterruptListener,
-    registerInterruptHandler,
-    unregisterInterruptHandler,
 } from './tools.js';
 import {
     validateOllamaConnection,
     sendOllamaChatStream,
     getOllamaApiErrorMessage,
 } from './ollamaApi.js';
-import type { ChatMessage, OllamaToolCall } from './ollamaApi.js';
+import type { ChatMessage } from './ollamaApi.js';
 import { summarizeCommandError } from './errorSummary.js';
-import { renderMarkdown } from './markdownRenderer.js';
+import { printAIResponse, streamAIResponse } from './aiResponseRenderer.js';
 import {
     createSession,
     renameSession,
@@ -287,69 +284,30 @@ async function startChat(
                     break;
                 }
 
-                refreshTokenStatus('AI is responding...');
-
                 const streamAbortController = new AbortController();
-                const streamedToolCalls: OllamaToolCall[] = [];
-                let streamedAssistantContent = '';
-                let interruptedDuringStream = false;
-
-                registerInterruptHandler(() => {
-                    streamAbortController.abort();
-                });
-
-                try {
-                    for await (const chunk of sendOllamaChatStream(baseUrl, {
+                const {
+                    content: streamedAssistantContent,
+                    toolCalls: streamedToolCalls,
+                    interrupted: interruptedDuringStream,
+                } = await streamAIResponse(
+                    sendOllamaChatStream(baseUrl, {
                         model: currentModel,
                         messages,
                         tools: TOOLS,
                         numCtx,
                         signal: streamAbortController.signal,
-                    })) {
-                        if (isInterruptRequested()) {
-                            interruptedDuringStream = true;
-                            streamAbortController.abort();
-                            break;
-                        }
-
-                        const chunkContent = chunk.message.content ?? '';
-                        if (chunkContent.length > 0) {
-                            streamedAssistantContent += chunkContent;
-                            refreshTokenStatus(`AI is responding... (${streamedAssistantContent.length} chars)`);
-                        }
-
-                        if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
-                            streamedToolCalls.push(...chunk.message.tool_calls);
-                        }
-                    }
-                } catch (error) {
-                    if (isInterruptRequested()) {
-                        interruptedDuringStream = true;
-                    } else {
-                        throw error;
-                    }
-                } finally {
-                    unregisterInterruptHandler();
-                }
+                    }),
+                    {
+                        abortController: streamAbortController,
+                        onStatusUpdate: refreshTokenStatus,
+                    },
+                );
 
                 if (interruptedDuringStream) {
-                    if (streamedAssistantContent.trim().length > 0) {
-                        clearLiveStatus();
-                        process.stdout.write(chalk.yellow('\nAI (interrupted) > '));
-                        process.stdout.write(renderMarkdown(sanitize(streamedAssistantContent)));
-                        process.stdout.write('\n');
-                    }
                     // Roll back history to before the turn started and break out of the loop
                     messages.length = historyLengthBeforeTurn;
                     saveSession();
                     break;
-                }
-
-                if (streamedAssistantContent.trim().length > 0) {
-                    clearLiveStatus();
-                    process.stdout.write(chalk.yellow('\nAI > '));
-                    process.stdout.write(renderMarkdown(sanitize(streamedAssistantContent)));
-                    process.stdout.write('\n');
                 }
 
                 let assistantMessage: ChatMessage;
@@ -428,11 +386,7 @@ async function startChat(
                     // we don't print it again. We only print here if content was empty and we
                     // are showing the fallback message.
                     if (assistantContent.length === 0) {
-                        const fallbackContent = '[No response content was returned by the model after tool execution.]';
-                        clearLiveStatus();
-                        process.stdout.write(chalk.yellow('\nAI > '));
-                        process.stdout.write(renderMarkdown(sanitize(fallbackContent)));
-                        process.stdout.write('\n');
+                        printAIResponse('[No response content was returned by the model after tool execution.]');
                     }
 
                     config.lastModel = currentModel;

@@ -245,6 +245,11 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-03-02: Centralised AI response rendering into `aiResponseRenderer.ts`
+  - Files: `aiResponseRenderer.ts` (new), `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Extracted all AI response printing logic from `index.ts` into two focused exports: `printAIResponse(content, opts?)` which clears the status line and renders markdown with the correct label, and `streamAIResponse(stream, opts)` which consumes an Ollama chat stream, manages the interrupt handler lifecycle, updates the live status, and delegates rendering to `printAIResponse`. Removed `sanitize`, `registerInterruptHandler`, `unregisterInterruptHandler` from `index.ts` imports, and removed the `renderMarkdown` import.
+  - Intent: Eliminate repeated and fragmented stream/render code in `index.ts`, making it trivial to add future response sites (e.g. inline tool result summaries) by calling a single well-tested function. `printAIResponse` can also be called outside a streaming context (e.g. fallback messages) without duplicating label/markdown/newline boilerplate.
+
 - 2026-03-01: Aligned `fetch_url` required-arg validation in dispatcher
   - Files: `tools.ts`, `.github/copilot-instructions.md`
   - Summary: Added an explicit `url` presence check in `handleToolCall` for `fetch_url` so missing/blank input returns `[Error: missing required argument "url"]` before tool execution.
