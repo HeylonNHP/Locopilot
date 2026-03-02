@@ -245,6 +245,16 @@ Security / UX notes:
 
 ## Change History
 
+- 2026-03-02: Hardened markdown normalization heuristic for mixed indentation
+  - Files: `markdownRenderer.ts`, `.github/copilot-instructions.md`
+  - Summary: Updated normalization to count indentation in columns (spaces + tabs), strip indentation safely, and trigger dedent based on indented markdown-structure lines instead of all non-empty lines.
+  - Intent: Ensure a single unindented line does not disable normalization and fix cases where tab-indented markdown was still rendered as an indented code block.
+
+- 2026-03-02: Added markdown indentation normalization before terminal rendering
+  - Files: `markdownRenderer.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a normalization pass that detects accidental global indentation in model responses and removes shared left padding (typically 4 spaces) before passing text to `marked`. The heuristic only applies when multiple markdown-structure lines are detected and avoids mutating fenced code blocks.
+  - Intent: Prevent headings/lists/links from being misinterpreted as indented code blocks while preserving legitimate code-fence formatting.
+
 - 2026-03-02: Moved to true streaming output in `aiResponseRenderer.ts`
   - Files: `aiResponseRenderer.ts`, `index.ts`, `.github/copilot-instructions.md`
   - Summary: `streamAIResponse` now owns the full turn lifecycle — it creates the `AbortController` and `sendOllamaChatStream` call internally. The caller only passes `(baseUrl, params, { onStatusUpdate })`. Text chunks are written to the terminal immediately as each NDJSON chunk arrives (no more buffering), giving a real-time "model is typing" effect. The `AI >` label is printed on the first chunk, and an inline `(interrupted)` suffix is appended if the stream is cut short. `printAIResponse` is kept for pre-built/fallback strings and still uses markdown rendering.

@@ -114,6 +114,15 @@ export async function streamAIResponse(
     let interrupted = false;
     let headerPrinted = false;
 
+    // Track the number of visual lines written to the terminal during streaming
+    // so we can step back precisely after the stream and re-render as markdown.
+    // We initialise to 1 because the "AI > " header occupies one line, and we
+    // track the column position within that line to detect soft-wraps correctly.
+    const termWidth = process.stdout.isTTY ? (process.stdout.columns || 80) : 80;
+    const AI_LABEL_VISIBLE_LEN = 'AI > '.length; // visible chars of the label
+    let streamedLines = 1;
+    let currentLineLen = AI_LABEL_VISIBLE_LEN;
+
     onStatusUpdate('AI is responding...');
 
     const abortController = new AbortController();
@@ -153,6 +162,24 @@ export async function streamAIResponse(
                 process.stdout.write(chunkContent);
                 // Do NOT call onStatusUpdate here — restarting the timer while
                 // content is mid-line would cause the status draw to erase it.
+
+                // Track visual lines written so we can step back precisely after
+                // the stream. LLM output is plain text (no ANSI), so we only need
+                // to count explicit newlines and terminal soft-wraps.
+                if (process.stdout.isTTY) {
+                    for (const char of chunkContent) {
+                        if (char === '\n') {
+                            streamedLines++;
+                            currentLineLen = 0;
+                        } else {
+                            currentLineLen++;
+                            if (currentLineLen >= termWidth) {
+                                streamedLines++;
+                                currentLineLen = 0;
+                            }
+                        }
+                    }
+                }
             }
 
             if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
@@ -173,8 +200,24 @@ export async function streamAIResponse(
         if (interrupted) {
             // Append an inline note so the user can see the stream was cut short.
             process.stdout.write(chalk.yellow(' (interrupted)'));
+            process.stdout.write('\n');
+        } else if (process.stdout.isTTY && content.trim().length > 0) {
+            // Step back exactly as many visual lines as we wrote during streaming,
+            // then erase to end of screen and re-render as formatted markdown.
+            //
+            // Using relative cursor-up (\x1B[{N}A) instead of save/restore because
+            // save/restore stores screen-row coordinates that become stale once the
+            // terminal scrolls — moving up by a counted number of lines is
+            // scroll-safe and works correctly in Konsole, Windows Terminal, etc.
+            process.stdout.write(`\x1B[${streamedLines}A`); // cursor up N lines
+            process.stdout.write('\x1B[G');                 // move to column 0
+            process.stdout.write('\x1B[J');                 // clear to end of screen
+            process.stdout.write(chalk.yellow('AI > '));
+            process.stdout.write(renderMarkdown(sanitize(content)));
+            process.stdout.write('\n');
+        } else {
+            process.stdout.write('\n');
         }
-        process.stdout.write('\n');
     }
 
     return { content, toolCalls, interrupted };
