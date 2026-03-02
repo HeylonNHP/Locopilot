@@ -127,9 +127,7 @@ export async function streamAIResponse(
 
     const abortController = new AbortController();
 
-    registerInterruptHandler(() => {
-        abortController.abort();
-    });
+    registerInterruptHandler(() => abortController.abort());
 
     const stream = sendOllamaChatStream(baseUrl, {
         model: params.model,
@@ -150,48 +148,33 @@ export async function streamAIResponse(
             const chunkContent = chunk.message.content ?? '';
             if (chunkContent.length > 0) {
                 if (!headerPrinted) {
-                    // Kill the status-line timer before writing any content.
-                    // draw() uses readline.cursorTo(0) + clearLine(0) which targets
-                    // the *current* line — if we leave the timer running it will
-                    // overwrite the streamed AI text every 120 ms.
                     clearLiveStatus();
                     process.stdout.write(chalk.yellow('\nAI > '));
                     headerPrinted = true;
                 }
                 content += chunkContent;
                 process.stdout.write(chunkContent);
-                // Do NOT call onStatusUpdate here — restarting the timer while
-                // content is mid-line would cause the status draw to erase it.
 
-                // Track visual lines written so we can step back precisely after
-                // the stream. LLM output is plain text (no ANSI), so we only need
-                // to count explicit newlines and terminal soft-wraps.
                 if (process.stdout.isTTY) {
                     for (const char of chunkContent) {
                         if (char === '\n') {
                             streamedLines++;
                             currentLineLen = 0;
-                        } else {
-                            currentLineLen++;
-                            if (currentLineLen >= termWidth) {
-                                streamedLines++;
-                                currentLineLen = 0;
-                            }
+                        } else if (++currentLineLen >= termWidth) {
+                            streamedLines++;
+                            currentLineLen = 0;
                         }
                     }
                 }
             }
 
-            if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
+            if (chunk.message.tool_calls) {
                 toolCalls.push(...chunk.message.tool_calls);
             }
         }
     } catch (error) {
-        if (isInterruptRequested()) {
-            interrupted = true;
-        } else {
-            throw error;
-        }
+        if (!isInterruptRequested()) throw error;
+        interrupted = true;
     } finally {
         unregisterInterruptHandler();
     }
