@@ -10,6 +10,7 @@ interface StatusSnapshot {
     tokensUsed: number;
     tokenLimit: number;
     model: string;
+    tokenSource?: 'estimated' | 'ollama';
 }
 
 let snapshot: StatusSnapshot | null = null;
@@ -30,7 +31,8 @@ function draw(): void {
             : chalk.green;
 
     const line = `${chalk.dim(frame)} ${snapshot.phase} ${chalk.dim('[' + snapshot.model + ']')} | ` +
-        `${color(`${snapshot.tokensUsed}/${snapshot.tokenLimit} tokens`)} ${chalk.dim(`(${percentage}%)`)}`;
+        `${color(`${snapshot.tokensUsed}/${snapshot.tokenLimit} tokens`)} ${chalk.dim(`(${percentage}%)`)}` +
+        `${snapshot.tokenSource === 'ollama' ? chalk.cyan.dim(' (ollama)') : chalk.dim(' (est.)')}`;
 
     readline.cursorTo(process.stdout, 0);
     readline.clearLine(process.stdout, 0);

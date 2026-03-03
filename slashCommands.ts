@@ -16,6 +16,7 @@ import {
     loadSessionMessages,
 } from './history.js';
 import type { Session } from './history.js';
+import type { SessionTokenStats } from './history.js';
 import { clearLiveStatus } from './statusLine.js';
 
 // --- TypeScript Interfaces ---
@@ -44,7 +45,7 @@ export interface ChatContext {
     currentSessionId: number;
     config: Config;
     systemPrompt: string;
-    saveSession: () => void;
+    saveSession: (tokenStats?: SessionTokenStats | null) => void;
     refreshTokenStatus: (phase: string) => void;
     updateModel: (model: string) => Promise<void>;
     updateSession: (sessionId: number, messages: ChatMessage[], sessionNamed: boolean) => void;

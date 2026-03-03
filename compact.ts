@@ -12,9 +12,8 @@
  */
 
 import chalk from 'chalk';
-import { sendOllamaChatStream } from './ollamaApi.js';
+import { sendOllamaChat, sendOllamaChatStream, getOllamaTurnStats } from './ollamaApi.js';
 import type { ChatMessage } from './ollamaApi.js';
-import { countMessagesTokens } from './tokenizer.js';
 
 // The instruction sent to the LLM when asking it to compact the history.
 const COMPACT_SYSTEM_PROMPT =
@@ -47,6 +46,31 @@ export interface CompactResult {
     };
 }
 
+async function measureConversationTokens(
+    baseUrl: string,
+    model: string,
+    messages: ChatMessage[],
+    numCtx: number,
+): Promise<number> {
+    const response = await sendOllamaChat(baseUrl, {
+        model,
+        messages,
+        tools: [],
+        numCtx,
+        options: {
+            num_predict: 0,
+            temperature: 0,
+        },
+    });
+
+    const stats = getOllamaTurnStats(response);
+    if (!stats) {
+        throw new Error('Ollama did not return prompt/eval token counts for compaction measurement.');
+    }
+
+    return stats.promptEvalCount + stats.evalCount;
+}
+
 /**
  * Compacts the provided conversation history by asking the LLM to summarise
  * it. Returns the new message array and stats comparing old vs new sizes.
@@ -64,7 +88,7 @@ export async function compactHistory(
     numCtx: number,
     onProgress?: (message: string) => void,
 ): Promise<CompactResult> {
-    const oldTokenCount = countMessagesTokens(messages, model);
+    const oldTokenCount = await measureConversationTokens(baseUrl, model, messages, numCtx);
 
     // Separate the system prompt from the rest of the history so we can
     // preserve it verbatim in the compacted result.
@@ -119,7 +143,7 @@ export async function compactHistory(
         },
     ];
 
-    const newTokenCount = countMessagesTokens(newMessages, model);
+    const newTokenCount = await measureConversationTokens(baseUrl, model, newMessages, numCtx);
 
     if (newTokenCount >= oldTokenCount && oldTokenCount > 0) {
         throw new Error(

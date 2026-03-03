@@ -196,14 +196,25 @@ Security / UX notes:
 
 Feature summary:
 - Locopilot now shows a one-line live token meter while the AI request/tool loop is active.
-- The meter displays estimated context usage as `used_tokens / num_ctx` plus a percentage.
+- The meter displays context usage as `used_tokens / num_ctx` plus a percentage.
+- During live streaming, token usage is estimated locally; once the final Ollama response arrives, the meter updates to authoritative counts from `prompt_eval_count + eval_count`.
 - Status updates occur across phases (AI waiting, tool execution, error summarization) and are redrawn in-place using `readline` so the terminal stays compact.
-- Token counting uses a local tokenizer (`@dqbd/tiktoken`) with model-based selection when possible and a fallback encoding.
+- Token counting uses a hybrid approach: local estimation (`@dqbd/tiktoken`) for in-flight updates and Ollama-provided token stats for authoritative post-response values.
 
 Security / UX notes:
-- Counts are local estimates and may differ slightly from Ollama's internal model tokenization.
+- In-flight counts can differ slightly from Ollama tokenization until final-response reconciliation.
 - The status line is cleared before final AI/user-facing logs to avoid output corruption.
 - Keep updates lightweight to avoid interfering with interactive prompts.
+
+## Session token stats persistence
+
+Feature summary:
+- Session records now persist the latest authoritative Ollama token counts (`last_prompt_eval_count`, `last_eval_count`, `last_total_tokens`) in SQLite.
+- Stats are updated when a full AI turn completes and Ollama provides final response metrics.
+
+Implementation notes:
+- Schema lives in `history.ts`; columns are added via startup-safe `ALTER TABLE` guards.
+- `updateSessionMessages` now accepts optional token stats and updates session metadata atomically with message writes.
 
 ## LLM maintenance instruction (always keep up to date)
 
@@ -244,6 +255,11 @@ Security / UX notes:
     - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
 
 ## Change History
+
+- 2026-03-03: Switched token reporting to Ollama-authoritative final stats
+  - Files: `ollamaApi.ts`, `aiResponseRenderer.ts`, `index.ts`, `statusLine.ts`, `compact.ts`, `history.ts`, `slashCommands.ts`, `README.md`, `.github/copilot-instructions.md`
+  - Summary: Added support for `prompt_eval_count` / `eval_count` in chat responses, propagated final turn stats through the streaming renderer, reconciled the live token meter to authoritative values after each response, updated `/compact` token math to use Ollama-measured counts, and persisted latest turn token stats in session records.
+  - Intent: Keep the responsive live meter UX while using model-native token accounting for final numbers and compaction decisions.
 
 - 2026-03-02: Hardened markdown normalization heuristic for mixed indentation
   - Files: `markdownRenderer.ts`, `.github/copilot-instructions.md`

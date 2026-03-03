@@ -26,6 +26,14 @@ export interface Session {
     model: string;
     created_at: string;
     updated_at: string;
+    last_prompt_eval_count: number | null;
+    last_eval_count: number | null;
+    last_total_tokens: number | null;
+}
+
+export interface SessionTokenStats {
+    promptEvalCount: number;
+    evalCount: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +67,18 @@ db.exec(`
     );
 `);
 
+function addColumnIfMissing(sql: string): void {
+    try {
+        db.exec(sql);
+    } catch {
+        // Column likely already exists.
+    }
+}
+
+addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_prompt_eval_count INTEGER');
+addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_eval_count INTEGER');
+addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_total_tokens INTEGER');
+
 // ---------------------------------------------------------------------------
 // Prepared statements (created once, reused on every call)
 // ---------------------------------------------------------------------------
@@ -73,6 +93,10 @@ const stmtUpdateSessionName = db.prepare<[string, number]>(
 
 const stmtUpdateSessionTimestamp = db.prepare<[number]>(
     'UPDATE sessions SET updated_at = datetime(\'now\') WHERE id = ?',
+);
+
+const stmtUpdateSessionTokenStats = db.prepare<[number, number, number, number]>(
+    'UPDATE sessions SET last_prompt_eval_count = ?, last_eval_count = ?, last_total_tokens = ?, updated_at = datetime(\'now\') WHERE id = ?',
 );
 
 const stmtListSessions = db.prepare<[]>(
@@ -135,7 +159,11 @@ export function deleteSession(sessionId: number): void {
  * Replaces all stored messages for a session with the provided array.
  * Used after compaction and when switching sessions.
  */
-export function updateSessionMessages(sessionId: number, messages: ChatMessage[]): void {
+export function updateSessionMessages(
+    sessionId: number,
+    messages: ChatMessage[],
+    tokenStats?: SessionTokenStats | null,
+): void {
     const run = db.transaction(() => {
         stmtDeleteMessages.run(sessionId);
         for (const msg of messages) {
@@ -146,7 +174,17 @@ export function updateSessionMessages(sessionId: number, messages: ChatMessage[]
                 JSON.stringify(msg.tool_calls ?? []),
             );
         }
-        stmtUpdateSessionTimestamp.run(sessionId);
+        if (tokenStats) {
+            const totalTokens = tokenStats.promptEvalCount + tokenStats.evalCount;
+            stmtUpdateSessionTokenStats.run(
+                tokenStats.promptEvalCount,
+                tokenStats.evalCount,
+                totalTokens,
+                sessionId,
+            );
+        } else {
+            stmtUpdateSessionTimestamp.run(sessionId);
+        }
     });
     run();
 }

@@ -30,6 +30,7 @@ import {
     loadSessionMessages,
 } from './history.js';
 import type { Session } from './history.js';
+import type { SessionTokenStats } from './history.js';
 import { countMessagesTokens } from './tokenizer.js';
 import { updateLiveStatus, clearLiveStatus } from './statusLine.js';
 import {
@@ -150,7 +151,8 @@ async function startChat(
     let sessionNamed = preloadedMessages !== undefined && preloadedMessages.length > 0;
 
     // Persists the current in-memory message list to the database.
-    const saveSession = () => updateSessionMessages(currentSessionId, messages);
+    const saveSession = (tokenStats?: SessionTokenStats | null) =>
+        updateSessionMessages(currentSessionId, messages, tokenStats);
 
     // Register cleanup for SIGINT (Ctrl+C)
     cleanupBeforeExit = saveSession;
@@ -180,13 +182,18 @@ async function startChat(
     };
 
     let lastCompactWarningTokens = 0;
-    function refreshTokenStatus(phase: string) {
-        const tokensUsed = countMessagesTokens(messages, currentModel);
+    function refreshTokenStatus(
+        phase: string,
+        tokensUsedOverride?: number,
+        tokenSource: 'estimated' | 'ollama' = 'estimated',
+    ) {
+        const tokensUsed = tokensUsedOverride ?? countMessagesTokens(messages, currentModel);
         updateLiveStatus({
             phase,
             tokensUsed,
             tokenLimit: numCtx,
             model: currentModel,
+            tokenSource,
         });
 
         // ── Suggestion #7: Auto-compact warning (once every 500 tokens after 85%) 
@@ -294,6 +301,7 @@ async function startChat(
                     content: streamedAssistantContent,
                     toolCalls: streamedToolCalls,
                     interrupted: interruptedDuringStream,
+                    finalStats,
                 } = await streamAIResponse(baseUrl, streamParams, {
                     onStatusUpdate: refreshTokenStatus,
                 });
@@ -324,7 +332,18 @@ async function startChat(
                 }
 
                 messages.push(assistantMessage);
-                refreshTokenStatus('AI response received.');
+                let sessionTokenStats: SessionTokenStats | null = null;
+                if (finalStats) {
+                    const authoritativeTokensUsed = finalStats.promptEvalCount + finalStats.evalCount;
+                    sessionTokenStats = {
+                        promptEvalCount: finalStats.promptEvalCount,
+                        evalCount: finalStats.evalCount,
+                    };
+                    refreshTokenStatus('AI response received.', authoritativeTokensUsed, 'ollama');
+                    console.log(chalk.dim(`(Used ${authoritativeTokensUsed} ${authoritativeTokensUsed === 1 ? 'token' : 'tokens'})`));
+                } else {
+                    refreshTokenStatus('AI response received.');
+                }
 
                 if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
                     // Execute each tool call sequentially then feed results back
@@ -387,7 +406,7 @@ async function startChat(
                     config.lastModel = currentModel;
                     config.numCtx = numCtx;
                     await saveConfig(config);
-                    saveSession();
+                    saveSession(sessionTokenStats);
                     break;
                 }
             }

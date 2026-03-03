@@ -57,6 +57,12 @@ export interface ChatApiResponse {
     message: ChatMessage;
     done: boolean;
     done_reason?: string;
+    total_duration?: number;
+    load_duration?: number;
+    prompt_eval_count?: number;
+    prompt_eval_duration?: number;
+    eval_count?: number;
+    eval_duration?: number;
 }
 
 interface ChatParams {
@@ -64,6 +70,7 @@ interface ChatParams {
     messages: ChatMessage[];
     tools: OllamaToolDefinition[];
     numCtx: number;
+    options?: Record<string, unknown>;
 }
 
 export interface StreamChatParams extends ChatParams {
@@ -78,8 +85,48 @@ function buildChatPayload(params: ChatParams, stream: boolean) {
         stream,
         options: {
             num_ctx: params.numCtx,
+            ...(params.options ?? {}),
         },
     };
+}
+
+export interface OllamaTurnStats {
+    promptEvalCount: number;
+    evalCount: number;
+    totalDuration?: number;
+    promptEvalDuration?: number;
+    evalDuration?: number;
+    loadDuration?: number;
+}
+
+export function getOllamaTurnStats(response: ChatApiResponse): OllamaTurnStats | null {
+    if (!Number.isFinite(response.prompt_eval_count) || !Number.isFinite(response.eval_count)) {
+        return null;
+    }
+
+    const stats: OllamaTurnStats = {
+        promptEvalCount: response.prompt_eval_count ?? 0,
+        evalCount: response.eval_count ?? 0,
+    };
+
+    const totalDuration = response.total_duration;
+    if (typeof totalDuration === 'number') {
+        stats.totalDuration = totalDuration;
+    }
+    const promptEvalDuration = response.prompt_eval_duration;
+    if (typeof promptEvalDuration === 'number') {
+        stats.promptEvalDuration = promptEvalDuration;
+    }
+    const evalDuration = response.eval_duration;
+    if (typeof evalDuration === 'number') {
+        stats.evalDuration = evalDuration;
+    }
+    const loadDuration = response.load_duration;
+    if (typeof loadDuration === 'number') {
+        stats.loadDuration = loadDuration;
+    }
+
+    return stats;
 }
 
 export async function validateOllamaConnection(baseUrl: string, timeoutMs: number = 2000): Promise<void> {

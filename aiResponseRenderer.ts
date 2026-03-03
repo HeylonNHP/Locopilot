@@ -26,8 +26,9 @@ import {
     registerInterruptHandler,
     unregisterInterruptHandler,
 } from './tools.js';
-import { sendOllamaChatStream } from './ollamaApi.js';
+import { sendOllamaChatStream, getOllamaTurnStats } from './ollamaApi.js';
 import type { OllamaToolCall, OllamaToolDefinition, ChatMessage } from './ollamaApi.js';
+import type { OllamaTurnStats } from './ollamaApi.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,8 @@ export interface StreamAIResponseResult {
     toolCalls: OllamaToolCall[];
     /** True if the user interrupted the stream before it completed. */
     interrupted: boolean;
+    /** Final Ollama token/duration stats when provided by the API. */
+    finalStats: OllamaTurnStats | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -113,6 +116,7 @@ export async function streamAIResponse(
     const toolCalls: OllamaToolCall[] = [];
     let interrupted = false;
     let headerPrinted = false;
+    let finalStats: OllamaTurnStats | null = null;
 
     // Track the number of visual lines written to the terminal during streaming
     // so we can step back precisely after the stream and re-render as markdown.
@@ -171,6 +175,10 @@ export async function streamAIResponse(
             if (chunk.message.tool_calls) {
                 toolCalls.push(...chunk.message.tool_calls);
             }
+
+            if (chunk.done) {
+                finalStats = getOllamaTurnStats(chunk);
+            }
         }
     } catch (error) {
         if (!isInterruptRequested()) throw error;
@@ -203,5 +211,5 @@ export async function streamAIResponse(
         }
     }
 
-    return { content, toolCalls, interrupted };
+    return { content, toolCalls, interrupted, finalStats };
 }
