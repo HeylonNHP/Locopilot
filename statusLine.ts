@@ -1,81 +1,70 @@
 import readline from 'readline';
 import chalk from 'chalk';
 
-let timer: NodeJS.Timeout | null = null;
-let frameIndex = 0;
-const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-interface StatusSnapshot {
+type StatusSnapshot = {
     phase: string;
     tokensUsed: number;
     tokenLimit: number;
-    model: string;
+    model?: string;
     tokenSource?: 'estimated' | 'ollama';
-}
+};
 
-let snapshot: StatusSnapshot | null = null;
+let state: StatusSnapshot | null = null;
+let ticker: NodeJS.Timeout | null = null;
+let spinner = 0;
+const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-function draw(): void {
-    if (!process.stdout.isTTY || !snapshot) return;
+function render() {
+    const out = process.stdout;
+    if (!out || !out.isTTY || !state) return;
 
-    const percentage = snapshot.tokenLimit > 0
-        ? Math.min(100, Math.round((snapshot.tokensUsed / snapshot.tokenLimit) * 100))
+    const pct = state.tokenLimit > 0
+        ? Math.min(100, Math.round((state.tokensUsed / state.tokenLimit) * 100))
         : 0;
-    const frame = frames[frameIndex % frames.length];
-    frameIndex += 1;
 
-    const color = percentage >= 90
-        ? chalk.red
-        : percentage >= 75
-            ? chalk.yellow
-            : chalk.green;
+    const frame = FRAMES[(spinner++ ) % FRAMES.length];
+    const pctColor = pct >= 90 ? chalk.red : pct >= 75 ? chalk.yellow : chalk.green;
 
-    const line = `${chalk.dim(frame)} ${snapshot.phase} ${chalk.dim('[' + snapshot.model + ']')} | ` +
-        `${color(`${snapshot.tokensUsed}/${snapshot.tokenLimit} tokens`)} ${chalk.dim(`(${percentage}%)`)}` +
-        `${snapshot.tokenSource === 'ollama' ? chalk.cyan.dim(' (ollama)') : chalk.dim(' (est.)')}`;
+    const left = `${chalk.dim(frame)} ${state.phase} ${chalk.dim(state.model ? '[' + state.model + ']' : '')}`.trim();
+    const right = `${pctColor(`${state.tokensUsed}/${state.tokenLimit} tokens`)} ${chalk.dim(`(${pct}%)`)}${state.tokenSource === 'ollama' ? chalk.cyan.dim(' (ollama)') : ''}`;
 
-    readline.cursorTo(process.stdout, 0);
-    readline.clearLine(process.stdout, 0);
-    process.stdout.write(line);
+    const cols = out.columns || 80;
+    const gap = Math.max(1, cols - stringWidth(left) - stringWidth(right));
+
+    readline.cursorTo(out, 0);
+    readline.clearLine(out, 0);
+    out.write(left + ' '.repeat(gap) + right);
 }
 
-export function updateLiveStatus(next: StatusSnapshot): void {
-    snapshot = next;
-    draw();
-
-    if (timer) return;
-    timer = setInterval(draw, 120);
-    timer.unref();
+function stringWidth(s: string) {
+    return [...s].length;
 }
 
-/**
- * Update only the current phase and optional partial stats.
- *
- * Callers can supply a human-readable `phase` string and optionally any of
- * `tokensUsed`, `tokenLimit`, `model` or `tokenSource`. Missing values are
- * preserved from the last snapshot or defaulted to sensible zeros.
- */
-export function updatePhase(
-    phase: string,
-    stats?: Partial<Omit<StatusSnapshot, 'phase'>>,
-): void {
-    const next: StatusSnapshot = {
+export function updateLiveStatus(next: StatusSnapshot) {
+    state = next;
+    render();
+    if (ticker) return;
+    ticker = setInterval(render, 120);
+    ticker.unref();
+}
+
+export function updatePhase(phase: string, stats?: Partial<Omit<StatusSnapshot, 'phase'>>) {
+    state = {
         phase,
-        tokensUsed: stats?.tokensUsed ?? snapshot?.tokensUsed ?? 0,
-        tokenLimit: stats?.tokenLimit ?? snapshot?.tokenLimit ?? 0,
-        model: stats?.model ?? snapshot?.model ?? '',
-        tokenSource: stats?.tokenSource ?? snapshot?.tokenSource ?? 'estimated',
+        tokensUsed: stats?.tokensUsed ?? state?.tokensUsed ?? 0,
+        tokenLimit: stats?.tokenLimit ?? state?.tokenLimit ?? 0,
+        model: stats?.model ?? state?.model ?? '',
+        tokenSource: stats?.tokenSource ?? state?.tokenSource ?? 'estimated',
     };
-    updateLiveStatus(next);
+    render();
 }
 
-export function clearLiveStatus(): void {
-    if (timer) {
-        clearInterval(timer);
-        timer = null;
+export function clearLiveStatus() {
+    if (ticker) {
+        clearInterval(ticker);
+        ticker = null;
     }
-    snapshot = null;
-
+    state = null;
     if (!process.stdout.isTTY) return;
     readline.cursorTo(process.stdout, 0);
     readline.clearLine(process.stdout, 0);
