@@ -22,7 +22,7 @@ import {
 import { summarizeCommandError } from './errorSummary.js';
 import {
     printAIResponse,
-    streamAIResponse,
+    renderTurn,
     type StreamAIResponseParams,
 } from './aiResponseRenderer.js';
 import {
@@ -456,14 +456,18 @@ async function startChat(
                     tools: TOOLS,
                     numCtx,
                 };
-                const {
-                    content: streamedAssistantContent,
-                    toolCalls: streamedToolCalls,
-                    interrupted: interruptedDuringStream,
-                    finalStats,
-                } = await streamAIResponse(baseUrl, streamParams, {
-                    onStatusUpdate: refreshTokenStatus,
-                });
+
+                const { assistantMessage, interrupted: interruptedDuringStream, sessionTokenStats, finalStats } = await renderTurn(
+                    baseUrl,
+                    streamParams,
+                    {
+                        onStatusUpdate: refreshTokenStatus,
+                        onFinalStats: (authoritativeTokensUsed, finalStats) => {
+                            refreshTokenStatus('AI response received.', authoritativeTokensUsed, 'ollama');
+                            console.log(chalk.dim(`(Used ${authoritativeTokensUsed} ${authoritativeTokensUsed === 1 ? 'token' : 'tokens'})`));
+                        },
+                    },
+                );
 
                 if (interruptedDuringStream) {
                     // Roll back history to before the turn started and break out of the loop
@@ -472,37 +476,11 @@ async function startChat(
                     break;
                 }
 
-                let assistantMessage: ChatMessage;
-                if (streamedToolCalls.length > 0) {
-                    const [firstToolCall, ...restToolCalls] = streamedToolCalls;
-                    if (!firstToolCall) {
-                        throw new Error('Invariant violation: streamedToolCalls was expected to be non-empty.');
-                    }
-                    assistantMessage = {
-                        role: 'assistant',
-                        content: streamedAssistantContent,
-                        tool_calls: [firstToolCall, ...restToolCalls],
-                    };
-                } else {
-                    assistantMessage = {
-                        role: 'assistant',
-                        content: streamedAssistantContent,
-                    };
+                if (!assistantMessage) {
+                    throw new Error('Invariant violation: assistantMessage was expected after successful renderTurn.');
                 }
 
                 messages.push(assistantMessage);
-                let sessionTokenStats: SessionTokenStats | null = null;
-                if (finalStats) {
-                    const authoritativeTokensUsed = finalStats.promptEvalCount + finalStats.evalCount;
-                    sessionTokenStats = {
-                        promptEvalCount: finalStats.promptEvalCount,
-                        evalCount: finalStats.evalCount,
-                    };
-                    refreshTokenStatus('AI response received.', authoritativeTokensUsed, 'ollama');
-                    console.log(chalk.dim(`(Used ${authoritativeTokensUsed} ${authoritativeTokensUsed === 1 ? 'token' : 'tokens'})`));
-                } else {
-                    refreshTokenStatus('AI response received.');
-                }
 
                 if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
                     // Execute each tool call sequentially then feed results back

@@ -60,6 +60,67 @@ export interface StreamAIResponseResult {
     finalStats: OllamaTurnStats | null;
 }
 
+export interface RenderTurnOptions extends StreamAIResponseOptions {
+    /** Called when final authoritative stats arrive from Ollama. */
+    onFinalStats?: (authoritativeTokensUsed: number, finalStats: OllamaTurnStats) => void;
+}
+
+/**
+ * Convenience wrapper that streams an AI turn and returns a ready-to-insert
+ * `assistant` chat message plus session token stats when available.
+ *
+ * This hides the common pattern of calling `streamAIResponse`, constructing the
+ * assistant message object (including any tool calls), and extracting the
+ * authoritative token counts so callers can keep the chat-loop concise.
+ */
+export async function renderTurn(
+    baseUrl: string,
+    params: StreamAIResponseParams,
+    opts: RenderTurnOptions,
+): Promise<{
+    assistantMessage: ChatMessage | null;
+    interrupted: boolean;
+    sessionTokenStats: { promptEvalCount: number; evalCount: number } | null;
+    finalStats: OllamaTurnStats | null;
+}> {
+    const { onStatusUpdate, onFinalStats } = opts;
+
+    const { content, toolCalls, interrupted, finalStats } = await streamAIResponse(baseUrl, params, {
+        onStatusUpdate,
+    });
+
+    if (interrupted) {
+        return { assistantMessage: null, interrupted: true, sessionTokenStats: null, finalStats };
+    }
+
+    let assistantMessage: ChatMessage;
+    if (toolCalls.length > 0) {
+        assistantMessage = {
+            role: 'assistant',
+            content,
+            // Ensure a non-empty tuple type: [first, ...rest]
+            tool_calls: [toolCalls[0]!, ...toolCalls.slice(1)],
+        };
+    } else {
+        assistantMessage = {
+            role: 'assistant',
+            content,
+        };
+    }
+
+    let sessionTokenStats: { promptEvalCount: number; evalCount: number } | null = null;
+    if (finalStats) {
+        const authoritativeTokensUsed = finalStats.promptEvalCount + finalStats.evalCount;
+        sessionTokenStats = {
+            promptEvalCount: finalStats.promptEvalCount,
+            evalCount: finalStats.evalCount,
+        };
+        if (onFinalStats) onFinalStats(authoritativeTokensUsed, finalStats);
+    }
+
+    return { assistantMessage, interrupted: false, sessionTokenStats, finalStats };
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
