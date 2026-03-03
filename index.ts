@@ -17,20 +17,23 @@ import {
 import {
     validateOllamaConnection,
     getOllamaApiErrorMessage,
+    type ChatMessage,
 } from './ollamaApi.js';
-import type { ChatMessage } from './ollamaApi.js';
 import { summarizeCommandError } from './errorSummary.js';
-import { printAIResponse, streamAIResponse } from './aiResponseRenderer.js';
-import type { StreamAIResponseParams } from './aiResponseRenderer.js';
+import {
+    printAIResponse,
+    streamAIResponse,
+    type StreamAIResponseParams,
+} from './aiResponseRenderer.js';
 import {
     createSession,
     renameSession,
     listSessions,
     updateSessionMessages,
     loadSessionMessages,
+    type Session,
+    type SessionTokenStats,
 } from './history.js';
-import type { Session } from './history.js';
-import type { SessionTokenStats } from './history.js';
 import { countMessagesTokens } from './tokenizer.js';
 import { updateLiveStatus, clearLiveStatus } from './statusLine.js';
 import {
@@ -39,8 +42,9 @@ import {
     withExitGuard,
     getModels,
     replaceMessages,
+    type Config,
+    type ChatContext,
 } from './slashCommands.js';
-import type { Config, ChatContext } from './slashCommands.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const DEFAULT_NUM_CTX = 131072;
