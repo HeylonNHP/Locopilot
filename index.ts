@@ -400,6 +400,9 @@ async function startChat(
         }
 
         if (!prompt || prompt.trim() === '') continue;
+
+        // Print the user's prompt to the terminal for historical purposes
+        console.log(chalk.cyan('You >') + ' ' + prompt);
         if (prompt.toLowerCase() === 'exit') break;
 
         // Handle slash commands via registry
