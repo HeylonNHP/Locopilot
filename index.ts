@@ -54,7 +54,7 @@ const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
 let cleanupBeforeExit: (() => void) | null = null;
 
-// --- Functions ---
+// --- Helper Functions ---
 
 async function loadConfig(): Promise<Config | null> {
     try {
@@ -62,8 +62,6 @@ async function loadConfig(): Promise<Config | null> {
         const data = await readFile(CONFIG_PATH, 'utf8');
         return JSON.parse(data);
     } catch (e) {
-        // If file doesn't exist (ENOENT), return null silently.
-        // For other errors (parsing), log it.
         if (e && (e as any).code !== 'ENOENT') {
             console.error(chalk.red('Error reading or parsing config file.'));
         }
@@ -74,6 +72,17 @@ async function loadConfig(): Promise<Config | null> {
 async function saveConfig(config: Config): Promise<void> {
     await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
+
+function handleUnexpectedError(err: any): void {
+    if (err && err.name === 'ExitPromptError') {
+        console.log('\nExiting Locopilot.');
+        process.exit(0);
+    }
+    console.error(chalk.red('An unexpected error occurred:'), err);
+    process.exit(1);
+}
+
+// --- Logic Blocks ---
 
 async function setupOllama(initialConfig: Config | null): Promise<Config> {
     let config = initialConfig;
@@ -89,7 +98,6 @@ async function setupOllama(initialConfig: Config | null): Promise<Config> {
         }
 
         try {
-            // Validate connection
             await validateOllamaConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
             await saveConfig(config);
             return config;
@@ -109,8 +117,156 @@ async function setupOllama(initialConfig: Config | null): Promise<Config> {
             });
             if (action === 'exit' || action === null) process.exit(0);
             if (action === 'edit') config = null;
-            // if retry, loop will continue with existing config
         }
+    }
+}
+
+async function selectExecutionMode(config: Config): Promise<boolean> {
+    const yoloEnv = process.env.YOLO?.toLowerCase();
+    let yoloActive = process.argv.some(arg => arg === '--yolo' || arg === '-y') ||
+                     yoloEnv === 'true' ||
+                     yoloEnv === '1';
+
+    if (!yoloActive) {
+        const mode = await withExitGuard(async () => {
+            return await select({
+                message: 'Select execution mode:',
+                choices: [
+                    { name: 'Standard (Confirm all terminal commands)', value: 'standard' },
+                    { name: chalk.red.bold('YOLO') + '     (Automatic command execution - USE WITH CAUTION)', value: 'yolo' }
+                ],
+                default: config?.yolo ? 'yolo' : 'standard'
+            });
+        });
+
+        if (mode === null) {
+            process.exit(0);
+        }
+        yoloActive = mode === 'yolo';
+    }
+
+    if (yoloActive) {
+        setYoloMode(true);
+        console.log(chalk.red.bold('\n⚠️  YOLO MODE ACTIVATED: Commands will execute automatically without confirmation. ⚠️\n'));
+    } else {
+        setYoloMode(false);
+    }
+    return yoloActive;
+}
+
+async function configureModelAndContext(config: Config, models: string[]): Promise<{ model: string, numCtx: number }> {
+    let selectedModel = config.lastModel && models.includes(config.lastModel)
+        ? config.lastModel
+        : null;
+    const savedNumCtx = config.numCtx ?? DEFAULT_NUM_CTX;
+
+    const numCtxInput = await input({
+        message: 'Enter context length (num_ctx):',
+        default: String(savedNumCtx),
+        validate: (value: string) => {
+            const parsed = Number.parseInt(value, 10);
+            return Number.isInteger(parsed) && parsed > 0
+                ? true
+                : 'Please enter a positive integer.';
+        },
+    });
+    const selectedNumCtx = Number.parseInt(numCtxInput, 10);
+
+    const savedWebSearch = config.webSearch;
+    const webSearchMaxQueriesInput = await input({
+        message: 'Web search setting: max queries per tool call:',
+        default: String(savedWebSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES),
+        validate: (value: string) => {
+            const parsed = Number.parseInt(value, 10);
+            return Number.isInteger(parsed) && parsed > 0
+                ? true
+                : 'Please enter a positive integer.';
+        },
+    });
+    const webSearchResultsPerQueryInput = await input({
+        message: 'Web search setting: results per query:',
+        default: String(savedWebSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY),
+        validate: (value: string) => {
+            const parsed = Number.parseInt(value, 10);
+            return Number.isInteger(parsed) && parsed > 0
+                ? true
+                : 'Please enter a positive integer.';
+        },
+    });
+    const selectedWebSearchMaxQueries = Number.parseInt(webSearchMaxQueriesInput, 10);
+    const selectedWebSearchResultsPerQuery = Number.parseInt(webSearchResultsPerQueryInput, 10);
+
+    if (!selectedModel) {
+        selectedModel = await withExitGuard(async () => {
+            return await select({
+                message: 'Select a model to chat with:',
+                choices: models.map((m: string) => ({ name: m, value: m })),
+                pageSize: 10
+            });
+        });
+
+        if (selectedModel === null) {
+            process.exit(0);
+        }
+    }
+
+    config.lastModel = selectedModel;
+    config.numCtx = selectedNumCtx;
+    config.webSearch = {
+        maxQueries: selectedWebSearchMaxQueries,
+        resultsPerQuery: selectedWebSearchResultsPerQuery,
+    };
+    await saveConfig(config);
+
+    setWebSearchConfig({
+        maxQueries: config.webSearch.maxQueries,
+        resultsPerQuery: config.webSearch.resultsPerQuery,
+    });
+
+    return { model: selectedModel as string, numCtx: selectedNumCtx };
+}
+
+async function selectOrCreateSession(models: string[], selectedModel: string): Promise<{ sessionId: number, messages?: ChatMessage[], model: string }> {
+    const savedSessions = listSessions();
+    let currentModel = selectedModel;
+
+    if (savedSessions.length > 0) {
+        const sessionChoice = await withExitGuard(async () => {
+            return await select<'new' | number>({
+                message: 'Start a new conversation or resume a previous one?',
+                choices: [
+                    { name: chalk.green('+ New conversation'), value: 'new' },
+                    ...savedSessions.slice(0, 10).map((s: Session) => ({
+                        name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
+                        value: s.id as 'new' | number,
+                    })),
+                ],
+                pageSize: 12,
+            });
+        });
+
+        if (sessionChoice === null) process.exit(0);
+
+        if (sessionChoice === 'new') {
+            const sessionId = createSession('New Session', currentModel);
+            return { sessionId, model: currentModel };
+        } else {
+            const resumedSession = savedSessions.find(s => s.id === sessionChoice);
+            if (resumedSession) {
+                if (models.includes(resumedSession.model)) {
+                    currentModel = resumedSession.model;
+                } else {
+                    console.log(chalk.yellow(`\n⚠️ Resumed session used model '${resumedSession.model}', which is not currently available.`));
+                    console.log(chalk.yellow(`Continuing with '${currentModel}' instead.\n`));
+                }
+            }
+            const messages = loadSessionMessages(sessionChoice);
+            console.log(chalk.dim(`Resuming session [${sessionChoice}] with ${messages.length} messages.`));
+            return { sessionId: sessionChoice, messages, model: currentModel };
+        }
+    } else {
+        const sessionId = createSession('New Session', currentModel);
+        return { sessionId, model: currentModel };
     }
 }
 
@@ -119,7 +275,7 @@ async function startChat(
     numCtx: number,
     sessionId: number,
     config: Config,
-    preloadedMessages?: import('./ollamaApi.js').ChatMessage[],
+    preloadedMessages?: ChatMessage[],
 ): Promise<void> {
     let currentModel = model;
     let currentSessionId = sessionId;
@@ -424,38 +580,11 @@ async function startChat(
 }
 
 async function main(): Promise<void> {
-    const yoloEnv = process.env.YOLO?.toLowerCase();
-    let yoloActive = process.argv.some(arg => arg === '--yolo' || arg === '-y') ||
-                     yoloEnv === 'true' ||
-                     yoloEnv === '1';
-
     let config = await loadConfig();
     config = await setupOllama(config);
 
-    if (!yoloActive) {
-        const mode = await withExitGuard(async () => {
-            return await select({
-                message: 'Select execution mode:',
-                choices: [
-                    { name: 'Standard (Confirm all terminal commands)', value: 'standard' },
-                    { name: chalk.red.bold('YOLO') + '     (Automatic command execution - USE WITH CAUTION)', value: 'yolo' }
-                ],
-                default: config?.yolo ? 'yolo' : 'standard'
-            });
-        });
-
-        if (mode === null) {
-            process.exit(0);
-        }
-        yoloActive = mode === 'yolo';
-    }
-
-    if (yoloActive) {
-        setYoloMode(true);
-        console.log(chalk.red.bold('\n⚠️  YOLO MODE ACTIVATED: Commands will execute automatically without confirmation. ⚠️\n'));
-    } else {
-        setYoloMode(false);
-    }
+    const yoloActive = await selectExecutionMode(config);
+    config.yolo = yoloActive;
 
     console.log(chalk.blue('Fetching models from ' + config.baseUrl + '...'));
     const models = await getModels(config.baseUrl);
@@ -468,120 +597,10 @@ async function main(): Promise<void> {
     console.log(chalk.green(`Found ${models.length} models:`));
     models.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
 
-    let selectedModel = config.lastModel && models.includes(config.lastModel)
-        ? config.lastModel
-        : null;
-    const savedNumCtx = config.numCtx ?? DEFAULT_NUM_CTX;
+    const { model: selectedModel, numCtx: selectedNumCtx } = await configureModelAndContext(config, models);
+    const { sessionId, messages: startingMessages, model: finalModel } = await selectOrCreateSession(models, selectedModel);
 
-    const numCtxInput = await input({
-        message: 'Enter context length (num_ctx):',
-        default: String(savedNumCtx),
-        validate: (value: string) => {
-            const parsed = Number.parseInt(value, 10);
-            return Number.isInteger(parsed) && parsed > 0
-                ? true
-                : 'Please enter a positive integer.';
-        },
-    });
-    const selectedNumCtx = Number.parseInt(numCtxInput, 10);
-
-    const savedWebSearch = config.webSearch;
-    const webSearchMaxQueriesInput = await input({
-        message: 'Web search setting: max queries per tool call:',
-        default: String(savedWebSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES),
-        validate: (value: string) => {
-            const parsed = Number.parseInt(value, 10);
-            return Number.isInteger(parsed) && parsed > 0
-                ? true
-                : 'Please enter a positive integer.';
-        },
-    });
-    const webSearchResultsPerQueryInput = await input({
-        message: 'Web search setting: results per query:',
-        default: String(savedWebSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY),
-        validate: (value: string) => {
-            const parsed = Number.parseInt(value, 10);
-            return Number.isInteger(parsed) && parsed > 0
-                ? true
-                : 'Please enter a positive integer.';
-        },
-    });
-    const selectedWebSearchMaxQueries = Number.parseInt(webSearchMaxQueriesInput, 10);
-    const selectedWebSearchResultsPerQuery = Number.parseInt(webSearchResultsPerQueryInput, 10);
-
-    if (!selectedModel) {
-        selectedModel = await withExitGuard(async () => {
-            return await select({
-                message: 'Select a model to chat with:',
-                choices: models.map((m: string) => ({ name: m, value: m })),
-                pageSize: 10
-            });
-        });
-
-        if (selectedModel === null) {
-            process.exit(0);
-        }
-    }
-
-    // Persist selected model and context length
-    config.lastModel = selectedModel;
-    config.numCtx = selectedNumCtx;
-    config.yolo = yoloActive;
-    config.webSearch = {
-        maxQueries: selectedWebSearchMaxQueries,
-        resultsPerQuery: selectedWebSearchResultsPerQuery,
-    };
-    await saveConfig(config);
-
-    setWebSearchConfig({
-        maxQueries: config.webSearch.maxQueries,
-        resultsPerQuery: config.webSearch.resultsPerQuery,
-    });
-
-    // ── Session management ──────────────────────────────────────────────
-    const savedSessions = listSessions();
-    let startingSessionId: number;
-    let startingMessages: ChatMessage[] | undefined;
-
-    if (savedSessions.length > 0) {
-        const sessionChoice = await withExitGuard(async () => {
-            return await select<'new' | number>({
-                message: 'Start a new conversation or resume a previous one?',
-                choices: [
-                    { name: chalk.green('+ New conversation'), value: 'new' },
-                    ...savedSessions.slice(0, 10).map((s: Session) => ({
-                        name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
-                        value: s.id as 'new' | number,
-                    })),
-                ],
-                pageSize: 12,
-            });
-        });
-
-        if (sessionChoice === null) process.exit(0);
-
-        if (sessionChoice === 'new') {
-            startingSessionId = createSession('New Session', selectedModel as string);
-        } else {
-            startingSessionId = sessionChoice;
-            const resumedSession = savedSessions.find(s => s.id === startingSessionId);
-            if (resumedSession) {
-                if (models.includes(resumedSession.model)) {
-                    selectedModel = resumedSession.model;
-                } else {
-                    console.log(chalk.yellow(`\n⚠️ Resumed session used model '${resumedSession.model}', which is not currently available.`));
-                    console.log(chalk.yellow(`Continuing with '${selectedModel}' instead.\n`));
-                }
-            }
-            startingMessages = loadSessionMessages(startingSessionId);
-            console.log(chalk.dim(`Resuming session [${startingSessionId}] with ${startingMessages.length} messages.`));
-        }
-    } else {
-        startingSessionId = createSession('New Session', selectedModel as string);
-    }
-    // ────────────────────────────────────────────────────────────────────
-
-    await startChat(selectedModel as string, selectedNumCtx, startingSessionId, config, startingMessages);
+    await startChat(finalModel, selectedNumCtx, sessionId, config, startingMessages);
 }
 
 process.on('SIGINT', () => {
@@ -592,11 +611,4 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
-main().catch(err => {
-    if (err && err.name === 'ExitPromptError') {
-        // Graceful exit for Ctrl+C
-        console.log('\nExiting Locopilot.');
-        process.exit(0);
-    }
-    console.error(chalk.red('An unexpected error occurred:'), err);
-});
+main().catch(handleUnexpectedError);
