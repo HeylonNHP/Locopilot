@@ -306,13 +306,6 @@ async function startChat(
     // Whether the session name has been set from the first user message.
     let sessionNamed = preloadedMessages !== undefined && preloadedMessages.length > 0;
 
-    // Persists the current in-memory message list to the database.
-    const saveSession = (tokenStats?: SessionTokenStats | null) =>
-        updateSessionMessages(currentSessionId, messages, tokenStats);
-
-    // Register cleanup for SIGINT (Ctrl+C)
-    cleanupBeforeExit = saveSession;
-
     const context: ChatContext = {
         get baseUrl() { return baseUrl; },
         get currentModel() { return currentModel; },
@@ -321,7 +314,8 @@ async function startChat(
         get currentSessionId() { return currentSessionId; },
         get config() { return config; },
         get systemPrompt() { return systemPrompt; },
-        saveSession,
+        saveSession: (tokenStats?: SessionTokenStats | null) =>
+            updateSessionMessages(currentSessionId, messages, tokenStats),
         refreshTokenStatus: (phase: string) => refreshTokenStatus(phase),
         updateModel: async (model: string) => {
             currentModel = model;
@@ -367,6 +361,9 @@ async function startChat(
         }
         // ─────────────────────────────────────────────────────────────
     }
+
+    // Register cleanup for SIGINT (Ctrl+C)
+    cleanupBeforeExit = () => context.saveSession();
 
     while (true) {
         let prompt: string;
@@ -443,7 +440,7 @@ async function startChat(
                     console.log(chalk.yellow('AI loop interrupted by user.\n'));
                     // Roll back history to before the turn started
                     messages.length = historyLengthBeforeTurn;
-                    saveSession();
+                    context.saveSession();
                     break;
                 }
 
@@ -465,7 +462,7 @@ async function startChat(
                 if (interruptedDuringStream) {
                     // Roll back history to before the turn started and break out of the loop
                     messages.length = historyLengthBeforeTurn;
-                    saveSession();
+                    context.saveSession();
                     break;
                 }
 
@@ -562,7 +559,7 @@ async function startChat(
                     config.lastModel = currentModel;
                     config.numCtx = numCtx;
                     await saveConfig(config);
-                    saveSession(sessionTokenStats);
+                    context.saveSession(sessionTokenStats);
                     break;
                 }
             }
@@ -571,7 +568,7 @@ async function startChat(
             console.error(chalk.red('Error communicating with Ollama:'), await getOllamaApiErrorMessage(error));
             // Roll back history to before the turn started so conversation stays consistent
             messages.length = historyLengthBeforeTurn;
-            saveSession();
+            context.saveSession();
         } finally {
             clearLiveStatus();
             removeKeyInterruptListener();
