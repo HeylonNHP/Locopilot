@@ -48,6 +48,27 @@ export function updateLiveStatus(next: StatusSnapshot): void {
     timer.unref();
 }
 
+/**
+ * Update only the current phase and optional partial stats.
+ *
+ * Callers can supply a human-readable `phase` string and optionally any of
+ * `tokensUsed`, `tokenLimit`, `model` or `tokenSource`. Missing values are
+ * preserved from the last snapshot or defaulted to sensible zeros.
+ */
+export function updatePhase(
+    phase: string,
+    stats?: Partial<Omit<StatusSnapshot, 'phase'>>,
+): void {
+    const next: StatusSnapshot = {
+        phase,
+        tokensUsed: stats?.tokensUsed ?? snapshot?.tokensUsed ?? 0,
+        tokenLimit: stats?.tokenLimit ?? snapshot?.tokenLimit ?? 0,
+        model: stats?.model ?? snapshot?.model ?? '',
+        tokenSource: stats?.tokenSource ?? snapshot?.tokenSource ?? 'estimated',
+    };
+    updateLiveStatus(next);
+}
+
 export function clearLiveStatus(): void {
     if (timer) {
         clearInterval(timer);

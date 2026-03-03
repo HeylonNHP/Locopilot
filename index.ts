@@ -35,7 +35,7 @@ import {
     type SessionTokenStats,
 } from './history.js';
 import { countMessagesTokens } from './tokenizer.js';
-import { updateLiveStatus, clearLiveStatus } from './statusLine.js';
+import { updatePhase, clearLiveStatus } from './statusLine.js';
 import {
     SLASH_COMMANDS,
     COMMAND_HANDLERS,
@@ -341,8 +341,7 @@ async function startChat(
         tokenSource: 'estimated' | 'ollama' = 'estimated',
     ) {
         const tokensUsed = tokensUsedOverride ?? countMessagesTokens(messages, currentModel);
-        updateLiveStatus({
-            phase,
+        updatePhase(phase, {
             tokensUsed,
             tokenLimit: numCtx,
             model: currentModel,
