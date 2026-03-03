@@ -370,27 +370,33 @@ async function startChat(
     while (true) {
         let prompt: string;
         try {
-            prompt = await search({
+            prompt = await search<string>({
                 message: chalk.cyan('You >'),
                 theme: {
                     prefix: { idle: '', done: '' },
+                    helpMode: 'none',
                     style: {
                         message: (text: string, status: 'idle' | 'done' | 'loading') =>
                             status === 'done' ? '' : text,
                         answer: () => '',
+                        help: () => '',
                     },
                 },
                 source: async (inputArg: string | undefined) => {
-                    if (!inputArg) {
-                        return [{ name: chalk.dim('Type a message or / for commands...'), value: '' }];
+                    const input = inputArg || '';
+                    if (!input) {
+                        return [];
                     }
 
-                    if (inputArg.startsWith('/')) {
-                        const matches = SLASH_COMMANDS.filter(c => c.value.startsWith(inputArg));
+                    if (input.startsWith('/')) {
+                        const matches = SLASH_COMMANDS.filter(c => c.value.startsWith(input));
                         if (matches.length > 0) return matches;
                     }
 
-                    return [{ name: inputArg, value: inputArg }];
+                    // To prevent the "repeated text" below the cursor while typing,
+                    // we return an empty array if the input doesn't look like a command.
+                    // This suppresses the autocomplete list for standard messages.
+                    return [];
                 },
             });
         } catch (e: unknown) {
@@ -400,9 +406,11 @@ async function startChat(
 
         if (!prompt || prompt.trim() === '') continue;
 
-        // Print the user's prompt to the terminal for historical purposes
-        console.log(chalk.cyan('You >') + ' ' + prompt);
         if (prompt.toLowerCase() === 'exit') break;
+
+        // Manually print the user's prompt to the terminal.
+        // This ensures the message appears exactly once and we have full control over the prefix.
+        process.stdout.write(`${chalk.cyan('You >')} ${prompt}\n`);
 
         // Handle slash commands via registry
         const [cmdName = ''] = prompt.trim().split(/\s+/);
