@@ -164,19 +164,13 @@ export class WebSearchTool {
         return Array.from(candidates).slice(0, maxQueries);
     }
 
-    private async fetchSearchResults(query: string, limit: number): Promise<DuckDuckGoResult[]> {
-        const response = await axios.get<string>(DUCKDUCKGO_HTML_SEARCH_URL, {
-            params: { q: query },
-            timeout: this.settings.requestTimeoutMs,
-            headers: {
-                'User-Agent': DEFAULT_USER_AGENT,
-                Accept: 'text/html,application/xhtml+xml',
-            },
-            responseType: 'text',
-        });
-
-        const $ = cheerio.load(response.data);
-        const results: DuckDuckGoResult[] = [];
+    private parseResultsFromPage(
+        $: ReturnType<typeof cheerio.load>,
+        results: DuckDuckGoResult[],
+        limit: number,
+    ): number {
+        const seen = new Set(results.map((r) => r.url));
+        let added = 0;
 
         $('.result').each((_, element) => {
             if (results.length >= limit) return;
@@ -190,13 +184,68 @@ export class WebSearchTool {
 
             const url = parseDuckDuckGoRedirect(href);
             if (!/^https?:\/\//i.test(url)) return;
+            if (seen.has(url)) return;
 
-            results.push({
-                title,
-                url,
-                snippet,
-            });
+            seen.add(url);
+            results.push({ title, url, snippet });
+            added++;
         });
+
+        return added;
+    }
+
+    private async fetchSearchResults(query: string, limit: number): Promise<DuckDuckGoResult[]> {
+        const results: DuckDuckGoResult[] = [];
+
+        // First page via GET
+        const firstResponse = await axios.get<string>(DUCKDUCKGO_HTML_SEARCH_URL, {
+            params: { q: query },
+            timeout: this.settings.requestTimeoutMs,
+            headers: {
+                'User-Agent': DEFAULT_USER_AGENT,
+                Accept: 'text/html,application/xhtml+xml',
+            },
+            responseType: 'text',
+        });
+
+        let $ = cheerio.load(firstResponse.data);
+        this.parseResultsFromPage($, results, limit);
+
+        if (results.length >= limit) return results;
+
+        // Extract vqd token required for subsequent pages
+        const vqd = ($('input[name="vqd"]').first().val() as string | undefined) ?? '';
+        if (!vqd) return results;
+
+        // Subsequent pages via POST with offset (DDG uses steps of 30)
+        let offset = 30;
+        while (results.length < limit) {
+            const pageResponse = await axios.post<string>(
+                DUCKDUCKGO_HTML_SEARCH_URL,
+                new URLSearchParams({
+                    q: query,
+                    vqd,
+                    s: String(offset),
+                    dc: String(offset + 1),
+                }).toString(),
+                {
+                    timeout: this.settings.requestTimeoutMs,
+                    headers: {
+                        'User-Agent': DEFAULT_USER_AGENT,
+                        Accept: 'text/html,application/xhtml+xml',
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        Referer: DUCKDUCKGO_HTML_SEARCH_URL,
+                    },
+                    responseType: 'text',
+                },
+            );
+
+            $ = cheerio.load(pageResponse.data);
+            const added = this.parseResultsFromPage($, results, limit);
+            if (added === 0) break; // No more results available
+
+            offset += 30;
+        }
 
         return results;
     }
