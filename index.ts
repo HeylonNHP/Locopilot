@@ -374,29 +374,26 @@ async function startChat(
                 message: chalk.cyan('You >'),
                 theme: {
                     prefix: { idle: '', done: '' },
-                    helpMode: 'none',
                     style: {
                         message: (text: string, status: 'idle' | 'done' | 'loading') =>
                             status === 'done' ? '' : text,
                         answer: () => '',
                         help: () => '',
+                        highlight: () => '', // Completely hide the selection text
                     },
                 },
                 source: async (inputArg: string | undefined) => {
-                    const input = inputArg || '';
-                    if (!input) {
-                        return [];
-                    }
+                    const input = (inputArg || '');
 
+                    // Slash commands: return matches so user can navigate/select.
                     if (input.startsWith('/')) {
                         const matches = SLASH_COMMANDS.filter(c => c.value.startsWith(input));
                         if (matches.length > 0) return matches;
                     }
 
-                    // To prevent the "repeated text" below the cursor while typing,
-                    // we return an empty array if the input doesn't look like a command.
-                    // This suppresses the autocomplete list for standard messages.
-                    return [];
+                    // For standard messages, return exactly one choice matching their text.
+                    // By setting highlight: () => '', this choice becomes invisible.
+                    return [{ name: input, value: input }];
                 },
             });
         } catch (e: unknown) {
