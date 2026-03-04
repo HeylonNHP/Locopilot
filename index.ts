@@ -378,8 +378,10 @@ async function startChat(
                         message: (text: string, status: 'idle' | 'done' | 'loading') =>
                             status === 'done' ? '' : text,
                         answer: () => '',
-                        help: () => '',
-                        highlight: () => '', // Completely hide the selection text
+                        // Hide the selected item text so it doesn't repeat the typed input
+                        highlight: () => '',
+                        // Hide the "↑↓ navigate • ⏎ select" hint line
+                        keysHelpTip: () => '',
                     },
                 },
                 source: async (inputArg: string | undefined) => {
@@ -391,9 +393,9 @@ async function startChat(
                         if (matches.length > 0) return matches;
                     }
 
-                    // For standard messages, return exactly one choice matching their text.
-                    // By setting highlight: () => '', this choice becomes invisible.
-                    return [{ name: input, value: input }];
+                    // Return a phantom selectable item so Enter can submit.
+                    // Empty name + highlight:()=>'' means nothing renders below the prompt.
+                    return [{ name: '', value: input }];
                 },
             });
         } catch (e: unknown) {

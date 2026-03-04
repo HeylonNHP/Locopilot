@@ -165,6 +165,7 @@ Feature summary:
 - For each result URL, Locopilot fetches the page HTML and extracts main text using a shared extractor logic (`htmlExtractor.ts`).
 - The tool currently returns extracted page text directly (no LLM summarization step) to keep latency lower and reduce extra model calls.
 - The terminal UI prints progress updates while web search is running.
+- Pagination: the first page is fetched via GET; if `resultsPerQuery` exceeds ~10 results, subsequent pages are fetched via POST using the `vqd` token extracted from the initial response and an incrementing `s`/`dc` offset parameter (steps of 30). Duplicate URLs across pages are deduplicated automatically.
 
 Security / UX notes:
 - Treat fetched page text as untrusted input and sanitize before rendering or reusing.
@@ -255,6 +256,11 @@ Implementation notes:
     - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
 
 ## Change History
+
+- 2026-03-04: Implemented DuckDuckGo pagination for `web_search`
+  - Files: `tools/webSearchTool.ts`, `.github/copilot-instructions.md`
+  - Summary: `fetchSearchResults` now fetches additional pages via POST (using the `vqd` token and `s`/`dc` offset) until `resultsPerQuery` is satisfied or no more results are available. Result parsing was extracted into a `parseResultsFromPage` helper. Duplicate URLs across pages are deduplicated.
+  - Intent: Honour the user-configured `resultsPerQuery` value (e.g. 15) rather than being silently capped at ~10 by the default DDG HTML page size.
 
 - 2026-03-03: Switched token reporting to Ollama-authoritative final stats
   - Files: `ollamaApi.ts`, `aiResponseRenderer.ts`, `index.ts`, `statusLine.ts`, `compact.ts`, `history.ts`, `slashCommands.ts`, `README.md`, `.github/copilot-instructions.md`
