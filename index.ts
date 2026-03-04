@@ -374,12 +374,14 @@ async function startChat(
                 message: chalk.cyan('You >'),
                 theme: {
                     prefix: { idle: '', done: '' },
-                    helpMode: 'none',
                     style: {
                         message: (text: string, status: 'idle' | 'done' | 'loading') =>
                             status === 'done' ? '' : text,
                         answer: () => '',
-                        help: () => '',
+                        // Hide the selected item text so it doesn't repeat the typed input
+                        highlight: () => '',
+                        // Hide the "↑↓ navigate • ⏎ select" hint line
+                        keysHelpTip: () => '',
                     },
                 },
                 source: async (inputArg: string | undefined) => {
@@ -393,10 +395,9 @@ async function startChat(
                         if (matches.length > 0) return matches;
                     }
 
-                    // To prevent the "repeated text" below the cursor while typing,
-                    // we return an empty array if the input doesn't look like a command.
-                    // This suppresses the autocomplete list for standard messages.
-                    return [];
+                    // Return a phantom selectable item so Enter can submit.
+                    // Empty name + highlight:()=>'' means nothing renders below the prompt.
+                    return [{ name: '', value: input }];
                 },
             });
         } catch (e: unknown) {
