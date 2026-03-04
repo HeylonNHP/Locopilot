@@ -64,10 +64,7 @@ export class WebSearchTool {
 
     async run(args: WebSearchToolArgs): Promise<string> {
         const effectiveMaxQueries = clampToPositiveInt(args.max_queries ?? this.settings.maxQueries, this.settings.maxQueries);
-        const effectiveResultsPerQuery = clampToPositiveInt(
-            args.results_per_query ?? this.settings.resultsPerQuery,
-            this.settings.resultsPerQuery,
-        );
+        const effectiveResultsPerQuery = this.settings.resultsPerQuery;
 
         const queries = this.generateQueries(args, effectiveMaxQueries);
         if (queries.length === 0) {
@@ -233,7 +230,7 @@ export class WebSearchTool {
  */
 export function getToolPrompt(): string {
     return (
-        '3. web_search(prompt?, queries?, max_queries?, results_per_query?)\n' +
+        '3. web_search(prompt?, queries?, max_queries?)\n' +
         '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
         '   Use this when external web context is needed. Provide explicit queries as\n' +
         '   an array when possible; aim for 2-3 distinct queries for complex requests\n' +

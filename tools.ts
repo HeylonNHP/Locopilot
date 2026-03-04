@@ -293,11 +293,6 @@ export const TOOLS: OllamaTool[] = [
                         description:
                             'Maximum number of queries to run for this call. Uses configured default when omitted.',
                     },
-                    results_per_query: {
-                        type: 'number',
-                        description:
-                            'Number of DuckDuckGo results to fetch per query. Uses configured default when omitted.',
-                    },
                 },
                 required: [],
             },
@@ -536,13 +531,7 @@ export async function handleToolCall(
                 }
                 webArgs.max_queries = parsedMaxQueries;
             }
-            if (args.results_per_query !== undefined) {
-                const parsedResultsPerQuery = parsePositiveInteger(args.results_per_query, 1, 10);
-                if (parsedResultsPerQuery === null) {
-                    return '[Error: invalid argument "results_per_query" (expected an integer between 1 and 10)]';
-                }
-                webArgs.results_per_query = parsedResultsPerQuery;
-            }
+
 
             if (!webArgs.prompt && (!webArgs.queries || webArgs.queries.length === 0)) {
                 return '[Error: web_search requires either "prompt" or "queries"]';
