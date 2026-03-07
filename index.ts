@@ -450,8 +450,6 @@ async function startChat(
                 if (isInterruptRequested()) {
                     clearLiveStatus();
                     console.log(chalk.yellow('AI loop interrupted by user.\n'));
-                    // Roll back history to before the turn started
-                    messages.length = historyLengthBeforeTurn;
                     context.saveSession();
                     break;
                 }
@@ -476,8 +474,6 @@ async function startChat(
                 );
 
                 if (interruptedDuringStream) {
-                    // Roll back history to before the turn started and break out of the loop
-                    messages.length = historyLengthBeforeTurn;
                     context.saveSession();
                     break;
                 }
@@ -556,8 +552,6 @@ async function startChat(
         } catch (error) {
             clearLiveStatus();
             console.error(chalk.red('Error communicating with Ollama:'), await getOllamaApiErrorMessage(error));
-            // Roll back history to before the turn started so conversation stays consistent
-            messages.length = historyLengthBeforeTurn;
             context.saveSession();
         } finally {
             clearLiveStatus();

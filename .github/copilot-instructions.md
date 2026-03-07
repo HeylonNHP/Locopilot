@@ -250,10 +250,10 @@ Implementation notes:
     - Files: `runCommandTool.ts` (new), `tools.ts`
     - Summary: Extracted command execution logic, process registry, and shell resolution into `runCommandTool.ts`.
     - Intent: Keep `tools.ts` focused on common tool-calling orchestration and schemas while isolating concrete tool implementations.
-- [x] **Modularized tool-specific system prompts**:
-    - Files: `runCommandTool.ts`, `webSearchTool.ts`, `tools.ts`
-    - Summary: Moved the string blocks describing each tool from `getToolSystemPrompt()` in `tools.ts` into exported `getToolPrompt()` functions within their respective tool files.
-    - Intent: Ensure that tool descriptions stay in sync with their implementations and keep `tools.ts` clean by delegating prompt generation to the modules that maintain the tools.
+- [x] **Preserve message history on error/interrupt**:
+    - Files: `index.ts`
+    - Summary: Removed the code that rolled back `messages.length` to `historyLengthBeforeTurn` when an AI turn was interrupted or failed due to an Ollama API error.
+    - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
 
