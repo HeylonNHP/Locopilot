@@ -118,26 +118,23 @@ const renderer = new TerminalRenderer({
   href: chalk.blue.underline,
 }) as any;
 
-// A fix for marked-terminal 7.x which fails to correctly render bold/italic/code text
-// inside list items when there is mixed text, because it tries to access
-// this.parser.parseInline on the object-form tokens which is inaccessible in the ESM build.
-// This workaround intercepts the listitem renderer and applies a regex-based format
-// to the raw 'text' property when the primary renderer fails to parse tokens correctly.
-const originalListItem = renderer.listitem.bind(renderer);
-renderer.listitem = function (item: string | { text: string }): string {
-  if (typeof item === 'object' && item !== null && item.text) {
-    // Basic terminal-friendly markdown processing for list items
-    const formatted = item.text
-      .replace(/\*\*(.*?)\*\*/g, chalk.bold('$1'))
-      .replace(/__(.*?)__/g, chalk.bold('$1'))
-      .replace(/\*(.*?)\*/g, chalk.italic('$1'))
-      .replace(/_(.*?)_/g, chalk.italic('$1'))
-      .replace(/`(.*?)`/g, chalk.yellow('$1'));
+// Fix for marked-terminal 7.x: the `text` renderer discards inline token children
+// and returns the raw markdown string (e.g. "**Bold**") instead of calling
+// parseInline on the child tokens, so strong/em/codespan renderers are never
+// reached for text nodes inside list items.
+//
+// The correct fix is to intercept the `text` renderer and delegate to
+// parseInline when a token object with children is provided.  We also prime the
+// renderer with an empty parse so that `renderer.parser` is initialised before
+// the patch runs.
+marked.parse('', { renderer });
 
-    // marked-terminal prefix logic for list items (default is \n and a bullet)
-    return '\n  * ' + formatted;
+const originalText = renderer.text.bind(renderer);
+renderer.text = function (token: any): string {
+  if (typeof token === 'object' && token !== null && token.tokens && renderer.parser) {
+    return renderer.parser.parseInline(token.tokens);
   }
-  return originalListItem(item);
+  return originalText(token);
 };
 
 marked.setOptions({

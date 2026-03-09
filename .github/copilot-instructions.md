@@ -114,6 +114,7 @@ Feature summary:
 - The `AI >` label is printed before the first content chunk; if the stream is interrupted an inline `(interrupted)` suffix is written.
 - While the AI is generating, the status line shows the live character count to indicate progress.
 - Raw assistant text in `printAIResponse` is sanitized (to remove any AI-generated ANSI codes) before being passed to the renderer.
+- After streaming completes, a **viewport-aware re-render strategy** is applied: if the response fits within the visible terminal height (`streamedLines < termHeight`), the cursor steps back to the header row with `\x1B[{N}A`, the raw text is erased, and the formatted markdown replaces it. If the response scrolled the terminal, `\x1B[{N}A` would be capped at the top of the visible viewport and produce a partial-erase artefact — in that case the raw stream is left in the scrollback buffer and the formatted version is printed below a dim separator rule.
 
 Implementation notes:
 - Rendering logic is isolated in `markdownRenderer.ts`.
@@ -257,10 +258,15 @@ Implementation notes:
 
 ## Change History
 
-- 2026-03-08: Fixed bold/italic/code rendering in list items
+- 2026-03-09: Fixed post-stream re-render using viewport-aware strategy
+  - Files: [aiResponseRenderer.ts](aiResponseRenderer.ts)
+  - Summary: Replaced the broken DSR/absolute-positioning attempt with a reliable short/long split: if `streamedLines < termHeight` the cursor steps back with `\x1B[{N}A` (safe because content never scrolled the viewport) and the raw text is replaced with formatted markdown; if content scrolled the terminal, the raw stream is left in scrollback and the formatted version is appended below a dim separator — avoiding the half-erase artefact caused by `\x1B[{N}A` being capped at the top of the visible screen. Also removed the non-functional `queryCursorRow` DSR helper.
+  - Intent: Ensure formatted markdown is always visible and never partially overwrites raw streamed output. Simple, reliable, no stdin dependency.
+
+- 2026-03-09: Corrected bold/italic/code rendering fix in list items
   - Files: [markdownRenderer.ts](markdownRenderer.ts)
-  - Summary: Applied a regex-based monkey-patch to the `listitem` renderer in `marked-terminal` to handle inline formatting (bold, italic, codespan) which fails to render correctly in ESM environments for specific token structures.
-  - Intent: Ensure all AI-generated lists with formatted text are displayed correctly in the terminal.
+  - Summary: Replaced the earlier regex-based `listitem` monkey-patch with a targeted `text` renderer patch. Root cause: `marked-terminal`'s `text` renderer discards inline token children (`token.tokens`) and returns the raw markdown string, so `strong`/`em`/`codespan` renderers are never invoked for text inside list items. The fix overrides `renderer.text` to delegate to `renderer.parser.parseInline(token.tokens)` when token children are present, letting the real renderers run. Also primes the renderer with an empty `marked.parse('', { renderer })` call so `renderer.parser` is initialized before the patch runs.
+  - Intent: Fix the issue correctly at the source (the `text` renderer, not `listitem`), removing fragile regex substitution and correctly routing through the configured Chalk styles.
 
 - 2026-03-04: Implemented DuckDuckGo pagination for `web_search`
   - Files: `tools/webSearchTool.ts`, `.github/copilot-instructions.md`

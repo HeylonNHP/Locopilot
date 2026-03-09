@@ -161,6 +161,16 @@ export function printAIResponse(
  *
  * Tool-call-only responses (no text content) produce no terminal output.
  *
+ * Post-stream re-render strategy:
+ *   - SHORT responses (streamed lines < terminal height): cursor moves back
+ *     to the "AI > " header line with \x1B[{N}A, the raw text is erased, and
+ *     the formatted markdown replaces it.  This works because the content never
+ *     scrolled the viewport so the header row is still reachable.
+ *   - LONG responses (scrolled off the top of the viewport): the raw stream is
+ *     left in the scrollback buffer and the formatted version is printed below,
+ *     separated by a dim rule.  This avoids the half-erase artefact that occurs
+ *     when \x1B[{N}A is capped at the top of the visible screen.
+ *
  * @param baseUrl - Ollama base URL (e.g. `http://localhost:11434`).
  * @param params  - Model, messages, tools, and context length.
  * @param opts    - Status-update callback.
@@ -179,12 +189,13 @@ export async function streamAIResponse(
     let headerPrinted = false;
     let finalStats: OllamaTurnStats | null = null;
 
-    // Track the number of visual lines written to the terminal during streaming
-    // so we can step back precisely after the stream and re-render as markdown.
-    // We initialise to 1 because the "AI > " header occupies one line, and we
-    // track the column position within that line to detect soft-wraps correctly.
+    // Count visual lines emitted during streaming so we can step back precisely
+    // for the post-stream re-render.  Only reliable when the response does NOT
+    // scroll the terminal (i.e. streamedLines < terminal height).  We start at 1
+    // for the "AI > " header line and track column position to detect soft-wraps.
     const termWidth = process.stdout.isTTY ? (process.stdout.columns || 80) : 80;
-    const AI_LABEL_VISIBLE_LEN = 'AI > '.length; // visible chars of the label
+    const termHeight = process.stdout.isTTY ? (process.stdout.rows || 24) : 24;
+    const AI_LABEL_VISIBLE_LEN = 'AI > '.length;
     let streamedLines = 1;
     let currentLineLen = AI_LABEL_VISIBLE_LEN;
 
@@ -254,19 +265,29 @@ export async function streamAIResponse(
             process.stdout.write(chalk.yellow(' (interrupted)'));
             process.stdout.write('\n');
         } else if (process.stdout.isTTY && content.trim().length > 0) {
-            // Step back exactly as many visual lines as we wrote during streaming,
-            // then erase to end of screen and re-render as formatted markdown.
-            //
-            // Using relative cursor-up (\x1B[{N}A) instead of save/restore because
-            // save/restore stores screen-row coordinates that become stale once the
-            // terminal scrolls — moving up by a counted number of lines is
-            // scroll-safe and works correctly in Konsole, Windows Terminal, etc.
-            process.stdout.write(`\x1B[${streamedLines}A`); // cursor up N lines
-            process.stdout.write('\x1B[G');                 // move to column 0
-            process.stdout.write('\x1B[J');                 // clear to end of screen
-            process.stdout.write(chalk.yellow('AI > '));
-            process.stdout.write(renderMarkdown(sanitize(content)));
-            process.stdout.write('\n');
+            const rendered = renderMarkdown(sanitize(content));
+
+            if (streamedLines < termHeight) {
+                // SHORT response: the entire streamed output is still within the
+                // visible viewport.  \x1B[{N}A reliably reaches the header row,
+                // so we erase and replace with formatted markdown.
+                process.stdout.write(`\x1B[${streamedLines}A`); // cursor up to header row
+                process.stdout.write('\x1B[G');                 // column 0
+                process.stdout.write('\x1B[J');                 // clear to end of screen
+                process.stdout.write(chalk.yellow('AI > '));
+                process.stdout.write(rendered);
+            } else {
+                // LONG response: the content scrolled the terminal.  \x1B[{N}A
+                // would be capped at the top of the visible viewport, leaving the
+                // raw stream partially visible above a half-erased re-render.
+                // Instead, leave the raw stream in the scrollback buffer and print
+                // the formatted version below, clearly separated.
+                process.stdout.write('\n');
+                process.stdout.write(chalk.dim('─'.repeat(termWidth)));
+                process.stdout.write('\n');
+                process.stdout.write(chalk.yellow('AI > '));
+                process.stdout.write(rendered);
+            }
         } else {
             process.stdout.write('\n');
         }
