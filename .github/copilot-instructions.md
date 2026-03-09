@@ -257,6 +257,11 @@ Implementation notes:
 
 ## Change History
 
+- 2026-03-08: Fixed bold/italic/code rendering in list items
+  - Files: [markdownRenderer.ts](markdownRenderer.ts)
+  - Summary: Applied a regex-based monkey-patch to the `listitem` renderer in `marked-terminal` to handle inline formatting (bold, italic, codespan) which fails to render correctly in ESM environments for specific token structures.
+  - Intent: Ensure all AI-generated lists with formatted text are displayed correctly in the terminal.
+
 - 2026-03-04: Implemented DuckDuckGo pagination for `web_search`
   - Files: `tools/webSearchTool.ts`, `.github/copilot-instructions.md`
   - Summary: `fetchSearchResults` now fetches additional pages via POST (using the `vqd` token and `s`/`dc` offset) until `resultsPerQuery` is satisfied or no more results are available. Result parsing was extracted into a `parseResultsFromPage` helper. Duplicate URLs across pages are deduplicated.

@@ -100,24 +100,48 @@ function normalizeMarkdownIndentation(text: string): string {
 }
 
 // Configure marked to use a terminal renderer
+const renderer = new TerminalRenderer({
+  code: chalk.yellow,
+  blockquote: chalk.gray.italic,
+  html: chalk.gray,
+  heading: chalk.green.bold,
+  firstHeading: chalk.magenta.underline.bold,
+  hr: chalk.reset,
+  listitem: chalk.reset,
+  table: chalk.reset,
+  paragraph: chalk.reset,
+  strong: chalk.bold,
+  em: chalk.italic,
+  codespan: chalk.yellow,
+  del: chalk.dim.strikethrough,
+  link: chalk.blue,
+  href: chalk.blue.underline,
+}) as any;
+
+// A fix for marked-terminal 7.x which fails to correctly render bold/italic/code text
+// inside list items when there is mixed text, because it tries to access
+// this.parser.parseInline on the object-form tokens which is inaccessible in the ESM build.
+// This workaround intercepts the listitem renderer and applies a regex-based format
+// to the raw 'text' property when the primary renderer fails to parse tokens correctly.
+const originalListItem = renderer.listitem.bind(renderer);
+renderer.listitem = function (item: string | { text: string }): string {
+  if (typeof item === 'object' && item !== null && item.text) {
+    // Basic terminal-friendly markdown processing for list items
+    const formatted = item.text
+      .replace(/\*\*(.*?)\*\*/g, chalk.bold('$1'))
+      .replace(/__(.*?)__/g, chalk.bold('$1'))
+      .replace(/\*(.*?)\*/g, chalk.italic('$1'))
+      .replace(/_(.*?)_/g, chalk.italic('$1'))
+      .replace(/`(.*?)`/g, chalk.yellow('$1'));
+
+    // marked-terminal prefix logic for list items (default is \n and a bullet)
+    return '\n  * ' + formatted;
+  }
+  return originalListItem(item);
+};
+
 marked.setOptions({
-  renderer: new TerminalRenderer({
-    code: chalk.yellow,
-    blockquote: chalk.gray.italic,
-    html: chalk.gray,
-    heading: chalk.green.bold,
-    firstHeading: chalk.magenta.underline.bold,
-    hr: chalk.reset,
-    listitem: chalk.reset,
-    table: chalk.reset,
-    paragraph: chalk.reset,
-    strong: chalk.bold,
-    em: chalk.italic,
-    codespan: chalk.yellow,
-    del: chalk.dim.strikethrough,
-    link: chalk.blue,
-    href: chalk.blue.underline,
-  }) as any
+  renderer
 });
 
 /**
