@@ -63,6 +63,7 @@ db.exec(`
         role       TEXT    NOT NULL,
         content    TEXT    NOT NULL DEFAULT '',
         tool_calls TEXT    NOT NULL DEFAULT '[]',
+        images     TEXT    NOT NULL DEFAULT '[]',
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
 `);
@@ -78,6 +79,7 @@ function addColumnIfMissing(sql: string): void {
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_prompt_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_total_tokens INTEGER');
+addColumnIfMissing('ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT \'[]\'');
 
 // ---------------------------------------------------------------------------
 // Prepared statements (created once, reused on every call)
@@ -111,12 +113,12 @@ const stmtDeleteMessages = db.prepare<[number]>(
     'DELETE FROM messages WHERE session_id = ?',
 );
 
-const stmtInsertMessage = db.prepare<[number, string, string, string]>(
-    'INSERT INTO messages (session_id, role, content, tool_calls) VALUES (?, ?, ?, ?)',
+const stmtInsertMessage = db.prepare<[number, string, string, string, string]>(
+    'INSERT INTO messages (session_id, role, content, tool_calls, images) VALUES (?, ?, ?, ?, ?)',
 );
 
 const stmtLoadMessages = db.prepare<[number]>(
-    'SELECT role, content, tool_calls FROM messages WHERE session_id = ? ORDER BY id ASC',
+    'SELECT role, content, tool_calls, images FROM messages WHERE session_id = ? ORDER BY id ASC',
 );
 
 // ---------------------------------------------------------------------------
@@ -172,6 +174,7 @@ export function updateSessionMessages(
                 msg.role,
                 msg.content ?? '',
                 JSON.stringify(msg.tool_calls ?? []),
+                JSON.stringify(msg.images ?? []),
             );
         }
         if (tokenStats) {
@@ -197,6 +200,7 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
         role: string;
         content: string;
         tool_calls: string;
+        images: string;
     }[];
 
     return rows.map(row => {
@@ -204,8 +208,13 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
         try {
             toolCalls = JSON.parse(row.tool_calls);
         } catch {
-            // Fallback for corrupted JSON
             toolCalls = [];
+        }
+        let images: string[] = [];
+        try {
+            images = JSON.parse(row.images ?? '[]');
+        } catch {
+            images = [];
         }
         const msg: ChatMessage = {
             role: row.role as ChatMessage['role'],
@@ -213,6 +222,9 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
         };
         if (toolCalls && toolCalls.length > 0) {
             msg.tool_calls = toolCalls;
+        }
+        if (images && images.length > 0) {
+            msg.images = images;
         }
         return msg;
     });

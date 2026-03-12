@@ -6,6 +6,7 @@ import {
     TOOLS,
     handleToolCall,
     getToolSystemPrompt,
+    type ToolCallResult,
     setYoloMode,
     setWebSearchConfig,
     isYolo,
@@ -489,7 +490,7 @@ async function startChat(
                     for (const tc of assistantMessage.tool_calls) {
                         clearLiveStatus();
                         refreshTokenStatus(`Tool call: ${tc.function.name}`);
-                        const toolResult = await handleToolCall(
+                        const toolResult: ToolCallResult = await handleToolCall(
                             tc.function.name,
                             tc.function.arguments,
                             (message) => {
@@ -497,13 +498,17 @@ async function startChat(
                             },
                         );
                         clearLiveStatus();
-                        messages.push({ role: 'tool', content: toolResult });
+                        messages.push({
+                            role: 'tool',
+                            content: toolResult.content,
+                            ...(toolResult.images ? { images: toolResult.images } : {}),
+                        });
                         refreshTokenStatus(`Tool result: ${tc.function.name}`);
 
                         // If the command failed, have the LLM summarize the error for the user
-                        if (tc.function.name === 'run_command' && toolResult.includes('(COMMAND FAILED') && !isInterruptRequested()) {
+                        if (tc.function.name === 'run_command' && toolResult.content.includes('(COMMAND FAILED') && !isInterruptRequested()) {
                             refreshTokenStatus('Summarizing command error...');
-                            const errorSummary = await summarizeCommandError(baseUrl, currentModel, toolResult, numCtx);
+                            const errorSummary = await summarizeCommandError(baseUrl, currentModel, toolResult.content, numCtx);
                             clearLiveStatus();
                             console.log(chalk.red('AI Error Summary: ') + chalk.yellow(errorSummary) + '\n');
                             

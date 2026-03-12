@@ -13,6 +13,7 @@ import chalk from 'chalk';
 import readline from 'readline';
 import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSettings, type WebSearchToolArgs } from './tools/webSearchTool.js';
 import { FetchUrlTool, getToolPrompt as getFetchUrlPrompt, type FetchUrlToolArgs } from './tools/fetchUrlTool.js';
+import { FetchImageTool, getToolPrompt as getFetchImagePrompt, type FetchImageToolArgs, type FetchImageResult } from './tools/fetchImageTool.js';
 import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from './runCommandTool.js';
 
 /**
@@ -317,6 +318,28 @@ export const TOOLS: OllamaTool[] = [
             },
         },
     },
+    {
+        type: 'function',
+        function: {
+            name: 'fetch_image',
+            description:
+                'Fetches an image from a URL or local file path and attaches it to the conversation. ' +
+                'Only use this with vision-capable models. After the tool call, the image will be visible to you. ' +
+                'Supported formats: JPEG, PNG, GIF, WebP, BMP. Maximum size: 10 MB.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    source: {
+                        type: 'string',
+                        description:
+                            'A full http/https URL (e.g. https://example.com/photo.jpg) or an absolute ' +
+                            'local file path (e.g. /home/user/photo.png or C:\\Users\\user\\photo.png).',
+                    },
+                },
+                required: ['source'],
+            },
+        },
+    },
 ];
 
 // --- Tool handlers ---
@@ -441,6 +464,13 @@ export interface ToolCallArguments {
     max_queries?: number;
     results_per_query?: number;
     url?: string;
+    source?: string;
+}
+
+/** Result returned by handleToolCall. Most tools only set content; vision tools also set images. */
+export interface ToolCallResult {
+    content: string;
+    images?: string[];
 }
 
 /**
@@ -454,6 +484,7 @@ export function getToolSystemPrompt(): string {
         getRunCommandPrompt(isYoloMode) +
         getWebSearchPrompt() +
         getFetchUrlPrompt() +
+        getFetchImagePrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- Do NOT ask the user for permission yourself; ' +
@@ -471,7 +502,18 @@ export function getToolSystemPrompt(): string {
         'When a command completes, summarise its output clearly for the user.'
     );
 }
-
+function runFetchImage(
+    args: FetchImageToolArgs,
+    onProgress?: (message: string) => void,
+): Promise<FetchImageResult> {
+    const tool = new FetchImageTool({
+        onProgress: (message) => {
+            console.log(chalk.dim(message));
+            onProgress?.(message);
+        },
+    });
+    return tool.run(args);
+}
 // Automatic nudging was removed in favour of a manual `/nudge` command.
 // The manual nudge is implemented in `index.ts` and the user-facing
 // reminder text is provided by `getToolUseNudge()` below.
@@ -492,26 +534,26 @@ export async function handleToolCall(
     name: string,
     args: ToolCallArguments,
     onProgress?: (message: string) => void,
-): Promise<string> {
+): Promise<ToolCallResult> {
     switch (name) {
         case 'run_command': {
-            if (!args.command) return '[Error: missing required argument "command"]';
+            if (!args.command) return { content: '[Error: missing required argument "command"]' };
             let timeoutMs = DEFAULT_TIMEOUT_MS;
             if (args.timeout_seconds !== undefined) {
                 const parsedTimeoutMs = parsePositiveTimeoutMs(args.timeout_seconds);
                 if (parsedTimeoutMs === null) {
-                    return '[Error: invalid argument "timeout_seconds" (expected a positive finite number)]';
+                    return { content: '[Error: invalid argument "timeout_seconds" (expected a positive finite number)]' };
                 }
                 timeoutMs = parsedTimeoutMs;
             }
-            return runCommand(args.command, args.shell, timeoutMs, onProgress);
+            return { content: await runCommand(args.command, args.shell, timeoutMs, onProgress) };
         }
 
         case 'check_process_output': {
             if (args.process_id === undefined) {
-                return '[Error: missing required argument "process_id"]';
+                return { content: '[Error: missing required argument "process_id"]' };
             }
-            return checkProcessOutput(args.process_id);
+            return { content: await checkProcessOutput(args.process_id) };
         }
 
         case 'web_search': {
@@ -527,30 +569,36 @@ export async function handleToolCall(
             if (args.max_queries !== undefined) {
                 const parsedMaxQueries = parsePositiveInteger(args.max_queries, 1, 10);
                 if (parsedMaxQueries === null) {
-                    return '[Error: invalid argument "max_queries" (expected an integer between 1 and 10)]';
+                    return { content: '[Error: invalid argument "max_queries" (expected an integer between 1 and 10)]' };
                 }
                 webArgs.max_queries = parsedMaxQueries;
             }
 
-
             if (!webArgs.prompt && (!webArgs.queries || webArgs.queries.length === 0)) {
-                return '[Error: web_search requires either "prompt" or "queries"]';
+                return { content: '[Error: web_search requires either "prompt" or "queries"]' };
             }
 
-            return runWebSearch(webArgs, onProgress);
+            return { content: await runWebSearch(webArgs, onProgress) };
         }
 
         case 'fetch_url': {
             if (typeof args.url !== 'string' || args.url.trim().length === 0) {
-                return '[Error: missing required argument "url"]';
+                return { content: '[Error: missing required argument "url"]' };
             }
             const fetchArgs: FetchUrlToolArgs = {
                 url: args.url,
             };
-            return runFetchUrl(fetchArgs, onProgress);
+            return { content: await runFetchUrl(fetchArgs, onProgress) };
+        }
+
+        case 'fetch_image': {
+            if (typeof args.source !== 'string' || args.source.trim().length === 0) {
+                return { content: '[Error: missing required argument "source"]' };
+            }
+            return runFetchImage({ source: args.source }, onProgress);
         }
 
         default:
-            return `[Unknown tool: ${name}]`;
+            return { content: `[Unknown tool: ${name}]` };
     }
 }

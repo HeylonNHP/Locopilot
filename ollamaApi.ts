@@ -49,6 +49,8 @@ export interface ChatMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
     tool_calls?: [OllamaToolCall, ...OllamaToolCall[]];
+    /** Base64-encoded images for multimodal/vision models. */
+    images?: string[];
 }
 
 export interface ChatApiResponse {

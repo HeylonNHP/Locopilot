@@ -122,6 +122,7 @@ Feature summary:
 Feature summary:
 - **`web_search`**: Multi-query DuckDuckGo search with automatic derivation of search intent and pagination support.
 - **`fetch_url`**: Direct page retrieval for following links or deep-diving into specific documentation.
+- **`fetch_image`**: Fetches an image from a URL or local file path and attaches it as base64 to the conversation message. Vision-only; only useful with models that have image understanding (e.g. llava, llama3.2-vision). Supports JPEG, PNG, GIF, WebP, and BMP up to 10 MB. The base64 is stored in the `images` field of the tool result message and is persisted to SQLite alongside other message fields.
 - **Smart Extraction**: Uses `@mozilla/readability` and `cheerio` to extract clean text from HTML, ignoring navbars and boilerplate.
 - **Configurable limits**: Timeouts and character limits are enforced to keep history manageable.
 
@@ -154,6 +155,11 @@ Feature summary:
     - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
+
+- 2026-03-12: Added `fetch_image` tool for vision models
+  - Files: `tools/fetchImageTool.ts` (new), `tools.ts`, `ollamaApi.ts`, `history.ts`, `index.ts`
+  - Summary: New tool that fetches an image from an HTTP/HTTPS URL or an absolute local file path, encodes it as base64, and attaches it to the tool result message via the `images` field on `ChatMessage`. `handleToolCall` return type changed from `string` to `ToolCallResult { content, images? }`. `history.ts` gained an `images` column on the messages table (migration-safe via `addColumnIfMissing`) so image data survives session reload. Supports JPEG, PNG, GIF, WebP, BMP; 10 MB limit.
+  - Intent: Enable vision-capable models to inspect images from the web or the local filesystem without any manual base64 encoding by the user.
 
 - 2026-03-09: Fixed post-stream re-render using viewport-aware strategy
   - Files: [aiResponseRenderer.ts](aiResponseRenderer.ts)
