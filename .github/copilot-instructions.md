@@ -76,167 +76,64 @@ Before starting a new task in the above plan, update progress in the plan.
 
 ## Application overview
 
-Locopilot is a terminal-based chat client for Ollama. The developer's intent is to provide a lightweight, local-first AI assistant that runs entirely in the user's terminal with no cloud dependency. Key design goals:
+Locopilot is a terminal-based chat client for Ollama, providing a lightweight, local-first AI assistant with no cloud dependency. Key design goals:
 
-- **Local & private** — all inference runs through a locally hosted Ollama instance; no data leaves the machine.
-- **Minimal friction** — the user picks a host/port and model once; choices are persisted in `config.json` and re-used on the next run.
-- **Transparent AI actions** — the assistant can call tools (e.g. run terminal commands) but must never act without explicit user approval, unless started in **YOLO mode** (via a startup prompt, command-line flag `--yolo`, or environment variable) which provides implicit consent for automatic execution.
-- **Developer-friendly** — written in TypeScript/ESM; thin wrappers around Inquirer (prompts), Axios (HTTP), and Chalk (styling) keep the codebase easy to extend.
-
-When adding new features, preserve these intentions: keep the UX simple, keep side-effects visible and opt-in, and avoid introducing external services or hidden state.
+- **Local & Private**: All inference runs through a local Ollama instance; no data leaves the machine.
+- **Persistent State**: Host, port, and model selections are persisted in `config.json`. Conversations are automatically saved to a local SQLite database (`locopilot.db`).
+- **Safety First**: Commands requested by the AI require explicit user approval by default.
+- **YOLO Mode**: A high-trust mode that skips command confirmation for automated workflows, enabled via startup prompt, `--yolo`/`-y` flag, or `YOLO=true` environment variable.
+- **Session Management**: Resume recent chats, switch between multiple active sessions (`/sessions`), or delete old ones (`/delete`).
+- **Slash Commands**: Specialized commands for utility tasks:
+    - `/model`: Refresh and switch LLM models mid-conversation.
+    - `/compact`: Force conversation summarization to recover context.
+    - `/sessions`: Switch between multiple persistent chat histories.
+    - `/delete`: Remove a session from the local database.
+    - `/nudge`: Manually inject a tool-use reminder if the AI is hesitant.
+    - `/exit` / `/help`: Application control and documentation.
 
 ## Tool-calling / Command-execution
 
 Feature summary:
-- The assistant can request terminal commands via tool calls (tool name: `run_command`).
-- By default, each requested command MUST be shown to the user and requires explicit confirmation before execution.
-- If the application is in **YOLO mode**, the confirmation step is skipped and commands are executed automatically (the user provides implicit consent). YOLO mode can be enabled via:
-    - A startup menu prompt (persistent in `config.json`).
-    - The `--yolo` or `-y` command-line flag.
-    - The `YOLO=true` environment variable.
-- When the user confirms (or in YOLO mode), the command is executed and its stdout/stderr is captured and returned to the model as the tool result so the assistant can continue the flow.
-- This flow protects against accidental or dangerous command execution and surfaces command outputs for transparency.
-- **Effective shell selection:** On Windows, Locopilot prefers the platform-native PowerShell even if the model requests a POSIX shell (bash/sh/zsh). When a POSIX shell is requested on Windows, Locopilot overrides it to `powershell` and prints a warning so the model can adapt. On non-Windows platforms the model's requested shell is honoured.
-- **Exact execution via stdin:** To avoid shell re-tokenisation and quoting problems (which break pipelines, brace blocks, and complex quoted paths), Locopilot passes the command to the invoked shell via stdin (for example, `powershell -Command -` and piping the script in). This ensures the command runs character-for-character as the model proposed.
-- **Failure visibility & retry guidance:** When a command exits with a non-zero exit code, the tool result explicitly labels the output as a failed command (including `exit_code` and any captured `stderr`) so the model can diagnose and propose a corrected command rather than giving up. In addition, Locopilot uses the LLM to provide a brief technical summary of the error directly to the user for immediate feedback, and this summary is also pushed back into the conversation history as a user nudge to help the model fix the error.
-- **Interrupt:** The user can press `Ctrl+C` at any time while the AI tool-call loop is active to interrupt it. If a command is currently running, its child process is killed immediately. The loop stops cleanly after the current step and the conversation history is left consistent. Outside the tool-call loop, `Ctrl+C` exits the application as normal.
-
-Security / UX notes:
-- Treat command output as untrusted input; sanitize before printing or feeding back into prompts.
-- Avoid running commands that expose secrets or modify critical system state unless the user explicitly understands the risk.
-- The interrupt mechanism (`requestInterrupt`, `clearInterrupt`, `isInterruptRequested`) lives in `tools.ts`. The SIGINT handler is swapped in/out around the tool-call loop in `index.ts` so it never interferes with normal exit behaviour.
+- **`run_command`**: Request shell commands. Uses a process registry for tracking and `Ctrl+X` for interruption.
+- **Process Registry**: Long-running commands are tracked by ID, allowing the AI to poll for output using a `check_process_output` tool if a command exceeds the initial 30s timeout.
+- **Shell Precision**: On Windows, PowerShell is preferred. Commands are fed via `stdin` (e.g., `powershell -Command -`) to avoid quoting/tokenization issues across different shells. POSIX shell requests on Windows are automatically remapped to PowerShell with a warning.
+- **Failure Analysis**: Non-zero exit codes trigger an AI-powered error summary ([errorSummary.ts](errorSummary.ts)) that distills technical `stderr` into a brief fix suggestion, which is then fed back into the history as a user-role nudge.
+- **Interruption**: `Ctrl+X` interrupts the tool-call loop or kills the running process without exiting the application. `Ctrl+C` remains a global exit signal.
 
 ## Markdown rendering
 
 Feature summary:
-- `printAIResponse` renders pre-built strings (e.g. fallback messages) using `marked` and `marked-terminal` for ANSI-formatted headings, bold/italic text, lists, code blocks, and tables.
-- Live model responses are streamed directly to the terminal chunk-by-chunk via `streamAIResponse` — markdown rendering is intentionally skipped during streaming because `marked` requires the full text to correctly format tables and fenced code blocks.
-- The `AI >` label is printed before the first content chunk; if the stream is interrupted an inline `(interrupted)` suffix is written.
-- While the AI is generating, the status line shows the live character count to indicate progress.
-- Raw assistant text in `printAIResponse` is sanitized (to remove any AI-generated ANSI codes) before being passed to the renderer.
-- After streaming completes, a **viewport-aware re-render strategy** is applied: if the response fits within the visible terminal height (`streamedLines < termHeight`), the cursor steps back to the header row with `\x1B[{N}A`, the raw text is erased, and the formatted markdown replaces it. If the response scrolled the terminal, `\x1B[{N}A` would be capped at the top of the visible viewport and produce a partial-erase artefact — in that case the raw stream is left in the scrollback buffer and the formatted version is printed below a dim separator rule.
+- **`streamAIResponse`**: Provides real-time "typing" effect chunk-by-chunk. Intentionally skips markdown formatting during streaming for performance and accuracy.
+- **`printAIResponse`**: Renders full markdown (tables, code blocks, formatting) using `marked` and `marked-terminal` once the stream is complete or for static messages.
+- **Viewport Recovery**: Uses a viewport-aware strategy to replace raw streamed text with formatted markdown if the response fits on screen; otherwise, appends the formatted version after a separator.
+- **Normalization**: Automatically fixes accidental global indentation in model responses to prevent formatting breakages (like misidentified code blocks).
 
-Implementation notes:
-- Rendering logic is isolated in `markdownRenderer.ts`.
-- `aiResponseRenderer.ts` exposes both `printAIResponse` (static render) and `streamAIResponse` (live stream). `index.ts` uses `streamAIResponse` for the main chat loop and `printAIResponse` only for fallback strings.
-- If a response is interrupted during streaming, the partial content already visible on-screen is sufficient; no re-render is attempted.
-
-## Session / conversation history (SQLite)
+## Session & Token Management
 
 Feature summary:
-- All conversations are automatically persisted to `locopilot.db` (SQLite, WAL mode) in the working directory.
-- On startup the user is prompted to start a new conversation or resume one of the ten most-recent saved sessions.
-- Sessions are auto-named from the first user message (up to 60 characters) and display the model name and last-updated timestamp.
-- `/sessions` — lists all saved sessions and lets the user switch to any of them mid-chat; the current session is saved before switching.
-- `/delete`   — lists all saved sessions and lets the user delete any one; if the active session is deleted a fresh session is started automatically.
-- After every complete AI response, after every interrupt/error recovery, and after every `/compact`, the full message array for the active session is written to the database via `updateSessionMessages`.
+- **SQLite Storage**: Uses `better-sqlite3` in WAL mode for reliable, concurrent message persistence. 
+- **Live Token Meter**: Displays a real-time status line ([statusLine.ts](statusLine.ts)) with a 10-frame spinner (`⠋⠙⠹...`), current phase, model, context usage (`used / limit`), and source tag (`estimated` vs `ollama`).
+- **Authoritative Stats**: Reconciles estimated local token counts (`tiktoken`) with authoritative metrics from Ollama (`prompt_eval_count`, `eval_count`) at the end of each turn.
+- **Token Calculation**: Estimated counts [tokenizer.ts](tokenizer.ts) add 4 tokens per message plus role, content, and tool call overhead to match OpenAI-style counting as a robust local approximation.
+- **Conversation Compaction**: The `/compact` command [compact.ts](compact.ts) uses a high-context LLM pass to summarize everything (decisions, code, paths) into the third person, injecting a `[This conversation history has been compacted...]` preamble.
 
-Implementation notes:
-- All SQLite logic lives in `history.ts` (`createSession`, `renameSession`, `listSessions`, `deleteSession`, `updateSessionMessages`, `loadSessionMessages`).
-- `index.ts` holds a `saveSession()` closure that calls `updateSessionMessages(currentSessionId, messages)` at each save point.
-- `better-sqlite3` is used for synchronous, dependency-light database access; its types are in `@types/better-sqlite3`.
-- The active session id is held in `let currentSessionId` inside `startChat`; switching sessions reassigns this variable in-place and replaces the live `messages` array.
-
-Security / UX notes:
-- `locopilot.db` is a plain file stored locally; it inherits whatever filesystem permissions the working directory has.
-- Do not store secrets or credentials in conversation messages if you are concerned about local file security.
-- Deleting a session is permanent and irreversible; no confirmation prompt is currently shown — consider adding one if sessions become large.
-
-## Conversation compaction (/compact)
+## Web search & Fetch tools
 
 Feature summary:
-- The user can type `/compact` at any time during a chat session to shrink the conversation history.
-- The currently selected model is asked to summarise the full history down to its most important parts (decisions, facts, commands, results, file paths, code). Conversational filler is discarded.
-- A preamble is prepended to the summary so the model knows it is reading a condensed record rather than a live transcript.
-- The summarised history replaces the live message array in-place; the original system prompt is always preserved verbatim.
-- After compaction, stats are printed: old vs new token count and the percentage reduction.
-- The new history is always expected to be smaller than the old one; if the model returns an empty summary, compaction is aborted with an error.
-
-Implementation notes:
-- All compaction logic lives in `compact.ts` (`compactHistory`, `printCompactStats`).
-- `index.ts` handles the `/compact` slash command, calls `compactHistory`, and splices the result back into the live `messages` array.
-- No tools are passed during the summarisation call (tools are not needed for this task).
-
-## Web search tool (`web_search`)
-
-Feature summary:
-- The assistant can call `web_search` to pull external web context from DuckDuckGo results.
-- The tool accepts either explicit queries or a prompt from which queries are derived.
-- Query count and results-per-query are configurable by the user and persisted in `config.json` under `webSearch`.
-- For each result URL, Locopilot fetches the page HTML and extracts main text using a shared extractor logic (`htmlExtractor.ts`).
-- The tool currently returns extracted page text directly (no LLM summarization step) to keep latency lower and reduce extra model calls.
-- The terminal UI prints progress updates while web search is running.
-- Pagination: the first page is fetched via GET; if `resultsPerQuery` exceeds ~10 results, subsequent pages are fetched via POST using the `vqd` token extracted from the initial response and an incrementing `s`/`dc` offset parameter (steps of 30). Duplicate URLs across pages are deduplicated automatically.
-
-Security / UX notes:
-- Treat fetched page text as untrusted input and sanitize before rendering or reusing.
-- Web requests reveal the local machine IP to remote sites; keep this behavior transparent to users.
-- Keep implementation modular (`tools/webSearchTool.ts`) and use shared extraction utilities (`tools/htmlExtractor.ts`).
-
-## Direct URL tool (`fetch_url`)
-
-Feature summary:
-- The assistant can call `fetch_url` to fetch content from a specific HTTP/HTTPS URL.
-- This enables deeper browsing by following links discovered from `web_search` results or revisiting a known page directly.
-- The tool extracts main page text using the shared `htmlExtractor.ts` logic.
-- The tool returns extracted text directly (no additional LLM summarization pass) to keep latency lower.
-
-## Shared HTML extraction (`htmlExtractor.ts`)
-
-- Centralizes logic for text extraction from HTML pages.
-- Tries `@mozilla/readability` first for clean article extraction.
-- Falls back to `cheerio`-based extraction (main/article/body tags) if readability fails.
-- Handles title extraction and basic text normalization (`cleanText`).
-- Exports `DEFAULT_USER_AGENT` used for all tool-initiated web requests.
-
-Security / UX notes:
-- Treat fetched page text as untrusted input and sanitize before rendering or reusing.
-- Only `http`/`https` URLs are accepted.
-- Reuse existing timeout and text-limit settings to keep behavior predictable across web tools.
-
-## Live token meter
-
-Feature summary:
-- Locopilot now shows a one-line live token meter while the AI request/tool loop is active.
-- The meter displays context usage as `used_tokens / num_ctx` plus a percentage.
-- During live streaming, token usage is estimated locally; once the final Ollama response arrives, the meter updates to authoritative counts from `prompt_eval_count + eval_count`.
-- Status updates occur across phases (AI waiting, tool execution, error summarization) and are redrawn in-place using `readline` so the terminal stays compact.
-- Token counting uses a hybrid approach: local estimation (`@dqbd/tiktoken`) for in-flight updates and Ollama-provided token stats for authoritative post-response values.
-
-Security / UX notes:
-- In-flight counts can differ slightly from Ollama tokenization until final-response reconciliation.
-- The status line is cleared before final AI/user-facing logs to avoid output corruption.
-- Keep updates lightweight to avoid interfering with interactive prompts.
-
-## Session token stats persistence
-
-Feature summary:
-- Session records now persist the latest authoritative Ollama token counts (`last_prompt_eval_count`, `last_eval_count`, `last_total_tokens`) in SQLite.
-- Stats are updated when a full AI turn completes and Ollama provides final response metrics.
-
-Implementation notes:
-- Schema lives in `history.ts`; columns are added via startup-safe `ALTER TABLE` guards.
-- `updateSessionMessages` now accepts optional token stats and updates session metadata atomically with message writes.
+- **`web_search`**: Multi-query DuckDuckGo search with automatic derivation of search intent and pagination support.
+- **`fetch_url`**: Direct page retrieval for following links or deep-diving into specific documentation.
+- **Smart Extraction**: Uses `@mozilla/readability` and `cheerio` to extract clean text from HTML, ignoring navbars and boilerplate.
+- **Configurable limits**: Timeouts and character limits are enforced to keep history manageable.
 
 ## LLM maintenance instruction (always keep up to date)
 
-- PURPOSE: This file documents developer intent, UX constraints, security notes, and tool behaviors. It exists so future LLMs and contributors can quickly understand the motivations behind design choices.
+- PURPOSE: Document developer intent, UX constraints, and tool behaviors for contributors and automated agents.
 
-- MANDATE FOR LLMS / MAINTAINERS:
-  - Whenever anything in this application changes (code, configuration, prompts, system prompt text, tool mappings, confirmation UX, dependencies, startup steps, or security controls), update this file to reflect the change.
-  - For each change, add a short entry that includes:
-    - File(s) changed (path)
-    - A one-line summary of what changed and why
-    - Any developer intent or UX rationale that future LLMs should preserve
-    - Any migration steps or notable side-effects (if applicable)
-
-- KEEP IT CONCISE: Entries should be short and follow the format above; prefer clarity over verbosity.
-
-- WHEN LLMS PROPOSE CHANGES:
-  - Before proposing or applying code changes that affect behavior, an LLM or automated agent MUST read this file and update it to reflect the intended outcome.
-  - If the LLM cannot confidently update this document (e.g., missing rationale), it should flag the change for a human reviewer instead of making an implementation-only edit.
-
-- DOCUMENT NEW TOOLS: If new tools are added (beyond `run_command`), document them here in the same format and include security notes and confirmation UX.
+- MANDATE:
+  - Update this file whenever code, configuration, or tool behaviors change.
+  - Keep entries concise: target file, summary of change, and rationale.
+  - When adding tools, document their security profile and confirmation UX.
+  - Ensure all new features align with the "Local, Private, Safe" philosophy.
 
 - **Web search tool** (`web_search`):
     - Changed `queries` parameter from `string` to `array` in the tool schema to encourage LLMs to provide multiple explicit queries properly.
