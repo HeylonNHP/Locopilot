@@ -157,9 +157,9 @@ Feature summary:
 ## Change History
 
 - 2026-03-12: Added `fetch_image` tool for vision models
-  - Files: `tools/fetchImageTool.ts` (new), `tools.ts`, `ollamaApi.ts`, `history.ts`, `index.ts`
-  - Summary: New tool that fetches an image from an HTTP/HTTPS URL or an absolute local file path, encodes it as base64, and attaches it to the tool result message via the `images` field on `ChatMessage`. `handleToolCall` return type changed from `string` to `ToolCallResult { content, images? }`. `history.ts` gained an `images` column on the messages table (migration-safe via `addColumnIfMissing`) so image data survives session reload. Supports JPEG, PNG, GIF, WebP, BMP; 10 MB limit.
-  - Intent: Enable vision-capable models to inspect images from the web or the local filesystem without any manual base64 encoding by the user.
+  - Files: `tools/fetchImageTool.ts` (new), `tools.ts`, `ollamaApi.ts`, `history.ts`, `index.ts`, `package.json`
+  - Summary: New tool that fetches an image from an HTTP/HTTPS URL or an absolute local file path, encodes it as base64, and attaches it to the tool result message via the `images` field on `ChatMessage`. `handleToolCall` return type changed from `string` to `ToolCallResult { content, images? }`. `history.ts` gained an `images` column on the messages table (migration-safe via `addColumnIfMissing`) so image data survives session reload. Supports JPEG, PNG, GIF, WebP, BMP, etc.; 10 MB limit. Image format is validated using the `image-type` library (magic bytes) to reject non-image resources (like HTML error pages masquerading as images) before processing.
+  - Intent: Enable vision-capable models to inspect images safely and persistently.
 
 - 2026-03-09: Fixed post-stream re-render using viewport-aware strategy
   - Files: [aiResponseRenderer.ts](aiResponseRenderer.ts)

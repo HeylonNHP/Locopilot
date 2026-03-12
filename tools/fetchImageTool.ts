@@ -1,21 +1,32 @@
 import axios from 'axios';
 import { readFile } from 'fs/promises';
-import path from 'path';
+import imageType from 'image-type';
 import { DEFAULT_USER_AGENT } from './htmlExtractor.js';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-const EXTENSION_TO_MIME: Record<string, string> = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.bmp': 'image/bmp',
-};
+/**
+ * Detects the actual image format from the file's magic bytes using the `image-type` library.
+ * Returns the detected MIME type, or throws if the bytes don't match
+ * any supported image format. This guards against files that have an
+ * image extension or Content-Type but are actually HTML/text (e.g. a
+ * server returning an error page with a .png URL).
+ */
+async function detectMimeTypeFromBytes(buf: Buffer): Promise<string> {
+    if (buf.length < 4) throw new Error('File is too small to be a valid image.');
 
-const SUPPORTED_MIME_TYPES = new Set(Object.values(EXTENSION_TO_MIME));
+    const type = await imageType(buf);
+
+    if (type && type.mime.startsWith('image/')) {
+        return type.mime;
+    }
+
+    throw new Error(
+        'File content does not match any supported image format. ' +
+        'The URL or path may point to an HTML page or other non-image resource.'
+    );
+}
 
 export interface FetchImageToolArgs {
     source?: string;
@@ -41,41 +52,29 @@ async function fetchRemoteImage(url: string, timeoutMs: number): Promise<Fetched
         headers: { 'User-Agent': DEFAULT_USER_AGENT },
     });
 
-    const contentType = (response.headers['content-type'] as string | undefined)
-        ?.split(';')[0]
-        ?.trim() ?? '';
-
-    if (!SUPPORTED_MIME_TYPES.has(contentType)) {
-        throw new Error(`Unsupported content type "${contentType}". Expected an image MIME type (jpeg, png, gif, webp, bmp).`);
-    }
-
     const buffer = Buffer.from(response.data);
     if (buffer.length > MAX_IMAGE_BYTES) {
         throw new Error(`Image too large (${(buffer.length / 1_048_576).toFixed(1)} MB). Limit is 10 MB.`);
     }
 
+    const mimeType = await detectMimeTypeFromBytes(buffer);
+
     return {
         base64: buffer.toString('base64'),
-        mimeType: contentType,
+        mimeType,
         sizeKb: Math.round(buffer.length / 1024),
         label: url,
     };
 }
 
 async function fetchLocalImage(filePath: string): Promise<FetchedImage> {
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeType = EXTENSION_TO_MIME[ext];
-
-    if (!mimeType) {
-        const supported = Object.keys(EXTENSION_TO_MIME).join(', ');
-        throw new Error(`Unsupported file extension "${ext}". Supported: ${supported}`);
-    }
-
     const buffer = await readFile(filePath);
 
     if (buffer.length > MAX_IMAGE_BYTES) {
         throw new Error(`Image too large (${(buffer.length / 1_048_576).toFixed(1)} MB). Limit is 10 MB.`);
     }
+
+    const mimeType = await detectMimeTypeFromBytes(buffer);
 
     return {
         base64: buffer.toString('base64'),
@@ -145,6 +144,8 @@ export function getToolPrompt(): string {
         '   after the tool call completes. Only works with vision-capable models (e.g. llava, llama3.2-vision, gemma3).\n' +
         '   - For web images: provide a full http or https URL.\n' +
         '   - For local files: provide an absolute file path (e.g. /home/user/photo.jpg or C:\\Users\\user\\photo.jpg).\n' +
-        '   - Supported formats: JPEG, PNG, GIF, WebP, BMP. Maximum size: 10 MB.\n\n'
+        '   - Supported formats: JPEG, PNG, GIF, WebP, BMP. Maximum size: 10 MB.\n' +
+        '   - The tool verifies the actual image content by inspecting the file\'s magic bytes,\n' +
+        '     so it will reject HTML error pages even if they have an image URL or extension.\n\n'
     );
 }
