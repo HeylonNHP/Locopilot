@@ -77,6 +77,7 @@ interface ChatParams {
 
 export interface StreamChatParams extends ChatParams {
     signal?: AbortSignal;
+    timeoutMs?: number | undefined;
 }
 
 function buildChatPayload(params: ChatParams, stream: boolean) {
@@ -143,10 +144,15 @@ export async function fetchOllamaModels(baseUrl: string): Promise<OllamaModel[]>
 export async function sendOllamaChat(
     baseUrl: string,
     params: ChatParams,
+    timeoutMs?: number | undefined,
 ): Promise<ChatApiResponse> {
+    const config: any = {};
+    if (timeoutMs !== undefined) config.timeout = timeoutMs;
+
     const response = await axios.post<ChatApiResponse>(
         `${baseUrl}/api/chat`,
         buildChatPayload(params, false),
+        config
     );
 
     return response.data;
@@ -156,11 +162,14 @@ export async function* sendOllamaChatStream(
     baseUrl: string,
     params: StreamChatParams,
 ): AsyncGenerator<ChatApiResponse> {
-    const requestConfig: { responseType: 'stream'; signal?: AbortSignal } = {
+    const requestConfig: any = {
         responseType: 'stream',
     };
     if (params.signal) {
         requestConfig.signal = params.signal;
+    }
+    if (params.timeoutMs !== undefined) {
+        requestConfig.timeout = params.timeoutMs;
     }
 
     const response = await axios.post<NodeJS.ReadableStream>(

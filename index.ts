@@ -54,7 +54,8 @@ const DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY = 3;
 const SESSION_NAME_MAX_LENGTH = 60;
 const COMPACT_WARNING_THRESHOLD_PCT = 85;
 const COMPACT_WARNING_TOKEN_INTERVAL = 500;
-const OLLAMA_CONNECT_TIMEOUT_MS = 2000;
+const OLLAMA_CONNECT_TIMEOUT_MS = 5000;
+const OLLAMA_CHAT_TIMEOUT_MS = 300_000; // 5 minutes
 const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
 let cleanupBeforeExit: (() => void) | null = null;
@@ -467,6 +468,7 @@ async function startChat(
                     streamParams,
                     {
                         onStatusUpdate: refreshTokenStatus,
+                        timeoutMs: OLLAMA_CHAT_TIMEOUT_MS,
                         onFinalStats: (authoritativeTokensUsed, finalStats) => {
                             refreshTokenStatus('AI response received.', authoritativeTokensUsed, 'ollama');
                             console.log(chalk.dim(`(Used ${authoritativeTokensUsed} ${authoritativeTokensUsed === 1 ? 'token' : 'tokens'})`));

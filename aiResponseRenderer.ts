@@ -47,6 +47,11 @@ export interface StreamAIResponseOptions {
      * `refreshTokenStatus`.
      */
     onStatusUpdate: (status: string) => void;
+
+    /**
+     * Optional timeout in milliseconds for the AI response (per chunk or total).
+     */
+    timeoutMs?: number | undefined;
 }
 
 export interface StreamAIResponseResult {
@@ -83,10 +88,11 @@ export async function renderTurn(
     sessionTokenStats: { promptEvalCount: number; evalCount: number } | null;
     finalStats: OllamaTurnStats | null;
 }> {
-    const { onStatusUpdate, onFinalStats } = opts;
+    const { onStatusUpdate, onFinalStats, timeoutMs } = opts;
 
     const { content, toolCalls, interrupted, finalStats } = await streamAIResponse(baseUrl, params, {
         onStatusUpdate,
+        timeoutMs,
     });
 
     if (interrupted) {
@@ -211,6 +217,7 @@ export async function streamAIResponse(
         tools: params.tools,
         numCtx: params.numCtx,
         signal: abortController.signal,
+        timeoutMs: opts.timeoutMs,
     });
 
     try {
