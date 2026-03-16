@@ -236,7 +236,22 @@ const NUDGE_HANDLER: SlashHandler = async (ctx) => {
 
 const EXIT_HANDLER: SlashHandler = async () => 'break';
 
+const NEW_HANDLER: SlashHandler = async (ctx) => {
+    // Save current session before switching
+    ctx.saveSession();
+
+    const newId = createSession('New Session', ctx.currentModel);
+    const freshMessages: ChatMessage[] = [{ role: 'system', content: ctx.systemPrompt }];
+    
+    // Switch to the new session record and message array
+    ctx.updateSession(newId, freshMessages, false);
+    
+    console.log(chalk.green('\nStarted a new conversation.\n'));
+    return true; // Continue chat loop
+};
+
 export const SLASH_COMMANDS: SlashCommand[] = [
+    { name: chalk.blue('/new') + '      - Start a fresh conversation', value: '/new' },
     { name: chalk.blue('/model') + '    - Switch LLM model', value: '/model' },
     { name: chalk.blue('/compact') + '  - Summarise conversation history to save context', value: '/compact' },
     { name: chalk.blue('/sessions') + ' - List and switch to a previous conversation', value: '/sessions' },
@@ -247,6 +262,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 ];
 
 export const COMMAND_HANDLERS: Record<string, SlashHandler> = {
+    '/new': NEW_HANDLER,
     '/model': MODEL_HANDLER,
     '/compact': COMPACT_HANDLER,
     '/sessions': SESSIONS_HANDLER,
