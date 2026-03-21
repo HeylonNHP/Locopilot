@@ -473,7 +473,6 @@ export interface ToolCallArguments {
     prompt?: string;
     queries?: string[] | string;
     max_queries?: number;
-    results_per_query?: number;
     url?: string;
     source?: string;
 }
