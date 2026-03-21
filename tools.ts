@@ -114,11 +114,22 @@ export function installKeyInterruptListener(keySpec = 'Ctrl+X'): void {
 
     readline.emitKeypressEvents(process.stdin);
 
-    // Save current raw mode and enable it so we get keypresses immediately.
-    // setRawMode(true) disables the OS TTY processing that converts Ctrl+C → SIGINT,
-    // so we must handle Ctrl+C manually inside the keypress listener.
-    prevRawMode = process.stdin.isRaw;
-    process.stdin.setRawMode(true);
+    // If a listener is already active, remove it before installing the new one.
+    // This prevents duplicate handlers from accumulating on repeated installs and
+    // ensures the stale reference can never fire again. We only capture prevRawMode
+    // and enable raw mode on a fresh (non-reinstall) call so that the stored value
+    // always reflects the pre-installation state and is not overwritten with 'true'
+    // on a reinstall (which would leave stdin raw after cleanup).
+    if (keyInterruptListener) {
+        process.stdin.off('keypress', keyInterruptListener);
+        keyInterruptListener = null;
+    } else {
+        // Save current raw mode and enable it so we get keypresses immediately.
+        // setRawMode(true) disables the OS TTY processing that converts Ctrl+C → SIGINT,
+        // so we must handle Ctrl+C manually inside the keypress listener.
+        prevRawMode = process.stdin.isRaw;
+        process.stdin.setRawMode(true);
+    }
     // Ensure stdin is flowing so keypress events are emitted between Inquirer prompts.
     process.stdin.resume();
 
