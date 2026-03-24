@@ -46,6 +46,7 @@ import {
     type Config,
     type ChatContext,
 } from './slashCommands.js';
+import { OLLAMA_CONNECT_TIMEOUT_MS, OLLAMA_CHAT_TIMEOUT_MS } from './constants.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const DEFAULT_NUM_CTX = 131072;
@@ -54,8 +55,6 @@ const DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY = 3;
 const SESSION_NAME_MAX_LENGTH = 60;
 const COMPACT_WARNING_THRESHOLD_PCT = 85;
 const COMPACT_WARNING_TOKEN_INTERVAL = 500;
-const OLLAMA_CONNECT_TIMEOUT_MS = 5000;
-const OLLAMA_CHAT_TIMEOUT_MS = 300_000; // 5 minutes
 const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
 let cleanupBeforeExit: (() => void) | null = null;
