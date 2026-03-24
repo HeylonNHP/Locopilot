@@ -1,6 +1,7 @@
 import { readFile, writeFile, access } from 'fs/promises';
 import path from 'path';
-import { select, input, search } from '@inquirer/prompts';
+import * as readline from 'readline';
+import { select, input } from '@inquirer/prompts';
 import chalk from 'chalk';
 import {
     TOOLS,
@@ -233,6 +234,68 @@ async function selectOrCreateSession(models: string[], selectedModel: string): P
     return { sessionId: sessionChoice, messages, model: currentModel };
 }
 
+async function getMultilineInput(promptStr: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const commands = SLASH_COMMANDS.map(c => c.value);
+        const completer = (line: string) => {
+            const hits = commands.filter((c) => c.startsWith(line));
+            return [hits.length ? hits : commands, line];
+        };
+
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+            prompt: promptStr,
+            terminal: true,
+            historySize: 500,
+            completer
+        });
+
+        let buffer: string[] = [];
+        let pasteTimeout: ReturnType<typeof setTimeout> | null = null;
+        let inBlock = false;
+
+        rl.prompt();
+
+        rl.on('line', (line) => {
+            buffer.push(line);
+
+            if (pasteTimeout) clearTimeout(pasteTimeout);
+
+            // Toggle block mode on """
+            if (line.trim() === '"""') {
+                inBlock = !inBlock;
+            }
+
+            if (inBlock) {
+                rl.setPrompt('... ');
+                rl.prompt();
+                return;
+            }
+
+            // Normal line continuation via backslash
+            if (line.endsWith('\\')) {
+                buffer[buffer.length - 1] = line.slice(0, -1);
+                rl.setPrompt('... ');
+                rl.prompt();
+                return;
+            }
+
+            pasteTimeout = setTimeout(() => {
+                rl.close();
+                resolve(buffer.join('\n'));
+            }, 30);
+        });
+
+        rl.on('SIGINT', () => {
+            rl.close();
+            const err = new Error('ExitPromptError');
+            err.name = 'ExitPromptError';
+            reject(err);
+        });
+    });
+}
+
 async function startChat(
     model: string,
     numCtx: number,
@@ -337,34 +400,7 @@ async function startChat(
     while (true) {
         let prompt: string;
         try {
-            prompt = await search<string>({
-                message: chalk.cyan('You >'),
-                theme: {
-                    prefix: { idle: '', done: '' },
-                    style: {
-                        message: (text: string, status: 'idle' | 'done' | 'loading') =>
-                            status === 'done' ? '' : text,
-                        answer: () => '',
-                        // Hide the selected item text so it doesn't repeat the typed input
-                        highlight: () => '',
-                        // Hide the "↑↓ navigate • ⏎ select" hint line
-                        keysHelpTip: () => '',
-                    },
-                },
-                source: async (inputArg: string | undefined) => {
-                    const input = (inputArg || '');
-
-                    // Slash commands: return matches so user can navigate/select.
-                    if (input.startsWith('/')) {
-                        const matches = SLASH_COMMANDS.filter(c => c.value.startsWith(input));
-                        if (matches.length > 0) return matches;
-                    }
-
-                    // Return a phantom selectable item so Enter can submit.
-                    // Empty name + highlight:()=>'' means nothing renders below the prompt.
-                    return [{ name: '', value: input }];
-                },
-            });
+            prompt = await getMultilineInput(chalk.cyan('You > '));
         } catch (e: unknown) {
             if (e instanceof Error && e.name === 'ExitPromptError') break;
             throw e;
@@ -374,9 +410,10 @@ async function startChat(
 
         if (prompt.toLowerCase() === 'exit') break;
 
-        // Manually print the user's prompt to the terminal.
-        // This ensures the message appears exactly once and we have full control over the prefix.
-        process.stdout.write(`${chalk.cyan('You >')} ${prompt}\n`);
+        // Note: the prompt is already visible via readline so we don't need to manually print it again.
+        
+        // Let's ensure string formatting is standard before sending to model
+        prompt = prompt.replace(/^"""|"""$/g, '');
 
         // Handle slash commands via registry
         const [cmdName = ''] = prompt.trim().split(/\s+/);

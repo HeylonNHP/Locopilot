@@ -357,3 +357,8 @@ Feature summary:
   - Files: `index.ts`, `slashCommands.ts`, `constants.ts`
   - Summary: Removed repetitive prompts for Execution Mode, max queries, and context length on startup. Added a `/settings` slash command to configure these mid-session.
   - Intent: Streamline app startup and improve UX by persisting previous configurations and relying on fallbacks.
+
+- 2026-03-24: Replaced Inquirer `search` with standard `readline` for improved multi-line input
+  - Files: `index.ts`
+  - Summary: Replaced `@inquirer/prompts/search` component with a custom `getMultilineInput` node readline interface. It gracefully delays `30ms` upon encountering a newline to wait for potentially fast-arriving lines (pasting multi-line text) and supports `"""` syntax or trailing `\` to compose lines manually.
+  - Intent: Allow the user to intuitively paste terminal outputs or Python blocks into the CLI without accidental early submissions caused by embedded `\r\n`. Autocomplete for `/slash` commands was retained via the native `readline` completer (`<Tab>`).
