@@ -46,12 +46,15 @@ import {
     type Config,
     type ChatContext,
 } from './slashCommands.js';
-import { OLLAMA_CONNECT_TIMEOUT_MS, OLLAMA_CHAT_TIMEOUT_MS } from './constants.js';
+import {
+    OLLAMA_CONNECT_TIMEOUT_MS,
+    OLLAMA_CHAT_TIMEOUT_MS,
+    DEFAULT_NUM_CTX,
+    DEFAULT_WEB_SEARCH_MAX_QUERIES,
+    DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+} from './constants.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
-const DEFAULT_NUM_CTX = 131072;
-const DEFAULT_WEB_SEARCH_MAX_QUERIES = 3;
-const DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY = 3;
 const SESSION_NAME_MAX_LENGTH = 60;
 const COMPACT_WARNING_THRESHOLD_PCT = 85;
 const COMPACT_WARNING_TOKEN_INTERVAL = 500;
@@ -137,20 +140,8 @@ async function selectExecutionMode(config: Config): Promise<boolean> {
                      yoloEnv === 'true' ||
                      yoloEnv === '1';
 
-    if (!yoloActive) {
-        const mode = await withExitGuard(async () => {
-            return await select({
-                message: 'Select execution mode:',
-                choices: [
-                    { name: 'Standard (Confirm all terminal commands)', value: 'standard' },
-                    { name: chalk.red.bold('YOLO') + '     (Automatic command execution - USE WITH CAUTION)', value: 'yolo' }
-                ],
-                default: config?.yolo ? 'yolo' : 'standard'
-            });
-        });
-
-        if (mode === null) process.exit(0);
-        yoloActive = mode === 'yolo';
+    if (!yoloActive && config.yolo !== undefined) {
+        yoloActive = config.yolo;
     }
 
     setYoloMode(yoloActive);
@@ -165,43 +156,11 @@ async function configureModelAndContext(config: Config, models: string[]): Promi
     let selectedModel = config.lastModel && models.includes(config.lastModel)
         ? config.lastModel
         : null;
-    const savedNumCtx = config.numCtx ?? DEFAULT_NUM_CTX;
-
-    const numCtxInput = await input({
-        message: 'Enter context length (num_ctx):',
-        default: String(savedNumCtx),
-        validate: (value: string) => {
-            const parsed = Number.parseInt(value, 10);
-            return Number.isInteger(parsed) && parsed > 0
-                ? true
-                : 'Please enter a positive integer.';
-        },
-    });
-    const selectedNumCtx = Number.parseInt(numCtxInput, 10);
+    const selectedNumCtx = config.numCtx ?? DEFAULT_NUM_CTX;
 
     const savedWebSearch = config.webSearch;
-    const webSearchMaxQueriesInput = await input({
-        message: 'Web search setting: max queries per tool call:',
-        default: String(savedWebSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES),
-        validate: (value: string) => {
-            const parsed = Number.parseInt(value, 10);
-            return Number.isInteger(parsed) && parsed > 0
-                ? true
-                : 'Please enter a positive integer.';
-        },
-    });
-    const webSearchResultsPerQueryInput = await input({
-        message: 'Web search setting: results per query:',
-        default: String(savedWebSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY),
-        validate: (value: string) => {
-            const parsed = Number.parseInt(value, 10);
-            return Number.isInteger(parsed) && parsed > 0
-                ? true
-                : 'Please enter a positive integer.';
-        },
-    });
-    const selectedWebSearchMaxQueries = Number.parseInt(webSearchMaxQueriesInput, 10);
-    const selectedWebSearchResultsPerQuery = Number.parseInt(webSearchResultsPerQueryInput, 10);
+    const selectedWebSearchMaxQueries = savedWebSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES;
+    const selectedWebSearchResultsPerQuery = savedWebSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY;
 
     if (!selectedModel) {
         selectedModel = await withExitGuard(async () => {
@@ -318,6 +277,13 @@ async function startChat(
         get currentSessionId() { return currentSessionId; },
         get config() { return config; },
         get systemPrompt() { return systemPrompt; },
+        saveConfig: async (newConfig: Config) => {
+            Object.assign(config, newConfig);
+            await saveConfig(config);
+        },
+        updateNumCtx: (newNumCtx: number) => {
+            numCtx = newNumCtx;
+        },
         saveSession: (tokenStats?: SessionTokenStats | null) =>
             updateSessionMessages(currentSessionId, messages, tokenStats),
         refreshTokenStatus: (phase: string) => refreshTokenStatus(phase),

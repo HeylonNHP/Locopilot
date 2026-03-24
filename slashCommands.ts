@@ -1,8 +1,15 @@
 import chalk from 'chalk';
-import { select } from '@inquirer/prompts';
+import { select, input } from '@inquirer/prompts';
 import {
     getToolUseNudge,
+    setYoloMode,
+    setWebSearchConfig,
 } from './tools.js';
+import {
+    DEFAULT_NUM_CTX,
+    DEFAULT_WEB_SEARCH_MAX_QUERIES,
+    DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+} from './constants.js';
 import {
     fetchOllamaModels,
     getOllamaApiErrorMessage,
@@ -45,6 +52,8 @@ export interface ChatContext {
     currentSessionId: number;
     config: Config;
     systemPrompt: string;
+    saveConfig: (config: Config) => Promise<void>;
+    updateNumCtx: (numCtx: number) => void;
     saveSession: (tokenStats?: SessionTokenStats | null) => void;
     refreshTokenStatus: (phase: string) => void;
     updateModel: (model: string) => Promise<void>;
@@ -250,9 +259,113 @@ const NEW_HANDLER: SlashHandler = async (ctx) => {
     return true; // Continue chat loop
 };
 
+const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
+    const action = await withExitGuard(async () => {
+        return await select({
+            message: 'Menu: Settings',
+            choices: [
+                { name: `Execution Mode (${ctx.config.yolo ? 'YOLO' : 'Standard'})`, value: 'mode' },
+                { name: `Context Length (${ctx.config.numCtx ?? DEFAULT_NUM_CTX})`, value: 'num_ctx' },
+                { name: `Web Search: Max Queries (${ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES})`, value: 'web_max_queries' },
+                { name: `Web Search: Results Per Query (${ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY})`, value: 'web_results_per_query' },
+                { name: 'Back to Chat', value: 'back' }
+            ]
+        });
+    });
+
+    if (action === null || action === 'back') return true;
+
+    if (action === 'mode') {
+        const mode = await withExitGuard(async () => {
+            return await select({
+                message: 'Select execution mode:',
+                choices: [
+                    { name: 'Standard (Confirm all terminal commands)', value: 'standard' },
+                    { name: chalk.red.bold('YOLO') + '     (Automatic command execution - USE WITH CAUTION)', value: 'yolo' }
+                ],
+                default: ctx.config.yolo ? 'yolo' : 'standard'
+            });
+        });
+        if (mode !== null) {
+            const isYolo = mode === 'yolo';
+            await ctx.saveConfig({ ...ctx.config, yolo: isYolo });
+            setYoloMode(isYolo);
+            console.log(chalk.green(`\nExecution mode set to ${isYolo ? chalk.red.bold('YOLO') : 'Standard'}\n`));
+        }
+    } else if (action === 'num_ctx') {
+        const numCtxInput = await withExitGuard(async () => {
+            return await input({
+                message: 'Enter context length (num_ctx):',
+                default: String(ctx.config.numCtx ?? DEFAULT_NUM_CTX),
+                validate: (value: string) => {
+                    const parsed = Number.parseInt(value, 10);
+                    return Number.isInteger(parsed) && parsed > 0
+                        ? true
+                        : 'Please enter a positive integer.';
+                },
+            });
+        });
+        if (numCtxInput !== null) {
+            const parsed = Number.parseInt(numCtxInput, 10);
+            await ctx.saveConfig({ ...ctx.config, numCtx: parsed });
+            ctx.updateNumCtx(parsed);
+            console.log(chalk.green(`\nContext length updated to ${parsed}\n`));
+        }
+    } else if (action === 'web_max_queries') {
+        const inputVal = await withExitGuard(async () => {
+            return await input({
+                message: 'Web search setting: max queries per tool call:',
+                default: String(ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES),
+                validate: (value: string) => {
+                    const parsed = Number.parseInt(value, 10);
+                    return Number.isInteger(parsed) && parsed > 0
+                        ? true
+                        : 'Please enter a positive integer.';
+                },
+            });
+        });
+        if (inputVal !== null) {
+            const parsed = Number.parseInt(inputVal, 10);
+            const newWebSearch = {
+                maxQueries: parsed,
+                resultsPerQuery: ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+            };
+            await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
+            setWebSearchConfig(newWebSearch);
+            console.log(chalk.green(`\nMax queries updated to ${parsed}\n`));
+        }
+    } else if (action === 'web_results_per_query') {
+        const inputVal = await withExitGuard(async () => {
+            return await input({
+                message: 'Web search setting: results per query:',
+                default: String(ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY),
+                validate: (value: string) => {
+                    const parsed = Number.parseInt(value, 10);
+                    return Number.isInteger(parsed) && parsed > 0
+                        ? true
+                        : 'Please enter a positive integer.';
+                },
+            });
+        });
+        if (inputVal !== null) {
+            const parsed = Number.parseInt(inputVal, 10);
+            const newWebSearch = {
+                maxQueries: ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
+                resultsPerQuery: parsed,
+            };
+            await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
+            setWebSearchConfig(newWebSearch);
+            console.log(chalk.green(`\nResults per query updated to ${parsed}\n`));
+        }
+    }
+
+    return true; // Continue chat loop
+};
+
 export const SLASH_COMMANDS: SlashCommand[] = [
     { name: chalk.blue('/new') + '      - Start a fresh conversation', value: '/new' },
     { name: chalk.blue('/model') + '    - Switch LLM model', value: '/model' },
+    { name: chalk.blue('/settings') + ' - Change session and app settings', value: '/settings' },
     { name: chalk.blue('/compact') + '  - Summarise conversation history to save context', value: '/compact' },
     { name: chalk.blue('/sessions') + ' - List and switch to a previous conversation', value: '/sessions' },
     { name: chalk.blue('/delete') + '   - Delete a saved conversation', value: '/delete' },
@@ -264,6 +377,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 export const COMMAND_HANDLERS: Record<string, SlashHandler> = {
     '/new': NEW_HANDLER,
     '/model': MODEL_HANDLER,
+    '/settings': SETTINGS_HANDLER,
     '/compact': COMPACT_HANDLER,
     '/sessions': SESSIONS_HANDLER,
     '/delete': DELETE_HANDLER,

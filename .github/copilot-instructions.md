@@ -85,6 +85,7 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
 - **Session Management**: Resume recent chats, switch between multiple active sessions (`/sessions`), or delete old ones (`/delete`).
 - **Slash Commands**: Specialized commands for utility tasks:
     - `/model`: Refresh and switch LLM models mid-conversation.
+    - `/settings`: Change App and Session settings (replaces initial startup prompts).
     - `/compact`: Force conversation summarization to recover context.
     - `/sessions`: Switch between multiple persistent chat histories.
     - `/delete`: Remove a session from the local database.
@@ -352,3 +353,7 @@ Feature summary:
   - Intent: Give the model and user clearer runtime context when polling long-running commands or diagnosing slow executions.
 
 (End of maintenance instructions)
+- 2026-03-24: Moved startup configuration prompts to a /settings menu
+  - Files: `index.ts`, `slashCommands.ts`, `constants.ts`
+  - Summary: Removed repetitive prompts for Execution Mode, max queries, and context length on startup. Added a `/settings` slash command to configure these mid-session.
+  - Intent: Streamline app startup and improve UX by persisting previous configurations and relying on fallbacks.
