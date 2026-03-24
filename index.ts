@@ -254,8 +254,32 @@ async function getMultilineInput(promptStr: string): Promise<string> {
         let buffer: string[] = [];
         let pasteTimeout: ReturnType<typeof setTimeout> | null = null;
         let inBlock = false;
+        let hasShownMenu = false;
+
+        const onKeypress = () => {
+            // Only show menu for the very first line
+            if (buffer.length > 0 || inBlock) return;
+            
+            const line = rl.line;
+            if (line === '/' && !hasShownMenu) {
+                hasShownMenu = true;
+                process.stdout.write('\n\x1B[2K' + chalk.dim('Available commands:') + '\n');
+                for (const cmd of SLASH_COMMANDS) {
+                    process.stdout.write(`  ${cmd.name}\n`);
+                }
+                rl.prompt(true);
+            } else if (line === '') {
+                hasShownMenu = false; // Reset if they backspace to empty
+            }
+        };
+
+        process.stdin.on('keypress', onKeypress);
 
         rl.prompt();
+
+        const cleanup = () => {
+            process.stdin.removeListener('keypress', onKeypress);
+        };
 
         rl.on('line', (line) => {
             buffer.push(line);
@@ -282,12 +306,14 @@ async function getMultilineInput(promptStr: string): Promise<string> {
             }
 
             pasteTimeout = setTimeout(() => {
+                cleanup();
                 rl.close();
                 resolve(buffer.join('\n'));
             }, 30);
         });
 
         rl.on('SIGINT', () => {
+            cleanup();
             rl.close();
             const err = new Error('ExitPromptError');
             err.name = 'ExitPromptError';
