@@ -228,7 +228,7 @@ export async function streamAIResponse(
                 break;
             }
 
-            const chunkContent = chunk.message.content ?? '';
+            const chunkContent = chunk.message?.content ?? '';
             if (chunkContent.length > 0) {
                 if (!headerPrinted) {
                     clearLiveStatus();
@@ -251,7 +251,7 @@ export async function streamAIResponse(
                 }
             }
 
-            if (chunk.message.tool_calls) {
+            if (chunk.message?.tool_calls) {
                 toolCalls.push(...chunk.message.tool_calls);
             }
 

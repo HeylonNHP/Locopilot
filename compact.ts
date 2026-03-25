@@ -120,7 +120,7 @@ export async function compactHistory(
         tools: [],   // No tools needed for summarisation
         numCtx,
     })) {
-        const content = chunk.message.content ?? '';
+        const content = chunk.message?.content ?? '';
         if (content.length > 0) {
             summary += content;
             onProgress?.(`AI is summarizing... (${summary.length} chars)`);
