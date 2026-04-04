@@ -47,6 +47,7 @@ import {
     type Config,
     type ChatContext,
 } from './slashCommands.js';
+import { compactHistory, printCompactStats } from './compact.js';
 import {
     OLLAMA_CONNECT_TIMEOUT_MS,
     DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
@@ -59,6 +60,7 @@ const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const SESSION_NAME_MAX_LENGTH = 60;
 const COMPACT_WARNING_THRESHOLD_PCT = 85;
 const COMPACT_WARNING_TOKEN_INTERVAL = 500;
+const AUTO_COMPACT_THRESHOLD_PCT = 92;
 const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 
 let cleanupBeforeExit: (() => void) | null = null;
@@ -415,6 +417,41 @@ async function startChat(
     };
 
     let lastCompactWarningTokens = 0;
+
+    /**
+     * Checks whether the context is above AUTO_COMPACT_THRESHOLD_PCT and, if so,
+     * runs compaction automatically. Prints a one-liner to inform the user.
+     * Returns true if compaction ran (caller should re-check interrupt state).
+     */
+    async function autoCompactIfNeeded(): Promise<boolean> {
+        const tokensUsed = countMessagesTokens(messages, currentModel);
+        if (numCtx <= 0) return false;
+        const pct = (tokensUsed / numCtx) * 100;
+        if (pct < AUTO_COMPACT_THRESHOLD_PCT) return false;
+
+        clearLiveStatus();
+        console.log(
+            chalk.yellow(`\n⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...\n`)
+        );
+        try {
+            const result = await compactHistory(
+                baseUrl,
+                currentModel,
+                messages,
+                numCtx,
+                (status) => refreshTokenStatus(status),
+            );
+            clearLiveStatus();
+            printCompactStats(result.stats);
+            replaceMessages(messages, result.newMessages);
+            context.saveSession();
+        } catch (err) {
+            clearLiveStatus();
+            const msg = err instanceof Error ? err.message : String(err);
+            console.log(chalk.yellow(`⚠️  Auto-compact skipped: ${msg}\n`));
+        }
+        return true;
+    }
     function refreshTokenStatus(
         phase: string,
         tokensUsedOverride?: number,
@@ -507,6 +544,9 @@ async function startChat(
                     context.saveSession();
                     break;
                 }
+
+                // Auto-compact if we've grown too close to the context limit between iterations.
+                await autoCompactIfNeeded();
 
                 const streamParams: StreamAIResponseParams = {
                     model: currentModel,

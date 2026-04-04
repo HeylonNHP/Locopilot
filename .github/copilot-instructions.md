@@ -117,6 +117,7 @@ Feature summary:
 - **Authoritative Stats**: Reconciles estimated local token counts (`tiktoken`) with authoritative metrics from Ollama (`prompt_eval_count`, `eval_count`) at the end of each turn.
 - **Token Calculation**: Estimated counts [tokenizer.ts](tokenizer.ts) add 4 tokens per message plus role, content, and tool call overhead to match OpenAI-style counting as a robust local approximation.
 - **Conversation Compaction**: The `/compact` command [compact.ts](compact.ts) uses a high-context LLM pass to summarize everything (decisions, code, paths) into the third person, injecting a `[This conversation history has been compacted...]` preamble.
+- **Auto-Compact**: When context usage reaches 92%, compaction is triggered automatically at the start of each tool-call loop iteration (covers both between-tool-call growth and end-of-turn growth). A yellow `⚡ Context at N% — auto-compacting...` line is printed. If compaction fails or is a no-op, a warning is shown but the loop continues uninterrupted.
 
 ## Web search & Fetch tools
 
@@ -362,3 +363,18 @@ Feature summary:
   - Files: `index.ts`
   - Summary: Replaced `@inquirer/prompts/search` component with a custom `getMultilineInput` node readline interface. It gracefully delays `30ms` upon encountering a newline to wait for potentially fast-arriving lines (pasting multi-line text) and supports `"""` syntax or trailing `\` to compose lines manually.
   - Intent: Allow the user to intuitively paste terminal outputs or Python blocks into the CLI without accidental early submissions caused by embedded `\r\n`. Autocomplete for `/slash` commands was retained via the native `readline` completer (`<Tab>`).
+
+- 2026-04-04: Improved `/compact` with output budgeting and sliding-window preservation
+  - Files: `compact.ts`, `.github/copilot-instructions.md`
+  - Summary: Added three compaction upgrades: (1) explicit `num_predict` overrides for summarization/distillation to avoid backend defaults truncating around ~2k tokens, (2) dynamic budget signaling in the summarizer system prompt with target/min/max token guidance derived from `numCtx`, and (3) context-scaled sliding-window preservation of recent messages so only older history is summarized while newer turns remain verbatim.
+  - Intent: Retain materially more useful context on large windows (e.g. 128k) while still reducing history size and preventing over-aggressive summarization.
+
+- 2026-04-04: Tuned `/compact` to avoid no-op growth on short splits
+  - Files: `compact.ts`, `.github/copilot-instructions.md`
+  - Summary: Reduced preserved-recent aggressiveness (lower ratio/floor, capped preserved message count by minimum summary share) and added source-aware summary budget capping so summary targets scale down when only a small slice is being summarized.
+  - Intent: Reduce failures where compaction preserved too much recent history and summary output grew enough to exceed original token count.
+
+- 2026-04-04: Added automatic context compaction
+  - Files: `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added `autoCompactIfNeeded()` in `index.ts` that triggers compaction when estimated token usage reaches `AUTO_COMPACT_THRESHOLD_PCT` (92%). The function is called at the top of every tool-call loop iteration, covering both mid-turn (between tool calls) and end-of-turn growth. A yellow `⚡` status line informs the user; errors are caught and shown as non-fatal warnings so the loop always continues.
+  - Intent: Prevent context-overflow hard stops by proactively compacting during long agentic runs without requiring user intervention.
