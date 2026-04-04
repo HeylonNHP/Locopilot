@@ -49,7 +49,7 @@ import {
 } from './slashCommands.js';
 import {
     OLLAMA_CONNECT_TIMEOUT_MS,
-    OLLAMA_CHAT_TIMEOUT_MS,
+    DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
     DEFAULT_NUM_CTX,
     DEFAULT_WEB_SEARCH_MAX_QUERIES,
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
@@ -496,7 +496,7 @@ async function startChat(
                     streamParams,
                     {
                         onStatusUpdate: refreshTokenStatus,
-                        timeoutMs: OLLAMA_CHAT_TIMEOUT_MS,
+                        timeoutMs: config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
                         onFinalStats: (authoritativeTokensUsed, finalStats) => {
                             refreshTokenStatus('AI response received.', authoritativeTokensUsed, 'ollama');
                             console.log(chalk.dim(`(Used ${authoritativeTokensUsed} ${authoritativeTokensUsed === 1 ? 'token' : 'tokens'})`));

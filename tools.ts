@@ -15,7 +15,7 @@ import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSetti
 import { FetchUrlTool, getToolPrompt as getFetchUrlPrompt, type FetchUrlToolArgs } from './tools/fetchUrlTool.js';
 import { FetchImageTool, getToolPrompt as getFetchImagePrompt, type FetchImageToolArgs, type FetchImageResult } from './tools/fetchImageTool.js';
 import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from './runCommandTool.js';
-import { OLLAMA_CHAT_TIMEOUT_MS } from './constants.js';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from './constants.js';
 
 /**
  * Strips ANSI escape codes and Carriage Returns from text.
@@ -41,7 +41,7 @@ let isYoloMode = false;
 const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
     maxQueries: 3,
     resultsPerQuery: 3,
-    requestTimeoutMs: OLLAMA_CHAT_TIMEOUT_MS,
+    requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
     perPageCharLimit: 2_500,
 };
 

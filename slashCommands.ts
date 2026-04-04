@@ -7,6 +7,7 @@ import {
 } from './tools.js';
 import {
     DEFAULT_NUM_CTX,
+    DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
     DEFAULT_WEB_SEARCH_MAX_QUERIES,
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
 } from './constants.js';
@@ -32,6 +33,7 @@ export interface Config {
     baseUrl: string;
     lastModel?: string;
     numCtx?: number;
+    chatTimeoutMs?: number;
     yolo?: boolean;
     webSearch?: {
         maxQueries: number;
@@ -266,6 +268,7 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
             choices: [
                 { name: `Execution Mode (${ctx.config.yolo ? 'YOLO' : 'Standard'})`, value: 'mode' },
                 { name: `Context Length (${ctx.config.numCtx ?? DEFAULT_NUM_CTX})`, value: 'num_ctx' },
+                { name: `Chat Timeout (${(ctx.config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000}s)`, value: 'chat_timeout' },
                 { name: `Web Search: Max Queries (${ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES})`, value: 'web_max_queries' },
                 { name: `Web Search: Results Per Query (${ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY})`, value: 'web_results_per_query' },
                 { name: 'Back to Chat', value: 'back' }
@@ -310,6 +313,24 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
             await ctx.saveConfig({ ...ctx.config, numCtx: parsed });
             ctx.updateNumCtx(parsed);
             console.log(chalk.green(`\nContext length updated to ${parsed}\n`));
+        }
+    } else if (action === 'chat_timeout') {
+        const timeoutInput = await withExitGuard(async () => {
+            return await input({
+                message: 'Enter chat timeout in seconds:',
+                default: String((ctx.config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000),
+                validate: (value: string) => {
+                    const parsed = Number.parseFloat(value);
+                    return Number.isFinite(parsed) && parsed > 0
+                        ? true
+                        : 'Please enter a positive number.';
+                },
+            });
+        });
+        if (timeoutInput !== null) {
+            const parsedMs = Math.floor(Number.parseFloat(timeoutInput) * 1000);
+            await ctx.saveConfig({ ...ctx.config, chatTimeoutMs: parsedMs });
+            console.log(chalk.green(`\nChat timeout updated to ${parsedMs / 1000}s\n`));
         }
     } else if (action === 'web_max_queries') {
         const inputVal = await withExitGuard(async () => {
