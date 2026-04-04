@@ -254,22 +254,46 @@ async function getMultilineInput(promptStr: string): Promise<string> {
         let buffer: string[] = [];
         let pasteTimeout: ReturnType<typeof setTimeout> | null = null;
         let inBlock = false;
-        let hasShownMenu = false;
 
-        const onKeypress = () => {
-            // Only show menu for the very first line
-            if (buffer.length > 0 || inBlock) return;
+        const onKeypress = async (str: string, key: any) => {
+            // Only show menu for the very first character of the very first line
+            if (buffer.length > 0 || inBlock || rl.line.length > 1) return;
             
             const line = rl.line;
-            if (line === '/' && !hasShownMenu) {
-                hasShownMenu = true;
-                process.stdout.write('\n\x1B[2K' + chalk.dim('Available commands:') + '\n');
-                for (const cmd of SLASH_COMMANDS) {
-                    process.stdout.write(`  ${cmd.name}\n`);
+            if (line === '/') {
+                // Pause rl to prevent it from consuming arrow keys/enter while select is active
+                rl.pause();
+                process.stdin.removeListener('keypress', onKeypress);
+
+                // Clear the "/" character before showing select
+                process.stdout.write('\r\x1B[K');
+
+                const choice = await withExitGuard(async () => {
+                    return await select({
+                        message: 'Select a command:',
+                        choices: SLASH_COMMANDS.map(c => ({ 
+                            name: c.name, 
+                            value: c.value 
+                        })),
+                        pageSize: 10
+                    });
+                });
+
+                if (choice) {
+                    // Replace "/" with the chosen command and immediately resolve
+                    cleanup();
+                    rl.close();
+                    resolve(choice);
+                    return;
+                } else {
+                    // User cancelled, restore the "/"
+                    rl.write('/');
                 }
+
+                // Resume rl and re-attach listener
+                rl.resume();
+                process.stdin.on('keypress', onKeypress);
                 rl.prompt(true);
-            } else if (line === '') {
-                hasShownMenu = false; // Reset if they backspace to empty
             }
         };
 
