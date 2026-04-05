@@ -49,7 +49,7 @@ import {
     type Config,
     withExitGuard,
 } from './slashCommands.js';
-import { compactHistory, printCompactStats } from './compact.js';
+import { compactHistory, printCompactStats } from './services/compact.js';
 import {
     DEFAULT_NUM_CTX,
     DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,

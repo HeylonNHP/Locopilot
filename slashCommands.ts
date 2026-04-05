@@ -16,7 +16,7 @@ import {
     getOllamaApiErrorMessage,
 } from './ollamaApi.js';
 import type { ChatMessage, OllamaModel } from './ollamaApi.js';
-import { compactHistory, printCompactStats } from './compact.js';
+import { compactHistory, printCompactStats } from './services/compact.js';
 import {
     createSession,
     listSessions,
