@@ -144,10 +144,35 @@ export async function fetchOllamaModels(baseUrl: string): Promise<OllamaModel[]>
 export async function sendOllamaChat(
     baseUrl: string,
     params: ChatParams,
+    onChunk?: (chunk: ChatApiResponse) => void,
     timeoutMs?: number | undefined,
 ): Promise<ChatApiResponse> {
     const config: any = {};
     if (timeoutMs !== undefined) config.timeout = timeoutMs;
+
+    if (onChunk) {
+        // Use streaming internally to provide progress but return full response
+        const streamParams: StreamChatParams = { ...params };
+        let fullMessage: ChatMessage = { role: 'assistant', content: '' };
+        let lastChunk: ChatApiResponse | null = null;
+
+        for await (const chunk of sendOllamaChatStream(baseUrl, streamParams)) {
+            if (chunk.message?.content) {
+                fullMessage.content += chunk.message.content;
+            }
+            if (chunk.message?.tool_calls) {
+                fullMessage.tool_calls = chunk.message.tool_calls;
+            }
+            lastChunk = chunk;
+            onChunk(chunk);
+        }
+
+        if (!lastChunk) throw new Error('No response from Ollama');
+        return {
+            ...lastChunk,
+            message: fullMessage,
+        };
+    }
 
     const response = await axios.post<ChatApiResponse>(
         `${baseUrl}/api/chat`,

@@ -88,7 +88,9 @@ async function measureConversationTokens(
     model: string,
     messages: ChatMessage[],
     numCtx: number,
+    onProgress?: (message: string) => void,
 ): Promise<number> {
+    onProgress?.('Measuring conversation tokens...');
     const response = await sendOllamaChat(baseUrl, {
         model,
         messages,
@@ -223,6 +225,7 @@ async function distillToolMessages(
             'Tool output:\n' +
             message.content;
 
+        let distilledContent = '';
         const distillResponse = await sendOllamaChat(baseUrl, {
             model,
             messages: [
@@ -235,6 +238,13 @@ async function distillToolMessages(
                 temperature: 0,
                 num_predict: TOOL_DISTILL_NUM_PREDICT,
             },
+        }, (chunk) => {
+            if (chunk.message?.content) {
+                distilledContent += chunk.message.content;
+                onProgress?.(
+                    `Distilling tool output ${index + 1}/${historyMessages.length} (${toolName})... (${distilledContent.length} chars)`
+                );
+            }
         });
 
         const rawDigest = (distillResponse.message?.content ?? '').trim();
@@ -274,7 +284,7 @@ export async function compactHistory(
     numCtx: number,
     onProgress?: (message: string) => void,
 ): Promise<CompactResult> {
-    const oldTokenCount = await measureConversationTokens(baseUrl, model, messages, numCtx);
+    const oldTokenCount = await measureConversationTokens(baseUrl, model, messages, numCtx, onProgress);
 
     // Separate the system prompt from the rest of the history so we can
     // preserve it verbatim in the compacted result.
@@ -434,7 +444,7 @@ export async function compactHistory(
         ...historySplit.preservedRecentMessages,
     ];
 
-    const newTokenCount = await measureConversationTokens(baseUrl, model, newMessages, numCtx);
+    const newTokenCount = await measureConversationTokens(baseUrl, model, newMessages, numCtx, onProgress);
 
     if (newTokenCount >= oldTokenCount && oldTokenCount > 0) {
         throw new Error(
