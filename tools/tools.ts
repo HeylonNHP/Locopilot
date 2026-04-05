@@ -358,6 +358,7 @@ export function getToolSystemPrompt(): string {
         getFetchImagePrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
+        '- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n' +
         '- Do NOT ask the user for permission yourself; ' +
         (isYoloMode
             ? 'the user has already provided implicit consent via YOLO mode.'
