@@ -415,10 +415,28 @@ async function startChat(
             replaceMessages(messages, newMessages);
             currentSessionId = sessionId;
             sessionNamed = isNamed;
+            lastAuthoritativeTokens = 0;
+            estimatedTokensAtAuthoritative = 0;
         }
     };
 
     let lastCompactWarningTokens = 0;
+
+    // Track the last exact token count from Ollama and the local Tkiktoken estimate
+    // at that exact same point. This allows us to track tokens using the highly accurate
+    // Ollama baseline plus the delta of any new messages, rather than relying solely
+    // on the less accurate local estimator for the entire context window.
+    let lastAuthoritativeTokens = 0;
+    let estimatedTokensAtAuthoritative = 0;
+
+    function getCurrentTokenEstimate(): number {
+        const rawEstimate = countMessagesTokens(messages, currentModel);
+        if (lastAuthoritativeTokens > 0 && estimatedTokensAtAuthoritative > 0) {
+            // Apply the delta of recent messages to our last known exact count
+            return Math.max(0, lastAuthoritativeTokens + (rawEstimate - estimatedTokensAtAuthoritative));
+        }
+        return rawEstimate;
+    }
 
     /**
      * Checks whether the context is above AUTO_COMPACT_THRESHOLD_PCT and, if so,
@@ -426,7 +444,7 @@ async function startChat(
      * Returns true if compaction ran (caller should re-check interrupt state).
      */
     async function autoCompactIfNeeded(): Promise<boolean> {
-        const tokensUsed = countMessagesTokens(messages, currentModel);
+        const tokensUsed = getCurrentTokenEstimate();
         if (numCtx <= 0) return false;
         const pct = (tokensUsed / numCtx) * 100;
         if (pct < AUTO_COMPACT_THRESHOLD_PCT) return false;
@@ -447,6 +465,10 @@ async function startChat(
             printCompactStats(result.stats);
             replaceMessages(messages, result.newMessages);
             context.saveSession();
+            
+            // Compaction completely changes the context, meaning our old baseline is no longer valid
+            lastAuthoritativeTokens = 0;
+            estimatedTokensAtAuthoritative = 0;
         } catch (err) {
             clearLiveStatus();
             const msg = err instanceof Error ? err.message : String(err);
@@ -459,7 +481,7 @@ async function startChat(
         tokensUsedOverride?: number,
         tokenSource: 'estimated' | 'ollama' = 'estimated',
     ) {
-        const tokensUsed = tokensUsedOverride ?? countMessagesTokens(messages, currentModel);
+        const tokensUsed = tokensUsedOverride ?? getCurrentTokenEstimate();
         updatePhase(phase, {
             tokensUsed,
             tokenLimit: numCtx,
@@ -580,6 +602,12 @@ async function startChat(
                 }
 
                 messages.push(assistantMessage);
+
+                // Update our exact baseline now that the messages array includes the complete AI response
+                if (sessionTokenStats) {
+                    lastAuthoritativeTokens = sessionTokenStats.promptEvalCount + sessionTokenStats.evalCount;
+                    estimatedTokensAtAuthoritative = countMessagesTokens(messages, currentModel);
+                }
 
                 if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
                     // Execute each tool call sequentially then feed results back

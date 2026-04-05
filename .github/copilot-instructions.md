@@ -378,3 +378,8 @@ Feature summary:
   - Files: `index.ts`, `.github/copilot-instructions.md`
   - Summary: Added `autoCompactIfNeeded()` in `index.ts` that triggers compaction when estimated token usage reaches `AUTO_COMPACT_THRESHOLD_PCT` (92%). The function is called at the top of every tool-call loop iteration, covering both mid-turn (between tool calls) and end-of-turn growth. A yellow `⚡` status line informs the user; errors are caught and shown as non-fatal warnings so the loop always continues.
   - Intent: Prevent context-overflow hard stops by proactively compacting during long agentic runs without requiring user intervention.
+
+- 2026-04-05: Integrated Ollama authoritative tokens for auto-compaction
+  - Files: `index.ts`, `.github/copilot-instructions.md`
+  - Summary: `getCurrentTokenEstimate()` now anchors the total context estimate to the last exact token count provided by Ollama (`lastAuthoritativeTokens`) and only uses the local Tiktoken approximation for the delta of added messages since that point.
+  - Intent: Fix a bug where the local tokenizer heavily underestimated true token cost, causing the application to warn about 96% context usage but incorrectly failing to automatically compact because its internal calculation stayed under 92%.
