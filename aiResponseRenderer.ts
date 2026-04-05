@@ -9,9 +9,10 @@
  *                       have the full text.
  *
  * `streamAIResponse`  – owns the full lifecycle of a single AI turn: creates
- *                       the HTTP stream, manages the interrupt handler, writes
- *                       each text chunk directly to the terminal as it arrives
- *                       (true streaming output — no buffering), and returns the
+ *                       the HTTP stream, manages the interrupt handler, shows
+ *                       a live character count on the status line while the
+ *                       response arrives, then renders the full response as
+ *                       formatted markdown once complete.  Returns the
  *                       accumulated content + tool calls + interrupted flag to
  *                       the caller.  The caller only needs to supply the chat
  *                       parameters and a status-update callback.
@@ -155,27 +156,15 @@ export function printAIResponse(
 }
 
 /**
- * Streams an AI response directly to the terminal as it arrives.
+ * Streams an AI response and shows a live character count on the status line.
  *
  * Opens the Ollama chat stream internally, wires up the interrupt handler, and
- * writes each content chunk to stdout the moment it is received — the user sees
- * the model "type" in real time.  When the stream ends (or is interrupted) a
- * final newline is written and the function returns.
- *
- * The `"AI is responding..."` status is set at the start; the char-count
- * suffix is kept up-to-date via `onStatusUpdate` while streaming proceeds.
+ * updates the status line with `"AI is responding... (N chars)"` as each chunk
+ * arrives.  No raw text is written to the terminal during this phase.  Once the
+ * stream is complete (or interrupted), the full accumulated response is rendered
+ * as formatted markdown via `printAIResponse`.
  *
  * Tool-call-only responses (no text content) produce no terminal output.
- *
- * Post-stream re-render strategy:
- *   - SHORT responses (streamed lines < terminal height): cursor moves back
- *     to the "AI > " header line with \x1B[{N}A, the raw text is erased, and
- *     the formatted markdown replaces it.  This works because the content never
- *     scrolled the viewport so the header row is still reachable.
- *   - LONG responses (scrolled off the top of the viewport): the raw stream is
- *     left in the scrollback buffer and the formatted version is printed below,
- *     separated by a dim rule.  This avoids the half-erase artefact that occurs
- *     when \x1B[{N}A is capped at the top of the visible screen.
  *
  * @param baseUrl - Ollama base URL (e.g. `http://localhost:11434`).
  * @param params  - Model, messages, tools, and context length.
@@ -192,18 +181,7 @@ export async function streamAIResponse(
     let content = '';
     const toolCalls: OllamaToolCall[] = [];
     let interrupted = false;
-    let headerPrinted = false;
     let finalStats: OllamaTurnStats | null = null;
-
-    // Count visual lines emitted during streaming so we can step back precisely
-    // for the post-stream re-render.  Only reliable when the response does NOT
-    // scroll the terminal (i.e. streamedLines < terminal height).  We start at 1
-    // for the "AI > " header line and track column position to detect soft-wraps.
-    const termWidth = process.stdout.isTTY ? (process.stdout.columns || 80) : 80;
-    const termHeight = process.stdout.isTTY ? (process.stdout.rows || 24) : 24;
-    const AI_LABEL_VISIBLE_LEN = 'AI > '.length;
-    let streamedLines = 1;
-    let currentLineLen = AI_LABEL_VISIBLE_LEN;
 
     onStatusUpdate('AI is responding...');
 
@@ -230,25 +208,8 @@ export async function streamAIResponse(
 
             const chunkContent = chunk.message?.content ?? '';
             if (chunkContent.length > 0) {
-                if (!headerPrinted) {
-                    clearLiveStatus();
-                    process.stdout.write(chalk.yellow('\nAI > '));
-                    headerPrinted = true;
-                }
                 content += chunkContent;
-                process.stdout.write(chunkContent);
-
-                if (process.stdout.isTTY) {
-                    for (const char of chunkContent) {
-                        if (char === '\n') {
-                            streamedLines++;
-                            currentLineLen = 0;
-                        } else if (++currentLineLen >= termWidth) {
-                            streamedLines++;
-                            currentLineLen = 0;
-                        }
-                    }
-                }
+                onStatusUpdate(`AI is responding... (${content.length} chars)`);
             }
 
             if (chunk.message?.tool_calls) {
@@ -266,38 +227,8 @@ export async function streamAIResponse(
         unregisterInterruptHandler();
     }
 
-    if (headerPrinted) {
-        if (interrupted) {
-            // Append an inline note so the user can see the stream was cut short.
-            process.stdout.write(chalk.yellow(' (interrupted)'));
-            process.stdout.write('\n');
-        } else if (process.stdout.isTTY && content.trim().length > 0) {
-            const rendered = renderMarkdown(sanitize(content));
-
-            if (streamedLines < termHeight) {
-                // SHORT response: the entire streamed output is still within the
-                // visible viewport.  \x1B[{N}A reliably reaches the header row,
-                // so we erase and replace with formatted markdown.
-                process.stdout.write(`\x1B[${streamedLines}A`); // cursor up to header row
-                process.stdout.write('\x1B[G');                 // column 0
-                process.stdout.write('\x1B[J');                 // clear to end of screen
-                process.stdout.write(chalk.yellow('AI > '));
-                process.stdout.write(rendered);
-            } else {
-                // LONG response: the content scrolled the terminal.  \x1B[{N}A
-                // would be capped at the top of the visible viewport, leaving the
-                // raw stream partially visible above a half-erased re-render.
-                // Instead, leave the raw stream in the scrollback buffer and print
-                // the formatted version below, clearly separated.
-                process.stdout.write('\n');
-                process.stdout.write(chalk.dim('─'.repeat(termWidth)));
-                process.stdout.write('\n');
-                process.stdout.write(chalk.yellow('AI > '));
-                process.stdout.write(rendered);
-            }
-        } else {
-            process.stdout.write('\n');
-        }
+    if (content.trim().length > 0) {
+        printAIResponse(content, { interrupted });
     }
 
     return { content, toolCalls, interrupted, finalStats };
