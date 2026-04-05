@@ -1,3 +1,14 @@
+/**
+ * HTML extraction utilities for Locopilot web tools.
+ *
+ * This module fetches remote pages, validates HTML content, and extracts
+ * readable text and titles using a best-effort pipeline.
+ *
+ * Extraction order:
+ * 1. Mozilla Readability for article-style content
+ * 2. cheerio-based fallback selectors when Readability fails or returns
+ *    insufficient text
+ */
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import * as cheerio from 'cheerio';
