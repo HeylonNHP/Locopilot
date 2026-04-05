@@ -1,6 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { cleanText, fetchAndExtract, DEFAULT_USER_AGENT } from '../htmlExtractor.js';
+import { cleanText, fetchAndExtract, DEFAULT_USER_AGENT, type ExtractedLink } from '../htmlExtractor.js';
 
 const DUCKDUCKGO_HTML_SEARCH_URL = 'https://duckduckgo.com/html/';
 
@@ -30,6 +30,7 @@ interface ExtractedPage {
     title: string;
     snippet: string;
     text: string;
+    links: ExtractedLink[];
 }
 
 export interface WebSearchOptions {
@@ -109,12 +110,17 @@ export class WebSearchTool {
                     urlLines.push(`result_${index + 1}_final_url: ${page.finalUrl}`);
                 }
 
+                const linksStr = page.links.length > 0
+                    ? page.links.map((l) => `- [${l.text}](${l.url})`).join('\n')
+                    : '(none)';
+
                 resultLines.push(
                     [
                         `result_${index + 1}_title: ${page.title || '(untitled)'}`,
                         ...urlLines,
                         `result_${index + 1}_snippet: ${page.snippet || '(none)'}`,
                         `result_${index + 1}_text:\n${page.text || '(no extractable text)'}`,
+                        `result_${index + 1}_links:\n${linksStr}`,
                     ].join('\n'),
                 );
             }
@@ -260,6 +266,7 @@ export class WebSearchTool {
                 title: result.title,
                 snippet: result.snippet,
                 text: extracted.text || '(no extractable text)',
+                links: extracted.links,
             };
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
@@ -269,6 +276,7 @@ export class WebSearchTool {
                 title: result.title,
                 snippet: result.snippet,
                 text: `(failed to fetch page: ${reason})`,
+                links: [],
             };
         }
     }

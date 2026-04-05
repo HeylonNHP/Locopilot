@@ -44,11 +44,16 @@ export class FetchUrlTool {
 
             this.progress('Fetch URL: completed.');
 
+            const linksStr = result.links.length > 0
+                ? result.links.map((l) => `- [${l.text}](${l.url})`).join('\n')
+                : '(none)';
+
             return [
                 'fetch_url_result:',
                 `url: ${result.finalUrl}`,
                 `title: ${result.title || '(untitled)'}`,
                 `text:\n${result.text || '(no extractable text)'}`,
+                `links:\n${linksStr}`,
             ].join('\n');
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);

@@ -24,11 +24,18 @@ export interface ExtractResult {
     text: string;
 }
 
+export interface ExtractedLink {
+    url: string;
+    text: string;
+}
+
 /**
  * Threshold for Readability extraction; if the resulting text is shorter
  * than this, we consider it a possible failure and try a fallback.
  */
 const MIN_READABILITY_LENGTH = 200;
+export const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
+const MAX_LINKS = 50;
 
 /**
  * Strips extra whitespace, normalizes line endings, and trims.
@@ -131,7 +138,41 @@ export function extractMainText(html: string, url: string): string {
     return fallbackText;
 }
 
-export const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
+/**
+ * Extracts unique, absolute http/https links from an HTML page.
+ * Relative hrefs are resolved against `baseUrl`.
+ */
+export function extractLinks(html: string, baseUrl: string): ExtractedLink[] {
+    try {
+        const $ = cheerio.load(html);
+        const seen = new Set<string>();
+        const links: ExtractedLink[] = [];
+
+        $('a[href]').each((_, el) => {
+            if (links.length >= MAX_LINKS) return;
+            const href = $(el).attr('href')?.trim() ?? '';
+            if (!href) return;
+
+            let resolved: string;
+            try {
+                resolved = new URL(href, baseUrl).toString();
+            } catch {
+                return;
+            }
+
+            if (!/^https?:\/\//i.test(resolved)) return;
+            if (seen.has(resolved)) return;
+            seen.add(resolved);
+
+            const text = cleanText($(el).text()) || resolved;
+            links.push({ url: resolved, text });
+        });
+
+        return links;
+    } catch {
+        return [];
+    }
+}
 
 /**
  * Common fetch + extraction logic shared by web tools.
@@ -139,7 +180,7 @@ export const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
 export async function fetchAndExtract(
     url: string,
     settings: WebExtractionSettings
-): Promise<{ title: string; text: string; finalUrl: string }> {
+): Promise<{ title: string; text: string; finalUrl: string; links: ExtractedLink[] }> {
     const response = await axios.get<string>(url, {
         timeout: settings.requestTimeoutMs,
         headers: {
@@ -161,6 +202,7 @@ export async function fetchAndExtract(
     const html = response.data;
     const title = extractTitle(html, finalUrl);
     const text = extractMainText(html, finalUrl).slice(0, settings.perPageCharLimit);
+    const links = extractLinks(html, finalUrl);
 
-    return { title, text, finalUrl };
+    return { title, text, finalUrl, links };
 }
