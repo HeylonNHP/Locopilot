@@ -8,10 +8,7 @@ import {
     getInterruptHint, 
     registerInterruptHandler, 
     unregisterInterruptHandler 
-} from './tools.js';
-
-// Default time (ms) to wait for a command before returning partial output
-export const DEFAULT_TIMEOUT_MS = 30_000;
+} from './tools/tools.js';
 
 interface ProcessEntry {
     process: ChildProcess;
@@ -26,6 +23,8 @@ interface ProcessEntry {
 
 const processRegistry = new Map<number, ProcessEntry>();
 let nextProcessId = 1;
+
+export const DEFAULT_TIMEOUT_MS = 30_000;
 
 const isWindows = os.platform() === 'win32';
 

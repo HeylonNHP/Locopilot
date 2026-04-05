@@ -4,7 +4,7 @@ import {
     getToolUseNudge,
     setYoloMode,
     setWebSearchConfig,
-} from './tools.js';
+} from './tools/tools.js';
 import {
     DEFAULT_NUM_CTX,
     DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,

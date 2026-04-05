@@ -15,7 +15,7 @@ import {
     isInterruptRequested,
     installKeyInterruptListener,
     removeKeyInterruptListener,
-} from './tools.js';
+} from './tools/tools.js';
 import {
     validateOllamaConnection,
     getOllamaApiErrorMessage,
