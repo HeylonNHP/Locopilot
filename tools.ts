@@ -10,12 +10,12 @@
  */
 
 import chalk from 'chalk';
-import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSettings, type WebSearchToolArgs } from './impl/webSearchTool.js';
-import { FetchUrlTool, getToolPrompt as getFetchUrlPrompt, type FetchUrlToolArgs } from './impl/fetchUrlTool.js';
-import { FetchImageTool, getToolPrompt as getFetchImagePrompt, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool.js';
-import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from '../runCommandTool.js';
-import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../constants.js';
-export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager.js';
+import readline from 'readline';
+import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSettings, type WebSearchToolArgs } from './tools/impl/webSearchTool.js';
+import { FetchUrlTool, getToolPrompt as getFetchUrlPrompt, type FetchUrlToolArgs } from './tools/impl/fetchUrlTool.js';
+import { FetchImageTool, getToolPrompt as getFetchImagePrompt, type FetchImageToolArgs, type FetchImageResult } from './tools/impl/fetchImageTool.js';
+import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from './runCommandTool.js';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from './constants.js';
 
 /**
  * Strips ANSI escape codes and Carriage Returns from text.
@@ -46,6 +46,146 @@ const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
 };
 
 let webSearchSettings: WebSearchSettings = { ...DEFAULT_WEB_SEARCH_SETTINGS };
+
+// --- Interrupt support ---
+
+// Set to true by requestInterrupt(); cleared by clearInterrupt().
+// The tool-call loop in index.ts checks this between tool invocations.
+let interruptRequested = false;
+
+// Resolvers registered by tools (e.g. run_command) so they can be
+// cancelled from outside without waiting for the natural finish.
+let activeInterruptHandler: ((result: string) => void) | null = null;
+
+let keyInterruptListener: ((s: string, k: readline.Key) => void) | null = null;
+let prevRawMode: boolean | null = null;
+const DEFAULT_INTERRUPT_KEY_SPEC = 'Ctrl+X';
+let currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
+
+/**
+ * Request an interrupt. If a tool is currently executing its work
+ * will be killed or cancelled and the pending promise resolved immediately. 
+ * The tool-call loop in index.ts should check isInterruptRequested() after
+ * each tool invocation and break early when true.
+ */
+export function requestInterrupt(): void {
+    interruptRequested = true;
+    if (activeInterruptHandler) {
+        activeInterruptHandler('[Interrupted by user.]');
+        activeInterruptHandler = null;
+    }
+}
+
+/**
+ * Registers a handler to be called when an interrupt is requested.
+ * Used by tools like run_command to kill child processes.
+ */
+export function registerInterruptHandler(handler: (result: string) => void): void {
+    activeInterruptHandler = handler;
+}
+
+/**
+ * Unregisters the current interrupt handler.
+ */
+export function unregisterInterruptHandler(): void {
+    activeInterruptHandler = null;
+}
+
+/**
+ * Returns a human-readable hint about how to interrupt the AI loop.
+ */
+export function getInterruptHint(): string {
+    return `Press ${chalk.bold(currentInterruptKeySpec)} to interrupt the AI loop.`;
+}
+
+/**
+ * Installs a keypress listener that calls requestInterrupt() when a specific
+ * key combination is pressed. This is used to provide an alternative to
+ * Ctrl+C which many users find themselves pressing accidentally.
+ *
+ * NOTE: only works in TTY environments.
+ */
+export function installKeyInterruptListener(keySpec = 'Ctrl+X'): void {
+    if (!process.stdin.isTTY) return;
+
+    currentInterruptKeySpec = keySpec;
+    const spec = keySpec.toLowerCase();
+    const isCtrl = spec.startsWith('ctrl+');
+    const keyName = isCtrl ? spec.slice(5) : spec;
+
+    readline.emitKeypressEvents(process.stdin);
+
+    // If a listener is already active, remove it before installing the new one.
+    // This prevents duplicate handlers from accumulating on repeated installs and
+    // ensures the stale reference can never fire again. We only capture prevRawMode
+    // and enable raw mode on a fresh (non-reinstall) call so that the stored value
+    // always reflects the pre-installation state and is not overwritten with 'true'
+    // on a reinstall (which would leave stdin raw after cleanup).
+    if (keyInterruptListener) {
+        process.stdin.off('keypress', keyInterruptListener);
+        keyInterruptListener = null;
+    } else {
+        // Save current raw mode and enable it so we get keypresses immediately.
+        // setRawMode(true) disables the OS TTY processing that converts Ctrl+C → SIGINT,
+        // so we must handle Ctrl+C manually inside the keypress listener.
+        prevRawMode = process.stdin.isRaw;
+        process.stdin.setRawMode(true);
+    }
+    // Ensure stdin is flowing so keypress events are emitted between Inquirer prompts.
+    process.stdin.resume();
+
+    keyInterruptListener = (str: string, key: readline.Key) => {
+        if (!key) return;
+
+        // Raw mode suppresses the OS SIGINT for Ctrl+C, so re-raise it manually
+        // so the normal top-level exit handler fires (i.e. Ctrl+C still kills the app).
+        if (key.ctrl && key.name === 'c') {
+            process.kill(process.pid, 'SIGINT');
+            return;
+        }
+
+        const match = isCtrl
+            ? (key.ctrl && key.name === keyName)
+            : (key.name === keyName || str === keySpec);
+
+        if (match) {
+            console.log(chalk.yellow(`\n[${keySpec} pressed — interrupting AI loop...]\n`));
+            requestInterrupt();
+        }
+    };
+
+    process.stdin.on('keypress', keyInterruptListener);
+}
+
+/**
+ * Removes the keypress listener and restores the previous TTY raw mode.
+ */
+export function removeKeyInterruptListener(): void {
+    if (!process.stdin.isTTY || !keyInterruptListener) {
+        currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
+        return;
+    }
+
+    process.stdin.off('keypress', keyInterruptListener);
+    if (prevRawMode !== null) {
+        process.stdin.setRawMode(prevRawMode);
+    }
+
+    keyInterruptListener = null;
+    prevRawMode = null;
+    currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
+}
+
+/** Clears the interrupt flag. Call this at the start of every new user turn. */
+export function clearInterrupt(): void {
+    interruptRequested = false;
+    activeInterruptHandler = null;
+}
+
+/** Returns true if an interrupt has been requested for the current turn. */
+export function isInterruptRequested(): boolean {
+    return interruptRequested;
+}
 
 /**
  * Returns true if YOLO mode is currently enabled.
@@ -302,7 +442,7 @@ async function runWebSearch(
 ): Promise<string> {
     const tool = new WebSearchTool({
         settings: webSearchSettings,
-        onProgress: (message: string) => {
+        onProgress: (message) => {
             console.log(chalk.dim(message));
             onProgress?.(message);
         },
@@ -316,7 +456,7 @@ async function runFetchUrl(
 ): Promise<string> {
     const tool = new FetchUrlTool({
         settings: webSearchSettings,
-        onProgress: (message: string) => {
+        onProgress: (message) => {
             console.log(chalk.dim(message));
             onProgress?.(message);
         },
@@ -378,7 +518,7 @@ function runFetchImage(
     onProgress?: (message: string) => void,
 ): Promise<FetchImageResult> {
     const tool = new FetchImageTool({
-        onProgress: (message: string) => {
+        onProgress: (message) => {
             console.log(chalk.dim(message));
             onProgress?.(message);
         },

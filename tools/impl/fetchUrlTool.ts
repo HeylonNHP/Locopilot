@@ -1,4 +1,4 @@
-import { fetchAndExtract } from './htmlExtractor.js';
+import { fetchAndExtract } from '../htmlExtractor.js';
 import type { WebSearchSettings } from './webSearchTool.js';
 
 export interface FetchUrlToolArgs {
