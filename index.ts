@@ -1,20 +1,22 @@
-import { readFile, writeFile, access } from 'fs/promises';
+import { access, readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import * as readline from 'readline';
-import { select, input } from '@inquirer/prompts';
+
 import chalk from 'chalk';
+import { input, select } from '@inquirer/prompts';
+
 import {
     TOOLS,
-    handleToolCall,
-    getToolSystemPrompt,
-    type ToolCallResult,
-    setYoloMode,
-    setWebSearchConfig,
-    isYolo,
     clearInterrupt,
-    isInterruptRequested,
+    getToolSystemPrompt,
+    handleToolCall,
     installKeyInterruptListener,
+    isInterruptRequested,
+    isYolo,
     removeKeyInterruptListener,
+    setWebSearchConfig,
+    setYoloMode,
+    type ToolCallResult,
 } from './tools/tools.js';
 import {
     validateOllamaConnection,
@@ -29,31 +31,31 @@ import {
 } from './aiResponseRenderer.js';
 import {
     createSession,
-    renameSession,
     listSessions,
-    updateSessionMessages,
     loadSessionMessages,
+    renameSession,
     type Session,
     type SessionTokenStats,
+    updateSessionMessages,
 } from './history.js';
 import { countMessagesTokens } from './tokenizer.js';
 import { updatePhase, clearLiveStatus } from './statusLine.js';
 import {
-    SLASH_COMMANDS,
     COMMAND_HANDLERS,
-    withExitGuard,
     getModels,
     replaceMessages,
-    type Config,
+    SLASH_COMMANDS,
     type ChatContext,
+    type Config,
+    withExitGuard,
 } from './slashCommands.js';
 import { compactHistory, printCompactStats } from './compact.js';
 import {
-    OLLAMA_CONNECT_TIMEOUT_MS,
-    DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
     DEFAULT_NUM_CTX,
+    DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
     DEFAULT_WEB_SEARCH_MAX_QUERIES,
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+    OLLAMA_CONNECT_TIMEOUT_MS,
 } from './constants.js';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
