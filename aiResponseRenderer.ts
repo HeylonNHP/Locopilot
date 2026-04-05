@@ -18,7 +18,7 @@
  */
 
 import chalk from 'chalk';
-import { renderMarkdown } from './markdownRenderer.js';
+import { renderMarkdown } from './services/markdownRenderer.js';
 import { clearLiveStatus } from './statusLine.js';
 import {
     sanitize,
