@@ -91,23 +91,34 @@ async function measureConversationTokens(
     onProgress?: (message: string) => void,
 ): Promise<number> {
     onProgress?.('Measuring conversation tokens...');
-    const response = await sendOllamaChat(baseUrl, {
-        model,
-        messages,
-        tools: [],
-        numCtx,
-        options: {
-            num_predict: 0,
-            temperature: 0,
-        },
-    });
+    
+    try {
+        // Use a significantly larger context window for the measurement call
+        // to avoid Status 400 errors when the history is already at 100% capacity.
+        const measurementCtx = Math.max(numCtx * 2, 32768);
+        
+        const response = await sendOllamaChat(baseUrl, {
+            model,
+            messages,
+            tools: [],
+            numCtx: measurementCtx,
+            options: {
+                num_predict: 1, // Set to 1 to minimize generation overhead
+                temperature: 0,
+            },
+        });
 
-    const stats = getOllamaTurnStats(response);
-    if (!stats) {
-        throw new Error('Ollama did not return prompt/eval token counts for compaction measurement.');
+        const stats = getOllamaTurnStats(response);
+        if (stats) {
+            return stats.promptEvalCount + stats.evalCount;
+        }
+    } catch (err) {
+        // If the API call fails (e.g. backend is very strict), fall back to 
+        // the local tiktoken estimate instead of crashing.
+        onProgress?.('API measurement failed; falling back to local estimate...');
     }
 
-    return stats.promptEvalCount + stats.evalCount;
+    return countMessagesTokens(messages, model);
 }
 
 function clamp(value: number, minValue: number, maxValue: number): number {
