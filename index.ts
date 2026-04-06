@@ -21,6 +21,7 @@ import {
 import {
     validateOllamaConnection,
     getOllamaApiErrorMessage,
+    fetchOllamaModelInfo,
     type ChatMessage,
 } from './ollamaApi.js';
 import { summarizeCommandError } from './services/errorSummary.js';
@@ -360,6 +361,22 @@ async function startChat(
     let currentModel = model;
     let currentSessionId = sessionId;
     const baseUrl = config.baseUrl;
+    let thinkingSupported = false;
+
+    async function checkThinkingSupport(modelName: string) {
+        try {
+            const info = await fetchOllamaModelInfo(baseUrl, modelName);
+            thinkingSupported = !!(info.capabilities && info.capabilities.includes('thinking'));
+            if (thinkingSupported) {
+                console.log(chalk.dim(`(Model ${modelName} supports thinking)`));
+            }
+        } catch (e) {
+            thinkingSupported = false;
+        }
+    }
+
+    await checkThinkingSupport(currentModel);
+
     console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
     console.log(chalk.dim(`(Using context length num_ctx=${numCtx})`));
     if (isYolo()) {
@@ -394,6 +411,7 @@ async function startChat(
         get currentSessionId() { return currentSessionId; },
         get config() { return config; },
         get systemPrompt() { return systemPrompt; },
+        get thinkingSupported() { return thinkingSupported; },
         saveConfig: async (newConfig: Config) => {
             Object.assign(config, newConfig);
             await saveConfig(config);
@@ -409,6 +427,7 @@ async function startChat(
             config.lastModel = currentModel;
             config.numCtx = numCtx;
             await saveConfig(config);
+            await checkThinkingSupport(currentModel);
             console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
         },
         updateSession: (sessionId: number, newMessages: ChatMessage[], isNamed: boolean) => {
@@ -577,6 +596,7 @@ async function startChat(
                     messages,
                     tools: TOOLS,
                     numCtx,
+                    think: config.thinkingEnabled !== false && thinkingSupported,
                 };
 
                 const { assistantMessage, interrupted: interruptedDuringStream, sessionTokenStats, finalStats } = await renderTurn(

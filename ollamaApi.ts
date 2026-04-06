@@ -12,6 +12,16 @@ export interface OllamaModelDetails {
     quantization_level: string;
 }
 
+export interface OllamaModelInfo {
+    modelfile: string;
+    parameters: string;
+    template: string;
+    system?: string;
+    details: OllamaModelDetails;
+    messages?: ChatMessage[];
+    capabilities?: string[];
+}
+
 export interface OllamaModel {
     name: string;
     model: string;
@@ -48,6 +58,7 @@ export interface OllamaToolDefinition {
 export interface ChatMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
+    thinking?: string;
     tool_calls?: [OllamaToolCall, ...OllamaToolCall[]];
     /** Base64-encoded images for multimodal/vision models. */
     images?: string[];
@@ -72,6 +83,7 @@ interface ChatParams {
     messages: ChatMessage[];
     tools: OllamaToolDefinition[];
     numCtx: number;
+    think?: boolean;
     options?: Record<string, unknown>;
 }
 
@@ -86,6 +98,7 @@ function buildChatPayload(params: ChatParams, stream: boolean) {
         messages: params.messages,
         tools: params.tools,
         stream,
+        think: params.think,
         options: {
             num_ctx: params.numCtx,
             ...(params.options ?? {}),
@@ -139,6 +152,11 @@ export async function validateOllamaConnection(baseUrl: string, timeoutMs: numbe
 export async function fetchOllamaModels(baseUrl: string): Promise<OllamaModel[]> {
     const response = await axios.get<TagsResponse>(`${baseUrl}/api/tags`);
     return response.data.models || [];
+}
+
+export async function fetchOllamaModelInfo(baseUrl: string, modelName: string): Promise<OllamaModelInfo> {
+    const response = await axios.post<OllamaModelInfo>(`${baseUrl}/api/show`, { name: modelName });
+    return response.data;
 }
 
 export async function sendOllamaChat(

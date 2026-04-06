@@ -35,6 +35,7 @@ export interface Config {
     numCtx?: number;
     chatTimeoutMs?: number;
     yolo?: boolean;
+    thinkingEnabled?: boolean;
     webSearch?: {
         maxQueries: number;
         resultsPerQuery: number;
@@ -54,6 +55,7 @@ export interface ChatContext {
     currentSessionId: number;
     config: Config;
     systemPrompt: string;
+    thinkingSupported?: boolean;
     saveConfig: (config: Config) => Promise<void>;
     updateNumCtx: (numCtx: number) => void;
     saveSession: (tokenStats?: SessionTokenStats | null) => void;
@@ -267,6 +269,7 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
             message: 'Menu: Settings',
             choices: [
                 { name: `Execution Mode (${ctx.config.yolo ? 'YOLO' : 'Standard'})`, value: 'mode' },
+                { name: `Thinking (${ctx.config.thinkingEnabled !== false ? chalk.green('Enabled') : chalk.red('Disabled')})`, value: 'thinking' },
                 { name: `Context Length (${ctx.config.numCtx ?? DEFAULT_NUM_CTX})`, value: 'num_ctx' },
                 { name: `Chat Timeout (${(ctx.config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000}s)`, value: 'chat_timeout' },
                 { name: `Web Search: Max Queries (${ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES})`, value: 'web_max_queries' },
@@ -294,6 +297,22 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
             await ctx.saveConfig({ ...ctx.config, yolo: isYolo });
             setYoloMode(isYolo);
             console.log(chalk.green(`\nExecution mode set to ${isYolo ? chalk.red.bold('YOLO') : 'Standard'}\n`));
+        }
+    } else if (action === 'thinking') {
+        const thinking = await withExitGuard(async () => {
+            return await select({
+                message: 'Should models use "Thinking" when supported?',
+                choices: [
+                    { name: 'Enabled (Produce reasoning trace for complex tasks)', value: 'on' },
+                    { name: 'Disabled (Direct answers only)', value: 'off' }
+                ],
+                default: ctx.config.thinkingEnabled !== false ? 'on' : 'off'
+            });
+        });
+        if (thinking !== null) {
+            const isEnabled = thinking === 'on';
+            await ctx.saveConfig({ ...ctx.config, thinkingEnabled: isEnabled });
+            console.log(chalk.green(`\nThinking mode: ${isEnabled ? chalk.green('Enabled') : chalk.red('Disabled')}\n`));
         }
     } else if (action === 'num_ctx') {
         const numCtxInput = await withExitGuard(async () => {

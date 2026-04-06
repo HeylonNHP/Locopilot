@@ -39,6 +39,7 @@ export interface StreamAIResponseParams {
     messages: ChatMessage[];
     tools: OllamaToolDefinition[];
     numCtx: number;
+    think?: boolean;
 }
 
 export interface StreamAIResponseOptions {
@@ -58,6 +59,8 @@ export interface StreamAIResponseOptions {
 export interface StreamAIResponseResult {
     /** Full accumulated text content from the model. */
     content: string;
+    /** The accumulated reasoning trace if the model supports thinking. */
+    thinking?: string;
     /** Any tool calls the model requested. */
     toolCalls: OllamaToolCall[];
     /** True if the user interrupted the stream before it completed. */
@@ -91,10 +94,11 @@ export async function renderTurn(
 }> {
     const { onStatusUpdate, onFinalStats, timeoutMs } = opts;
 
-    const { content, toolCalls, interrupted, finalStats } = await streamAIResponse(baseUrl, params, {
+    const result = await streamAIResponse(baseUrl, params, {
         onStatusUpdate,
         timeoutMs,
     });
+    const { content, thinking, toolCalls, interrupted, finalStats } = result;
 
     if (interrupted) {
         return { assistantMessage: null, interrupted: true, sessionTokenStats: null, finalStats };
@@ -105,6 +109,7 @@ export async function renderTurn(
         assistantMessage = {
             role: 'assistant',
             content,
+            ...(thinking ? { thinking } : {}),
             // Ensure a non-empty tuple type: [first, ...rest]
             tool_calls: [toolCalls[0]!, ...toolCalls.slice(1)],
         };
@@ -112,6 +117,7 @@ export async function renderTurn(
         assistantMessage = {
             role: 'assistant',
             content,
+            ...(thinking ? { thinking } : {}),
         };
     }
 
@@ -179,6 +185,7 @@ export async function streamAIResponse(
     const { onStatusUpdate } = opts;
 
     let content = '';
+    let thinking = '';
     const toolCalls: OllamaToolCall[] = [];
     let interrupted = false;
     let finalStats: OllamaTurnStats | null = null;
@@ -194,9 +201,13 @@ export async function streamAIResponse(
         messages: params.messages,
         tools: params.tools,
         numCtx: params.numCtx,
+        ...(params.think !== undefined ? { think: params.think } : {}),
         signal: abortController.signal,
         timeoutMs: opts.timeoutMs,
     });
+
+    const startTime = Date.now();
+    let firstContentTime: number | null = null;
 
     try {
         for await (const chunk of stream) {
@@ -206,8 +217,26 @@ export async function streamAIResponse(
                 break;
             }
 
+            const chunkThinking = chunk.message?.thinking ?? '';
+            if (chunkThinking.length > 0) {
+                thinking += chunkThinking;
+                onStatusUpdate(`AI is thinking... (${thinking.length} chars)`);
+            }
+
             const chunkContent = chunk.message?.content ?? '';
             if (chunkContent.length > 0) {
+                if (firstContentTime === null) {
+                    firstContentTime = Date.now();
+                    if (thinking.length > 0) {
+                        const durationSec = (firstContentTime - startTime) / 1000;
+                        const durationStr = durationSec > 60
+                            ? `${Math.floor(durationSec / 60)}m ${Math.floor(durationSec % 60)}s`
+                            : `${durationSec.toFixed(1)}s`;
+                        
+                        clearLiveStatus();
+                        console.log(chalk.dim(`(Thought for ${durationStr} · ${thinking.length} chars)`));
+                    }
+                }
                 content += chunkContent;
                 onStatusUpdate(`AI is responding... (${content.length} chars)`);
             }
@@ -231,5 +260,13 @@ export async function streamAIResponse(
         printAIResponse(content, { interrupted });
     }
 
-    return { content, toolCalls, interrupted, finalStats };
+    const result: StreamAIResponseResult = { 
+        content, 
+        toolCalls, 
+        interrupted, 
+        finalStats 
+    };
+    if (thinking) result.thinking = thinking;
+
+    return result;
 }
