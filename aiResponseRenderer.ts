@@ -187,6 +187,7 @@ export async function streamAIResponse(
     let content = '';
     let thinking = '';
     const toolCalls: OllamaToolCall[] = [];
+    let toolCallRawArgs = '';
     let interrupted = false;
     let finalStats: OllamaTurnStats | null = null;
 
@@ -242,7 +243,22 @@ export async function streamAIResponse(
             }
 
             if (chunk.message?.tool_calls) {
+                // Track tool calls for the final result
                 toolCalls.push(...chunk.message.tool_calls);
+                
+                // Track RAW tool call text (accumulated arguments) to show progress while OLLAMA is still generating them.
+                // Ollama tool calls usually arrive in chunks where each chunk adds to the current argument set.
+                for (const tc of chunk.message.tool_calls) {
+                    if (tc.function?.arguments) {
+                        try {
+                            const argsJson = JSON.stringify(tc.function.arguments);
+                            toolCallRawArgs += argsJson;
+                        } catch {
+                            // If it's not stringifiable yet (rare for partials), skip
+                        }
+                    }
+                }
+                onStatusUpdate(`AI is requesting tools... (${toolCallRawArgs.length} chars)`);
             }
 
             if (chunk.done) {
