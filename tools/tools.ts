@@ -13,6 +13,8 @@ import chalk from 'chalk';
 import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSettings, type WebSearchToolArgs } from './impl/webSearchTool.js';
 import { FetchUrlTool, getToolPrompt as getFetchUrlPrompt, type FetchUrlToolArgs } from './impl/fetchUrlTool.js';
 import { FetchImageTool, getToolPrompt as getFetchImagePrompt, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool.js';
+import { ReadFileTool, getToolPrompt as getReadFilePrompt, type ReadFileToolArgs } from './impl/readFileTool.js';
+import { WriteFileTool, getToolPrompt as getWriteFilePrompt, type WriteFileToolArgs } from './impl/writeFileTool.js';
 import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from '../runCommandTool.js';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../constants.js';
 export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager.js';
@@ -212,6 +214,74 @@ export const TOOLS: OllamaTool[] = [
             },
         },
     },
+    {
+        type: 'function',
+        function: {
+            name: 'read_file',
+            description:
+                'Reads a file from the host filesystem. Use head_chars to read the first N characters, ' +
+                'tail_chars to read the last N characters, or start/length to read a specific range.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: {
+                        type: 'string',
+                        description: 'A file path to read from, absolute or relative to the current working directory.',
+                    },
+                    head_chars: {
+                        type: 'number',
+                        description: 'Read only the first N characters of the file.',
+                    },
+                    tail_chars: {
+                        type: 'number',
+                        description: 'Read only the last N characters of the file.',
+                    },
+                    start: {
+                        type: 'number',
+                        description: 'Zero-based character index at which to begin reading.',
+                    },
+                    length: {
+                        type: 'number',
+                        description: 'Number of characters to read starting at start.',
+                    },
+                },
+                required: ['path'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'write_file',
+            description:
+                'Writes text to a file on the host filesystem. Supports overwrite, append, and create-only semantics. ' +
+                'If a target file already exists and overwrite is requested, the tool will warn first and require explicit confirm_overwrite=true.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: {
+                        type: 'string',
+                        description: 'A file path to write to, absolute or relative to the current working directory.',
+                    },
+                    content: {
+                        type: 'string',
+                        description: 'The text content to write into the file.',
+                    },
+                    mode: {
+                        type: 'string',
+                        description: 'The write mode: overwrite, append, or create.',
+                        enum: ['overwrite', 'append', 'create'],
+                    },
+                    confirm_overwrite: {
+                        type: 'boolean',
+                        description:
+                            'Required when overwriting an existing file. If the file exists and confirm_overwrite is not true, the tool will return a warning instead of writing.',
+                    },
+                },
+                required: ['path', 'content'],
+            },
+        },
+    },
 ];
 
 // --- Tool handlers ---
@@ -324,6 +394,20 @@ async function runFetchUrl(
     return tool.run(args);
 }
 
+async function runReadFile(
+    args: ReadFileToolArgs,
+): Promise<string> {
+    const tool = new ReadFileTool();
+    return tool.run(args);
+}
+
+async function runWriteFile(
+    args: WriteFileToolArgs,
+): Promise<string> {
+    const tool = new WriteFileTool();
+    return tool.run(args);
+}
+
 // --- Public dispatcher ---
 
 export interface ToolCallArguments {
@@ -336,6 +420,14 @@ export interface ToolCallArguments {
     max_queries?: number;
     url?: string;
     source?: string;
+    path?: string;
+    head_chars?: number;
+    tail_chars?: number;
+    start?: number;
+    length?: number;
+    content?: string;
+    mode?: 'overwrite' | 'append' | 'create';
+    confirm_overwrite?: boolean;
 }
 
 /** Result returned by handleToolCall. Most tools only set content; vision tools also set images. */
@@ -356,6 +448,8 @@ export function getToolSystemPrompt(): string {
         getWebSearchPrompt() +
         getFetchUrlPrompt() +
         getFetchImagePrompt() +
+        getReadFilePrompt() +
+        getWriteFilePrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n' +
@@ -468,6 +562,34 @@ export async function handleToolCall(
                 return { content: '[Error: missing required argument "source"]' };
             }
             return runFetchImage({ source: args.source }, onProgress);
+        }
+
+        case 'read_file': {
+            if (typeof args.path !== 'string' || args.path.trim().length === 0) {
+                return { content: '[Error: missing required argument "path"]' };
+            }
+            return { content: await runReadFile({
+                path: args.path,
+                head_chars: args.head_chars,
+                tail_chars: args.tail_chars,
+                start: args.start,
+                length: args.length,
+            }) };
+        }
+
+        case 'write_file': {
+            if (typeof args.path !== 'string' || args.path.trim().length === 0) {
+                return { content: '[Error: missing required argument "path"]' };
+            }
+            if (typeof args.content !== 'string') {
+                return { content: '[Error: missing required argument "content"]' };
+            }
+            return { content: await runWriteFile({
+                path: args.path,
+                content: args.content,
+                mode: args.mode,
+                confirm_overwrite: args.confirm_overwrite,
+            }) };
         }
 
         default:
