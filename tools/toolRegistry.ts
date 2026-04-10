@@ -1,0 +1,266 @@
+/**
+ * Command pattern registry for Locopilot tool handlers.
+ *
+ * Each tool is represented as an IToolCommand object that encapsulates its
+ * argument validation and execution logic. The handleToolCall dispatcher in
+ * tools.ts resolves the appropriate command from this registry rather than
+ * using a monolithic switch statement.
+ */
+
+import chalk from 'chalk';
+import { WebSearchTool, type WebSearchSettings, type WebSearchToolArgs } from './impl/webSearchTool.js';
+import { FetchUrlTool, type FetchUrlToolArgs } from './impl/fetchUrlTool.js';
+import { FetchImageTool, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool.js';
+import { ReadFileTool, type ReadFileToolArgs } from './impl/readFileTool.js';
+import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool.js';
+import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from '../runCommandTool.js';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../constants.js';
+import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers.js';
+
+// --- Shared mutable state ---
+
+let isYoloMode = false;
+
+const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
+    maxQueries: 3,
+    resultsPerQuery: 3,
+    requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+    perPageCharLimit: 2_500,
+};
+
+let webSearchSettings: WebSearchSettings = { ...DEFAULT_WEB_SEARCH_SETTINGS };
+
+export function isYolo(): boolean {
+    return isYoloMode;
+}
+
+export function setYoloMode(enabled: boolean): void {
+    isYoloMode = enabled;
+}
+
+export interface ToolWebSearchConfig {
+    maxQueries: number;
+    resultsPerQuery: number;
+}
+
+export function setWebSearchConfig(config: ToolWebSearchConfig): void {
+    webSearchSettings = {
+        ...webSearchSettings,
+        maxQueries: Math.max(1, Math.floor(config.maxQueries)),
+        resultsPerQuery: Math.max(1, Math.floor(config.resultsPerQuery)),
+    };
+}
+
+// --- Shared tool argument and result types ---
+
+export interface ToolCallArguments {
+    command?: string;
+    shell?: string;
+    timeout_seconds?: number;
+    process_id?: number;
+    prompt?: string;
+    queries?: string[] | string;
+    max_queries?: number;
+    url?: string;
+    source?: string;
+    path?: string;
+    head_chars?: number;
+    tail_chars?: number;
+    start?: number;
+    length?: number;
+    content?: string;
+    mode?: 'overwrite' | 'append' | 'create';
+    confirm_overwrite?: boolean;
+}
+
+/** Result returned by a tool command. Most tools only set content; vision tools also set images. */
+export interface ToolCallResult {
+    content: string;
+    images?: string[];
+}
+
+// --- Command interface ---
+
+export interface IToolCommand {
+    execute(
+        args: ToolCallArguments,
+        onProgress?: (message: string) => void,
+    ): Promise<ToolCallResult>;
+}
+
+// --- Private adapter helpers ---
+
+async function runWebSearch(
+    args: WebSearchToolArgs,
+    onProgress?: (message: string) => void,
+): Promise<string> {
+    const tool = new WebSearchTool({
+        settings: webSearchSettings,
+        onProgress: (message: string) => {
+            console.log(chalk.dim(message));
+            onProgress?.(message);
+        },
+    });
+    return tool.run(args);
+}
+
+async function runFetchUrl(
+    args: FetchUrlToolArgs,
+    onProgress?: (message: string) => void,
+): Promise<string> {
+    const tool = new FetchUrlTool({
+        settings: webSearchSettings,
+        onProgress: (message: string) => {
+            console.log(chalk.dim(message));
+            onProgress?.(message);
+        },
+    });
+    return tool.run(args);
+}
+
+async function runReadFile(args: ReadFileToolArgs): Promise<string> {
+    const tool = new ReadFileTool();
+    return tool.run(args);
+}
+
+async function runWriteFile(args: WriteFileToolArgs): Promise<string> {
+    const tool = new WriteFileTool();
+    return tool.run(args);
+}
+
+function runFetchImage(
+    args: FetchImageToolArgs,
+    onProgress?: (message: string) => void,
+): Promise<FetchImageResult> {
+    const tool = new FetchImageTool({
+        onProgress: (message: string) => {
+            console.log(chalk.dim(message));
+            onProgress?.(message);
+        },
+    });
+    return tool.run(args);
+}
+
+// --- Tool command registry ---
+
+export const toolRegistry = new Map<string, IToolCommand>([
+    [
+        'run_command',
+        {
+            async execute(args, onProgress) {
+                if (!args.command) return { content: '[Error: missing required argument "command"]' };
+                let timeoutMs = DEFAULT_TIMEOUT_MS;
+                if (args.timeout_seconds !== undefined) {
+                    const parsedTimeoutMs = parsePositiveTimeoutMs(args.timeout_seconds);
+                    if (parsedTimeoutMs === null) {
+                        return { content: '[Error: invalid argument "timeout_seconds" (expected a positive finite number)]' };
+                    }
+                    timeoutMs = parsedTimeoutMs;
+                }
+                return { content: await runCommand(args.command, args.shell, timeoutMs, onProgress) };
+            },
+        },
+    ],
+    [
+        'check_process_output',
+        {
+            async execute(args) {
+                if (args.process_id === undefined) {
+                    return { content: '[Error: missing required argument "process_id"]' };
+                }
+                return { content: await checkProcessOutput(args.process_id) };
+            },
+        },
+    ],
+    [
+        'web_search',
+        {
+            async execute(args, onProgress) {
+                const parsedQueries = parseQueriesInput(args.queries);
+                const webArgs: WebSearchToolArgs = {};
+
+                if (typeof args.prompt === 'string' && args.prompt.trim().length > 0) {
+                    webArgs.prompt = args.prompt;
+                }
+                if (parsedQueries.length > 0) {
+                    webArgs.queries = parsedQueries;
+                }
+                if (args.max_queries !== undefined) {
+                    const parsedMaxQueries = parsePositiveInteger(args.max_queries, 1, 10);
+                    if (parsedMaxQueries === null) {
+                        return { content: '[Error: invalid argument "max_queries" (expected an integer between 1 and 10)]' };
+                    }
+                    webArgs.max_queries = parsedMaxQueries;
+                }
+
+                if (!webArgs.prompt && (!webArgs.queries || webArgs.queries.length === 0)) {
+                    return { content: '[Error: web_search requires either "prompt" or "queries"]' };
+                }
+
+                return { content: await runWebSearch(webArgs, onProgress) };
+            },
+        },
+    ],
+    [
+        'fetch_url',
+        {
+            async execute(args, onProgress) {
+                if (typeof args.url !== 'string' || args.url.trim().length === 0) {
+                    return { content: '[Error: missing required argument "url"]' };
+                }
+                return { content: await runFetchUrl({ url: args.url }, onProgress) };
+            },
+        },
+    ],
+    [
+        'fetch_image',
+        {
+            async execute(args, onProgress) {
+                if (typeof args.source !== 'string' || args.source.trim().length === 0) {
+                    return { content: '[Error: missing required argument "source"]' };
+                }
+                return runFetchImage({ source: args.source }, onProgress);
+            },
+        },
+    ],
+    [
+        'read_file',
+        {
+            async execute(args) {
+                if (typeof args.path !== 'string' || args.path.trim().length === 0) {
+                    return { content: '[Error: missing required argument "path"]' };
+                }
+                return {
+                    content: await runReadFile({
+                        path: args.path,
+                        head_chars: args.head_chars,
+                        tail_chars: args.tail_chars,
+                        start: args.start,
+                        length: args.length,
+                    }),
+                };
+            },
+        },
+    ],
+    [
+        'write_file',
+        {
+            async execute(args) {
+                if (typeof args.path !== 'string' || args.path.trim().length === 0) {
+                    return { content: '[Error: missing required argument "path"]' };
+                }
+                if (typeof args.content !== 'string') {
+                    return { content: '[Error: missing required argument "content"]' };
+                }
+                return {
+                    content: await runWriteFile({
+                        path: args.path,
+                        content: args.content,
+                        mode: args.mode,
+                        confirm_overwrite: args.confirm_overwrite,
+                    }),
+                };
+            },
+        },
+    ],
+]);

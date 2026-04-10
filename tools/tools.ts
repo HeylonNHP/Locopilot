@@ -9,15 +9,17 @@
  * poll for incremental output via the `check_process_output` tool.
  */
 
-import chalk from 'chalk';
-import { WebSearchTool, getToolPrompt as getWebSearchPrompt, type WebSearchSettings, type WebSearchToolArgs } from './impl/webSearchTool.js';
-import { FetchUrlTool, getToolPrompt as getFetchUrlPrompt, type FetchUrlToolArgs } from './impl/fetchUrlTool.js';
-import { FetchImageTool, getToolPrompt as getFetchImagePrompt, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool.js';
-import { ReadFileTool, getToolPrompt as getReadFilePrompt, type ReadFileToolArgs } from './impl/readFileTool.js';
-import { WriteFileTool, getToolPrompt as getWriteFilePrompt, type WriteFileToolArgs } from './impl/writeFileTool.js';
-import { runCommand, checkProcessOutput, getToolPrompt as getRunCommandPrompt, defaultShell, DEFAULT_TIMEOUT_MS } from '../runCommandTool.js';
-import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../constants.js';
+import { getToolPrompt as getWebSearchPrompt } from './impl/webSearchTool.js';
+import { getToolPrompt as getFetchUrlPrompt } from './impl/fetchUrlTool.js';
+import { getToolPrompt as getFetchImagePrompt } from './impl/fetchImageTool.js';
+import { getToolPrompt as getReadFilePrompt } from './impl/readFileTool.js';
+import { getToolPrompt as getWriteFilePrompt } from './impl/writeFileTool.js';
+import { getToolPrompt as getRunCommandPrompt, defaultShell } from '../runCommandTool.js';
+import { isYolo, toolRegistry, setYoloMode, setWebSearchConfig } from './toolRegistry.js';
+import type { ToolCallArguments, ToolCallResult, ToolWebSearchConfig } from './toolRegistry.js';
 export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager.js';
+export { isYolo, setYoloMode, setWebSearchConfig };
+export type { ToolCallArguments, ToolCallResult, ToolWebSearchConfig };
 
 /**
  * Strips ANSI escape codes and Carriage Returns from text.
@@ -38,25 +40,7 @@ export function sanitize(text: string): string {
 
 // --- Internal process registry ---
 
-let isYoloMode = false;
-
-const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
-    maxQueries: 3,
-    resultsPerQuery: 3,
-    requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-    perPageCharLimit: 2_500,
-};
-
-let webSearchSettings: WebSearchSettings = { ...DEFAULT_WEB_SEARCH_SETTINGS };
-
-/**
- * Returns true if YOLO mode is currently enabled.
- */
-export function isYolo(): boolean {
-    return isYoloMode;
-}
-
-// --- Tool handlers ---
+// --- Tool schemas ---
 
 export interface OllamaToolParameter {
     type: string;
@@ -78,11 +62,6 @@ export interface OllamaTool {
             required: string[];
         };
     };
-}
-
-export interface ToolWebSearchConfig {
-    maxQueries: number;
-    resultsPerQuery: number;
 }
 
 export const TOOLS: OllamaTool[] = [
@@ -284,158 +263,6 @@ export const TOOLS: OllamaTool[] = [
     },
 ];
 
-// --- Tool handlers ---
-
-/**
- * Enables or disables YOLO mode. In YOLO mode, commands requested by the
- * AI are executed automatically without user confirmation.
- */
-export function setYoloMode(enabled: boolean): void {
-    isYoloMode = enabled;
-}
-
-export function setWebSearchConfig(config: ToolWebSearchConfig): void {
-    webSearchSettings = {
-        ...webSearchSettings,
-        maxQueries: Math.max(1, Math.floor(config.maxQueries)),
-        resultsPerQuery: Math.max(1, Math.floor(config.resultsPerQuery)),
-    };
-}
-
-function parseFiniteNumber(value: unknown): number | null {
-    if (typeof value !== 'number') return null;
-    return Number.isFinite(value) ? value : null;
-}
-
-function parsePositiveInteger(
-    value: unknown,
-    min = 1,
-    max = Number.MAX_SAFE_INTEGER,
-): number | null {
-    const parsed = parseFiniteNumber(value);
-    if (parsed === null) return null;
-    const floored = Math.floor(parsed);
-    if (floored < min || floored > max) return null;
-    return floored;
-}
-
-function parsePositiveTimeoutMs(seconds: unknown): number | null {
-    const parsedSeconds = parseFiniteNumber(seconds);
-    if (parsedSeconds === null || parsedSeconds <= 0) return null;
-    const ms = Math.floor(parsedSeconds * 1000);
-    if (!Number.isFinite(ms) || ms < 1) return null;
-    return Math.min(ms, 3_600_000);
-}
-
-function parseQueriesInput(raw: unknown): string[] {
-    const splitAndNormalize = (value: string): string[] => {
-        return value
-            .split(/\n|,|;/)
-            .map((item) => item.trim())
-            .filter((item) => item.length > 0);
-    };
-
-    if (Array.isArray(raw)) {
-        return raw
-            .flatMap((item) => String(item).split(/\n|,|;/))
-            .map((item) => item.trim())
-            .filter((item) => item.length > 0);
-    }
-
-    if (typeof raw === 'string') {
-        const trimmed = raw.trim();
-        if (!trimmed) return [];
-        if (!trimmed.startsWith('[')) {
-            return splitAndNormalize(trimmed);
-        }
-
-        try {
-            const parsed = JSON.parse(trimmed) as unknown;
-            if (Array.isArray(parsed)) {
-                return parsed
-                    .map((item) => String(item).trim())
-                    .filter((item) => item.length > 0);
-            }
-        } catch {
-            return splitAndNormalize(trimmed);
-        }
-
-        return splitAndNormalize(trimmed);
-    }
-
-    return [];
-}
-
-async function runWebSearch(
-    args: WebSearchToolArgs,
-    onProgress?: (message: string) => void,
-): Promise<string> {
-    const tool = new WebSearchTool({
-        settings: webSearchSettings,
-        onProgress: (message: string) => {
-            console.log(chalk.dim(message));
-            onProgress?.(message);
-        },
-    });
-    return tool.run(args);
-}
-
-async function runFetchUrl(
-    args: FetchUrlToolArgs,
-    onProgress?: (message: string) => void,
-): Promise<string> {
-    const tool = new FetchUrlTool({
-        settings: webSearchSettings,
-        onProgress: (message: string) => {
-            console.log(chalk.dim(message));
-            onProgress?.(message);
-        },
-    });
-    return tool.run(args);
-}
-
-async function runReadFile(
-    args: ReadFileToolArgs,
-): Promise<string> {
-    const tool = new ReadFileTool();
-    return tool.run(args);
-}
-
-async function runWriteFile(
-    args: WriteFileToolArgs,
-): Promise<string> {
-    const tool = new WriteFileTool();
-    return tool.run(args);
-}
-
-// --- Public dispatcher ---
-
-export interface ToolCallArguments {
-    command?: string;
-    shell?: string;
-    timeout_seconds?: number;
-    process_id?: number;
-    prompt?: string;
-    queries?: string[] | string;
-    max_queries?: number;
-    url?: string;
-    source?: string;
-    path?: string;
-    head_chars?: number;
-    tail_chars?: number;
-    start?: number;
-    length?: number;
-    content?: string;
-    mode?: 'overwrite' | 'append' | 'create';
-    confirm_overwrite?: boolean;
-}
-
-/** Result returned by handleToolCall. Most tools only set content; vision tools also set images. */
-export interface ToolCallResult {
-    content: string;
-    images?: string[];
-}
-
 /**
  * Returns the tool-awareness section of the system prompt, describing the
  * available tools and how the model should use them. Kept here so that the
@@ -444,7 +271,7 @@ export interface ToolCallResult {
 export function getToolSystemPrompt(): string {
     return (
         'You have access to the following tools that let you interact with the host machine:\n\n' +
-        getRunCommandPrompt(isYoloMode) +
+        getRunCommandPrompt(isYolo()) +
         getWebSearchPrompt() +
         getFetchUrlPrompt() +
         getFetchImagePrompt() +
@@ -454,7 +281,7 @@ export function getToolSystemPrompt(): string {
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n' +
         '- Do NOT ask the user for permission yourself; ' +
-        (isYoloMode
+        (isYolo()
             ? 'the user has already provided implicit consent via YOLO mode.'
             : 'the application already prompts for approval.') + '\n' +
         '- Do NOT only print a shell snippet/code block when the task requires execution.\n' +
@@ -468,18 +295,6 @@ export function getToolSystemPrompt(): string {
         'When a command completes, summarise its output clearly for the user.'
     );
 }
-function runFetchImage(
-    args: FetchImageToolArgs,
-    onProgress?: (message: string) => void,
-): Promise<FetchImageResult> {
-    const tool = new FetchImageTool({
-        onProgress: (message: string) => {
-            console.log(chalk.dim(message));
-            onProgress?.(message);
-        },
-    });
-    return tool.run(args);
-}
 // Automatic nudging was removed in favour of a manual `/nudge` command.
 // The manual nudge is implemented in `index.ts` and the user-facing
 // reminder text is provided by `getToolUseNudge()` below.
@@ -490,7 +305,7 @@ export function getToolUseNudge(): string {
         'If you are not entirely certain, call web_search now and then answer using the fetched evidence. ' +
         'Do not use result_N placeholders; cite full URLs inline. ' +
         'If terminal access is needed, call run_command directly now. ' +
-        (isYoloMode
+        (isYolo()
             ? 'The command will execute automatically.'
             : 'I (the app) will ask the human user for approval before execution.')
     );
@@ -501,98 +316,7 @@ export async function handleToolCall(
     args: ToolCallArguments,
     onProgress?: (message: string) => void,
 ): Promise<ToolCallResult> {
-    switch (name) {
-        case 'run_command': {
-            if (!args.command) return { content: '[Error: missing required argument "command"]' };
-            let timeoutMs = DEFAULT_TIMEOUT_MS;
-            if (args.timeout_seconds !== undefined) {
-                const parsedTimeoutMs = parsePositiveTimeoutMs(args.timeout_seconds);
-                if (parsedTimeoutMs === null) {
-                    return { content: '[Error: invalid argument "timeout_seconds" (expected a positive finite number)]' };
-                }
-                timeoutMs = parsedTimeoutMs;
-            }
-            return { content: await runCommand(args.command, args.shell, timeoutMs, onProgress) };
-        }
-
-        case 'check_process_output': {
-            if (args.process_id === undefined) {
-                return { content: '[Error: missing required argument "process_id"]' };
-            }
-            return { content: await checkProcessOutput(args.process_id) };
-        }
-
-        case 'web_search': {
-            const parsedQueries = parseQueriesInput(args.queries);
-            const webArgs: WebSearchToolArgs = {};
-
-            if (typeof args.prompt === 'string' && args.prompt.trim().length > 0) {
-                webArgs.prompt = args.prompt;
-            }
-            if (parsedQueries.length > 0) {
-                webArgs.queries = parsedQueries;
-            }
-            if (args.max_queries !== undefined) {
-                const parsedMaxQueries = parsePositiveInteger(args.max_queries, 1, 10);
-                if (parsedMaxQueries === null) {
-                    return { content: '[Error: invalid argument "max_queries" (expected an integer between 1 and 10)]' };
-                }
-                webArgs.max_queries = parsedMaxQueries;
-            }
-
-            if (!webArgs.prompt && (!webArgs.queries || webArgs.queries.length === 0)) {
-                return { content: '[Error: web_search requires either "prompt" or "queries"]' };
-            }
-
-            return { content: await runWebSearch(webArgs, onProgress) };
-        }
-
-        case 'fetch_url': {
-            if (typeof args.url !== 'string' || args.url.trim().length === 0) {
-                return { content: '[Error: missing required argument "url"]' };
-            }
-            const fetchArgs: FetchUrlToolArgs = {
-                url: args.url,
-            };
-            return { content: await runFetchUrl(fetchArgs, onProgress) };
-        }
-
-        case 'fetch_image': {
-            if (typeof args.source !== 'string' || args.source.trim().length === 0) {
-                return { content: '[Error: missing required argument "source"]' };
-            }
-            return runFetchImage({ source: args.source }, onProgress);
-        }
-
-        case 'read_file': {
-            if (typeof args.path !== 'string' || args.path.trim().length === 0) {
-                return { content: '[Error: missing required argument "path"]' };
-            }
-            return { content: await runReadFile({
-                path: args.path,
-                head_chars: args.head_chars,
-                tail_chars: args.tail_chars,
-                start: args.start,
-                length: args.length,
-            }) };
-        }
-
-        case 'write_file': {
-            if (typeof args.path !== 'string' || args.path.trim().length === 0) {
-                return { content: '[Error: missing required argument "path"]' };
-            }
-            if (typeof args.content !== 'string') {
-                return { content: '[Error: missing required argument "content"]' };
-            }
-            return { content: await runWriteFile({
-                path: args.path,
-                content: args.content,
-                mode: args.mode,
-                confirm_overwrite: args.confirm_overwrite,
-            }) };
-        }
-
-        default:
-            return { content: `[Unknown tool: ${name}]` };
-    }
+    const command = toolRegistry.get(name);
+    if (!command) return { content: `[Unknown tool: ${name}]` };
+    return command.execute(args, onProgress);
 }
