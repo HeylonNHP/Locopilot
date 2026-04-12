@@ -208,6 +208,18 @@ export async function streamAIResponse(
 
     const startTime = Date.now();
     let firstContentTime: number | null = null;
+    let thinkingSummaryPrinted = false;
+
+    function printThinkingSummary(durationMs: number, thinkingChars: number): void {
+        const durationSec = durationMs / 1000;
+        const durationStr = durationSec > 60
+            ? `${Math.floor(durationSec / 60)}m ${Math.floor(durationSec % 60)}s`
+            : `${durationSec.toFixed(1)}s`;
+
+        clearLiveStatus();
+        console.log(chalk.dim(`(Thought for ${durationStr} · ${thinkingChars} chars)`));
+        thinkingSummaryPrinted = true;
+    }
 
     try {
         for await (const chunk of stream) {
@@ -228,13 +240,7 @@ export async function streamAIResponse(
                 if (firstContentTime === null) {
                     firstContentTime = Date.now();
                     if (thinking.length > 0) {
-                        const durationSec = (firstContentTime - startTime) / 1000;
-                        const durationStr = durationSec > 60
-                            ? `${Math.floor(durationSec / 60)}m ${Math.floor(durationSec % 60)}s`
-                            : `${durationSec.toFixed(1)}s`;
-                        
-                        clearLiveStatus();
-                        console.log(chalk.dim(`(Thought for ${durationStr} · ${thinking.length} chars)`));
+                        printThinkingSummary(firstContentTime - startTime, thinking.length);
                     }
                 }
                 content += chunkContent;
@@ -269,6 +275,12 @@ export async function streamAIResponse(
         interrupted = true;
     } finally {
         unregisterInterruptHandler();
+    }
+
+    // Tool-call-only turns may think without emitting assistant content.
+    // Print a final thought summary so the thinking duration/chars are visible.
+    if (!interrupted && thinking.length > 0 && !thinkingSummaryPrinted) {
+        printThinkingSummary(Date.now() - startTime, thinking.length);
     }
 
     if (content.trim().length > 0) {

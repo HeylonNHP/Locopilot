@@ -388,3 +388,13 @@ Feature summary:
   - Files: `services/adapters/llmAdapter.ts` (new), `services/adapters/ollamaAdapter.ts`, `services/llm.ts` (new), `index.ts`, `aiResponseRenderer.ts`, `slashCommands.ts`, `services/compact.ts`, `services/errorSummary.ts`, `history.ts`, `tokenizer.ts`, `.github/copilot-instructions.md`
   - Summary: Moved the concrete Ollama implementation to `services/adapters/ollamaAdapter.ts`, added a generic `LlmAdapter` contract in `services/adapters/llmAdapter.ts`, and introduced `services/llm.ts` as the active-adapter facade (`getLlmAdapter`/`setLlmAdapter` plus provider-agnostic API wrappers). Updated all consumers to import generic chat/model/error functions and shared message/tool types from the facade.
   - Intent: Decouple application flow from Ollama-specific modules so additional providers (for example OpenAI-compatible endpoints) can be added as drop-in adapters without rewriting chat/session/tool orchestration.
+
+- 2026-04-12: Fixed lingering final-status line and missing thought summary on tool-only turns
+  - Files: `aiResponseRenderer.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a dedicated thought-summary printer in `streamAIResponse` and ensured it also runs when the model produces tool calls without assistant content. Updated final-stats handling in `index.ts` to clear the live status line before logging token usage so `AI response received...` is not left in scrollback.
+  - Intent: Preserve clear terminal UX after thinking completes by showing thought duration/character count and preventing status-line artifacts from becoming permanent output.
+
+- 2026-04-12: Restored persistent final token snapshot after each AI turn
+  - Files: `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added `printFinalTokenSnapshot()` and invoked it from the final-stats callback so each completed response prints a stable `used/limit`, percentage, source tag, and used-token count line after clearing the live status line.
+  - Intent: Bring back easy-to-read final token totals in scrollback without reintroducing lingering status-line artifacts.

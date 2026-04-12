@@ -524,6 +524,25 @@ async function startChat(
         // ─────────────────────────────────────────────────────────────
     }
 
+    function printFinalTokenSnapshot(tokensUsed: number): void {
+        const percentage = numCtx > 0
+            ? Math.min(100, Math.round((tokensUsed / numCtx) * 100))
+            : 0;
+        const pctColor = percentage >= 90
+            ? chalk.red
+            : percentage >= 75
+                ? chalk.yellow
+                : chalk.green;
+
+        console.log(
+            chalk.dim(`[${currentModel}] `) +
+            pctColor(`${tokensUsed}/${numCtx} tokens`) +
+            chalk.dim(` (${percentage}%)`) +
+            chalk.cyan.dim(' (ollama)') +
+            chalk.dim(` (Used ${tokensUsed} ${tokensUsed === 1 ? 'token' : 'tokens'})`),
+        );
+    }
+
     // Register cleanup for SIGINT (Ctrl+C)
     cleanupBeforeExit = () => context.saveSession();
 
@@ -607,7 +626,8 @@ async function startChat(
                         timeoutMs: config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
                         onFinalStats: (authoritativeTokensUsed, finalStats) => {
                             refreshTokenStatus('AI response received.', authoritativeTokensUsed, 'ollama');
-                            console.log(chalk.dim(`(Used ${authoritativeTokensUsed} ${authoritativeTokensUsed === 1 ? 'token' : 'tokens'})`));
+                            clearLiveStatus();
+                            printFinalTokenSnapshot(authoritativeTokensUsed);
                         },
                     },
                 );
