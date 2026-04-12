@@ -516,7 +516,7 @@ async function startChat(
                 lastCompactWarningTokens = tokensUsed;
                 clearLiveStatus();
                 console.log(
-                    chalk.yellow.bold(`\n⚠️  Context is ${percentage.toFixed(0)}% full (${tokensUsed}/${numCtx}). `) +
+                    chalk.yellow.bold(`\n⚠️  Context is ${percentage.toFixed(0)}% full. `) +
                     chalk.yellow(`Consider running `) + chalk.cyan(`/compact`) + chalk.yellow(` to save tokens.\n`)
                 );
             }
@@ -625,7 +625,6 @@ async function startChat(
                         onStatusUpdate: refreshTokenStatus,
                         timeoutMs: config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
                         onFinalStats: (authoritativeTokensUsed, finalStats) => {
-                            refreshTokenStatus('AI response received.', authoritativeTokensUsed, 'ollama');
                             clearLiveStatus();
                             printFinalTokenSnapshot(authoritativeTokensUsed);
                         },

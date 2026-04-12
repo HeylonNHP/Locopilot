@@ -398,3 +398,8 @@ Feature summary:
   - Files: `index.ts`, `.github/copilot-instructions.md`
   - Summary: Added `printFinalTokenSnapshot()` and invoked it from the final-stats callback so each completed response prints a stable `used/limit`, percentage, source tag, and used-token count line after clearing the live status line.
   - Intent: Bring back easy-to-read final token totals in scrollback without reintroducing lingering status-line artifacts.
+
+- 2026-04-12: Hid estimated token totals from live status output
+  - Files: `statusLine.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Updated the live status bar and warning text so estimated counts no longer print as raw totals. Only the final authoritative Ollama snapshot prints full `used/limit` totals; in-progress UI now stays percentage-based unless the source is definitively Ollama.
+  - Intent: Prevent tokenizer-based estimates from looking like authoritative token totals while preserving the final post-response token snapshot.

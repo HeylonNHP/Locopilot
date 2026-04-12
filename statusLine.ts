@@ -26,7 +26,9 @@ function render() {
     const pctColor = pct >= 90 ? chalk.red : pct >= 75 ? chalk.yellow : chalk.green;
 
     const left = `${chalk.dim(frame)} ${state.phase} ${chalk.dim(state.model ? '[' + state.model + ']' : '')}`.trim();
-    const right = `${pctColor(`${state.tokensUsed}/${state.tokenLimit} tokens`)} ${chalk.dim(`(${pct}%)`)}${state.tokenSource === 'ollama' ? chalk.cyan.dim(' (ollama)') : ''}`;
+    const right = state.tokenSource === 'ollama'
+        ? `${pctColor(`${state.tokensUsed}/${state.tokenLimit} tokens`)} ${chalk.dim(`(${pct}%)`)}${chalk.cyan.dim(' (ollama)')}`
+        : `${pctColor(`${pct}%`)}${chalk.dim(' (estimated)')}`;
 
     const cols = out.columns || 80;
     const gap = Math.max(1, cols - stringWidth(left) - stringWidth(right));
