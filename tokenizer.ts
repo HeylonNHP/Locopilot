@@ -1,5 +1,5 @@
 import { encoding_for_model, get_encoding, Tiktoken } from '@dqbd/tiktoken';
-import type { ChatMessage } from './services/ollamaApi.js';
+import type { ChatMessage } from './services/llm.js';
 
 let encoder: Tiktoken | null = null;
 let currentEncoderModel: string | null = null;

@@ -14,7 +14,7 @@
 
 import Database from 'better-sqlite3';
 import path from 'path';
-import type { ChatMessage } from './services/ollamaApi.js';
+import type { ChatMessage } from './services/llm.js';
 
 // ---------------------------------------------------------------------------
 // Types

@@ -12,10 +12,10 @@ import {
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
 } from './constants.js';
 import {
-    fetchOllamaModels,
-    getOllamaApiErrorMessage,
-} from './services/ollamaApi.js';
-import type { ChatMessage, OllamaModel } from './services/ollamaApi.js';
+    fetchLlmModels,
+    getLlmApiErrorMessage,
+} from './services/llm.js';
+import type { ChatMessage, LlmModel } from './services/llm.js';
 import { compactHistory, printCompactStats } from './services/compact.js';
 import {
     createSession,
@@ -93,10 +93,10 @@ export function replaceMessages(target: ChatMessage[], newMessages: ChatMessage[
 
 export async function getModels(baseUrl: string): Promise<string[]> {
     try {
-        const models = await fetchOllamaModels(baseUrl);
-        return models.map((m: OllamaModel) => m.name).sort();
+        const models = await fetchLlmModels(baseUrl);
+        return models.map((m: LlmModel) => m.name).sort();
     } catch (error) {
-        console.error(chalk.red('Error fetching models:'), await getOllamaApiErrorMessage(error));
+        console.error(chalk.red('Error fetching models:'), await getLlmApiErrorMessage(error));
         return [];
     }
 }
@@ -163,7 +163,7 @@ const COMPACT_HANDLER: SlashHandler = async (ctx) => {
         ctx.saveSession();
     } catch (err) {
         clearLiveStatus();
-        console.error(chalk.red('Compaction failed:'), await getOllamaApiErrorMessage(err));
+        console.error(chalk.red('Compaction failed:'), await getLlmApiErrorMessage(err));
     }
     return true;
 };

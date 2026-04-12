@@ -27,17 +27,16 @@ import {
     registerInterruptHandler,
     unregisterInterruptHandler,
 } from './tools/tools.js';
-import { sendOllamaChatStream, getOllamaTurnStats } from './services/ollamaApi.js';
-import type { OllamaToolCall, OllamaToolDefinition, ChatMessage } from './services/ollamaApi.js';
-import type { OllamaTurnStats } from './services/ollamaApi.js';
+import { sendLlmChatStream, getLlmTurnStats } from './services/llm.js';
+import type { ToolCall, ToolDefinition, ChatMessage, LlmTurnStats } from './services/llm.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-/** Chat parameters forwarded to the Ollama API. */
+/** Chat parameters forwarded to the active LLM adapter. */
 export interface StreamAIResponseParams {
     model: string;
     messages: ChatMessage[];
-    tools: OllamaToolDefinition[];
+    tools: ToolDefinition[];
     numCtx: number;
     think?: boolean;
 }
@@ -62,16 +61,16 @@ export interface StreamAIResponseResult {
     /** The accumulated reasoning trace if the model supports thinking. */
     thinking?: string;
     /** Any tool calls the model requested. */
-    toolCalls: OllamaToolCall[];
+    toolCalls: ToolCall[];
     /** True if the user interrupted the stream before it completed. */
     interrupted: boolean;
-    /** Final Ollama token/duration stats when provided by the API. */
-    finalStats: OllamaTurnStats | null;
+    /** Final provider token/duration stats when provided by the API. */
+    finalStats: LlmTurnStats | null;
 }
 
 export interface RenderTurnOptions extends StreamAIResponseOptions {
     /** Called when final authoritative stats arrive from Ollama. */
-    onFinalStats?: (authoritativeTokensUsed: number, finalStats: OllamaTurnStats) => void;
+    onFinalStats?: (authoritativeTokensUsed: number, finalStats: LlmTurnStats) => void;
 }
 
 /**
@@ -90,7 +89,7 @@ export async function renderTurn(
     assistantMessage: ChatMessage | null;
     interrupted: boolean;
     sessionTokenStats: { promptEvalCount: number; evalCount: number } | null;
-    finalStats: OllamaTurnStats | null;
+    finalStats: LlmTurnStats | null;
 }> {
     const { onStatusUpdate, onFinalStats, timeoutMs } = opts;
 
@@ -164,7 +163,7 @@ export function printAIResponse(
 /**
  * Streams an AI response and shows a live character count on the status line.
  *
- * Opens the Ollama chat stream internally, wires up the interrupt handler, and
+ * Opens the active LLM provider chat stream internally, wires up the interrupt handler, and
  * updates the status line with `"AI is responding... (N chars)"` as each chunk
  * arrives.  No raw text is written to the terminal during this phase.  Once the
  * stream is complete (or interrupted), the full accumulated response is rendered
@@ -172,7 +171,7 @@ export function printAIResponse(
  *
  * Tool-call-only responses (no text content) produce no terminal output.
  *
- * @param baseUrl - Ollama base URL (e.g. `http://localhost:11434`).
+ * @param baseUrl - Provider base URL (e.g. `http://localhost:11434`).
  * @param params  - Model, messages, tools, and context length.
  * @param opts    - Status-update callback.
  * @returns Accumulated content, tool calls, and whether the stream was cut short.
@@ -186,10 +185,10 @@ export async function streamAIResponse(
 
     let content = '';
     let thinking = '';
-    const toolCalls: OllamaToolCall[] = [];
+    const toolCalls: ToolCall[] = [];
     let toolCallRawArgs = '';
     let interrupted = false;
-    let finalStats: OllamaTurnStats | null = null;
+    let finalStats: LlmTurnStats | null = null;
 
     onStatusUpdate('AI is responding...');
 
@@ -197,7 +196,7 @@ export async function streamAIResponse(
 
     registerInterruptHandler(() => abortController.abort());
 
-    const stream = sendOllamaChatStream(baseUrl, {
+    const stream = sendLlmChatStream(baseUrl, {
         model: params.model,
         messages: params.messages,
         tools: params.tools,
@@ -262,7 +261,7 @@ export async function streamAIResponse(
             }
 
             if (chunk.done) {
-                finalStats = getOllamaTurnStats(chunk);
+                finalStats = getLlmTurnStats(chunk);
             }
         }
     } catch (error) {

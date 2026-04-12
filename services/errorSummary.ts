@@ -6,8 +6,8 @@
  * technical stderr output into a brief, human-readable summary.
  */
 
-import { sendOllamaChat } from './ollamaApi.js';
-import type { ChatMessage } from './ollamaApi.js';
+import { sendLlmChat } from './llm.js';
+import type { ChatMessage } from './llm.js';
 
 const ERROR_SUMMARY_SYSTEM_PROMPT =
     'You are a technical support assistant. You will be given the output and exit code of a failed terminal command. ' +
@@ -38,7 +38,7 @@ export async function summarizeCommandError(
     ];
 
     try {
-        const response = await sendOllamaChat(baseUrl, {
+        const response = await sendLlmChat(baseUrl, {
             model,
             messages: summarizationMessages,
             tools: [], // No tools needed for summarization

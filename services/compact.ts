@@ -12,8 +12,8 @@
  */
 
 import chalk from 'chalk';
-import { sendOllamaChat, sendOllamaChatStream, getOllamaTurnStats } from './ollamaApi.js';
-import type { ChatMessage } from './ollamaApi.js';
+import { sendLlmChat, sendLlmChatStream, getLlmTurnStats } from './llm.js';
+import type { ChatMessage } from './llm.js';
 import { countMessagesTokens } from '../tokenizer.js';
 
 // The instruction sent to the LLM when asking it to compact the history.
@@ -97,7 +97,7 @@ async function measureConversationTokens(
         // to avoid Status 400 errors when the history is already at 100% capacity.
         const measurementCtx = Math.max(numCtx * 2, 32768);
         
-        const response = await sendOllamaChat(baseUrl, {
+        const response = await sendLlmChat(baseUrl, {
             model,
             messages,
             tools: [],
@@ -108,7 +108,7 @@ async function measureConversationTokens(
             },
         });
 
-        const stats = getOllamaTurnStats(response);
+        const stats = getLlmTurnStats(response);
         if (stats) {
             return stats.promptEvalCount + stats.evalCount;
         }
@@ -237,7 +237,7 @@ async function distillToolMessages(
             message.content;
 
         let distilledContent = '';
-        const distillResponse = await sendOllamaChat(baseUrl, {
+        const distillResponse = await sendLlmChat(baseUrl, {
             model,
             messages: [
                 { role: 'system', content: TOOL_DISTILL_SYSTEM_PROMPT },
@@ -397,7 +397,7 @@ export async function compactHistory(
 
     const streamSummary = async (msgs: ChatMessage[], numPredict: number): Promise<string> => {
         let text = '';
-        for await (const chunk of sendOllamaChatStream(baseUrl, {
+        for await (const chunk of sendLlmChatStream(baseUrl, {
             model,
             messages: msgs,
             tools: [],

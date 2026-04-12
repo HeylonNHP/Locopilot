@@ -1,95 +1,19 @@
 import axios from 'axios';
 import { createInterface } from 'readline';
 import { Readable } from 'stream';
-import type { ToolCallArguments } from '../tools/tools.js';
-
-export interface OllamaModelDetails {
-    parent_model: string;
-    format: string;
-    family: string;
-    families: string[] | null;
-    parameter_size: string;
-    quantization_level: string;
-}
-
-export interface OllamaModelInfo {
-    modelfile: string;
-    parameters: string;
-    template: string;
-    system?: string;
-    details: OllamaModelDetails;
-    messages?: ChatMessage[];
-    capabilities?: string[];
-}
-
-export interface OllamaModel {
-    name: string;
-    model: string;
-    modified_at: string;
-    size: number;
-    digest: string;
-    details: OllamaModelDetails;
-}
+import type {
+    ChatApiResponse,
+    ChatMessage,
+    ChatParams,
+    LlmAdapter,
+    LlmModel,
+    LlmModelInfo,
+    LlmTurnStats,
+    StreamChatParams,
+} from './llmAdapter.js';
 
 interface TagsResponse {
-    models: OllamaModel[];
-}
-
-export interface OllamaToolCall {
-    function: {
-        name: string;
-        arguments: ToolCallArguments;
-    };
-}
-
-export interface OllamaToolDefinition {
-    type: 'function';
-    function: {
-        name: string;
-        description: string;
-        parameters: {
-            type: 'object';
-            properties: Record<string, unknown>;
-            required?: string[];
-        };
-    };
-}
-
-export interface ChatMessage {
-    role: 'system' | 'user' | 'assistant' | 'tool';
-    content: string;
-    thinking?: string;
-    tool_calls?: [OllamaToolCall, ...OllamaToolCall[]];
-    /** Base64-encoded images for multimodal/vision models. */
-    images?: string[];
-}
-
-export interface ChatApiResponse {
-    model: string;
-    created_at: string;
-    message: ChatMessage;
-    done: boolean;
-    done_reason?: string;
-    total_duration?: number;
-    load_duration?: number;
-    prompt_eval_count?: number;
-    prompt_eval_duration?: number;
-    eval_count?: number;
-    eval_duration?: number;
-}
-
-interface ChatParams {
-    model: string;
-    messages: ChatMessage[];
-    tools: OllamaToolDefinition[];
-    numCtx: number;
-    think?: boolean;
-    options?: Record<string, unknown>;
-}
-
-export interface StreamChatParams extends ChatParams {
-    signal?: AbortSignal;
-    timeoutMs?: number | undefined;
+    models: LlmModel[];
 }
 
 function buildChatPayload(params: ChatParams, stream: boolean) {
@@ -106,21 +30,12 @@ function buildChatPayload(params: ChatParams, stream: boolean) {
     };
 }
 
-export interface OllamaTurnStats {
-    promptEvalCount: number;
-    evalCount: number;
-    totalDuration?: number;
-    promptEvalDuration?: number;
-    evalDuration?: number;
-    loadDuration?: number;
-}
-
-export function getOllamaTurnStats(response: ChatApiResponse): OllamaTurnStats | null {
+function getOllamaTurnStats(response: ChatApiResponse): LlmTurnStats | null {
     if (!Number.isFinite(response.prompt_eval_count) || !Number.isFinite(response.eval_count)) {
         return null;
     }
 
-    const stats: OllamaTurnStats = {
+    const stats: LlmTurnStats = {
         promptEvalCount: response.prompt_eval_count ?? 0,
         evalCount: response.eval_count ?? 0,
     };
@@ -145,21 +60,21 @@ export function getOllamaTurnStats(response: ChatApiResponse): OllamaTurnStats |
     return stats;
 }
 
-export async function validateOllamaConnection(baseUrl: string, timeoutMs: number = 2000): Promise<void> {
+async function validateOllamaConnection(baseUrl: string, timeoutMs: number = 2000): Promise<void> {
     await axios.get<TagsResponse>(`${baseUrl}/api/tags`, { timeout: timeoutMs });
 }
 
-export async function fetchOllamaModels(baseUrl: string): Promise<OllamaModel[]> {
+async function fetchOllamaModels(baseUrl: string): Promise<LlmModel[]> {
     const response = await axios.get<TagsResponse>(`${baseUrl}/api/tags`);
     return response.data.models || [];
 }
 
-export async function fetchOllamaModelInfo(baseUrl: string, modelName: string): Promise<OllamaModelInfo> {
-    const response = await axios.post<OllamaModelInfo>(`${baseUrl}/api/show`, { name: modelName });
+async function fetchOllamaModelInfo(baseUrl: string, modelName: string): Promise<LlmModelInfo> {
+    const response = await axios.post<LlmModelInfo>(`${baseUrl}/api/show`, { name: modelName });
     return response.data;
 }
 
-export async function sendOllamaChat(
+async function sendOllamaChat(
     baseUrl: string,
     params: ChatParams,
     onChunk?: (chunk: ChatApiResponse) => void,
@@ -177,6 +92,9 @@ export async function sendOllamaChat(
         for await (const chunk of sendOllamaChatStream(baseUrl, streamParams)) {
             if (chunk.message?.content) {
                 fullMessage.content += chunk.message.content;
+            }
+            if (chunk.message?.thinking) {
+                fullMessage.thinking = `${fullMessage.thinking ?? ''}${chunk.message.thinking}`;
             }
             if (chunk.message?.tool_calls) {
                 fullMessage.tool_calls = chunk.message.tool_calls;
@@ -201,7 +119,7 @@ export async function sendOllamaChat(
     return response.data;
 }
 
-export async function* sendOllamaChatStream(
+async function* sendOllamaChatStream(
     baseUrl: string,
     params: StreamChatParams,
 ): AsyncGenerator<ChatApiResponse> {
@@ -242,7 +160,7 @@ export async function* sendOllamaChatStream(
     }
 }
 
-export async function getOllamaApiErrorMessage(error: unknown): Promise<string> {
+async function getOllamaApiErrorMessage(error: unknown): Promise<string> {
     if (axios.isAxiosError(error)) {
         if (error.response?.data) {
             const data = error.response.data;
@@ -264,9 +182,9 @@ export async function getOllamaApiErrorMessage(error: unknown): Promise<string> 
                 } catch {
                     // Fallback to error.message if reading stream fails
                 }
-            } else if (typeof data === 'object' && data.error) {
+            } else if (typeof data === 'object' && data && 'error' in data) {
                 // If it's already an object (non-streaming requests)
-                return `${error.message}: ${data.error}`;
+                return `${error.message}: ${String((data as { error: unknown }).error)}`;
             } else if (typeof data === 'string' && data.trim()) {
                 return `${error.message}: ${data.trim()}`;
             }
@@ -280,3 +198,14 @@ export async function getOllamaApiErrorMessage(error: unknown): Promise<string> 
 
     return String(error);
 }
+
+export const ollamaAdapter: LlmAdapter = {
+    id: 'ollama',
+    validateConnection: validateOllamaConnection,
+    fetchModels: fetchOllamaModels,
+    fetchModelInfo: fetchOllamaModelInfo,
+    sendChat: sendOllamaChat,
+    sendChatStream: sendOllamaChatStream,
+    getApiErrorMessage: getOllamaApiErrorMessage,
+    getTurnStats: getOllamaTurnStats,
+};

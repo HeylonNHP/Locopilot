@@ -383,3 +383,8 @@ Feature summary:
   - Files: `index.ts`, `.github/copilot-instructions.md`
   - Summary: `getCurrentTokenEstimate()` now anchors the total context estimate to the last exact token count provided by Ollama (`lastAuthoritativeTokens`) and only uses the local Tiktoken approximation for the delta of added messages since that point.
   - Intent: Fix a bug where the local tokenizer heavily underestimated true token cost, causing the application to warn about 96% context usage but incorrectly failing to automatically compact because its internal calculation stayed under 92%.
+
+- 2026-04-12: Introduced provider adapter layer for LLM backends
+  - Files: `services/adapters/llmAdapter.ts` (new), `services/adapters/ollamaAdapter.ts`, `services/llm.ts` (new), `index.ts`, `aiResponseRenderer.ts`, `slashCommands.ts`, `services/compact.ts`, `services/errorSummary.ts`, `history.ts`, `tokenizer.ts`, `.github/copilot-instructions.md`
+  - Summary: Moved the concrete Ollama implementation to `services/adapters/ollamaAdapter.ts`, added a generic `LlmAdapter` contract in `services/adapters/llmAdapter.ts`, and introduced `services/llm.ts` as the active-adapter facade (`getLlmAdapter`/`setLlmAdapter` plus provider-agnostic API wrappers). Updated all consumers to import generic chat/model/error functions and shared message/tool types from the facade.
+  - Intent: Decouple application flow from Ollama-specific modules so additional providers (for example OpenAI-compatible endpoints) can be added as drop-in adapters without rewriting chat/session/tool orchestration.

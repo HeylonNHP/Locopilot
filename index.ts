@@ -19,11 +19,11 @@ import {
     type ToolCallResult,
 } from './tools/tools.js';
 import {
-    validateOllamaConnection,
-    getOllamaApiErrorMessage,
-    fetchOllamaModelInfo,
+    validateLlmConnection,
+    getLlmApiErrorMessage,
+    fetchLlmModelInfo,
     type ChatMessage,
-} from './services/ollamaApi.js';
+} from './services/llm.js';
 import { summarizeCommandError } from './services/errorSummary.js';
 import {
     printAIResponse,
@@ -112,7 +112,7 @@ async function setupOllama(initialConfig: Config | null): Promise<Config> {
         }
 
         try {
-            await validateOllamaConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
+            await validateLlmConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
             await saveConfig(config);
             return config;
         } catch (error) {
@@ -365,7 +365,7 @@ async function startChat(
 
     async function checkThinkingSupport(modelName: string) {
         try {
-            const info = await fetchOllamaModelInfo(baseUrl, modelName);
+            const info = await fetchLlmModelInfo(baseUrl, modelName);
             thinkingSupported = !!(info.capabilities && info.capabilities.includes('thinking'));
             if (thinkingSupported) {
                 console.log(chalk.dim(`(Model ${modelName} supports thinking)`));
@@ -700,7 +700,7 @@ async function startChat(
             }
         } catch (error) {
             clearLiveStatus();
-            console.error(chalk.red('Error communicating with Ollama:'), await getOllamaApiErrorMessage(error));
+            console.error(chalk.red('Error communicating with Ollama:'), await getLlmApiErrorMessage(error));
             context.saveSession();
         } finally {
             clearLiveStatus();
