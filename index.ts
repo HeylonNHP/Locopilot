@@ -23,7 +23,7 @@ import {
     getOllamaApiErrorMessage,
     fetchOllamaModelInfo,
     type ChatMessage,
-} from './ollamaApi.js';
+} from './services/ollamaApi.js';
 import { summarizeCommandError } from './services/errorSummary.js';
 import {
     printAIResponse,

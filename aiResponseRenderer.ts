@@ -27,9 +27,9 @@ import {
     registerInterruptHandler,
     unregisterInterruptHandler,
 } from './tools/tools.js';
-import { sendOllamaChatStream, getOllamaTurnStats } from './ollamaApi.js';
-import type { OllamaToolCall, OllamaToolDefinition, ChatMessage } from './ollamaApi.js';
-import type { OllamaTurnStats } from './ollamaApi.js';
+import { sendOllamaChatStream, getOllamaTurnStats } from './services/ollamaApi.js';
+import type { OllamaToolCall, OllamaToolDefinition, ChatMessage } from './services/ollamaApi.js';
+import type { OllamaTurnStats } from './services/ollamaApi.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

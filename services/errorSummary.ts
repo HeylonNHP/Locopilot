@@ -6,8 +6,8 @@
  * technical stderr output into a brief, human-readable summary.
  */
 
-import { sendOllamaChat } from '../ollamaApi.js';
-import type { ChatMessage } from '../ollamaApi.js';
+import { sendOllamaChat } from './ollamaApi.js';
+import type { ChatMessage } from './ollamaApi.js';
 
 const ERROR_SUMMARY_SYSTEM_PROMPT =
     'You are a technical support assistant. You will be given the output and exit code of a failed terminal command. ' +

@@ -14,8 +14,8 @@ import {
 import {
     fetchOllamaModels,
     getOllamaApiErrorMessage,
-} from './ollamaApi.js';
-import type { ChatMessage, OllamaModel } from './ollamaApi.js';
+} from './services/ollamaApi.js';
+import type { ChatMessage, OllamaModel } from './services/ollamaApi.js';
 import { compactHistory, printCompactStats } from './services/compact.js';
 import {
     createSession,

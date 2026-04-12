@@ -12,8 +12,8 @@
  */
 
 import chalk from 'chalk';
-import { sendOllamaChat, sendOllamaChatStream, getOllamaTurnStats } from '../ollamaApi.js';
-import type { ChatMessage } from '../ollamaApi.js';
+import { sendOllamaChat, sendOllamaChatStream, getOllamaTurnStats } from './ollamaApi.js';
+import type { ChatMessage } from './ollamaApi.js';
 import { countMessagesTokens } from '../tokenizer.js';
 
 // The instruction sent to the LLM when asking it to compact the history.

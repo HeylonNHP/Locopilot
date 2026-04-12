@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { createInterface } from 'readline';
 import { Readable } from 'stream';
-import type { ToolCallArguments } from './tools/tools.js';
+import type { ToolCallArguments } from '../tools/tools.js';
 
 export interface OllamaModelDetails {
     parent_model: string;
