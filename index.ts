@@ -483,6 +483,15 @@ async function startChat(
             clearLiveStatus();
             printCompactStats(result.stats);
             replaceMessages(messages, result.newMessages);
+            // Append a continuation nudge so the LLM explicitly resumes the active
+            // request after seeing the compacted context, rather than asking for guidance.
+            messages.push({
+                role: 'user',
+                content:
+                    'The conversation history was automatically compacted due to context length. ' +
+                    'Your original request and the most recent tool-call results have been preserved above. ' +
+                    'Please continue working on the original task without asking for confirmation.',
+            });
             context.saveSession();
             
             // Compaction completely changes the context, meaning our old baseline is no longer valid

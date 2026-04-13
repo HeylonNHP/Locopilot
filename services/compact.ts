@@ -129,6 +129,14 @@ function computeRecentMessageFloor(numCtx: number): number {
     return clamp(Math.round(numCtx / 32768) + 2, 2, 8);
 }
 
+/** Returns the index of the most recent `role === 'user'` message, or -1 if none. */
+function findLatestUserMessageIndex(messages: ChatMessage[]): number {
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i]?.role === 'user') return i;
+    }
+    return -1;
+}
+
 function splitHistoryForCompaction(
     historyMessages: ChatMessage[],
     model: string,
@@ -186,14 +194,61 @@ function splitHistoryForCompaction(
         preservedRecentTokens += estimatedMessageTokens;
     }
 
-    const preservedRecentMessages = preservedFromEnd.reverse();
-    const splitIndex = historyMessages.length - preservedRecentMessages.length;
+    const windowSplitIndex = historyMessages.length - preservedFromEnd.length;
+    const windowPreservedMessages = preservedFromEnd.reverse();
 
+    // ── Latest-user-message anchor ────────────────────────────────────────
+    // The most recent user message is a hard anchor: it must always appear in
+    // preservedRecentMessages (verbatim) and must never be summarised.
+    const latestUserIndex = findLatestUserMessageIndex(historyMessages);
+
+    // If the anchor is already inside the preserved window (or there is no user
+    // message at all), the normal result is correct — return it directly.
+    if (latestUserIndex < 0 || latestUserIndex >= windowSplitIndex) {
+        return {
+            messagesToSummarise: historyMessages.slice(0, windowSplitIndex),
+            preservedRecentMessages: windowPreservedMessages,
+            preservedRecentTokens: countMessagesTokens(windowPreservedMessages, model),
+        };
+    }
+
+    // The user prompt sits in the "to-summarise" portion — it must be rescued.
+    const anchorMessage = historyMessages[latestUserIndex]!;
+    const prePromptMessages = historyMessages.slice(0, latestUserIndex);
+    const postPromptPreWindowMessages = historyMessages.slice(latestUserIndex + 1, windowSplitIndex);
+
+    // Try A: summarise only the pre-prompt history (cleanest split).
+    if (countMessagesTokens(prePromptMessages, model) >= MIN_SUMMARISE_TOKENS) {
+        const preservedMessages = [anchorMessage, ...windowPreservedMessages];
+        return {
+            messagesToSummarise: prePromptMessages,
+            preservedRecentMessages: preservedMessages,
+            preservedRecentTokens: countMessagesTokens(preservedMessages, model),
+        };
+    }
+
+    // Try B: pre-prompt content alone is too small. Also fold in the post-prompt
+    // assistant/tool messages that sit between the anchor and the sliding-window
+    // boundary. The user prompt itself is still held out verbatim.
+    const combinedToSummarise = [...prePromptMessages, ...postPromptPreWindowMessages];
+    if (countMessagesTokens(combinedToSummarise, model) >= MIN_SUMMARISE_TOKENS) {
+        const preservedMessages = [anchorMessage, ...windowPreservedMessages];
+        return {
+            messagesToSummarise: combinedToSummarise,
+            preservedRecentMessages: preservedMessages,
+            preservedRecentTokens: countMessagesTokens(preservedMessages, model),
+        };
+    }
+
+    // Fallback: still not enough. Return the pre-prompt slice; the caller's
+    // MIN_SUMMARISE_TOKENS guard will decide whether to abort or expand.
+    const preservedMessages = [anchorMessage, ...windowPreservedMessages];
     return {
-        messagesToSummarise: historyMessages.slice(0, splitIndex),
-        preservedRecentMessages,
-        preservedRecentTokens,
+        messagesToSummarise: prePromptMessages,
+        preservedRecentMessages: preservedMessages,
+        preservedRecentTokens: countMessagesTokens(preservedMessages, model),
     };
+    // ── End anchor adjustment ─────────────────────────────────────────────
 }
 
 function getToolMessageName(message: ChatMessage): string {
@@ -306,15 +361,27 @@ export async function compactHistory(
     const historyMessages = messages.slice(1);
     let historySplit = splitHistoryForCompaction(historyMessages, model, numCtx);
 
-    // If the split leaves too little content to summarize, fall back to
-    // summarizing the full history with no sliding-window preservation.
+    // If the split leaves too little content to summarize, expand the summarised
+    // section — but still respect the latest-user-message anchor so it is never
+    // compacted away.
     const splitEstimate = countMessagesTokens(historySplit.messagesToSummarise, model);
     if (splitEstimate < MIN_SUMMARISE_TOKENS && historySplit.preservedRecentMessages.length > 0) {
-        historySplit = {
-            messagesToSummarise: historyMessages,
-            preservedRecentMessages: [],
-            preservedRecentTokens: 0,
-        };
+        const anchorIndex = findLatestUserMessageIndex(historyMessages);
+        if (anchorIndex > 0) {
+            historySplit = {
+                messagesToSummarise: historyMessages.slice(0, anchorIndex),
+                preservedRecentMessages: historyMessages.slice(anchorIndex),
+                preservedRecentTokens: countMessagesTokens(historyMessages.slice(anchorIndex), model),
+            };
+        } else {
+            // No prior history before the anchor (or no user message found) —
+            // fall back to summarising the full history as a last resort.
+            historySplit = {
+                messagesToSummarise: historyMessages,
+                preservedRecentMessages: [],
+                preservedRecentTokens: 0,
+            };
+        }
     }
 
     const fullEstimate = countMessagesTokens(historySplit.messagesToSummarise, model);
