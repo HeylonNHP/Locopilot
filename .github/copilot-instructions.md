@@ -118,7 +118,7 @@ Feature summary:
 - **Authoritative Stats**: Reconciles estimated local token counts (`tiktoken`) with authoritative metrics from Ollama (`prompt_eval_count`, `eval_count`) at the end of each turn.
 - **Token Calculation**: Estimated counts [tokenizer.ts](tokenizer.ts) add 4 tokens per message plus role, content, and tool call overhead to match OpenAI-style counting as a robust local approximation.
 - **Conversation Compaction**: The `/compact` command [compact.ts](compact.ts) uses a high-context LLM pass to summarize everything (decisions, code, paths) into the third person, injecting a `[This conversation history has been compacted...]` preamble.
-- **Auto-Compact**: When context usage reaches 92%, compaction is triggered automatically at the start of each tool-call loop iteration (covers both between-tool-call growth and end-of-turn growth). A yellow `⚡ Context at N% — auto-compacting...` line is printed. If compaction fails or is a no-op, a warning is shown but the loop continues uninterrupted.
+- **Auto-Compact**: When context usage reaches 92%, compaction is triggered automatically at the start of each tool-call loop iteration (covers both between-tool-call growth and end-of-turn growth). A yellow `⚡ Context at N% — auto-compacting...` line is printed. If compaction fails or is a no-op, a warning is shown but the loop continues uninterrupted. If the compacted result still exceeds 90% of the context window (`COMPACT_ACCEPTANCE_HEADROOM`), compaction automatically retries once with a stronger aggressiveness factor that shrinks preservation budgets and summary targets. The most recent user prompt is always preserved verbatim across both passes.
 
 ## Web search & Fetch tools
 
@@ -158,6 +158,11 @@ Feature summary:
     - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
+
+- 2026-04-14: Added aggressive compaction retry when first pass still exceeds context window
+  - Files: `services/compact.ts`, `.github/copilot-instructions.md`
+  - Summary: `compactHistory` now accepts an `aggressiveFactor` parameter (default 1.0) that scales down the preserved-recent-token budget, preserved-message floor, and summary target/max token ranges. After measuring the compacted result, if it still exceeds 90% of `numCtx` and the current factor is the default, the service automatically retries once with a stronger factor derived from the overflow ratio (`max(1.5, newTokenCount / (numCtx * 0.75))`). The retry feeds the already-compacted messages back through the full pipeline with tighter budgets. The latest user prompt remains a hard anchor across both passes; all earlier user prompts are eligible for summarization. Stats reported to the caller reflect the original-to-final token delta.
+  - Intent: Fix the failure mode where a single compaction pass reduced tokens but still left the history above the model's context limit, causing repeated no-op compactions and eventual 400 errors from the provider.
 
 - 2026-04-14: Added configurable per-page character limit for web page extraction
   - Files: `constants.ts`, `tools/commandHelpers.ts`, `tools/htmlExtractor.ts`, `tools/toolRegistry.ts`, `index.ts`, `slashCommands.ts`, `README.md`

@@ -9,6 +9,10 @@
  * model's context window. A preamble is injected into the summarised history
  * so the model understands it is receiving a condensed record rather than a
  * verbatim transcript.
+ *
+ * This compaction will preserve the most recent user prompt verbatim, summarise
+ * older history, and retry once with a stronger compression factor if the
+ * first pass still leaves the history too large for the model.
  */
 
 import chalk from 'chalk';
@@ -59,6 +63,10 @@ const PRESERVE_RECENT_TOKENS_RATIO = 0.12;
 const SUMMARY_TARGET_TOKENS_RATIO = 0.10;
 const SUMMARY_MAX_TOKENS_RATIO = 0.18;
 const SUMMARY_NUM_PREDICT_BUFFER_RATIO = 1.20;
+
+// Compacted result must fit within this fraction of numCtx to be accepted
+// without triggering an automatic aggressive retry pass.
+const COMPACT_ACCEPTANCE_HEADROOM = 0.90;
 
 // Preamble injected at the start of the compacted history so the model knows
 // it is reading a summary rather than a live transcript.
@@ -141,6 +149,7 @@ function splitHistoryForCompaction(
     historyMessages: ChatMessage[],
     model: string,
     numCtx: number,
+    aggressiveFactor: number = 1.0,
 ): HistorySplit {
     if (historyMessages.length <= 1) {
         return {
@@ -151,9 +160,9 @@ function splitHistoryForCompaction(
     }
 
     const preserveRecentTokenBudget = clamp(
-        Math.floor(numCtx * PRESERVE_RECENT_TOKENS_RATIO),
-        Math.max(300, Math.floor(numCtx * 0.03)),
-        Math.floor(numCtx * 0.30),
+        Math.floor(numCtx * PRESERVE_RECENT_TOKENS_RATIO / aggressiveFactor),
+        Math.max(300, Math.floor(numCtx * 0.03 / aggressiveFactor)),
+        Math.floor(numCtx * 0.30 / aggressiveFactor),
     );
     const minMessagesToSummarise = Math.min(
         Math.max(1, Math.ceil(historyMessages.length * 0.25)),
@@ -161,7 +170,7 @@ function splitHistoryForCompaction(
     );
     const maxPreservedMessages = Math.max(1, historyMessages.length - minMessagesToSummarise);
     const preserveRecentMessageFloor = Math.min(
-        computeRecentMessageFloor(numCtx),
+        Math.max(1, Math.floor(computeRecentMessageFloor(numCtx) / aggressiveFactor)),
         maxPreservedMessages,
     );
 
@@ -349,6 +358,7 @@ export async function compactHistory(
     messages: ChatMessage[],
     numCtx: number,
     onProgress?: (message: string) => void,
+    aggressiveFactor: number = 1.0,
 ): Promise<CompactResult> {
     const oldTokenCount = await measureConversationTokens(baseUrl, model, messages, numCtx, onProgress);
 
@@ -359,7 +369,7 @@ export async function compactHistory(
         throw new Error('Cannot compact an empty message history.');
     }
     const historyMessages = messages.slice(1);
-    let historySplit = splitHistoryForCompaction(historyMessages, model, numCtx);
+    let historySplit = splitHistoryForCompaction(historyMessages, model, numCtx, aggressiveFactor);
 
     // If the split leaves too little content to summarize, expand the summarised
     // section — but still respect the latest-user-message anchor so it is never
@@ -410,9 +420,9 @@ export async function compactHistory(
     );
 
     const rawMaxSummaryTokens = clamp(
-        Math.floor(numCtx * SUMMARY_MAX_TOKENS_RATIO),
-        Math.max(600, Math.floor(numCtx * 0.05)),
-        Math.max(1200, Math.floor(numCtx * 0.30)),
+        Math.floor(numCtx * SUMMARY_MAX_TOKENS_RATIO / aggressiveFactor),
+        Math.max(600, Math.floor(numCtx * 0.05 / aggressiveFactor)),
+        Math.max(1200, Math.floor(numCtx * 0.30 / aggressiveFactor)),
     );
     // Cap the summary budget so it can never exceed the source it is compressing.
     // Without this a tiny conversation gets a confusingly large target, which
@@ -423,8 +433,8 @@ export async function compactHistory(
     );
     const maxSummaryTokens = Math.min(rawMaxSummaryTokens, sourceCappedMaxSummaryTokens);
     const rawTargetSummaryTokens = clamp(
-        Math.floor(numCtx * SUMMARY_TARGET_TOKENS_RATIO),
-        Math.max(500, Math.floor(numCtx * 0.04)),
+        Math.floor(numCtx * SUMMARY_TARGET_TOKENS_RATIO / aggressiveFactor),
+        Math.max(500, Math.floor(numCtx * 0.04 / aggressiveFactor)),
         rawMaxSummaryTokens,
     );
     const targetSummaryTokens = clamp(
@@ -529,6 +539,29 @@ export async function compactHistory(
             `Compaction failed to reduce history size (old: ${oldTokenCount}, new: ${newTokenCount} tokens). ` +
             'Aborting to avoid increasing context usage.'
         );
+    }
+
+    // If the compacted result still exceeds the context window (with headroom),
+    // retry once with a stronger factor that shrinks preservation budgets and
+    // summary targets, forcing more aggressive compression.
+    const acceptanceBudget = Math.floor(numCtx * COMPACT_ACCEPTANCE_HEADROOM);
+    if (newTokenCount > acceptanceBudget && aggressiveFactor <= 1.0) {
+        const retryFactor = Math.max(1.5, newTokenCount / (numCtx * 0.75));
+        onProgress?.(
+            `Compacted to ${newTokenCount} tokens but limit is ${numCtx} — ` +
+            `retrying with ${retryFactor.toFixed(1)}x stronger compression...`,
+        );
+        const retryResult = await compactHistory(
+            baseUrl, model, newMessages, numCtx, onProgress, retryFactor,
+        );
+        // Report stats relative to the original pre-compaction history.
+        return {
+            newMessages: retryResult.newMessages,
+            stats: {
+                oldTokenCount,
+                newTokenCount: retryResult.stats.newTokenCount,
+            },
+        };
     }
 
     return {
