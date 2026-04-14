@@ -50,11 +50,18 @@ export function installKeyInterruptListener(keySpec = 'Ctrl+X'): void {
 
     readline.emitKeypressEvents(process.stdin);
 
+    // Always capture the current raw mode before we change anything so
+    // removeKeyInterruptListener can reliably restore it.
+    if (prevRawMode === null) {
+        prevRawMode = process.stdin.isRaw ?? false;
+    }
+
     if (keyInterruptListener) {
         process.stdin.off('keypress', keyInterruptListener);
         keyInterruptListener = null;
-    } else {
-        prevRawMode = process.stdin.isRaw;
+    }
+
+    if (!process.stdin.isRaw) {
         process.stdin.setRawMode(true);
     }
 
@@ -82,19 +89,28 @@ export function installKeyInterruptListener(keySpec = 'Ctrl+X'): void {
 }
 
 export function removeKeyInterruptListener(): void {
-    if (!process.stdin.isTTY || !keyInterruptListener) {
-        currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
-        return;
-    }
-
-    process.stdin.off('keypress', keyInterruptListener);
-    if (prevRawMode !== null) {
-        process.stdin.setRawMode(prevRawMode);
-    }
-
-    keyInterruptListener = null;
-    prevRawMode = null;
     currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
+
+    if (!process.stdin.isTTY) return;
+
+    // Remove the listener if it's still registered.
+    if (keyInterruptListener) {
+        process.stdin.off('keypress', keyInterruptListener);
+        keyInterruptListener = null;
+    }
+
+    // Always restore raw mode and pause stdin, even if the listener was
+    // already gone.  Skipping this step is what causes the terminal freeze:
+    // stdin stays in raw mode with no handler, so keypresses disappear and
+    // Ctrl+C no longer generates SIGINT on Windows.
+    const modeToRestore = prevRawMode ?? false;
+    prevRawMode = null;
+    try {
+        process.stdin.setRawMode(modeToRestore);
+    } catch {
+        // stdin may already be closed or in an unexpected state — ignore.
+    }
+    process.stdin.pause();
 }
 
 export function clearInterrupt(): void {
