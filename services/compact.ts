@@ -359,6 +359,7 @@ export async function compactHistory(
     numCtx: number,
     onProgress?: (message: string) => void,
     aggressiveFactor: number = 1.0,
+    remainingRetries: number = 2,
 ): Promise<CompactResult> {
     const oldTokenCount = await measureConversationTokens(baseUrl, model, messages, numCtx, onProgress);
 
@@ -410,6 +411,17 @@ export async function compactHistory(
         baseUrl,
         model,
         historySplit.messagesToSummarise,
+        numCtx,
+        onProgress,
+    );
+
+    // Also distill large tool outputs in the preserved window so they don't
+    // land in newMessages at full size, which is the main cause of compaction
+    // failing to bring token counts under the model context limit.
+    const preparedRecentMessages = await distillToolMessages(
+        baseUrl,
+        model,
+        historySplit.preservedRecentMessages,
         numCtx,
         onProgress,
     );
@@ -529,7 +541,7 @@ export async function compactHistory(
             role: 'assistant',
             content: `${SUMMARY_PREAMBLE}\n\n${summary}`,
         },
-        ...historySplit.preservedRecentMessages,
+        ...preparedRecentMessages,
     ];
 
     const newTokenCount = await measureConversationTokens(baseUrl, model, newMessages, numCtx, onProgress);
@@ -542,17 +554,17 @@ export async function compactHistory(
     }
 
     // If the compacted result still exceeds the context window (with headroom),
-    // retry once with a stronger factor that shrinks preservation budgets and
-    // summary targets, forcing more aggressive compression.
+    // retry with a stronger factor that shrinks preservation budgets and summary
+    // targets, forcing more aggressive compression. Bounded by remainingRetries.
     const acceptanceBudget = Math.floor(numCtx * COMPACT_ACCEPTANCE_HEADROOM);
-    if (newTokenCount > acceptanceBudget && aggressiveFactor <= 1.0) {
+    if (newTokenCount > acceptanceBudget && remainingRetries > 0) {
         const retryFactor = Math.max(1.5, newTokenCount / (numCtx * 0.75));
         onProgress?.(
             `Compacted to ${newTokenCount} tokens but limit is ${numCtx} — ` +
-            `retrying with ${retryFactor.toFixed(1)}x stronger compression...`,
+            `retrying with ${retryFactor.toFixed(1)}x stronger compression (${remainingRetries} attempt(s) left)...`,
         );
         const retryResult = await compactHistory(
-            baseUrl, model, newMessages, numCtx, onProgress, retryFactor,
+            baseUrl, model, newMessages, numCtx, onProgress, retryFactor, remainingRetries - 1,
         );
         // Report stats relative to the original pre-compaction history.
         return {

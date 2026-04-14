@@ -398,6 +398,12 @@ async function startChat(
             );
             clearLiveStatus();
             printCompactStats(result.stats);
+            if (result.stats.newTokenCount > numCtx) {
+                console.log(chalk.red(
+                    `⚠️  Compaction reduced context but history is still over the model limit ` +
+                    `(${result.stats.newTokenCount}/${numCtx} tokens). The next turn may fail.\n`,
+                ));
+            }
             replaceMessages(messages, result.newMessages);
             // Append a continuation nudge so the LLM explicitly resumes the active
             // request after seeing the compacted context, rather than asking for guidance.

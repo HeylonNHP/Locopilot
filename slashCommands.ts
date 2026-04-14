@@ -275,6 +275,12 @@ const COMPACT_HANDLER: SlashHandler = async (ctx) => {
         );
         clearLiveStatus();
         printCompactStats(result.stats);
+        if (result.stats.newTokenCount > ctx.numCtx) {
+            console.log(chalk.red(
+                `⚠️  Compaction reduced context but history is still over the model limit ` +
+                `(${result.stats.newTokenCount}/${ctx.numCtx} tokens). The next turn may fail.\n`,
+            ));
+        }
         
         // Re-initialize message array while keeping reference
         replaceMessages(ctx.messages, result.newMessages);
