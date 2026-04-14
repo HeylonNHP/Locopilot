@@ -389,6 +389,11 @@ Feature summary:
   - Summary: Moved the concrete Ollama implementation to `services/adapters/ollamaAdapter.ts`, added a generic `LlmAdapter` contract in `services/adapters/llmAdapter.ts`, and introduced `services/llm.ts` as the active-adapter facade (`getLlmAdapter`/`setLlmAdapter` plus provider-agnostic API wrappers). Updated all consumers to import generic chat/model/error functions and shared message/tool types from the facade.
   - Intent: Decouple application flow from Ollama-specific modules so additional providers (for example OpenAI-compatible endpoints) can be added as drop-in adapters without rewriting chat/session/tool orchestration.
 
+- 2026-04-14: Emit thought summary immediately when tool calls arrive after thinking
+  - Files: `aiResponseRenderer.ts`, `.github/copilot-instructions.md`
+  - Summary: In `streamAIResponse`, added a check inside the `chunk.message?.tool_calls` handler that fires `printThinkingSummary` as soon as the first tool-call chunk arrives (when the model was thinking). Previously the summary was only printed after the full stream ended, so the status bar would silently transition from `AI is thinking...` to `AI is requesting tools...` with no persistent record until later. The fix mirrors the existing behaviour for text content (line 243), where the summary is printed the instant thinking ends and output begins.
+  - Intent: Ensure users always see `(Thought for Xs · N chars)` the moment thinking transitions to tool-calling, not deferred until the end of the stream.
+
 - 2026-04-12: Fixed lingering final-status line and missing thought summary on tool-only turns
   - Files: `aiResponseRenderer.ts`, `index.ts`, `.github/copilot-instructions.md`
   - Summary: Added a dedicated thought-summary printer in `streamAIResponse` and ensured it also runs when the model produces tool calls without assistant content. Updated final-stats handling in `index.ts` to clear the live status line before logging token usage so `AI response received...` is not left in scrollback.

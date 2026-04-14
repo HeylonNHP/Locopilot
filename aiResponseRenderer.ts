@@ -248,6 +248,11 @@ export async function streamAIResponse(
             }
 
             if (chunk.message?.tool_calls) {
+                // If thinking preceded these tool calls, emit the persistent thought
+                // summary now — same timing as for the first content chunk above.
+                if (thinking.length > 0 && !thinkingSummaryPrinted) {
+                    printThinkingSummary(Date.now() - startTime, thinking.length);
+                }
                 // Track tool calls for the final result
                 toolCalls.push(...chunk.message.tool_calls);
                 
