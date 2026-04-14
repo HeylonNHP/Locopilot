@@ -16,6 +16,84 @@ interface TagsResponse {
     models: LlmModel[];
 }
 
+const CONTEXT_LIMIT_KEY_PATTERN = /(?:^|[._])(?:context_length|num_ctx|context_window)$/i;
+
+function parsePositiveInteger(value: unknown): number | null {
+    if (typeof value === 'number') {
+        return Number.isInteger(value) && value > 0 ? value : null;
+    }
+
+    if (typeof value === 'string') {
+        const parsed = Number.parseInt(value, 10);
+        return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    }
+
+    return null;
+}
+
+function findContextLimitInObject(value: unknown): number | null {
+    if (!value || typeof value !== 'object') {
+        return null;
+    }
+
+    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+        if (CONTEXT_LIMIT_KEY_PATTERN.test(key)) {
+            const parsed = parsePositiveInteger(nestedValue);
+            if (parsed !== null) {
+                return parsed;
+            }
+        }
+
+        const nestedLimit = findContextLimitInObject(nestedValue);
+        if (nestedLimit !== null) {
+            return nestedLimit;
+        }
+    }
+
+    return null;
+}
+
+function parseContextLimitFromText(value: unknown): number | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const patterns = [
+        /\bnum_ctx\s+(\d+)\b/i,
+        /\bcontext_length\s+(\d+)\b/i,
+    ];
+
+    for (const pattern of patterns) {
+        const match = value.match(pattern);
+        if (!match?.[1]) {
+            continue;
+        }
+
+        const parsed = Number.parseInt(match[1], 10);
+        if (Number.isInteger(parsed) && parsed > 0) {
+            return parsed;
+        }
+    }
+
+    return null;
+}
+
+function getOllamaModelContextLimit(info: LlmModelInfo): number | null {
+    const structuredLimit = findContextLimitInObject(info);
+    if (structuredLimit !== null) {
+        return structuredLimit;
+    }
+
+    for (const text of [info.parameters, info.modelfile]) {
+        const parsed = parseContextLimitFromText(text);
+        if (parsed !== null) {
+            return parsed;
+        }
+    }
+
+    return null;
+}
+
 function buildChatPayload(params: ChatParams, stream: boolean) {
     return {
         model: params.model,
@@ -204,6 +282,7 @@ export const ollamaAdapter: LlmAdapter = {
     validateConnection: validateOllamaConnection,
     fetchModels: fetchOllamaModels,
     fetchModelInfo: fetchOllamaModelInfo,
+    getModelContextLimit: getOllamaModelContextLimit,
     sendChat: sendOllamaChat,
     sendChatStream: sendOllamaChatStream,
     getApiErrorMessage: getOllamaApiErrorMessage,

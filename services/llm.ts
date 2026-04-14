@@ -34,6 +34,10 @@ export function fetchLlmModelInfo(baseUrl: string, modelName: string): Promise<L
     return activeAdapter.fetchModelInfo(baseUrl, modelName);
 }
 
+export function getLlmModelContextLimit(modelInfo: LlmModelInfo): number | null {
+    return activeAdapter.getModelContextLimit(modelInfo);
+}
+
 export function sendLlmChat(
     baseUrl: string,
     params: ChatParams,

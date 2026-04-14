@@ -72,6 +72,7 @@ export interface LlmModelInfo {
     parameters?: string;
     template?: string;
     system?: string;
+    model_info?: Record<string, unknown>;
     details?: LlmModelDetails;
     messages?: ChatMessage[];
     capabilities?: string[];
@@ -102,6 +103,7 @@ export interface LlmAdapter {
     validateConnection(baseUrl: string, timeoutMs?: number): Promise<void>;
     fetchModels(baseUrl: string): Promise<LlmModel[]>;
     fetchModelInfo(baseUrl: string, modelName: string): Promise<LlmModelInfo>;
+    getModelContextLimit(modelInfo: LlmModelInfo): number | null;
     sendChat(
         baseUrl: string,
         params: ChatParams,

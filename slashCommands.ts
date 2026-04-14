@@ -444,7 +444,15 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
             const parsed = Number.parseInt(numCtxInput, 10);
             await ctx.saveConfig({ ...ctx.config, numCtx: parsed });
             ctx.updateNumCtx(parsed);
-            console.log(chalk.green(`\nContext length updated to ${parsed}\n`));
+            if (ctx.numCtx < parsed) {
+                console.log(
+                    chalk.yellow(
+                        `\nContext length preference saved as ${parsed}, but ${ctx.currentModel} is capped at ${ctx.numCtx} for now.\n`,
+                    ),
+                );
+            } else {
+                console.log(chalk.green(`\nContext length updated to ${parsed}\n`));
+            }
         }
     } else if (action === 'chat_timeout') {
         const timeoutInput = await withExitGuard(async () => {

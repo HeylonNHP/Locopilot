@@ -408,3 +408,8 @@ Feature summary:
   - Files: `statusLine.ts`, `index.ts`, `.github/copilot-instructions.md`
   - Summary: Updated the live status bar and warning text so estimated counts no longer print as raw totals. Only the final authoritative Ollama snapshot prints full `used/limit` totals; in-progress UI now stays percentage-based unless the source is definitively Ollama.
   - Intent: Prevent tokenizer-based estimates from looking like authoritative token totals while preserving the final post-response token snapshot.
+
+- 2026-04-14: Added runtime-only model context clamping
+  - Files: `index.ts`, `services/adapters/llmAdapter.ts`, `services/adapters/ollamaAdapter.ts`, `services/llm.ts`, `slashCommands.ts`, `README.md`
+  - Summary: Added provider model-context lookup and split the saved requested `num_ctx` from the active runtime value. When a selected model reports a smaller context window than the user's setting, Locopilot now clamps the live session context in memory only, warns the user, and keeps `config.json` unchanged until the user explicitly changes the setting.
+  - Intent: Respect provider limits without silently overwriting the user's saved context preference.

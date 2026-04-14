@@ -21,6 +21,7 @@ import {
     validateLlmConnection,
     getLlmApiErrorMessage,
     fetchLlmModelInfo,
+    getLlmModelContextLimit,
     type ChatMessage,
 } from './services/llm.js';
 import { summarizeCommandError } from './services/errorSummary.js';
@@ -240,7 +241,7 @@ async function selectOrCreateSession(models: string[], selectedModel: string): P
 
 async function startChat(
     model: string,
-    numCtx: number,
+    requestedNumCtxInput: number,
     sessionId: number,
     config: Config,
     preloadedMessages?: ChatMessage[],
@@ -249,20 +250,44 @@ async function startChat(
     let currentSessionId = sessionId;
     const baseUrl = config.baseUrl;
     let thinkingSupported = false;
+    let requestedNumCtx = requestedNumCtxInput;
+    let numCtx = requestedNumCtxInput;
+    let modelContextLimit: number | null = null;
 
-    async function checkThinkingSupport(modelName: string) {
+    function applyEffectiveNumCtx(): void {
+        numCtx = modelContextLimit && modelContextLimit > 0
+            ? Math.min(requestedNumCtx, modelContextLimit)
+            : requestedNumCtx;
+    }
+
+    async function loadModelMetadata(modelName: string): Promise<void> {
+        thinkingSupported = false;
+        modelContextLimit = null;
+
         try {
             const info = await fetchLlmModelInfo(baseUrl, modelName);
             thinkingSupported = !!(info.capabilities && info.capabilities.includes('thinking'));
+            modelContextLimit = getLlmModelContextLimit(info);
+            applyEffectiveNumCtx();
             if (thinkingSupported) {
                 console.log(chalk.dim(`(Model ${modelName} supports thinking)`));
             }
-        } catch (e) {
+            if (modelContextLimit && requestedNumCtx > modelContextLimit) {
+                console.log(
+                    chalk.yellow(
+                        `\n⚠️  Model ${modelName} reports max context num_ctx=${modelContextLimit}; ` +
+                        `using that temporarily instead of requested ${requestedNumCtx}.\n`,
+                    ),
+                );
+            }
+        } catch {
             thinkingSupported = false;
+            modelContextLimit = null;
+            applyEffectiveNumCtx();
         }
     }
 
-    await checkThinkingSupport(currentModel);
+    await loadModelMetadata(currentModel);
 
     console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
     console.log(chalk.dim(`(Using context length num_ctx=${numCtx})`));
@@ -304,7 +329,8 @@ async function startChat(
             await saveConfig(config);
         },
         updateNumCtx: (newNumCtx: number) => {
-            numCtx = newNumCtx;
+            requestedNumCtx = newNumCtx;
+            applyEffectiveNumCtx();
         },
         saveSession: (tokenStats?: SessionTokenStats | null) =>
             updateSessionMessages(currentSessionId, messages, tokenStats),
@@ -312,9 +338,8 @@ async function startChat(
         updateModel: async (model: string) => {
             currentModel = model;
             config.lastModel = currentModel;
-            config.numCtx = numCtx;
             await saveConfig(config);
-            await checkThinkingSupport(currentModel);
+            await loadModelMetadata(currentModel);
             console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
         },
         updateSession: (sessionId: number, newMessages: ChatMessage[], isNamed: boolean) => {
@@ -607,7 +632,6 @@ async function startChat(
                     }
 
                     config.lastModel = currentModel;
-                    config.numCtx = numCtx;
                     await saveConfig(config);
                     context.saveSession(sessionTokenStats);
                     break;
