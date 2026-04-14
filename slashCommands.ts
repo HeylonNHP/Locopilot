@@ -239,6 +239,7 @@ const MODEL_HANDLER: SlashHandler = async (ctx) => {
         return await select({
             message: 'Select a model to chat with:',
             choices: latestModels.map((m: string) => ({ name: m, value: m })),
+            default: ctx.currentModel,
             pageSize: 10
         });
     });

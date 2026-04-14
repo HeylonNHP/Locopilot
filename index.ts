@@ -663,9 +663,6 @@ async function main(): Promise<void> {
         return;
     }
 
-    console.log(chalk.green(`Found ${models.length} models:`));
-    models.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
-
     const { model: selectedModel, numCtx: selectedNumCtx } = await configureModelAndContext(config, models);
     const { sessionId, messages: startingMessages, model: finalModel } = await selectOrCreateSession(models, selectedModel);
 
