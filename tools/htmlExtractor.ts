@@ -201,8 +201,12 @@ export async function fetchAndExtract(
 
     const html = response.data;
     const title = extractTitle(html, finalUrl);
-    const text = extractMainText(html, finalUrl).slice(0, settings.perPageCharLimit);
+    const perPageCharLimit = Number.isFinite(settings.perPageCharLimit)
+        ? Math.max(0, Math.floor(settings.perPageCharLimit))
+        : 0;
+    const text = extractMainText(html, finalUrl);
+    const limitedText = perPageCharLimit > 0 ? text.slice(0, perPageCharLimit) : text;
     const links = extractLinks(html, finalUrl);
 
-    return { title, text, finalUrl, links };
+    return { title, text: limitedText, finalUrl, links };
 }

@@ -159,6 +159,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-14: Added configurable per-page character limit for web page extraction
+  - Files: `constants.ts`, `tools/commandHelpers.ts`, `tools/htmlExtractor.ts`, `tools/toolRegistry.ts`, `index.ts`, `slashCommands.ts`, `README.md`
+  - Summary: Promoted the hard-coded 2,500-character extraction cap into persisted `webSearch.perPageCharLimit` config, propagated it through startup and runtime tool settings, and added a `/settings` control that accepts `0` for unlimited page text.
+  - Intent: Let users trade off token usage versus retrieval depth without editing source, while keeping the default behavior unchanged.
+
 - 2026-04-14: Added `/dump` conversation history export
   - Files: `services/historyDump.ts` (new), `slashCommands.ts`, `README.md`, `.github/copilot-instructions.md`
   - Summary: Added a slash command that writes the current conversation transcript, system prompt, tool calls, tool results, and attached images to a timestamped markdown file in the working directory.

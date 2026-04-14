@@ -14,7 +14,7 @@ import { FetchImageTool, type FetchImageToolArgs, type FetchImageResult } from '
 import { ReadFileTool, type ReadFileToolArgs } from './impl/readFileTool.js';
 import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool.js';
 import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from '../runCommandTool.js';
-import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../constants.js';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants.js';
 import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers.js';
 
 // --- Shared mutable state ---
@@ -25,7 +25,7 @@ const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
     maxQueries: 3,
     resultsPerQuery: 3,
     requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-    perPageCharLimit: 2_500,
+    perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
 };
 
 let webSearchSettings: WebSearchSettings = { ...DEFAULT_WEB_SEARCH_SETTINGS };
@@ -41,6 +41,7 @@ export function setYoloMode(enabled: boolean): void {
 export interface ToolWebSearchConfig {
     maxQueries: number;
     resultsPerQuery: number;
+    perPageCharLimit: number;
 }
 
 export function setWebSearchConfig(config: ToolWebSearchConfig): void {
@@ -48,6 +49,9 @@ export function setWebSearchConfig(config: ToolWebSearchConfig): void {
         ...webSearchSettings,
         maxQueries: Math.max(1, Math.floor(config.maxQueries)),
         resultsPerQuery: Math.max(1, Math.floor(config.resultsPerQuery)),
+        perPageCharLimit: Number.isFinite(config.perPageCharLimit)
+            ? Math.max(0, Math.floor(config.perPageCharLimit))
+            : DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
     };
 }
 

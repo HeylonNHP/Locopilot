@@ -6,10 +6,12 @@ import {
     setYoloMode,
     setWebSearchConfig,
 } from './tools/tools.js';
+import { parseNonNegativeInteger } from './tools/commandHelpers.js';
 import {
     DEFAULT_NUM_CTX,
     DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
     DEFAULT_WEB_SEARCH_MAX_QUERIES,
+    DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
 } from './constants.js';
 import {
@@ -41,6 +43,7 @@ export interface Config {
     webSearch?: {
         maxQueries: number;
         resultsPerQuery: number;
+        perPageCharLimit: number;
     };
 }
 
@@ -416,6 +419,7 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 { name: `Chat Timeout (${(ctx.config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000}s)`, value: 'chat_timeout' },
                 { name: `Web Search: Max Queries (${ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES})`, value: 'web_max_queries' },
                 { name: `Web Search: Results Per Query (${ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY})`, value: 'web_results_per_query' },
+                { name: `Web Search: Page Char Limit (0 = unlimited) (${ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT})`, value: 'web_per_page_char_limit' },
                 { name: 'Back to Chat', value: 'back' }
             ]
         });
@@ -519,6 +523,7 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
             const newWebSearch = {
                 maxQueries: parsed,
                 resultsPerQuery: ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+                perPageCharLimit: ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
             };
             await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
             setWebSearchConfig(newWebSearch);
@@ -542,10 +547,37 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
             const newWebSearch = {
                 maxQueries: ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
                 resultsPerQuery: parsed,
+                perPageCharLimit: ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
             };
             await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
             setWebSearchConfig(newWebSearch);
             console.log(chalk.green(`\nResults per query updated to ${parsed}\n`));
+        }
+    } else if (action === 'web_per_page_char_limit') {
+        const inputVal = await withExitGuard(async () => {
+            return await input({
+                message: 'Web search setting: page character limit (0 = unlimited):',
+                default: String(ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT),
+                validate: (value: string) => {
+                    const parsed = parseNonNegativeInteger(Number.parseInt(value, 10));
+                    return parsed !== null
+                        ? true
+                        : 'Please enter a non-negative integer.';
+                },
+            });
+        });
+        if (inputVal !== null) {
+            const parsed = parseNonNegativeInteger(Number.parseInt(inputVal, 10));
+            if (parsed !== null) {
+                const newWebSearch = {
+                    maxQueries: ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
+                    resultsPerQuery: ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+                    perPageCharLimit: parsed,
+                };
+                await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
+                setWebSearchConfig(newWebSearch);
+                console.log(chalk.green(`\nPage character limit updated to ${parsed === 0 ? 'unlimited' : parsed}\n`));
+            }
         }
     }
 
