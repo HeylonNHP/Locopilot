@@ -18,6 +18,7 @@ import {
 } from './services/llm.js';
 import type { ChatMessage, LlmModel } from './services/llm.js';
 import { compactHistory, printCompactStats } from './services/compact.js';
+import { writeConversationHistoryDump } from './services/historyDump.js';
 import {
     createSession,
     listSessions,
@@ -282,6 +283,33 @@ const COMPACT_HANDLER: SlashHandler = async (ctx) => {
     return true;
 };
 
+const DUMP_HANDLER: SlashHandler = async (ctx) => {
+    const currentSession = listSessions().find((session: Session) => session.id === ctx.currentSessionId);
+
+    try {
+        const result = await writeConversationHistoryDump({
+            sessionId: ctx.currentSessionId,
+            sessionName: currentSession?.name,
+            currentModel: ctx.currentModel,
+            baseUrl: ctx.baseUrl,
+            runtimeNumCtx: ctx.numCtx,
+            savedNumCtx: ctx.config.numCtx,
+            systemPrompt: ctx.systemPrompt,
+            messages: ctx.messages,
+            config: ctx.config,
+        });
+
+        console.log(chalk.green(`\nConversation history dumped to ${result.filePath}\n`));
+    } catch (error) {
+        console.error(
+            chalk.red('History dump failed:'),
+            error instanceof Error ? error.message : String(error),
+        );
+    }
+
+    return true;
+};
+
 const SESSIONS_HANDLER: SlashHandler = async (ctx) => {
     const sessions = listSessions();
     if (sessions.length === 0) {
@@ -529,6 +557,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     { name: chalk.blue('/model') + '    - Switch LLM model', value: '/model' },
     { name: chalk.blue('/settings') + ' - Change session and app settings', value: '/settings' },
     { name: chalk.blue('/compact') + '  - Summarise conversation history to save context', value: '/compact' },
+    { name: chalk.blue('/dump') + '     - Export the current conversation as a markdown debug file', value: '/dump' },
     { name: chalk.blue('/sessions') + ' - List and switch to a previous conversation', value: '/sessions' },
     { name: chalk.blue('/delete') + '   - Delete a saved conversation', value: '/delete' },
     { name: chalk.blue('/nudge') + '    - Manually remind the AI to use tools', value: '/nudge' },
@@ -541,6 +570,7 @@ export const COMMAND_HANDLERS: Record<string, SlashHandler> = {
     '/model': MODEL_HANDLER,
     '/settings': SETTINGS_HANDLER,
     '/compact': COMPACT_HANDLER,
+    '/dump': DUMP_HANDLER,
     '/sessions': SESSIONS_HANDLER,
     '/delete': DELETE_HANDLER,
     '/nudge': NUDGE_HANDLER,

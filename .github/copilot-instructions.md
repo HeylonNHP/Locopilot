@@ -87,6 +87,7 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
     - `/model`: Refresh and switch LLM models mid-conversation.
     - `/settings`: Change App and Session settings (replaces initial startup prompts).
     - `/compact`: Force conversation summarization to recover context.
+  - `/dump`: Export the current conversation history, including the system prompt and tool call/tool result details, to a markdown debug file.
     - `/sessions`: Switch between multiple persistent chat histories.
     - `/delete`: Remove a session from the local database.
     - `/nudge`: Manually inject a tool-use reminder if the AI is hesitant.
@@ -157,6 +158,11 @@ Feature summary:
     - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
+
+- 2026-04-14: Added `/dump` conversation history export
+  - Files: `services/historyDump.ts` (new), `slashCommands.ts`, `README.md`, `.github/copilot-instructions.md`
+  - Summary: Added a slash command that writes the current conversation transcript, system prompt, tool calls, tool results, and attached images to a timestamped markdown file in the working directory.
+  - Intent: Make it easy to capture a full debugging snapshot without bloating the main slash command registry.
 
 - 2026-03-12: Added `fetch_image` tool for vision models
   - Files: `tools/fetchImageTool.ts` (new), `tools.ts`, `ollamaApi.ts`, `history.ts`, `index.ts`, `package.json`

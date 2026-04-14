@@ -38,6 +38,7 @@ $env:YOLO="true"; npm start
 - Renders AI replies as terminal-friendly markdown.
 - Supports safe command execution via `run_command` with optional YOLO approval.
 - Provides web helpers like `web_search` and `fetch_url` for additional context.
+- Exports the current conversation as a markdown debug snapshot with `/dump`, including the system prompt and tool calls/results.
 
 ## Requirements
 
