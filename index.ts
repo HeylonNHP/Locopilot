@@ -1,6 +1,5 @@
 import { access, readFile, writeFile } from 'fs/promises';
 import path from 'path';
-import * as readline from 'readline';
 
 import chalk from 'chalk';
 import { input, select } from '@inquirer/prompts';
@@ -44,8 +43,8 @@ import { updatePhase, clearLiveStatus } from './statusLine.js';
 import {
     COMMAND_HANDLERS,
     getModels,
+    getMultilineInput,
     replaceMessages,
-    SLASH_COMMANDS,
     type ChatContext,
     type Config,
     withExitGuard,
@@ -237,118 +236,6 @@ async function selectOrCreateSession(models: string[], selectedModel: string): P
     const messages = loadSessionMessages(sessionChoice);
     console.log(chalk.dim(`Resuming session [${sessionChoice}] with ${messages.length} messages.`));
     return { sessionId: sessionChoice, messages, model: currentModel };
-}
-
-async function getMultilineInput(promptStr: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const commands = SLASH_COMMANDS.map(c => c.value);
-        const completer = (line: string) => {
-            const hits = commands.filter((c) => c.startsWith(line));
-            return [hits.length ? hits : commands, line];
-        };
-
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-            prompt: promptStr,
-            terminal: true,
-            historySize: 500,
-            completer
-        });
-
-        let buffer: string[] = [];
-        let pasteTimeout: ReturnType<typeof setTimeout> | null = null;
-        let inBlock = false;
-
-        const onKeypress = async (str: string, key: any) => {
-            // Only show menu for the very first character of the very first line
-            if (buffer.length > 0 || inBlock || rl.line.length > 1) return;
-            
-            const line = rl.line;
-            if (line === '/') {
-                // Pause rl to prevent it from consuming arrow keys/enter while select is active
-                rl.pause();
-                process.stdin.removeListener('keypress', onKeypress);
-
-                // Clear the "/" character before showing select
-                process.stdout.write('\r\x1B[K');
-
-                const choice = await withExitGuard(async () => {
-                    return await select({
-                        message: 'Select a command:',
-                        choices: SLASH_COMMANDS.map(c => ({ 
-                            name: c.name, 
-                            value: c.value 
-                        })),
-                        pageSize: 10
-                    });
-                });
-
-                if (choice) {
-                    // Replace "/" with the chosen command and immediately resolve
-                    cleanup();
-                    rl.close();
-                    resolve(choice);
-                    return;
-                } else {
-                    // User cancelled, restore the "/"
-                    rl.write('/');
-                }
-
-                // Resume rl and re-attach listener
-                rl.resume();
-                process.stdin.on('keypress', onKeypress);
-                rl.prompt(true);
-            }
-        };
-
-        process.stdin.on('keypress', onKeypress);
-
-        rl.prompt();
-
-        const cleanup = () => {
-            process.stdin.removeListener('keypress', onKeypress);
-        };
-
-        rl.on('line', (line) => {
-            buffer.push(line);
-
-            if (pasteTimeout) clearTimeout(pasteTimeout);
-
-            // Toggle block mode on """
-            if (line.trim() === '"""') {
-                inBlock = !inBlock;
-            }
-
-            if (inBlock) {
-                rl.setPrompt('... ');
-                rl.prompt();
-                return;
-            }
-
-            // Normal line continuation via backslash
-            if (line.endsWith('\\')) {
-                buffer[buffer.length - 1] = line.slice(0, -1);
-                rl.setPrompt('... ');
-                rl.prompt();
-                return;
-            }
-
-            pasteTimeout = setTimeout(() => {
-                cleanup();
-                rl.close();
-                resolve(buffer.join('\n'));
-            }, 30);
-        });
-
-        rl.on('SIGINT', () => {
-            cleanup();
-            rl.close();
-            const err = new Error('ExitPromptError');
-            err.name = 'ExitPromptError';
-            reject(err);
-        });
-    });
 }
 
 async function startChat(
@@ -568,7 +455,7 @@ async function startChat(
 
         if (prompt.toLowerCase() === 'exit') break;
 
-        // Note: the prompt is already visible via readline so we don't need to manually print it again.
+        // The prompt is already visible, so we don't need to manually print it again.
         
         // Let's ensure string formatting is standard before sending to model
         prompt = prompt.replace(/^"""|"""$/g, '');
