@@ -169,6 +169,66 @@ Feature summary:
   - Summary: Added a slash command that writes the current conversation transcript, system prompt, tool calls, tool results, and attached images to a timestamped markdown file in the working directory.
   - Intent: Make it easy to capture a full debugging snapshot without bloating the main slash command registry.
 
+- 2026-04-14: Emit thought summary immediately when tool calls arrive after thinking
+  - Files: `aiResponseRenderer.ts`, `.github/copilot-instructions.md`
+  - Summary: In `streamAIResponse`, added a check inside the `chunk.message?.tool_calls` handler that fires `printThinkingSummary` as soon as the first tool-call chunk arrives (when the model was thinking). Previously the summary was only printed after the full stream ended, so the status bar would silently transition from `AI is thinking...` to `AI is requesting tools...` with no persistent record until later. The fix mirrors the existing behaviour for text content (line 243), where the summary is printed the instant thinking ends and output begins.
+  - Intent: Ensure users always see `(Thought for Xs · N chars)` the moment thinking transitions to tool-calling, not deferred until the end of the stream.
+
+- 2026-04-14: Added runtime-only model context clamping
+  - Files: `index.ts`, `services/adapters/llmAdapter.ts`, `services/adapters/ollamaAdapter.ts`, `services/llm.ts`, `slashCommands.ts`, `README.md`
+  - Summary: Added provider model-context lookup and split the saved requested `num_ctx` from the active runtime value. When a selected model reports a smaller context window than the user's setting, Locopilot now clamps the live session context in memory only, warns the user, and keeps `config.json` unchanged until the user explicitly changes the setting.
+  - Intent: Respect provider limits without silently overwriting the user's saved context preference.
+
+- 2026-04-12: Introduced provider adapter layer for LLM backends
+  - Files: `services/adapters/llmAdapter.ts` (new), `services/adapters/ollamaAdapter.ts`, `services/llm.ts` (new), `index.ts`, `aiResponseRenderer.ts`, `slashCommands.ts`, `services/compact.ts`, `services/errorSummary.ts`, `history.ts`, `tokenizer.ts`, `.github/copilot-instructions.md`
+  - Summary: Moved the concrete Ollama implementation to `services/adapters/ollamaAdapter.ts`, added a generic `LlmAdapter` contract in `services/adapters/llmAdapter.ts`, and introduced `services/llm.ts` as the active-adapter facade (`getLlmAdapter`/`setLlmAdapter` plus provider-agnostic API wrappers). Updated all consumers to import generic chat/model/error functions and shared message/tool types from the facade.
+  - Intent: Decouple application flow from Ollama-specific modules so additional providers (for example OpenAI-compatible endpoints) can be added as drop-in adapters without rewriting chat/session/tool orchestration.
+
+- 2026-04-12: Fixed lingering final-status line and missing thought summary on tool-only turns
+  - Files: `aiResponseRenderer.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a dedicated thought-summary printer in `streamAIResponse` and ensured it also runs when the model produces tool calls without assistant content. Updated final-stats handling in `index.ts` to clear the live status line before logging token usage so `AI response received...` is not left in scrollback.
+  - Intent: Preserve clear terminal UX after thinking completes by showing thought duration/character count and preventing status-line artifacts from becoming permanent output.
+
+- 2026-04-12: Restored persistent final token snapshot after each AI turn
+  - Files: `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added `printFinalTokenSnapshot()` and invoked it from the final-stats callback so each completed response prints a stable `used/limit`, percentage, source tag, and used-token count line after clearing the live status line.
+  - Intent: Bring back easy-to-read final token totals in scrollback without reintroducing lingering status-line artifacts.
+
+- 2026-04-12: Hid estimated token totals from live status output
+  - Files: `statusLine.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Updated the live status bar and warning text so estimated counts no longer print as raw totals. Only the final authoritative Ollama snapshot prints full `used/limit` totals; in-progress UI now stays percentage-based unless the source is definitively Ollama.
+  - Intent: Prevent tokenizer-based estimates from looking like authoritative token totals while preserving the final post-response token snapshot.
+
+- 2026-04-05: Integrated Ollama authoritative tokens for auto-compaction
+  - Files: `index.ts`, `.github/copilot-instructions.md`
+  - Summary: `getCurrentTokenEstimate()` now anchors the total context estimate to the last exact token count provided by Ollama (`lastAuthoritativeTokens`) and only uses the local Tiktoken approximation for the delta of added messages since that point.
+  - Intent: Fix a bug where the local tokenizer heavily underestimated true token cost, causing the application to warn about 96% context usage but incorrectly failing to automatically compact because its internal calculation stayed under 92%.
+
+- 2026-04-04: Improved `/compact` with output budgeting and sliding-window preservation
+  - Files: `compact.ts`, `.github/copilot-instructions.md`
+  - Summary: Added three compaction upgrades: (1) explicit `num_predict` overrides for summarization/distillation to avoid backend defaults truncating around ~2k tokens, (2) dynamic budget signaling in the summarizer system prompt with target/min/max token guidance derived from `numCtx`, and (3) context-scaled sliding-window preservation of recent messages so only older history is summarized while newer turns remain verbatim.
+  - Intent: Retain materially more useful context on large windows (e.g. 128k) while still reducing history size and preventing over-aggressive summarization.
+
+- 2026-04-04: Tuned `/compact` to avoid no-op growth on short splits
+  - Files: `compact.ts`, `.github/copilot-instructions.md`
+  - Summary: Reduced preserved-recent aggressiveness (lower ratio/floor, capped preserved message count by minimum summary share) and added source-aware summary budget capping so summary targets scale down when only a small slice is being summarized.
+  - Intent: Reduce failures where compaction preserved too much recent history and summary output grew enough to exceed original token count.
+
+- 2026-04-04: Added automatic context compaction
+  - Files: `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added `autoCompactIfNeeded()` in `index.ts` that triggers compaction when estimated token usage reaches `AUTO_COMPACT_THRESHOLD_PCT` (92%). The function is called at the top of every tool-call loop iteration, covering both mid-turn (between tool calls) and end-of-turn growth. A yellow `⚡` status line informs the user; errors are caught and shown as non-fatal warnings so the loop always continues.
+  - Intent: Prevent context-overflow hard stops by proactively compacting during long agentic runs without requiring user intervention.
+
+- 2026-03-24: Moved startup configuration prompts to a /settings menu
+  - Files: `index.ts`, `slashCommands.ts`, `constants.ts`
+  - Summary: Removed repetitive prompts for Execution Mode, max queries, and context length on startup. Added a `/settings` slash command to configure these mid-session.
+  - Intent: Streamline app startup and improve UX by persisting previous configurations and relying on fallbacks.
+
+- 2026-03-24: Replaced Inquirer `search` with standard `readline` for improved multi-line input
+  - Files: `index.ts`
+  - Summary: Replaced `@inquirer/prompts/search` component with a custom `getMultilineInput` node readline interface. It gracefully delays `30ms` upon encountering a newline to wait for potentially fast-arriving lines (pasting multi-line text) and supports `"""` syntax or trailing `\` to compose lines manually.
+  - Intent: Allow the user to intuitively paste terminal outputs or Python blocks into the CLI without accidental early submissions caused by embedded `\r\n`. Autocomplete for `/slash` commands was retained via the native `readline` completer (`<Tab>`).
+
 - 2026-03-12: Added `fetch_image` tool for vision models
   - Files: `tools/fetchImageTool.ts` (new), `tools.ts`, `ollamaApi.ts`, `history.ts`, `index.ts`, `package.json`
   - Summary: New tool that fetches an image from an HTTP/HTTPS URL or an absolute local file path, encodes it as base64, and attaches it to the tool result message via the `images` field on `ChatMessage`. `handleToolCall` return type changed from `string` to `ToolCallResult { content, images? }`. `history.ts` gained an `images` column on the messages table (migration-safe via `addColumnIfMissing`) so image data survives session reload. Supports JPEG, PNG, GIF, WebP, BMP, etc.; 10 MB limit. Image format is validated using the `image-type` library (magic bytes) to reject non-image resources (like HTML error pages masquerading as images) before processing.
@@ -249,6 +309,22 @@ Feature summary:
   - Summary: Fixed dead variables, interrupt guards, token encoder staleness, session JSON parsing, and redundant HTML extraction. Corrected string concatenation in web search system prompt.
   - Intent: Improve application stability, accuracy of token counts, and performance of web tool execution.
 
+- 2026-02-28: Added stdin error handling for `run_command`
+  - Files: `runCommandTool.ts`, `.github/copilot-instructions.md`
+  - Summary: Added explicit handling for missing stdin streams, asynchronous stdin errors, and synchronous stdin write/end failures when sending shell commands.
+  - Intent: Prevent unhandled EPIPE-like failures and ensure command execution errors are surfaced as tool results instead of crashing or hanging.
+
+- 2026-02-28: Fixed `cmd` shell configuration for stdin execution
+  - Files: `runCommandTool.ts`, `.github/copilot-instructions.md`
+  - Summary: Updated `getShellConfig` to use `cmd.exe` with `/D /Q` so stdin-fed scripts execute more predictably and with cleaner output on Windows.
+  - Intent: Keep command execution behavior consistent across shells while preserving the exact-via-stdin design.
+
+- 2026-02-28: Added elapsed time to command tool output
+  - Files: `runCommandTool.ts`, `.github/copilot-instructions.md`
+  - Summary: `buildOutput` now reports `elapsed_seconds` for both running and completed commands.
+  - Intent: Give the model and user clearer runtime context when polling long-running commands or diagnosing slow executions.
+
+(End of maintenance instructions)
 - 2026-02-26: Kept slash autocomplete while removing duplicate prompt echo
   - Files: `index.ts`, `.github/copilot-instructions.md`
   - Summary: Restored `@inquirer/prompts` `search`-based input for slash-command autocomplete and applied theme overrides to suppress the prompt's final "done" echo line.
@@ -348,79 +424,3 @@ Feature summary:
   - Files: `tools.ts`
   - Summary: Consolidated shell resolution and configuration logic. Extracted redundant process completion and interrupt handling logic into a shared helper within the runCommand promise.
   - Intent: Improve maintainability and reduce code duplication in the tool execution layer.
-
-- 2026-02-28: Added stdin error handling for `run_command`
-  - Files: `runCommandTool.ts`, `.github/copilot-instructions.md`
-  - Summary: Added explicit handling for missing stdin streams, asynchronous stdin errors, and synchronous stdin write/end failures when sending shell commands.
-  - Intent: Prevent unhandled EPIPE-like failures and ensure command execution errors are surfaced as tool results instead of crashing or hanging.
-
-- 2026-02-28: Fixed `cmd` shell configuration for stdin execution
-  - Files: `runCommandTool.ts`, `.github/copilot-instructions.md`
-  - Summary: Updated `getShellConfig` to use `cmd.exe` with `/D /Q` so stdin-fed scripts execute more predictably and with cleaner output on Windows.
-  - Intent: Keep command execution behavior consistent across shells while preserving the exact-via-stdin design.
-
-- 2026-02-28: Added elapsed time to command tool output
-  - Files: `runCommandTool.ts`, `.github/copilot-instructions.md`
-  - Summary: `buildOutput` now reports `elapsed_seconds` for both running and completed commands.
-  - Intent: Give the model and user clearer runtime context when polling long-running commands or diagnosing slow executions.
-
-(End of maintenance instructions)
-- 2026-03-24: Moved startup configuration prompts to a /settings menu
-  - Files: `index.ts`, `slashCommands.ts`, `constants.ts`
-  - Summary: Removed repetitive prompts for Execution Mode, max queries, and context length on startup. Added a `/settings` slash command to configure these mid-session.
-  - Intent: Streamline app startup and improve UX by persisting previous configurations and relying on fallbacks.
-
-- 2026-03-24: Replaced Inquirer `search` with standard `readline` for improved multi-line input
-  - Files: `index.ts`
-  - Summary: Replaced `@inquirer/prompts/search` component with a custom `getMultilineInput` node readline interface. It gracefully delays `30ms` upon encountering a newline to wait for potentially fast-arriving lines (pasting multi-line text) and supports `"""` syntax or trailing `\` to compose lines manually.
-  - Intent: Allow the user to intuitively paste terminal outputs or Python blocks into the CLI without accidental early submissions caused by embedded `\r\n`. Autocomplete for `/slash` commands was retained via the native `readline` completer (`<Tab>`).
-
-- 2026-04-04: Improved `/compact` with output budgeting and sliding-window preservation
-  - Files: `compact.ts`, `.github/copilot-instructions.md`
-  - Summary: Added three compaction upgrades: (1) explicit `num_predict` overrides for summarization/distillation to avoid backend defaults truncating around ~2k tokens, (2) dynamic budget signaling in the summarizer system prompt with target/min/max token guidance derived from `numCtx`, and (3) context-scaled sliding-window preservation of recent messages so only older history is summarized while newer turns remain verbatim.
-  - Intent: Retain materially more useful context on large windows (e.g. 128k) while still reducing history size and preventing over-aggressive summarization.
-
-- 2026-04-04: Tuned `/compact` to avoid no-op growth on short splits
-  - Files: `compact.ts`, `.github/copilot-instructions.md`
-  - Summary: Reduced preserved-recent aggressiveness (lower ratio/floor, capped preserved message count by minimum summary share) and added source-aware summary budget capping so summary targets scale down when only a small slice is being summarized.
-  - Intent: Reduce failures where compaction preserved too much recent history and summary output grew enough to exceed original token count.
-
-- 2026-04-04: Added automatic context compaction
-  - Files: `index.ts`, `.github/copilot-instructions.md`
-  - Summary: Added `autoCompactIfNeeded()` in `index.ts` that triggers compaction when estimated token usage reaches `AUTO_COMPACT_THRESHOLD_PCT` (92%). The function is called at the top of every tool-call loop iteration, covering both mid-turn (between tool calls) and end-of-turn growth. A yellow `⚡` status line informs the user; errors are caught and shown as non-fatal warnings so the loop always continues.
-  - Intent: Prevent context-overflow hard stops by proactively compacting during long agentic runs without requiring user intervention.
-
-- 2026-04-05: Integrated Ollama authoritative tokens for auto-compaction
-  - Files: `index.ts`, `.github/copilot-instructions.md`
-  - Summary: `getCurrentTokenEstimate()` now anchors the total context estimate to the last exact token count provided by Ollama (`lastAuthoritativeTokens`) and only uses the local Tiktoken approximation for the delta of added messages since that point.
-  - Intent: Fix a bug where the local tokenizer heavily underestimated true token cost, causing the application to warn about 96% context usage but incorrectly failing to automatically compact because its internal calculation stayed under 92%.
-
-- 2026-04-12: Introduced provider adapter layer for LLM backends
-  - Files: `services/adapters/llmAdapter.ts` (new), `services/adapters/ollamaAdapter.ts`, `services/llm.ts` (new), `index.ts`, `aiResponseRenderer.ts`, `slashCommands.ts`, `services/compact.ts`, `services/errorSummary.ts`, `history.ts`, `tokenizer.ts`, `.github/copilot-instructions.md`
-  - Summary: Moved the concrete Ollama implementation to `services/adapters/ollamaAdapter.ts`, added a generic `LlmAdapter` contract in `services/adapters/llmAdapter.ts`, and introduced `services/llm.ts` as the active-adapter facade (`getLlmAdapter`/`setLlmAdapter` plus provider-agnostic API wrappers). Updated all consumers to import generic chat/model/error functions and shared message/tool types from the facade.
-  - Intent: Decouple application flow from Ollama-specific modules so additional providers (for example OpenAI-compatible endpoints) can be added as drop-in adapters without rewriting chat/session/tool orchestration.
-
-- 2026-04-14: Emit thought summary immediately when tool calls arrive after thinking
-  - Files: `aiResponseRenderer.ts`, `.github/copilot-instructions.md`
-  - Summary: In `streamAIResponse`, added a check inside the `chunk.message?.tool_calls` handler that fires `printThinkingSummary` as soon as the first tool-call chunk arrives (when the model was thinking). Previously the summary was only printed after the full stream ended, so the status bar would silently transition from `AI is thinking...` to `AI is requesting tools...` with no persistent record until later. The fix mirrors the existing behaviour for text content (line 243), where the summary is printed the instant thinking ends and output begins.
-  - Intent: Ensure users always see `(Thought for Xs · N chars)` the moment thinking transitions to tool-calling, not deferred until the end of the stream.
-
-- 2026-04-12: Fixed lingering final-status line and missing thought summary on tool-only turns
-  - Files: `aiResponseRenderer.ts`, `index.ts`, `.github/copilot-instructions.md`
-  - Summary: Added a dedicated thought-summary printer in `streamAIResponse` and ensured it also runs when the model produces tool calls without assistant content. Updated final-stats handling in `index.ts` to clear the live status line before logging token usage so `AI response received...` is not left in scrollback.
-  - Intent: Preserve clear terminal UX after thinking completes by showing thought duration/character count and preventing status-line artifacts from becoming permanent output.
-
-- 2026-04-12: Restored persistent final token snapshot after each AI turn
-  - Files: `index.ts`, `.github/copilot-instructions.md`
-  - Summary: Added `printFinalTokenSnapshot()` and invoked it from the final-stats callback so each completed response prints a stable `used/limit`, percentage, source tag, and used-token count line after clearing the live status line.
-  - Intent: Bring back easy-to-read final token totals in scrollback without reintroducing lingering status-line artifacts.
-
-- 2026-04-12: Hid estimated token totals from live status output
-  - Files: `statusLine.ts`, `index.ts`, `.github/copilot-instructions.md`
-  - Summary: Updated the live status bar and warning text so estimated counts no longer print as raw totals. Only the final authoritative Ollama snapshot prints full `used/limit` totals; in-progress UI now stays percentage-based unless the source is definitively Ollama.
-  - Intent: Prevent tokenizer-based estimates from looking like authoritative token totals while preserving the final post-response token snapshot.
-
-- 2026-04-14: Added runtime-only model context clamping
-  - Files: `index.ts`, `services/adapters/llmAdapter.ts`, `services/adapters/ollamaAdapter.ts`, `services/llm.ts`, `slashCommands.ts`, `README.md`
-  - Summary: Added provider model-context lookup and split the saved requested `num_ctx` from the active runtime value. When a selected model reports a smaller context window than the user's setting, Locopilot now clamps the live session context in memory only, warns the user, and keeps `config.json` unchanged until the user explicitly changes the setting.
-  - Intent: Respect provider limits without silently overwriting the user's saved context preference.
