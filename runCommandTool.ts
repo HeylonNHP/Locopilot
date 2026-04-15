@@ -2,6 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import os from 'os';
+import { isAbsolute, resolve } from 'node:path';
 import { 
     sanitize, 
     isYolo, 
@@ -23,6 +24,7 @@ interface ProcessEntry {
 
 const processRegistry = new Map<number, ProcessEntry>();
 let nextProcessId = 1;
+let lastWorkingDirectory = process.cwd();
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -133,10 +135,15 @@ export async function runCommand(
     shell?: string,
     timeoutMs: number = DEFAULT_TIMEOUT_MS,
     onProgress?: (message: string) => void,
+    cwd?: string,
 ): Promise<string> {
     const currentYolo = isYolo();
     const effectiveShell = getEffectiveShell(shell);
     const approvedYolo = currentYolo;
+    const trimmedCwd = cwd?.trim();
+    const workingDirectory = trimmedCwd
+        ? (isAbsolute(trimmedCwd) ? resolve(trimmedCwd) : resolve(lastWorkingDirectory, trimmedCwd))
+        : lastWorkingDirectory;
 
     // Show the user what the AI wants to run
     console.log(chalk.cyan(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`));
@@ -179,8 +186,12 @@ export async function runCommand(
     const child = spawn(config.bin, config.args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: !isWindows,
+        cwd: workingDirectory,
     });
     entry.process = child;
+    child.once('spawn', () => {
+        lastWorkingDirectory = workingDirectory;
+    });
 
     child.stdout?.on('data', (chunk: Buffer) => { entry.stdout += chunk.toString(); });
     child.stderr?.on('data', (chunk: Buffer) => { entry.stderr += chunk.toString(); });
@@ -283,11 +294,12 @@ export function checkProcessOutput(processId: number): string {
  */
 export function getToolPrompt(isYolo: boolean): string {
     return (
-        '1. run_command(command, shell?, timeout_seconds?)\n' +
-        '   Execute a shell command on the host machine. ' +
+        '1. run_command(command, shell?, timeout_seconds?, cwd?)\n' +
+        '   Execute a shell command on the host machine. Each call is stateless with respect to shell state, so a previous cd does not persist unless you pass cwd. ' +
         (isYolo
             ? 'The command will run automatically with user consent.'
             : 'The user will be asked to approve it before it runs.') + '\n' +
+        '   If cwd is omitted, the tool uses its current default working directory.\n' +
         '   Returns stdout/stderr when the command finishes, or partial\n' +
         `   output plus a process_id if still running after the timeout (default ${DEFAULT_TIMEOUT_MS / 1000}s).\n\n` +
         '2. check_process_output(process_id)\n' +

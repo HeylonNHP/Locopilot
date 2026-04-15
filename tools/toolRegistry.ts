@@ -67,6 +67,7 @@ export interface ToolCallArguments {
     command?: string;
     shell?: string;
     timeout_seconds?: number;
+    cwd?: string;
     process_id?: number;
     prompt?: string;
     queries?: string[] | string;
@@ -167,7 +168,11 @@ export const toolRegistry = new Map<string, IToolCommand>([
                     }
                     timeoutMs = parsedTimeoutMs;
                 }
-                return { content: await runCommand(args.command, args.shell, timeoutMs, onProgress) };
+                const cwd = typeof args.cwd === 'string' && args.cwd.trim().length > 0 ? args.cwd : undefined;
+                if (args.cwd !== undefined && cwd === undefined) {
+                    return { content: '[Error: invalid argument "cwd" (expected a non-empty string)]' };
+                }
+                return { content: await runCommand(args.command, args.shell, timeoutMs, onProgress, cwd) };
             },
         },
     ],

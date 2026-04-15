@@ -94,6 +94,11 @@ export const TOOLS: OllamaTool[] = [
                             'How many seconds to wait before returning partial output. ' +
                             'Defaults to 30. Use a higher value for commands known to be slow.',
                     },
+                    cwd: {
+                        type: 'string',
+                        description:
+                            'Optional working directory for the command. If omitted, Locopilot uses the tool\'s current default working directory.',
+                    },
                 },
                 required: ['command'],
             },
