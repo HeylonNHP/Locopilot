@@ -101,19 +101,34 @@ export class ContentCompactor {
         }
 
         let compactedContent = content;
+        this.logCompactionRequested(content.length, limit);
 
         try {
+            let previousLength = content.length;
             for (let attempt = 1; attempt <= MAX_COMPACTION_ATTEMPTS; attempt += 1) {
                 compactedContent = await this.compactContent(compactedContent, attempt);
+                this.logCompactionAttempt(attempt, compactedContent.length);
+
                 if (compactedContent.length <= limit) {
+                    this.logCompactionComplete(content.length, compactedContent.length);
                     return compactedContent;
                 }
+
+                if (compactedContent.length >= previousLength) {
+                    break;
+                }
+
+                previousLength = compactedContent.length;
             }
 
-            return compactedContent.slice(0, limit);
+            const finalResult = compactedContent.slice(0, limit);
+            this.logCompactionComplete(content.length, finalResult.length);
+            return finalResult;
         } catch (error) {
             console.warn('Content compaction failed, returning truncated content:', error instanceof Error ? error.message : String(error));
-            return compactedContent.length <= limit ? compactedContent : compactedContent.slice(0, limit);
+            const finalResult = compactedContent.length <= limit ? compactedContent : compactedContent.slice(0, limit);
+            this.logCompactionComplete(content.length, finalResult.length);
+            return finalResult;
         }
     }
 
@@ -159,6 +174,18 @@ export class ContentCompactor {
         }
 
         throw new Error('No content received from LLM for compaction');
+    }
+
+    private logCompactionRequested(originalLength: number, limit: number): void {
+        console.log(`Web content compaction requested: ${originalLength} chars -> ${limit} chars`);
+    }
+
+    private logCompactionAttempt(attempt: number, currentLength: number): void {
+        console.log(`Web content compaction attempt ${attempt}: ${currentLength} chars`);
+    }
+
+    private logCompactionComplete(originalLength: number, finalLength: number): void {
+        console.log(`Web content compaction complete: ${originalLength} -> ${finalLength} chars`);
     }
 
     /**
