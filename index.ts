@@ -120,7 +120,7 @@ async function setupOllama(initialConfig: Config | null): Promise<Config> {
         } catch (error) {
             console.error(chalk.red('\nCould not connect to Ollama at ' + config.baseUrl));
             console.error(chalk.yellow('Please check if Ollama is running and the address is correct.\n'));
-            
+
             const action = await withExitGuard(async () => {
                 return await select({
                     message: 'What would you like to do?',
@@ -196,6 +196,8 @@ async function configureModelAndContext(config: Config, models: string[]): Promi
         maxQueries: config.webSearch.maxQueries,
         resultsPerQuery: config.webSearch.resultsPerQuery,
         perPageCharLimit: config.webSearch.perPageCharLimit,
+        baseUrl: config.baseUrl,
+        compactionModel: selectedModel as string,
     });
 
     return { model: selectedModel as string, numCtx: selectedNumCtx };
@@ -344,6 +346,13 @@ async function startChat(
             currentModel = model;
             config.lastModel = currentModel;
             await saveConfig(config);
+            setWebSearchConfig({
+                maxQueries: config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
+                resultsPerQuery: config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+                perPageCharLimit: config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+                baseUrl: config.baseUrl,
+                compactionModel: currentModel,
+            });
             await loadModelMetadata(currentModel);
             console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
         },

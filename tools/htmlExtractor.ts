@@ -13,10 +13,13 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import * as cheerio from 'cheerio';
 import axios from 'axios';
+import { ContentCompactor } from './impl/contentCompactor.js';
 
 export interface WebExtractionSettings {
     requestTimeoutMs: number;
     perPageCharLimit: number;
+    baseUrl: string; // REQUIRED - always from config, never optional
+    compactionModel: string;
 }
 
 export interface ExtractResult {
@@ -176,6 +179,7 @@ export function extractLinks(html: string, baseUrl: string): ExtractedLink[] {
 
 /**
  * Common fetch + extraction logic shared by web tools.
+ * Now includes content compaction when extracted text exceeds the character limit.
  */
 export async function fetchAndExtract(
     url: string,
@@ -201,12 +205,17 @@ export async function fetchAndExtract(
 
     const html = response.data;
     const title = extractTitle(html, finalUrl);
-    const perPageCharLimit = Number.isFinite(settings.perPageCharLimit)
-        ? Math.max(0, Math.floor(settings.perPageCharLimit))
-        : 0;
     const text = extractMainText(html, finalUrl);
-    const limitedText = perPageCharLimit > 0 ? text.slice(0, perPageCharLimit) : text;
     const links = extractLinks(html, finalUrl);
 
-    return { title, text: limitedText, finalUrl, links };
+    if (settings.perPageCharLimit <= 0) {
+        return { title, text, finalUrl, links };
+    }
+
+    // Use content compactor if text exceeds the character limit
+    // baseUrl is REQUIRED and always comes from config
+    const compactor = ContentCompactor.create(settings, settings.baseUrl);
+    const processedText = await compactor.compactIfNeeded(text);
+
+    return { title, text: processedText, finalUrl, links };
 }

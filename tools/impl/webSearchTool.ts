@@ -9,6 +9,8 @@ export interface WebSearchSettings {
     resultsPerQuery: number;
     requestTimeoutMs: number;
     perPageCharLimit: number;
+    baseUrl: string; // Required - always from config
+    compactionModel: string;
 }
 
 export interface WebSearchToolArgs {

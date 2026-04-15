@@ -26,6 +26,8 @@ const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
     resultsPerQuery: 3,
     requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
     perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+    baseUrl: '', // Will be set by setWebSearchConfig() from config
+    compactionModel: '',
 };
 
 let webSearchSettings: WebSearchSettings = { ...DEFAULT_WEB_SEARCH_SETTINGS };
@@ -42,6 +44,8 @@ export interface ToolWebSearchConfig {
     maxQueries: number;
     resultsPerQuery: number;
     perPageCharLimit: number;
+    baseUrl: string; // REQUIRED - must come from config
+    compactionModel: string;
 }
 
 export function setWebSearchConfig(config: ToolWebSearchConfig): void {
@@ -52,6 +56,8 @@ export function setWebSearchConfig(config: ToolWebSearchConfig): void {
         perPageCharLimit: Number.isFinite(config.perPageCharLimit)
             ? Math.max(0, Math.floor(config.perPageCharLimit))
             : DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+        baseUrl: config.baseUrl, // ALWAYS use the config's base URL
+        compactionModel: config.compactionModel.trim(),
     };
 }
 

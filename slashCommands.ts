@@ -530,9 +530,10 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 maxQueries: parsed,
                 resultsPerQuery: ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
                 perPageCharLimit: ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+                baseUrl: ctx.config.baseUrl,
             };
             await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
-            setWebSearchConfig(newWebSearch);
+            setWebSearchConfig({ ...newWebSearch, compactionModel: ctx.currentModel });
             console.log(chalk.green(`\nMax queries updated to ${parsed}\n`));
         }
     } else if (action === 'web_results_per_query') {
@@ -554,9 +555,10 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 maxQueries: ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
                 resultsPerQuery: parsed,
                 perPageCharLimit: ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+                baseUrl: ctx.config.baseUrl,
             };
             await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
-            setWebSearchConfig(newWebSearch);
+            setWebSearchConfig({ ...newWebSearch, compactionModel: ctx.currentModel });
             console.log(chalk.green(`\nResults per query updated to ${parsed}\n`));
         }
     } else if (action === 'web_per_page_char_limit') {
@@ -579,9 +581,10 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                     maxQueries: ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
                     resultsPerQuery: ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
                     perPageCharLimit: parsed,
+                    baseUrl: ctx.config.baseUrl,
                 };
                 await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
-                setWebSearchConfig(newWebSearch);
+                setWebSearchConfig({ ...newWebSearch, compactionModel: ctx.currentModel });
                 console.log(chalk.green(`\nPage character limit updated to ${parsed === 0 ? 'unlimited' : parsed}\n`));
             }
         }
@@ -615,3 +618,12 @@ export const COMMAND_HANDLERS: Record<string, SlashHandler> = {
     '/exit': EXIT_HANDLER,
     '/help': HELP_HANDLER
 };
+
+
+
+
+
+
+
+
+
