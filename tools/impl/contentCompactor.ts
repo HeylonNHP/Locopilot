@@ -8,7 +8,7 @@
  */
 
 import { type WebExtractionSettings } from '../htmlExtractor.js';
-import { sendLlmChat, type ChatMessage, type ChatParams } from '../../services/llm.js';
+import { sendLlmChat, sendLlmChatStream, type ChatMessage, type ChatParams, type StreamChatParams } from '../../services/llm.js';
 import { countMessagesTokens } from '../../tokenizer.js';
 
 /**
@@ -156,24 +156,42 @@ export class ContentCompactor {
 
         const { numCtx, numPredict } = estimateCompactionContext(messages, model, this.settings.perPageCharLimit);
 
-        const params: ChatParams = {
+        const params: StreamChatParams = {
             model,
             messages: messages,
             tools: [],
             numCtx,
+            timeoutMs: this.settings.requestTimeoutMs,
             options: {
                 temperature: 0,
                 num_predict: numPredict,
             },
         };
 
-        const response = await sendLlmChat(this.baseUrl, params, undefined, this.settings.requestTimeoutMs);
+        return await this.streamCompactionResponse(params);
+    }
 
-        if (response.message?.content) {
-            return response.message.content.trim();
+    private async streamCompactionResponse(params: StreamChatParams): Promise<string> {
+        let compactedText = '';
+        try {
+            for await (const chunk of sendLlmChatStream(this.baseUrl, params)) {
+                const content = chunk.message?.content ?? '';
+                if (!content) {
+                    continue;
+                }
+                compactedText += content;
+                this.logCompactionProgress(compactedText.length);
+            }
+        } finally {
+            this.clearCompactionProgressLine();
         }
 
-        throw new Error('No content received from LLM for compaction');
+        const trimmed = compactedText.trim();
+        if (!trimmed) {
+            throw new Error('No content received from LLM for compaction');
+        }
+
+        return trimmed;
     }
 
     private logCompactionRequested(originalLength: number, limit: number): void {
@@ -182,6 +200,28 @@ export class ContentCompactor {
 
     private logCompactionAttempt(attempt: number, currentLength: number): void {
         console.log(`Web content compaction attempt ${attempt}: ${currentLength} chars`);
+    }
+
+    private logCompactionProgress(currentLength: number): void {
+        const line = `Web content compaction generating: ${currentLength} chars`;
+
+        if (process.stdout.isTTY) {
+            process.stdout.cursorTo(0);
+            process.stdout.clearLine(0);
+            process.stdout.write(line);
+            return;
+        }
+
+        process.stdout.write(`${line}\n`);
+    }
+
+    private clearCompactionProgressLine(): void {
+        if (!process.stdout.isTTY) {
+            return;
+        }
+
+        process.stdout.cursorTo(0);
+        process.stdout.clearLine(0);
     }
 
     private logCompactionComplete(originalLength: number, finalLength: number): void {
