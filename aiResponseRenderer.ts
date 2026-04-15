@@ -28,6 +28,7 @@ import {
     unregisterInterruptHandler,
 } from './tools/tools.js';
 import { sendLlmChatStream, getLlmTurnStats } from './services/llm.js';
+import { stripSpecialTokens } from './services/textUtils.js';
 import type { ToolCall, ToolDefinition, ChatMessage, LlmTurnStats } from './services/llm.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -288,17 +289,20 @@ export async function streamAIResponse(
         printThinkingSummary(Date.now() - startTime, thinking.length);
     }
 
-    if (content.trim().length > 0) {
-        printAIResponse(content, { interrupted });
+    const cleanedContent = stripSpecialTokens(content);
+    const cleanedThinking = stripSpecialTokens(thinking);
+
+    if (cleanedContent.trim().length > 0) {
+        printAIResponse(cleanedContent, { interrupted });
     }
 
     const result: StreamAIResponseResult = { 
-        content, 
+        content: cleanedContent, 
         toolCalls, 
         interrupted, 
         finalStats 
     };
-    if (thinking) result.thinking = thinking;
+    if (cleanedThinking) result.thinking = cleanedThinking;
 
     return result;
 }

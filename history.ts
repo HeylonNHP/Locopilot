@@ -14,7 +14,8 @@
 
 import Database from 'better-sqlite3';
 import path from 'path';
-import type { ChatMessage } from './services/llm.js';
+import { type ChatMessage } from './services/llm.js';
+import { sanitizeChatMessage } from './services/textUtils.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,12 +170,13 @@ export function updateSessionMessages(
     const run = db.transaction(() => {
         stmtDeleteMessages.run(sessionId);
         for (const msg of messages) {
+            const sanitizedMessage = sanitizeChatMessage(msg);
             stmtInsertMessage.run(
                 sessionId,
-                msg.role,
-                msg.content ?? '',
-                JSON.stringify(msg.tool_calls ?? []),
-                JSON.stringify(msg.images ?? []),
+                sanitizedMessage.role,
+                sanitizedMessage.content ?? '',
+                JSON.stringify(sanitizedMessage.tool_calls ?? []),
+                JSON.stringify(sanitizedMessage.images ?? []),
             );
         }
         if (tokenStats) {
@@ -226,6 +228,6 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
         if (images && images.length > 0) {
             msg.images = images;
         }
-        return msg;
+        return sanitizeChatMessage(msg);
     });
 }

@@ -25,6 +25,7 @@ import {
     type ChatMessage,
 } from './services/llm.js';
 import { summarizeCommandError } from './services/errorSummary.js';
+import { sanitizeChatMessage } from './services/textUtils.js';
 import {
     printAIResponse,
     renderTurn,
@@ -511,7 +512,7 @@ async function startChat(
             }
         } else {
             // Standard user message
-            messages.push({ role: 'user', content: prompt });
+            messages.push(sanitizeChatMessage({ role: 'user', content: prompt }));
 
             // Name the session from the first user message.
             if (!sessionNamed) {
@@ -571,7 +572,8 @@ async function startChat(
                     throw new Error('Invariant violation: assistantMessage was expected after successful renderTurn.');
                 }
 
-                messages.push(assistantMessage);
+                const sanitizedAssistantMessage = sanitizeChatMessage(assistantMessage);
+                messages.push(sanitizedAssistantMessage);
 
                 // Update our exact baseline now that the messages array includes the complete AI response
                 if (sessionTokenStats) {
@@ -579,9 +581,9 @@ async function startChat(
                     estimatedTokensAtAuthoritative = countMessagesTokens(messages, currentModel);
                 }
 
-                if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+                if (sanitizedAssistantMessage.tool_calls && sanitizedAssistantMessage.tool_calls.length > 0) {
                     // Execute each tool call sequentially then feed results back
-                    for (const tc of assistantMessage.tool_calls) {
+                    for (const tc of sanitizedAssistantMessage.tool_calls) {
                         clearLiveStatus();
                         refreshTokenStatus(`Tool call: ${tc.function.name}`);
                         const toolResult: ToolCallResult = await handleToolCall(
@@ -592,11 +594,11 @@ async function startChat(
                             },
                         );
                         clearLiveStatus();
-                        messages.push({
+                        messages.push(sanitizeChatMessage({
                             role: 'tool',
                             content: toolResult.content,
                             ...(toolResult.images ? { images: toolResult.images } : {}),
-                        });
+                        }));
                         refreshTokenStatus(`Tool result: ${tc.function.name}`);
 
                         // If the command failed, have the LLM summarize the error for the user
@@ -608,10 +610,10 @@ async function startChat(
                             
                             // Include the error summary in the conversation history as a user nudge
                             // to help the model reason about the failure in the next turn.
-                            messages.push({
+                            messages.push(sanitizeChatMessage({
                                 role: 'user',
                                 content: `Command failed. AI Error Analysis: ${errorSummary}\nPlease analyze the failure and propose a correction.`
-                            });
+                            }));
                             refreshTokenStatus('Retry requested after command failure.');
                         }
 
@@ -624,12 +626,12 @@ async function startChat(
 
                     if (assistantContent.length === 0 && emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
                         emptyResponseRecoveryAttempts += 1;
-                        messages.push({
+                        messages.push(sanitizeChatMessage({
                             role: 'user',
                             content:
                                 'Your last response was empty. Provide a direct answer now. ' +
                                 'If commands are needed, call run_command. If commands already ran, summarize their output and errors.'
-                        });
+                        }));
                         continue;
                     }
 

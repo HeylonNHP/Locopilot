@@ -1,5 +1,6 @@
 import { encoding_for_model, get_encoding, Tiktoken } from '@dqbd/tiktoken';
-import type { ChatMessage } from './services/llm.js';
+import { type ChatMessage } from './services/llm.js';
+import { stripSpecialTokens } from './services/textUtils.js';
 
 let encoder: Tiktoken | null = null;
 let currentEncoderModel: string | null = null;
@@ -21,8 +22,9 @@ function getEncoder(model: string): Tiktoken {
 }
 
 function countTextTokensWithEncoder(text: string, activeEncoder: Tiktoken): number {
-    if (!text) return 0;
-    return activeEncoder.encode(text).length;
+    const cleanedText = stripSpecialTokens(text);
+    if (!cleanedText) return 0;
+    return activeEncoder.encode(cleanedText).length;
 }
 
 export function countTextTokens(text: string, model: string): number {
