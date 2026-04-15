@@ -159,6 +159,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-15: Added browser-like headers and optional cookie support for web fetches
+  - Files: `tools/webRequestHeaders.ts` (new), `tools/htmlExtractor.ts`, `README.md`, `.github/copilot-instructions.md`
+  - Summary: Moved web request header construction into a dedicated helper, switched the shared HTML fetch path to browser-like headers (`Accept`, `Accept-Language`, `Sec-Fetch-*`, referer), and added optional `LOCOPILOT_WEB_COOKIE` support to pass a raw `Cookie` header through the web tools.
+  - Intent: Improve compatibility with sites that gate non-browser requests, while keeping the fetch layer modular and easy to extend.
+
 - 2026-04-14: Hardened compaction against massively oversized context windows (three-pronged fix)
   - Files: `services/compact.ts`, `index.ts`, `slashCommands.ts`, `.github/copilot-instructions.md`
   - Summary: Three independent fixes applied together. (1) **Distill preserved messages** — `distillToolMessages` is now also run on `historySplit.preservedRecentMessages` before those messages are assembled into `newMessages`, so large web-search and command-output tool results in the preserved window are compressed identically to those in the summarized window. This was the primary cause of 273 k → 272 k "reduction" when 6 preserved tool messages each held 25 k+ chars. (2) **Bounded multi-pass retry** — the aggressive retry loop was generalized with a `remainingRetries` counter (default 2), replacing the single-shot `aggressiveFactor <= 1.0` guard, so the service can run up to 3 progressively more aggressive passes without possibility of infinite recursion. (3) **Caller-side over-budget warning** — both `autoCompactIfNeeded` and `COMPACT_HANDLER` now print a red warning if `result.stats.newTokenCount > numCtx` after all passes, making the failure visible instead of silently allowing the next turn to receive a 400 from Ollama.

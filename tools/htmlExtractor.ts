@@ -14,12 +14,14 @@ import { Readability } from '@mozilla/readability';
 import * as cheerio from 'cheerio';
 import axios from 'axios';
 import { ContentCompactor } from './impl/contentCompactor.js';
+import { buildWebRequestHeaders } from './webRequestHeaders.js';
 
 export interface WebExtractionSettings {
     requestTimeoutMs: number;
     perPageCharLimit: number;
     baseUrl: string; // REQUIRED - always from config, never optional
     compactionModel: string;
+    cookieHeader?: string;
 }
 
 export interface ExtractResult {
@@ -179,7 +181,6 @@ export function extractLinks(html: string, baseUrl: string): ExtractedLink[] {
 
 /**
  * Common fetch + extraction logic shared by web tools.
- * Now includes content compaction when extracted text exceeds the character limit.
  */
 export async function fetchAndExtract(
     url: string,
@@ -187,10 +188,10 @@ export async function fetchAndExtract(
 ): Promise<{ title: string; text: string; finalUrl: string; links: ExtractedLink[] }> {
     const response = await axios.get<string>(url, {
         timeout: settings.requestTimeoutMs,
-        headers: {
-            'User-Agent': DEFAULT_USER_AGENT,
-            Accept: 'text/html,application/xhtml+xml',
-        },
+        headers: buildWebRequestHeaders(
+            url,
+            settings.cookieHeader ? { cookieHeader: settings.cookieHeader } : undefined,
+        ),
         responseType: 'text',
         maxRedirects: 5,
     });
