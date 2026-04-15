@@ -37,10 +37,11 @@ sendLlmChat(baseUrl, ...) (services/llm.ts)
 
 ### 1. `tools/impl/contentCompactor.ts` (NEW)
 - Core compaction logic using LLM
-- Uses `sendLlmChat` from `services/llm.ts` (proper LLM infrastructure)
+- Uses `sendLlmChatStream` from `services/llm.ts` (proper LLM infrastructure)
 - **baseUrl parameter is REQUIRED** - no default value, no optional
 - Intelligent compaction with preservation of valuable content
 - Uses the active chat model from web-search settings instead of a hardcoded fallback
+- Estimates `num_predict` from a rough chars-per-token ratio instead of treating the page character limit as a token limit, then trims that budget slightly on later retry passes if the previous attempt still overshot the limit
 - Retries compaction up to three passes before truncating the best-effort result
 - Graceful fallback to truncation when LLM is unavailable
 

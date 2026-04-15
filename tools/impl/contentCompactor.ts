@@ -8,8 +8,8 @@
  */
 
 import { type WebExtractionSettings } from '../htmlExtractor.js';
-import { sendLlmChat, sendLlmChatStream, type ChatMessage, type ChatParams, type StreamChatParams } from '../../services/llm.js';
-import { countMessagesTokens } from '../../tokenizer.js';
+import { sendLlmChatStream, type ChatMessage, type StreamChatParams } from '../../services/llm.js';
+import { countMessagesTokens, countTextTokens } from '../../tokenizer.js';
 
 /**
  * Prompt template for content compaction.
@@ -53,6 +53,13 @@ Provide only the compacted content, without any additional commentary or markup.
 const MAX_COMPACTION_ATTEMPTS = 3;
 const MIN_COMPACTION_NUM_CTX = 4096;
 const COMPACTION_CONTEXT_BUFFER_TOKENS = 256;
+const APPROX_CHARS_PER_TOKEN = 4;
+const OUTPUT_TOKEN_BUFFER_RATIO = 1.2;
+const INITIAL_OUTPUT_SCALE = 0.9;
+const RETRY_OUTPUT_SCALE_STEP = 0.1;
+const MIN_RETRY_OUTPUT_SCALE = 0.8;
+const MIN_CHARS_PER_TOKEN = 2;
+const MAX_CHARS_PER_TOKEN = 6;
 
 function buildCompactionPrompt(content: string, charLimit: number, attempt: number): string {
     const retryNote = attempt > 1
@@ -66,9 +73,36 @@ function buildCompactionPrompt(content: string, charLimit: number, attempt: numb
         .replace('{content}', content);
 }
 
-function estimateCompactionContext(messages: ChatMessage[], model: string, charLimit: number): { numCtx: number; numPredict: number } {
+function estimateCharsPerToken(content: string, model: string): number {
+    const tokenCount = countTextTokens(content, model);
+    if (tokenCount <= 0) {
+        return APPROX_CHARS_PER_TOKEN;
+    }
+
+    return Math.max(MIN_CHARS_PER_TOKEN, Math.min(MAX_CHARS_PER_TOKEN, content.length / tokenCount));
+}
+
+function estimateCompactionContext(
+    messages: ChatMessage[],
+    model: string,
+    content: string,
+    charLimit: number,
+    attempt: number,
+): { numCtx: number; numPredict: number } {
     const promptTokens = countMessagesTokens(messages, model);
-    const numPredict = Math.max(1, Math.floor(charLimit));
+    const charsPerToken = estimateCharsPerToken(content, model);
+    const roughOutputTokens = Math.max(1, Math.ceil(charLimit / charsPerToken));
+    const attemptScale = Math.max(
+        MIN_RETRY_OUTPUT_SCALE,
+        INITIAL_OUTPUT_SCALE - ((attempt - 1) * RETRY_OUTPUT_SCALE_STEP),
+    );
+    const overflowScale = content.length > charLimit
+        ? Math.max(MIN_RETRY_OUTPUT_SCALE, charLimit / content.length)
+        : 1;
+    const numPredict = Math.max(
+        1,
+        Math.floor(roughOutputTokens * OUTPUT_TOKEN_BUFFER_RATIO * attemptScale * overflowScale),
+    );
 
     return {
         numCtx: Math.max(MIN_COMPACTION_NUM_CTX, promptTokens + numPredict + COMPACTION_CONTEXT_BUFFER_TOKENS),
@@ -154,7 +188,13 @@ export class ContentCompactor {
             }
         ];
 
-        const { numCtx, numPredict } = estimateCompactionContext(messages, model, this.settings.perPageCharLimit);
+        const { numCtx, numPredict } = estimateCompactionContext(
+            messages,
+            model,
+            content,
+            this.settings.perPageCharLimit,
+            attempt,
+        );
 
         const params: StreamChatParams = {
             model,
@@ -195,11 +235,11 @@ export class ContentCompactor {
     }
 
     private logCompactionRequested(originalLength: number, limit: number): void {
-        console.log(`Web content compaction requested: ${originalLength} chars -> ${limit} chars`);
+        this.logCompactionLine(`Web content compaction requested: ${originalLength} chars -> ${limit} chars`);
     }
 
     private logCompactionAttempt(attempt: number, currentLength: number): void {
-        console.log(`Web content compaction attempt ${attempt}: ${currentLength} chars`);
+        this.logCompactionLine(`Web content compaction attempt ${attempt}: ${currentLength} chars`);
     }
 
     private logCompactionProgress(currentLength: number): void {
@@ -215,6 +255,11 @@ export class ContentCompactor {
         process.stdout.write(`${line}\n`);
     }
 
+    private logCompactionLine(message: string): void {
+        this.clearCompactionProgressLine();
+        console.log(message);
+    }
+
     private clearCompactionProgressLine(): void {
         if (!process.stdout.isTTY) {
             return;
@@ -225,7 +270,7 @@ export class ContentCompactor {
     }
 
     private logCompactionComplete(originalLength: number, finalLength: number): void {
-        console.log(`Web content compaction complete: ${originalLength} -> ${finalLength} chars`);
+        this.logCompactionLine(`Web content compaction complete: ${originalLength} -> ${finalLength} chars`);
     }
 
     /**
