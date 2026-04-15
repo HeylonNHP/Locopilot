@@ -41,6 +41,24 @@ export interface ExtractedLink {
 const MIN_READABILITY_LENGTH = 200;
 export const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
 const MAX_LINKS = 50;
+const MIN_BROWSER_FALLBACK_TEXT_LENGTH = 300;
+const BROWSER_RENDER_TIMEOUT_MS = 15_000;
+
+const JS_HEAVY_PATTERNS = [
+    /__NEXT_DATA__/i,
+    /__NUXT__/i,
+    /window\.__INITIAL_STATE__/i,
+    /window\.__APOLLO_STATE__/i,
+    /data-reactroot/i,
+    /data-react/i,
+    /ng-version/i,
+    /id=["']?(?:__next|__nuxt|root|app)["']?/i,
+];
+
+interface RenderedPage {
+    html: string;
+    finalUrl: string;
+}
 
 /**
  * Strips extra whitespace, normalizes line endings, and trims.
@@ -143,6 +161,93 @@ export function extractMainText(html: string, url: string): string {
     return fallbackText;
 }
 
+function shouldTryBrowserFallback(html: string, text: string): boolean {
+    if (text.length >= MIN_BROWSER_FALLBACK_TEXT_LENGTH) {
+        return false;
+    }
+
+    if (JS_HEAVY_PATTERNS.some((pattern) => pattern.test(html))) {
+        return true;
+    }
+
+    const scriptCount = (html.match(/<script\b/gi) ?? []).length;
+    const noscriptCount = (html.match(/<noscript\b/gi) ?? []).length;
+    const textIsVeryThin = text.length < 120;
+    const htmlLooksAppLike = html.length > 3000 && scriptCount >= 3;
+
+    return (textIsVeryThin && (scriptCount >= 3 || noscriptCount > 0)) || htmlLooksAppLike;
+}
+
+function shouldPreferRenderedText(staticText: string, renderedText: string): boolean {
+    if (renderedText.length === 0) {
+        return false;
+    }
+
+    if (staticText.length === 0) {
+        return true;
+    }
+
+    if (renderedText.length >= staticText.length) {
+        return true;
+    }
+
+    return staticText.length < MIN_BROWSER_FALLBACK_TEXT_LENGTH && renderedText.length >= Math.floor(staticText.length * 0.75);
+}
+
+async function renderWithPlaywright(url: string, settings: WebExtractionSettings): Promise<RenderedPage | null> {
+    try {
+        const playwrightModule = await import('playwright');
+        const browser = await playwrightModule.chromium.launch({ headless: true });
+
+        try {
+            const headers = buildWebRequestHeaders(
+                url,
+                settings.cookieHeader ? { cookieHeader: settings.cookieHeader } : undefined,
+            );
+
+            const extraHTTPHeaders: Record<string, string> = {};
+            if (headers['Accept-Language']) extraHTTPHeaders['Accept-Language'] = headers['Accept-Language'];
+            if (headers.Referer) extraHTTPHeaders.Referer = headers.Referer;
+            if (headers.Cookie) extraHTTPHeaders.Cookie = headers.Cookie;
+
+            const context = await browser.newContext({
+                userAgent: headers['User-Agent'] ?? DEFAULT_USER_AGENT,
+                extraHTTPHeaders,
+            });
+
+            try {
+                const page = await context.newPage();
+                const timeoutMs = Math.min(settings.requestTimeoutMs, BROWSER_RENDER_TIMEOUT_MS);
+
+                try {
+                    await page.goto(url, {
+                        waitUntil: 'domcontentloaded',
+                        timeout: timeoutMs,
+                    });
+                } catch {
+                    // Continue with the partially rendered DOM if navigation times out.
+                }
+
+                await page.waitForLoadState('networkidle', { timeout: Math.min(timeoutMs, 5000) }).catch(() => undefined);
+
+                const html = await page.content();
+                const finalUrl = page.url() || url;
+                if (!html.trim()) {
+                    return null;
+                }
+
+                return { html, finalUrl };
+            } finally {
+                await context.close();
+            }
+        } finally {
+            await browser.close();
+        }
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Extracts unique, absolute http/https links from an HTML page.
  * Relative hrefs are resolved against `baseUrl`.
@@ -205,12 +310,29 @@ export async function fetchAndExtract(
     }
 
     const html = response.data;
-    const title = extractTitle(html, finalUrl);
-    const text = extractMainText(html, finalUrl);
-    const links = extractLinks(html, finalUrl);
+    const staticText = extractMainText(html, finalUrl);
+
+    let extractionHtml = html;
+    let extractionUrl = finalUrl;
+    let text = staticText;
+
+    if (shouldTryBrowserFallback(html, staticText)) {
+        const renderedPage = await renderWithPlaywright(url, settings);
+        if (renderedPage) {
+            const renderedText = extractMainText(renderedPage.html, renderedPage.finalUrl);
+            if (shouldPreferRenderedText(staticText, renderedText)) {
+                extractionHtml = renderedPage.html;
+                extractionUrl = renderedPage.finalUrl;
+                text = renderedText;
+            }
+        }
+    }
+
+    const title = extractTitle(extractionHtml, extractionUrl);
+    const links = extractLinks(extractionHtml, extractionUrl);
 
     if (settings.perPageCharLimit <= 0) {
-        return { title, text, finalUrl, links };
+        return { title, text, finalUrl: extractionUrl, links };
     }
 
     // Use content compactor if text exceeds the character limit
@@ -218,5 +340,5 @@ export async function fetchAndExtract(
     const compactor = ContentCompactor.create(settings, settings.baseUrl);
     const processedText = await compactor.compactIfNeeded(text);
 
-    return { title, text: processedText, finalUrl, links };
+    return { title, text: processedText, finalUrl: extractionUrl, links };
 }

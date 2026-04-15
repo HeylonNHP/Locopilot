@@ -159,6 +159,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-16: Added Playwright fallback for JS-heavy page visits
+  - Files: `tools/htmlExtractor.ts`, `package.json`, `package-lock.json`
+  - Summary: `fetchAndExtract()` now heuristically detects thin SPA-style pages and can re-render them through Playwright/Chromium before title, text, and link extraction. The browser path is lazy and only kicks in when the static scrape looks insufficient.
+  - Intent: Improve scraping of JavaScript-heavy pages without changing DuckDuckGo search parsing or the existing fast HTTP path.
+
 - 2026-04-15: Added browser-like headers and optional cookie support for web fetches
   - Files: `tools/webRequestHeaders.ts` (new), `tools/htmlExtractor.ts`, `README.md`, `.github/copilot-instructions.md`
   - Summary: Moved web request header construction into a dedicated helper, switched the shared HTML fetch path to browser-like headers (`Accept`, `Accept-Language`, `Sec-Fetch-*`, referer), and added optional `LOCOPILOT_WEB_COOKIE` support to pass a raw `Cookie` header through the web tools.
