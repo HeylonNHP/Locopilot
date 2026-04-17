@@ -18,7 +18,7 @@ import { getLlmApiErrorMessage } from './services/llm.js';
 import type { ChatMessage } from './services/llm.js';
 import { compactHistory, printCompactStats } from './services/compact.js';
 import { writeConversationHistoryDump } from './services/historyDump.js';
-import { getModels } from './services/modelManager.js';
+import { getModels, resolveCompactionModel } from './services/modelManager.js';
 import {
     createSession,
     listSessions,
@@ -34,6 +34,7 @@ import { clearLiveStatus } from './statusLine.js';
 export interface Config {
     baseUrl: string;
     lastModel?: string;
+    compactionModel?: string;
     numCtx?: number;
     chatTimeoutMs?: number;
     yolo?: boolean;
@@ -256,7 +257,7 @@ const COMPACT_HANDLER: SlashHandler = async (ctx) => {
         ctx.refreshTokenStatus('AI request queued for compaction...');
         const result = await compactHistory(
             ctx.baseUrl,
-            ctx.currentModel,
+            resolveCompactionModel(ctx.config.compactionModel, ctx.currentModel),
             ctx.messages,
             ctx.numCtx,
             (status) => ctx.refreshTokenStatus(status),
@@ -403,6 +404,8 @@ const NEW_HANDLER: SlashHandler = async (ctx) => {
 };
 
 const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
+    const effectiveCompactionModel = resolveCompactionModel(ctx.config.compactionModel, ctx.currentModel);
+
     const action = await withExitGuard(async () => {
         return await select({
             message: 'Menu: Settings',
@@ -411,6 +414,7 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 { name: `Thinking (${ctx.config.thinkingEnabled !== false ? chalk.green('Enabled') : chalk.red('Disabled')})`, value: 'thinking' },
                 { name: `Context Length (${ctx.config.numCtx ?? DEFAULT_NUM_CTX})`, value: 'num_ctx' },
                 { name: `Chat Timeout (${(ctx.config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000}s)`, value: 'chat_timeout' },
+                { name: `Compaction Model (${effectiveCompactionModel})`, value: 'compaction_model' },
                 { name: `Web Search: Max Queries (${ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES})`, value: 'web_max_queries' },
                 { name: `Web Search: Results Per Query (${ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY})`, value: 'web_results_per_query' },
                 { name: `Web Search: Page Char Limit (0 = unlimited) (${ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT})`, value: 'web_per_page_char_limit' },
@@ -499,6 +503,39 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
             await ctx.saveConfig({ ...ctx.config, chatTimeoutMs: parsedMs });
             console.log(chalk.green(`\nChat timeout updated to ${parsedMs / 1000}s\n`));
         }
+    } else if (action === 'compaction_model') {
+        const latestModels = await getModels(ctx.baseUrl);
+        if (latestModels.length === 0) {
+            console.log(chalk.red('No models found. Please pull a model first.'));
+            return true;
+        }
+
+        console.log(chalk.green('\nAvailable models:'));
+        latestModels.forEach((m: string, i: number) => console.log(`  ${i + 1}. ${m}`));
+
+        const selectedCompactionModel = await withExitGuard(async () => {
+            return await select({
+                message: 'Select a model for history and web compaction:',
+                choices: latestModels.map((m: string) => ({ name: m, value: m })),
+                default: effectiveCompactionModel,
+                pageSize: 10,
+            });
+        });
+
+        if (selectedCompactionModel === null) {
+            console.log(chalk.yellow('Compaction model selection cancelled.'));
+            return true;
+        }
+
+        await ctx.saveConfig({ ...ctx.config, compactionModel: selectedCompactionModel });
+        setWebSearchConfig({
+            maxQueries: ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
+            resultsPerQuery: ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+            perPageCharLimit: ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+            baseUrl: ctx.config.baseUrl,
+            compactionModel: selectedCompactionModel,
+        });
+        console.log(chalk.green(`\nCompaction model updated to ${selectedCompactionModel}\n`));
     } else if (action === 'web_max_queries') {
         const inputVal = await withExitGuard(async () => {
             return await input({
@@ -521,7 +558,7 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 baseUrl: ctx.config.baseUrl,
             };
             await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
-            setWebSearchConfig({ ...newWebSearch, compactionModel: ctx.currentModel });
+            setWebSearchConfig({ ...newWebSearch, compactionModel: effectiveCompactionModel });
             console.log(chalk.green(`\nMax queries updated to ${parsed}\n`));
         }
     } else if (action === 'web_results_per_query') {
@@ -546,7 +583,7 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 baseUrl: ctx.config.baseUrl,
             };
             await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
-            setWebSearchConfig({ ...newWebSearch, compactionModel: ctx.currentModel });
+            setWebSearchConfig({ ...newWebSearch, compactionModel: effectiveCompactionModel });
             console.log(chalk.green(`\nResults per query updated to ${parsed}\n`));
         }
     } else if (action === 'web_per_page_char_limit') {
@@ -572,7 +609,7 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                     baseUrl: ctx.config.baseUrl,
                 };
                 await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
-                setWebSearchConfig({ ...newWebSearch, compactionModel: ctx.currentModel });
+                setWebSearchConfig({ ...newWebSearch, compactionModel: effectiveCompactionModel });
                 console.log(chalk.green(`\nPage character limit updated to ${parsed === 0 ? 'unlimited' : parsed}\n`));
             }
         }

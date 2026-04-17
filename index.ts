@@ -50,7 +50,7 @@ import {
     type Config,
     withExitGuard,
 } from './slashCommands.js';
-import { getModels } from './services/modelManager.js';
+import { getModels, resolveCompactionModel } from './services/modelManager.js';
 import { compactHistory, printCompactStats } from './services/compact.js';
 import {
     DEFAULT_NUM_CTX,
@@ -197,7 +197,7 @@ async function configureModelAndContext(config: Config, models: string[]): Promi
         resultsPerQuery: config.webSearch.resultsPerQuery,
         perPageCharLimit: config.webSearch.perPageCharLimit,
         baseUrl: config.baseUrl,
-        compactionModel: selectedModel as string,
+        compactionModel: resolveCompactionModel(config.compactionModel, selectedModel as string),
     });
 
     return { model: selectedModel as string, numCtx: selectedNumCtx };
@@ -351,7 +351,7 @@ async function startChat(
                 resultsPerQuery: config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
                 perPageCharLimit: config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
                 baseUrl: config.baseUrl,
-                compactionModel: currentModel,
+                compactionModel: resolveCompactionModel(config.compactionModel, currentModel),
             });
             await loadModelMetadata(currentModel);
             console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
@@ -401,7 +401,7 @@ async function startChat(
         try {
             const result = await compactHistory(
                 baseUrl,
-                currentModel,
+                resolveCompactionModel(config.compactionModel, currentModel),
                 messages,
                 numCtx,
                 (status) => refreshTokenStatus(status),

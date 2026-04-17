@@ -159,6 +159,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-17: Added user-selectable compaction model
+  - Files: `services/modelManager.ts`, `slashCommands.ts`, `index.ts`, `README.md`, `.github/copilot-instructions.md`
+  - Summary: Added a persisted `compactionModel` setting and threaded it through `/settings`, startup configuration, `/compact`, and web-content compaction. The new setting defaults to the active chat model until the user explicitly chooses a cheaper model.
+  - Intent: Let users keep chat quality high while shifting summarization and web-content reduction to a smaller, less expensive model.
+
 - 2026-04-17: Extracted shared model-list lookup into a service module
   - Files: `services/modelManager.ts` (new), `slashCommands.ts`, `index.ts`, `.github/copilot-instructions.md`
   - Summary: Moved the reusable Ollama model enumeration helper out of `slashCommands.ts` and into `services/modelManager.ts` so startup model selection and the `/model` command share one service-owned implementation.

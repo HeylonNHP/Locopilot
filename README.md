@@ -37,7 +37,7 @@ $env:YOLO="true"; npm start
 - Automatically caps the live context window to a model's reported maximum when your saved setting is larger, then restores the saved preference when you switch to a model that supports it.
 - Renders AI replies as terminal-friendly markdown.
 - Supports safe command execution via `run_command` with optional YOLO approval.
-- Provides web helpers like `web_search` and `fetch_url` for additional context, with a configurable per-page character limit in `/settings` (`0` means unlimited). If a site needs a logged-in session, you can set `LOCOPILOT_WEB_COOKIE` to pass a `Cookie` header through the web fetch layer.
+- Provides web helpers like `web_search` and `fetch_url` for additional context, with a configurable compaction model and per-page character limit in `/settings` (`0` means unlimited). If a site needs a logged-in session, you can set `LOCOPILOT_WEB_COOKIE` to pass a `Cookie` header through the web fetch layer.
 - Exports the current conversation as a markdown debug snapshot with `/dump`, including the system prompt and tool calls/results.
 
 ## Requirements
