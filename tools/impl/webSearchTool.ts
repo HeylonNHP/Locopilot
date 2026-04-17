@@ -1,6 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { cleanText, fetchAndExtract, DEFAULT_USER_AGENT, type ExtractedLink } from '../htmlExtractor.js';
+import { cleanText, fetchAndExtract, DEFAULT_USER_AGENT, type ExtractedLink } from '../web/htmlExtractor.js';
 
 const DUCKDUCKGO_HTML_SEARCH_URL = 'https://duckduckgo.com/html/';
 

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { readFile } from 'fs/promises';
 import imageType from 'image-type';
-import { DEFAULT_USER_AGENT } from '../htmlExtractor.js';
+import { DEFAULT_USER_AGENT } from '../web/htmlExtractor.js';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 const DEFAULT_TIMEOUT_MS = 15_000;

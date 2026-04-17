@@ -7,7 +7,7 @@
  * elements like code snippets, tables, and structured data.
  */
 
-import { type WebExtractionSettings } from '../htmlExtractor.js';
+import { type WebExtractionSettings } from '../web/htmlExtractor.js';
 import { sendLlmChatStream, type ChatMessage, type StreamChatParams } from '../../services/llm.js';
 import { countMessagesTokens, countTextTokens } from '../../tokenizer.js';
 
