@@ -44,13 +44,13 @@ import { countMessagesTokens } from './services/tokenizer.js';
 import { updatePhase, clearLiveStatus } from './statusLine.js';
 import {
     COMMAND_HANDLERS,
-    getModels,
     getMultilineInput,
     replaceMessages,
     type ChatContext,
     type Config,
     withExitGuard,
 } from './slashCommands.js';
+import { getModels } from './services/modelManager.js';
 import { compactHistory, printCompactStats } from './services/compact.js';
 import {
     DEFAULT_NUM_CTX,

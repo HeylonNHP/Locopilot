@@ -14,13 +14,11 @@ import {
     DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
 } from './constants.js';
-import {
-    fetchLlmModels,
-    getLlmApiErrorMessage,
-} from './services/llm.js';
-import type { ChatMessage, LlmModel } from './services/llm.js';
+import { getLlmApiErrorMessage } from './services/llm.js';
+import type { ChatMessage } from './services/llm.js';
 import { compactHistory, printCompactStats } from './services/compact.js';
 import { writeConversationHistoryDump } from './services/historyDump.js';
+import { getModels } from './services/modelManager.js';
 import {
     createSession,
     listSessions,
@@ -94,16 +92,6 @@ export async function withExitGuard<T>(fn: () => Promise<T>): Promise<T | null> 
 export function replaceMessages(target: ChatMessage[], newMessages: ChatMessage[]): void {
     target.length = 0;
     target.push(...newMessages);
-}
-
-export async function getModels(baseUrl: string): Promise<string[]> {
-    try {
-        const models = await fetchLlmModels(baseUrl);
-        return models.map((m: LlmModel) => m.name).sort();
-    } catch (error) {
-        console.error(chalk.red('Error fetching models:'), await getLlmApiErrorMessage(error));
-        return [];
-    }
 }
 
 export async function getMultilineInput(promptStr: string): Promise<string> {

@@ -159,6 +159,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-17: Extracted shared model-list lookup into a service module
+  - Files: `services/modelManager.ts` (new), `slashCommands.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Moved the reusable Ollama model enumeration helper out of `slashCommands.ts` and into `services/modelManager.ts` so startup model selection and the `/model` command share one service-owned implementation.
+  - Intent: Keep `slashCommands.ts` focused on command orchestration while centralizing model-fetch and error-handling logic in the services layer.
+
 - 2026-04-16: Added Playwright fallback for JS-heavy page visits
   - Files: `tools/htmlExtractor.ts`, `package.json`, `package-lock.json`
   - Summary: `fetchAndExtract()` now heuristically detects thin SPA-style pages and can re-render them through Playwright/Chromium before title, text, and link extraction. The browser path is lazy and only kicks in when the static scrape looks insufficient.
