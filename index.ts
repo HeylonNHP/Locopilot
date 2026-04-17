@@ -40,7 +40,7 @@ import {
     type SessionTokenStats,
     updateSessionMessages,
 } from './history.js';
-import { countMessagesTokens } from './tokenizer.js';
+import { countMessagesTokens } from './services/tokenizer.js';
 import { updatePhase, clearLiveStatus } from './statusLine.js';
 import {
     COMMAND_HANDLERS,

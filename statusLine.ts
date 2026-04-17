@@ -1,3 +1,11 @@
+/**
+ * Status line helper for Locopilot's terminal UI.
+ *
+ * This module maintains a small live-line display while the assistant is
+ * thinking or tools are executing. It shows the current phase, optional model
+ * name, and token usage with a spinner. The status line is updated on a short
+ * interval and cleared when the turn is complete.
+ */
 import readline from 'readline';
 import chalk from 'chalk';
 

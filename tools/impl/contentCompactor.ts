@@ -9,7 +9,7 @@
 
 import { type WebExtractionSettings } from '../web/htmlExtractor.js';
 import { sendLlmChatStream, type ChatMessage, type StreamChatParams } from '../../services/llm.js';
-import { countMessagesTokens, countTextTokens } from '../../tokenizer.js';
+import { countMessagesTokens, countTextTokens } from '../../services/tokenizer.js';
 
 /**
  * Prompt template for content compaction.

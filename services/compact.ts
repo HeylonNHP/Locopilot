@@ -18,7 +18,7 @@
 import chalk from 'chalk';
 import { sendLlmChat, sendLlmChatStream, getLlmTurnStats } from './llm.js';
 import type { ChatMessage } from './llm.js';
-import { countMessagesTokens } from '../tokenizer.js';
+import { countMessagesTokens } from './tokenizer.js';
 
 // The instruction sent to the LLM when asking it to compact the history.
 function buildCompactSystemPrompt(params: {
