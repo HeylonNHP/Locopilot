@@ -14,7 +14,7 @@ import { getToolPrompt as getFetchUrlPrompt } from './impl/fetchUrlTool.js';
 import { getToolPrompt as getFetchImagePrompt } from './impl/fetchImageTool.js';
 import { getToolPrompt as getReadFilePrompt } from './impl/readFileTool.js';
 import { getToolPrompt as getWriteFilePrompt } from './impl/writeFileTool.js';
-import { getToolPrompt as getRunCommandPrompt, defaultShell } from '../runCommandTool.js';
+import { getToolPrompt as getRunCommandPrompt, defaultShell } from './impl/runCommandTool.js';
 import { isYolo, toolRegistry, setYoloMode, setWebSearchConfig } from './toolRegistry.js';
 import type { ToolCallArguments, ToolCallResult, ToolWebSearchConfig } from './toolRegistry.js';
 export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager.js';

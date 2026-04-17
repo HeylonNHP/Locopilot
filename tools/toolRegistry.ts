@@ -13,7 +13,7 @@ import { FetchUrlTool, type FetchUrlToolArgs } from './impl/fetchUrlTool.js';
 import { FetchImageTool, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool.js';
 import { ReadFileTool, type ReadFileToolArgs } from './impl/readFileTool.js';
 import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool.js';
-import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from '../runCommandTool.js';
+import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCommandTool.js';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants.js';
 import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers.js';
 

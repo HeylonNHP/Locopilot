@@ -3,13 +3,13 @@ import { confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import os from 'os';
 import { isAbsolute, resolve } from 'node:path';
-import { 
-    sanitize, 
-    isYolo, 
-    getInterruptHint, 
-    registerInterruptHandler, 
-    unregisterInterruptHandler 
-} from './tools/tools.js';
+import {
+    sanitize,
+    isYolo,
+    getInterruptHint,
+    registerInterruptHandler,
+    unregisterInterruptHandler,
+} from '../tools.js';
 
 interface ProcessEntry {
     process: ChildProcess;
