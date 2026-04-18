@@ -341,7 +341,12 @@ async function startChat(
         },
         saveSession: (tokenStats?: SessionTokenStats | null) =>
             updateSessionMessages(currentSessionId, messages, tokenStats),
-        refreshTokenStatus: (phase: string) => refreshTokenStatus(phase),
+        refreshTokenStatus: (
+            phase: string,
+            tokensUsedOverride?: number,
+            tokenSource: 'estimated' | 'ollama' = 'estimated',
+            modelOverride?: string,
+        ) => refreshTokenStatus(phase, tokensUsedOverride, tokenSource, modelOverride),
         updateModel: async (model: string) => {
             currentModel = model;
             config.lastModel = currentModel;
@@ -399,12 +404,13 @@ async function startChat(
             chalk.yellow(`\n⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...\n`)
         );
         try {
+            const compactionModel = resolveCompactionModel(config.compactionModel, currentModel);
             const result = await compactHistory(
                 baseUrl,
-                resolveCompactionModel(config.compactionModel, currentModel),
+                compactionModel,
                 messages,
                 numCtx,
-                (status) => refreshTokenStatus(status),
+                (status) => refreshTokenStatus(status, undefined, 'estimated', compactionModel),
             );
             clearLiveStatus();
             printCompactStats(result.stats);
@@ -440,12 +446,13 @@ async function startChat(
         phase: string,
         tokensUsedOverride?: number,
         tokenSource: 'estimated' | 'ollama' = 'estimated',
+        modelOverride?: string,
     ) {
         const tokensUsed = tokensUsedOverride ?? getCurrentTokenEstimate();
         updatePhase(phase, {
             tokensUsed,
             tokenLimit: numCtx,
-            model: currentModel,
+            model: modelOverride ?? currentModel,
             tokenSource,
         });
 

@@ -63,7 +63,12 @@ export interface ChatContext {
     saveConfig: (config: Config) => Promise<void>;
     updateNumCtx: (numCtx: number) => void;
     saveSession: (tokenStats?: SessionTokenStats | null) => void;
-    refreshTokenStatus: (phase: string) => void;
+    refreshTokenStatus: (
+        phase: string,
+        tokensUsedOverride?: number,
+        tokenSource?: 'estimated' | 'ollama',
+        modelOverride?: string,
+    ) => void;
     updateModel: (model: string) => Promise<void>;
     updateSession: (sessionId: number, messages: ChatMessage[], sessionNamed: boolean) => void;
 }
@@ -254,13 +259,14 @@ const COMPACT_HANDLER: SlashHandler = async (ctx) => {
         return true;
     }
     try {
-        ctx.refreshTokenStatus('AI request queued for compaction...');
+        const compactionModel = resolveCompactionModel(ctx.config.compactionModel, ctx.currentModel);
+        ctx.refreshTokenStatus('AI request queued for compaction...', undefined, 'estimated', compactionModel);
         const result = await compactHistory(
             ctx.baseUrl,
-            resolveCompactionModel(ctx.config.compactionModel, ctx.currentModel),
+            compactionModel,
             ctx.messages,
             ctx.numCtx,
-            (status) => ctx.refreshTokenStatus(status),
+            (status) => ctx.refreshTokenStatus(status, undefined, 'estimated', compactionModel),
         );
         clearLiveStatus();
         printCompactStats(result.stats);
