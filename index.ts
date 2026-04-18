@@ -4,6 +4,8 @@ import path from 'path';
 import chalk from 'chalk';
 import { input, select } from '@inquirer/prompts';
 
+import { printSplashScreen } from './services/splashScreen.js';
+
 import {
     TOOLS,
     clearInterrupt,
@@ -677,6 +679,8 @@ async function startChat(
 }
 
 async function main(): Promise<void> {
+    printSplashScreen();
+
     let config = await loadConfig();
     config = await setupOllama(config);
 
