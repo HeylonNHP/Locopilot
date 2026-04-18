@@ -18,6 +18,36 @@ A CLI tool for chatting with Ollama. It handles configuration for host/port, mod
 - Axios for Ollama API communication
 - Chalk for terminal styling
 
+## Coding Guidelines
+
+Apply appropriate design patterns and good programming practices to all code changes:
+
+### Design Patterns
+- **Prefer composition over inheritance** — use composition, delegation, and dependency injection to build flexible, testable components.
+- **Apply SOLID principles** — single responsibility, open/closed, Liskov substitution, interface segregation, and dependency inversion.
+- **Use established patterns where fit**:
+  - Factory functions for complex object creation
+  - Registry pattern for extensible feature sets (e.g., slash commands, tool handlers)
+  - Adapter pattern for provider abstraction (see `services/adapters/`)
+  - Facade pattern for simplified public APIs over complex subsystems
+  - Strategy pattern for swappable algorithms (e.g., token counting, HTML extraction)
+- **Avoid over-engineering** — use patterns when they genuinely simplify complexity, not to add abstraction layers for their own sake.
+
+### Good Practices
+- **Single Responsibility** — each function/module should do one thing well; keep functions small and focused.
+- **DRY (Don't Repeat Yourself)** — extract shared logic into reusable helpers; avoid copy-paste code.
+- **Explicit over implicit** — prefer clear, descriptive naming and explicit flows over clever shortcuts.
+- **Type safety** — use TypeScript strictly; avoid `any` unless absolutely necessary; define proper types for all interfaces.
+- **Error handling** — handle errors gracefully with meaningful messages; propagate errors up the call stack appropriately.
+- **Modularity** — organize code into focused modules with clear public APIs; follow the existing `services/` and `tools/` directory structure.
+- **Separation of concerns** — keep business logic separate from I/O, rendering, and orchestration.
+- **Testability** — structure code so dependencies can be injected or mocked for testing.
+
+### Refactoring Guidelines
+- When modifying existing code, look for opportunities to improve structure.
+- Extract new helpers into dedicated modules (e.g., `services/`, `tools/`) rather than bloating `index.ts`.
+- Update this file when patterns or key architectural decisions change.
+
 
 - Work through each checklist item systematically.
 - Keep communication concise and focused.
