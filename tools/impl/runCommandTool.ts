@@ -103,7 +103,7 @@ function buildOutput(
     } else {
         parts.push(`elapsed_seconds: ${elapsedSeconds}`);
         parts.push(`status: still running (process_id=${processId})`);
-        parts.push('Use check_process_output to get updated output.');
+        parts.push('Use check_process_output(process_id, poll_interval_seconds?) to get updated output.');
     }
     return parts.join('\n');
 }
@@ -274,10 +274,58 @@ export async function runCommand(
     });
 }
 
-export function checkProcessOutput(processId: number): string {
+function waitForProcessSnapshot(entry: ProcessEntry, waitMs: number): Promise<void> {
+    if (waitMs <= 0 || entry.done) {
+        return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+        const child = entry.process;
+        let settled = false;
+
+        const cleanup = () => {
+            if (child) {
+                child.off('close', handleClose);
+            }
+            clearTimeout(timer);
+        };
+
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve();
+        };
+
+        const handleClose = () => {
+            finish();
+        };
+
+        const timer = setTimeout(() => {
+            finish();
+        }, waitMs);
+
+        child?.once('close', handleClose);
+
+        if (entry.done) {
+            finish();
+        }
+    });
+}
+
+export async function checkProcessOutput(
+    processId: number,
+    waitMs: number = 0,
+    onProgress?: (message: string) => void,
+): Promise<string> {
     const entry = processRegistry.get(processId);
     if (!entry) {
         return `[No process found with process_id=${processId}]`;
+    }
+
+    if (!entry.done && waitMs > 0) {
+        onProgress?.(`check_process_output: waiting ${Math.round(waitMs / 1000)}s before sampling...`);
+        await waitForProcessSnapshot(entry, waitMs);
     }
 
     if (entry.done) {
@@ -286,6 +334,7 @@ export function checkProcessOutput(processId: number): string {
         return output;
     }
 
+    onProgress?.('check_process_output: returning partial output.');
     return buildOutput(entry, false, processId);
 }
 
@@ -302,8 +351,9 @@ export function getToolPrompt(isYolo: boolean): string {
         '   If cwd is omitted, the tool uses its current default working directory.\n' +
         '   Returns stdout/stderr when the command finishes, or partial\n' +
         `   output plus a process_id if still running after the timeout (default ${DEFAULT_TIMEOUT_MS / 1000}s).\n\n` +
-        '2. check_process_output(process_id)\n' +
+        '2. check_process_output(process_id, poll_interval_seconds?)\n' +
         '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
-        '   finished. Use this to check on commands that are still in progress.\n\n'
+        '   finished. Use poll_interval_seconds to wait longer before the next snapshot\n' +
+        '   when the command is expected to run for a long time.\n\n'
     );
 }

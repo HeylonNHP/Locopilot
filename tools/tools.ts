@@ -73,8 +73,9 @@ export const TOOLS: OllamaTool[] = [
                 'Executes a terminal command in the specified shell on the host machine. ' +
                 'The user will be asked to approve the command before it runs. ' +
                 'Returns the full stdout/stderr when the command finishes within the timeout, ' +
-                'or partial output plus a process_id when it is still running. ' +
-                'Use check_process_output to poll a long-running command for progress.',
+                    'or partial output plus a process_id when it is still running. ' +
+                    'Use check_process_output to poll a long-running command for progress, ' +
+                    'and pass a larger poll_interval_seconds when you want fewer status checks.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -111,7 +112,9 @@ export const TOOLS: OllamaTool[] = [
             description:
                 'Returns the current accumulated stdout/stderr of a command that was ' +
                 'previously started with run_command and is still running (or has since ' +
-                'completed). Also reports whether the process has finished and its exit code.',
+                    'completed). Also reports whether the process has finished and its exit code. ' +
+                    'Use poll_interval_seconds to intentionally wait longer between snapshots ' +
+                    'when the command is expected to take a long time.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -119,6 +122,12 @@ export const TOOLS: OllamaTool[] = [
                         type: 'number',
                         description: 'The process_id returned by run_command.',
                     },
+                        poll_interval_seconds: {
+                            type: 'number',
+                            description:
+                                'Optional seconds to wait before sampling stdout/stderr again. ' +
+                                'Use this to reduce polling frequency for long-running commands.',
+                        },
                 },
                 required: ['process_id'],
             },
@@ -290,7 +299,8 @@ export function getToolSystemPrompt(): string {
             ? 'the user has already provided implicit consent via YOLO mode.'
             : 'the application already prompts for approval.') + '\n' +
         '- Do NOT only print a shell snippet/code block when the task requires execution.\n' +
-        '- If run_command returns a process_id, periodically call check_process_output until completion.\n' +
+        '- If run_command returns a process_id, periodically call check_process_output until completion. ' +
+        'Use poll_interval_seconds to slow down polling when the command is likely to run for a long time.\n' +
         `- The default shell on this machine is '${defaultShell()}'. Always use commands appropriate for that shell.\n` +
         '- If a command exits with a non-zero exit code, read the stderr carefully, correct the command, and try again.\n' +
         '  Do NOT give up or tell the user it failed after a single attempt — diagnose and retry with a fixed command.\n\n' +

@@ -69,6 +69,7 @@ export interface ToolCallArguments {
     timeout_seconds?: number;
     cwd?: string;
     process_id?: number;
+    poll_interval_seconds?: number;
     prompt?: string;
     queries?: string[] | string;
     max_queries?: number;
@@ -179,11 +180,20 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'check_process_output',
         {
-            async execute(args) {
+            async execute(args, onProgress) {
                 if (args.process_id === undefined) {
                     return { content: '[Error: missing required argument "process_id"]' };
                 }
-                return { content: await checkProcessOutput(args.process_id) };
+                let waitMs = 0;
+                if (args.poll_interval_seconds !== undefined) {
+                    const parsedWaitMs = parsePositiveTimeoutMs(args.poll_interval_seconds);
+                    if (parsedWaitMs === null) {
+                        return { content: '[Error: invalid argument "poll_interval_seconds" (expected a positive finite number)]' };
+                    }
+                    waitMs = parsedWaitMs;
+                }
+
+                return { content: await checkProcessOutput(args.process_id, waitMs, onProgress) };
             },
         },
     ],

@@ -131,6 +131,8 @@ When changing an existing tool:
   - `read_file`
   - `write_file`
 
+- `check_process_output` accepts optional `poll_interval_seconds` so the model can intentionally slow down polling for long-running commands.
+
 ## Validation checklist before committing
 
 - `npx tsc --noEmit` passes.

@@ -141,6 +141,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-18: Added configurable poll interval for long-running command checks
+  - Files: `tools/impl/runCommandTool.ts`, `tools/toolRegistry.ts`, `tools/tools.ts`, `tools/TOOL_GUIDE.md`, `.github/copilot-instructions.md`
+  - Summary: Added optional `poll_interval_seconds` to `check_process_output`, wired the dispatcher to honor it, and updated the command tool prompt/schema so the model can intentionally sample long-running command output less often.
+  - Intent: Reduce noisy polling for commands that are expected to run for a long time while keeping the command registry contract explicit.
+
 - 2026-04-17: Added user-selectable compaction model
   - Files: `services/modelManager.ts`, `slashCommands.ts`, `index.ts`, `README.md`, `.github/copilot-instructions.md`
   - Summary: Added a persisted `compactionModel` setting and threaded it through `/settings`, startup configuration, `/compact`, and web-content compaction. The new setting defaults to the active chat model until the user explicitly chooses a cheaper model.
