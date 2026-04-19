@@ -19,7 +19,7 @@ import {
     isInterruptRequested,
     setWebSearchConfig,
 } from './tools/tools';
-import { getLlmApiErrorMessage } from './services/llm';
+import { getLlmApiErrorMessage, type ChatMessage, type LlmTurnStats } from './services/llm';
 import { printAIResponse, renderTurn, type StreamAIResponseParams } from './aiResponseRenderer';
 import { updateSessionMessages } from './history';
 import { COMMAND_HANDLERS, getMultilineInput, withExitGuard, type Config } from './slashCommands';
@@ -53,7 +53,6 @@ import {
     handleEmptyResponseRecovery,
     nameSessionFromPrompt,
 } from './services/chatSession';
-import type { ChatMessage } from './services/llm';
 
 let cleanupBeforeExit: (() => void) | null = null;
 
@@ -221,25 +220,30 @@ async function startChat(
                     think: config.thinkingEnabled !== false && state.thinkingSupported,
                 };
 
+                // Create callback that updates token baseline - receive stats as parameter
+                const onFinalStats = (authoritativeTokensUsed: number, stats: LlmTurnStats | null) => {
+                    clearLiveStatus();
+                    printFinalTokenSnapshot(state, authoritativeTokensUsed);
+                    
+                    // Update authoritative token baseline
+                    if (stats) {
+                        state.lastAuthoritativeTokens = stats.promptEvalCount + stats.evalCount;
+                        state.estimatedTokensAtAuthoritative = countMessagesTokens(state.messages, state.currentModel);
+                    }
+                };
+
                 // Render the AI turn
-                const { assistantMessage, interrupted: interruptedDuringStream, sessionTokenStats } = await renderTurn(
+                const renderResult = await renderTurn(
                     config.baseUrl,
                     streamParams,
                     {
                         onStatusUpdate: (phase: string) => refreshTokenStatus(state, phase),
                         timeoutMs: config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-                        onFinalStats: (authoritativeTokensUsed: number) => {
-                            clearLiveStatus();
-                            printFinalTokenSnapshot(state, authoritativeTokensUsed);
-                            
-                            // Update authoritative token baseline
-                            if (sessionTokenStats) {
-                                state.lastAuthoritativeTokens = sessionTokenStats.promptEvalCount + sessionTokenStats.evalCount;
-                                state.estimatedTokensAtAuthoritative = countMessagesTokens(state.messages, state.currentModel);
-                            }
-                        },
+                        onFinalStats,
                     },
                 );
+
+                const { assistantMessage, interrupted: interruptedDuringStream, sessionTokenStats } = renderResult;
 
                 if (interruptedDuringStream) {
                     updateSessionMessages(state.currentSessionId, state.messages);
