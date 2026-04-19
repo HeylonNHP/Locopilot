@@ -382,3 +382,7 @@ Feature summary:
   - Files: `tools.ts`
   - Summary: Consolidated shell resolution and configuration logic. Extracted redundant process completion and interrupt handling logic into a shared helper within the runCommand promise.
   - Intent: Improve maintainability and reduce code duplication in the tool execution layer.
+- 2026-04-19: Added runtime Ollama connection configuration
+  - Files: `slashCommands.ts`, `constants.ts`, `services/llm.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a `Connection` option to the `/settings` menu that lets users change the Ollama host and port mid-session. The handler parses the current URL to pre-fill defaults, prompts for new host/port, validates connectivity, and persists the updated `baseUrl` to `config.json` along with refreshing `setWebSearchConfig`.
+  - Intent: Allow users to switch between different Ollama instances without restarting the application.

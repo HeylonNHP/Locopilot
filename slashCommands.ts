@@ -13,8 +13,9 @@ import {
     DEFAULT_WEB_SEARCH_MAX_QUERIES,
     DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+    OLLAMA_CONNECT_TIMEOUT_MS,
 } from './constants.js';
-import { getLlmApiErrorMessage } from './services/llm.js';
+import { getLlmApiErrorMessage, validateLlmConnection } from './services/llm.js';
 import type { ChatMessage } from './services/llm.js';
 import { compactHistory, printCompactStats } from './services/compact.js';
 import { writeConversationHistoryDump } from './services/historyDump.js';
@@ -424,6 +425,7 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 { name: `Web Search: Max Queries (${ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES})`, value: 'web_max_queries' },
                 { name: `Web Search: Results Per Query (${ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY})`, value: 'web_results_per_query' },
                 { name: `Web Search: Page Char Limit (0 = unlimited) (${ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT})`, value: 'web_per_page_char_limit' },
+                { name: `Connection (${ctx.config.baseUrl})`, value: 'connection' },
                 { name: 'Back to Chat', value: 'back' }
             ]
         });
@@ -619,6 +621,60 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 console.log(chalk.green(`\nPage character limit updated to ${parsed === 0 ? 'unlimited' : parsed}\n`));
             }
         }
+    } else if (action === 'connection') {
+        // Parse current host and port from baseUrl
+        const currentMatch = ctx.config.baseUrl.match(/^https?:\/\/([^:]+):(\d+)\/?$/);
+        const defaultHost = currentMatch?.[1] ?? 'localhost';
+        const defaultPort = currentMatch?.[2] ?? '11434';
+
+        const newHost = await withExitGuard(async () => {
+            return await input({
+                message: 'Enter Ollama host:',
+                default: defaultHost,
+            });
+        });
+        if (newHost === null) {
+            console.log(chalk.yellow('\nConnection settings cancelled.\n'));
+            return true;
+        }
+
+        const newPort = await withExitGuard(async () => {
+            return await input({
+                message: 'Enter Ollama port:',
+                default: defaultPort,
+                validate: (value: string) => {
+                    const parsed = Number.parseInt(value, 10);
+                    return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535
+                        ? true
+                        : 'Please enter a port number between 1 and 65535.';
+                },
+            });
+        });
+        if (newPort === null) {
+            console.log(chalk.yellow('\nConnection settings cancelled.\n'));
+            return true;
+        }
+
+        const newBaseUrl = `http://${newHost}:${newPort}`;
+        console.log(chalk.blue(`\nTesting connection to ${newBaseUrl}...`));
+
+        const connected = await validateLlmConnection(newBaseUrl, OLLAMA_CONNECT_TIMEOUT_MS).then(() => true).catch(() => false);
+
+        if (!connected) {
+            console.log(chalk.red('\nCould not connect to Ollama at ' + newBaseUrl));
+            console.log(chalk.yellow('Please check if Ollama is running at that address.\n'));
+            return true;
+        }
+
+        await ctx.saveConfig({ ...ctx.config, baseUrl: newBaseUrl });
+        setWebSearchConfig({
+            maxQueries: ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
+            resultsPerQuery: ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+            perPageCharLimit: ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+            baseUrl: newBaseUrl,
+            compactionModel: effectiveCompactionModel,
+        });
+        console.log(chalk.green(`\nConnection updated to ${newBaseUrl}\n`));
     }
 
     return true; // Continue chat loop
