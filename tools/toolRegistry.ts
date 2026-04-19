@@ -73,6 +73,7 @@ export interface ToolCallArguments {
     prompt?: string;
     queries?: string[] | string;
     max_queries?: number;
+    use_playwright?: boolean;
     url?: string;
     source?: string;
     path?: string;
@@ -217,6 +218,9 @@ export const toolRegistry = new Map<string, IToolCommand>([
                     }
                     webArgs.max_queries = parsedMaxQueries;
                 }
+                if (args.use_playwright === true) {
+                    webArgs.use_playwright = true;
+                }
 
                 if (!webArgs.prompt && (!webArgs.queries || webArgs.queries.length === 0)) {
                     return { content: '[Error: web_search requires either "prompt" or "queries"]' };
@@ -233,7 +237,10 @@ export const toolRegistry = new Map<string, IToolCommand>([
                 if (typeof args.url !== 'string' || args.url.trim().length === 0) {
                     return { content: '[Error: missing required argument "url"]' };
                 }
-                return { content: await runFetchUrl({ url: args.url }, onProgress) };
+                return { content: await runFetchUrl({ 
+                    url: args.url,
+                    use_playwright: args.use_playwright === true,
+                }, onProgress) };
             },
         },
     ],

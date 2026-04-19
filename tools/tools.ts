@@ -161,6 +161,13 @@ export const TOOLS: OllamaTool[] = [
                         description:
                             'Maximum number of queries to run for this call. Uses configured default when omitted.',
                     },
+                    use_playwright: {
+                        type: 'boolean',
+                        description:
+                            'When true, uses a real browser (Playwright) to render each result page before extracting text. ' +
+                            'Useful for JavaScript-heavy pages, SPAs, or sites that require client-side rendering. ' +
+                            'May be slower but provides more complete content extraction.',
+                    },
                 },
                 required: [],
             },
@@ -179,6 +186,13 @@ export const TOOLS: OllamaTool[] = [
                     url: {
                         type: 'string',
                         description: 'A full http or https URL to fetch, for example: https://example.com/article',
+                    },
+                    use_playwright: {
+                        type: 'boolean',
+                        description:
+                            'When true, uses a real browser (Playwright) to render the page before extracting text. ' +
+                            'Useful for JavaScript-heavy pages, SPAs, or sites that require client-side rendering. ' +
+                            'May be slower but provides more complete content extraction.',
                     },
                 },
                 required: ['url'],
@@ -301,9 +315,9 @@ export function getToolSystemPrompt(): string {
         '- Do NOT only print a shell snippet/code block when the task requires execution.\n' +
         '- If run_command returns a process_id, periodically call check_process_output until completion. ' +
         'Use poll_interval_seconds to slow down polling when the command is likely to run for a long time.\n' +
-        `- The default shell on this machine is '${defaultShell()}'. Always use commands appropriate for that shell.\n` +
+        '- The default shell on this machine is \'bash\'. Always use commands appropriate for that shell.\n' +
         '- If a command exits with a non-zero exit code, read the stderr carefully, correct the command, and try again.\n' +
-        '  Do NOT give up or tell the user it failed after a single attempt — diagnose and retry with a fixed command.\n\n' +
+        '  Do NOT give up or tell the user it failed after a single attempt — diagnose and retry with a fixed command.\n' +
         '- When working on one of Locopilot\'s own LLM tool integrations, you may optionally read #file:TOOL_GUIDE.md for architecture, validation, and implementation guidance.\n\n' +
         'When the user asks you to do something that involves the filesystem, the terminal,\n' +
         'running programs, or inspecting the system, use these tools rather than refusing\n' +

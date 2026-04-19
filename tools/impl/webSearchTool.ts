@@ -18,6 +18,7 @@ export interface WebSearchToolArgs {
     queries?: string[];
     max_queries?: number;
     results_per_query?: number;
+    use_playwright?: boolean;
 }
 
 interface DuckDuckGoResult {
@@ -33,6 +34,7 @@ interface ExtractedPage {
     snippet: string;
     text: string;
     links: ExtractedLink[];
+    usedPlaywright?: boolean;
 }
 
 export interface WebSearchOptions {
@@ -95,7 +97,7 @@ export class WebSearchTool {
                     `Web search: loading page ${resultIndex + 1}/${searchResults.length} for query ${queryIndex + 1}/${queries.length}...`,
                 );
 
-                const extracted = await this.fetchAndExtractText(result);
+                const extracted = await this.fetchAndExtractText(result, args.use_playwright);
                 if (extracted) {
                     pages.push(extracted);
                 }
@@ -116,12 +118,16 @@ export class WebSearchTool {
                     ? page.links.map((l) => `- [${l.text}](${l.url})`).join('\n')
                     : '(none)';
 
+                const methodNote = page.usedPlaywright
+                    ? '\n[Note: This page was rendered using Playwright (browser) because use_playwright was requested.]'
+                    : '';
+
                 resultLines.push(
                     [
                         `result_${index + 1}_title: ${page.title || '(untitled)'}`,
                         ...urlLines,
                         `result_${index + 1}_snippet: ${page.snippet || '(none)'}`,
-                        `result_${index + 1}_text:\n${page.text || '(no extractable text)'}`,
+                        `result_${index + 1}_text:\n${page.text || '(no extractable text)'}${methodNote}`,
                         `result_${index + 1}_links:\n${linksStr}`,
                     ].join('\n'),
                 );
@@ -258,9 +264,11 @@ export class WebSearchTool {
         return results;
     }
 
-    private async fetchAndExtractText(result: DuckDuckGoResult): Promise<ExtractedPage | null> {
+    private async fetchAndExtractText(result: DuckDuckGoResult, usePlaywright?: boolean): Promise<ExtractedPage | null> {
         try {
-            const extracted = await fetchAndExtract(result.url, this.settings);
+            const extracted = await fetchAndExtract(result.url, this.settings, {
+                usePlaywright: usePlaywright === true,
+            });
 
             return {
                 url: result.url,
@@ -269,6 +277,7 @@ export class WebSearchTool {
                 snippet: result.snippet,
                 text: extracted.text || '(no extractable text)',
                 links: extracted.links,
+                usedPlaywright: usePlaywright === true,
             };
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
@@ -279,6 +288,7 @@ export class WebSearchTool {
                 snippet: result.snippet,
                 text: `(failed to fetch page: ${reason})`,
                 links: [],
+                usedPlaywright: false,
             };
         }
     }
@@ -289,11 +299,18 @@ export class WebSearchTool {
  */
 export function getToolPrompt(): string {
     return (
-        '3. web_search(prompt?, queries?, max_queries?)\n' +
+        '3. web_search(prompt?, queries?, max_queries?, use_playwright?)\n' +
         '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
         '   Use this when external web context is needed. Provide explicit queries as\n' +
         '   an array when possible; aim for 2-3 distinct queries for complex requests\n' +
         '   to ensure comprehensive coverage. The tool will respect the max_queries limit.\n\n' +
+        '   - prompt: User request text for deriving search queries if explicit queries are not supplied.\n' +
+        '   - queries: Optional list of explicit search queries to run.\n' +
+        '   - max_queries: Maximum number of queries to run for this call.\n' +
+        '   - use_playwright (optional): When true, uses a real browser (Playwright) to render\n' +
+        '     each result page before extracting text. This is useful for JavaScript-heavy pages,\n' +
+        '     SPAs, or sites that require client-side rendering. May be slower than standard\n' +
+        '     fetching but provides more complete content extraction.\n\n' +
         '   CITATION RULES:\n' +
         '   When referencing a search result, always include the full result URL inline immediately\n' +
         '   after the referenced sentence. Avoid generic "result_N" placeholders or special\n' +

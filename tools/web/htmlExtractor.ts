@@ -8,6 +8,7 @@
  * 1. Mozilla Readability for article-style content
  * 2. cheerio-based fallback selectors when Readability fails or returns
  *    insufficient text
+ * 3. Playwright browser rendering (when requested or as automatic fallback)
  */
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
@@ -207,8 +208,8 @@ async function renderWithPlaywright(url: string, settings: WebExtractionSettings
 
             const extraHTTPHeaders: Record<string, string> = {};
             if (headers['Accept-Language']) extraHTTPHeaders['Accept-Language'] = headers['Accept-Language'];
-            if (headers.Referer) extraHTTPHeaders.Referer = headers.Referer;
-            if (headers.Cookie) extraHTTPHeaders.Cookie = headers.Cookie;
+            if (headers.Referer) extraHTTPHeaders['Referer'] = headers.Referer;
+            if (headers.Cookie) extraHTTPHeaders['Cookie'] = headers.Cookie;
 
             const context = await browser.newContext({
                 userAgent: headers['User-Agent'] ?? DEFAULT_USER_AGENT,
@@ -284,12 +285,22 @@ export function extractLinks(html: string, baseUrl: string): ExtractedLink[] {
     }
 }
 
+export interface FetchAndExtractOptions {
+    usePlaywright?: boolean;
+}
+
 /**
  * Common fetch + extraction logic shared by web tools.
+ * 
+ * @param url - The URL to fetch
+ * @param settings - Extraction settings
+ * @param options - Additional options
+ * @param options.usePlaywright - If true, always use Playwright for rendering (useful for JavaScript-heavy pages)
  */
 export async function fetchAndExtract(
     url: string,
-    settings: WebExtractionSettings
+    settings: WebExtractionSettings,
+    options: FetchAndExtractOptions = {},
 ): Promise<{ title: string; text: string; finalUrl: string; links: ExtractedLink[] }> {
     const response = await axios.get<string>(url, {
         timeout: settings.requestTimeoutMs,
@@ -316,11 +327,21 @@ export async function fetchAndExtract(
     let extractionUrl = finalUrl;
     let text = staticText;
 
-    if (shouldTryBrowserFallback(html, staticText)) {
+    // Use Playwright if explicitly requested OR if automatic fallback detection suggests it
+    const shouldTryPlaywright = options.usePlaywright || shouldTryBrowserFallback(html, staticText);
+    
+    if (shouldTryPlaywright) {
         const renderedPage = await renderWithPlaywright(url, settings);
         if (renderedPage) {
             const renderedText = extractMainText(renderedPage.html, renderedPage.finalUrl);
-            if (shouldPreferRenderedText(staticText, renderedText)) {
+            
+            // If explicitly requested, always prefer the rendered result (unless empty)
+            // If automatic fallback, use the preference logic
+            const shouldUseRendered = options.usePlaywright
+                ? renderedText.length > 0
+                : shouldPreferRenderedText(staticText, renderedText);
+            
+            if (shouldUseRendered) {
                 extractionHtml = renderedPage.html;
                 extractionUrl = renderedPage.finalUrl;
                 text = renderedText;
