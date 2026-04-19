@@ -1,168 +1,85 @@
-import { access, readFile, writeFile } from 'fs/promises';
+/**
+ * index.ts - Locopilot CLI Application Entry Point
+ * 
+ * Main orchestrator for the terminal-based Ollama chat client.
+ * Handles configuration, session management, and the main chat loop.
+ */
+
 import path from 'path';
 
 import chalk from 'chalk';
-import { input, select } from '@inquirer/prompts';
+import { select } from '@inquirer/prompts';
 
-import { printSplashScreen } from './services/splashScreen.js';
-
+import { printSplashScreen } from './services/splashScreen';
 import {
-    TOOLS,
-    clearInterrupt,
-    getToolSystemPrompt,
-    handleToolCall,
-    installKeyInterruptListener,
-    isInterruptRequested,
     isYolo,
+    TOOLS,
+    installKeyInterruptListener,
     removeKeyInterruptListener,
+    isInterruptRequested,
     setWebSearchConfig,
-    setYoloMode,
-    type ToolCallResult,
-} from './tools/tools.js';
-import {
-    validateLlmConnection,
-    getLlmApiErrorMessage,
-    fetchLlmModelInfo,
-    getLlmModelContextLimit,
-    type ChatMessage,
-} from './services/llm.js';
-import { summarizeCommandError } from './services/errorSummary.js';
-import { sanitizeChatMessage } from './services/textUtils.js';
-import {
-    printAIResponse,
-    renderTurn,
-    type StreamAIResponseParams,
-} from './aiResponseRenderer.js';
-import {
-    createSession,
-    listSessions,
-    loadSessionMessages,
-    renameSession,
-    type Session,
-    type SessionTokenStats,
-    updateSessionMessages,
-} from './history.js';
-import { countMessagesTokens } from './services/tokenizer.js';
-import { updatePhase, clearLiveStatus } from './statusLine.js';
-import {
-    COMMAND_HANDLERS,
-    getMultilineInput,
-    replaceMessages,
-    type ChatContext,
-    type Config,
-    withExitGuard,
-} from './slashCommands.js';
-import { getModels, resolveCompactionModel } from './services/modelManager.js';
-import { compactHistory, printCompactStats } from './services/compact.js';
+} from './tools/tools';
+import { getLlmApiErrorMessage } from './services/llm';
+import { printAIResponse, renderTurn, type StreamAIResponseParams } from './aiResponseRenderer';
+import { updateSessionMessages } from './history';
+import { COMMAND_HANDLERS, getMultilineInput, withExitGuard, type Config } from './slashCommands';
+import { getModels, resolveCompactionModel } from './services/modelManager';
+import { countMessagesTokens } from './services/tokenizer';
+import { clearLiveStatus } from './statusLine';
 import {
     DEFAULT_NUM_CTX,
-    DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
     DEFAULT_WEB_SEARCH_MAX_QUERIES,
     DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
-    OLLAMA_CONNECT_TIMEOUT_MS,
-} from './constants.js';
-
-const CONFIG_PATH = path.join(process.cwd(), 'config.json');
-const SESSION_NAME_MAX_LENGTH = 60;
-const COMPACT_WARNING_THRESHOLD_PCT = 85;
-const COMPACT_WARNING_TOKEN_INTERVAL = 500;
-const AUTO_COMPACT_THRESHOLD_PCT = 92;
-const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
+    DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+} from './constants';
+import {
+    loadConfig,
+    saveConfig,
+    setupOllama as setupOllamaService,
+    handleUnexpectedError,
+} from './services/configManager';
+import {
+    selectExecutionMode,
+    selectOrCreateSession,
+} from './services/sessionManager';
+import {
+    createChatSessionState,
+    loadModelMetadata,
+    refreshTokenStatus,
+    printFinalTokenSnapshot,
+    autoCompactIfNeeded,
+    processAITurn,
+    handleEmptyResponseRecovery,
+    nameSessionFromPrompt,
+} from './services/chatSession';
+import type { ChatMessage } from './services/llm';
 
 let cleanupBeforeExit: (() => void) | null = null;
 
-// --- Helper Functions ---
+// --- Application Entry Point ---
 
-async function loadConfig(): Promise<Config | null> {
-    try {
-        await access(CONFIG_PATH);
-        const data = await readFile(CONFIG_PATH, 'utf8');
-        return JSON.parse(data);
-    } catch (e) {
-        if (e && (e as any).code !== 'ENOENT') {
-            console.error(chalk.red('Error reading or parsing config file.'));
-        }
-        return null;
-    }
-}
+async function main(): Promise<void> {
+    printSplashScreen();
 
-async function saveConfig(config: Config): Promise<void> {
-    await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
-}
+    // Load or create configuration
+    let config = await loadConfig();
+    config = await setupOllamaService(config);
 
-function handleUnexpectedError(err: any): void {
-    if (err && err.name === 'ExitPromptError') {
-        console.log('\nExiting Locopilot.');
-        process.exit(0);
-    }
-    console.error(chalk.red('An unexpected error occurred:'), err);
-    process.exit(1);
-}
+    // Select execution mode (Standard or YOLO)
+    const yoloActive = await selectExecutionMode(config);
+    config.yolo = yoloActive;
 
-// --- Logic Blocks ---
+    // Get available models
+    console.log(chalk.blue('Fetching models from ' + config.baseUrl + '...'));
+    const models = await getModels(config.baseUrl);
 
-async function setupOllama(initialConfig: Config | null): Promise<Config> {
-    let config = initialConfig;
-
-    while (true) {
-        if (!config) {
-            console.log(chalk.blue('Initial Configuration Required'));
-            const host = await input({ message: 'Enter Ollama host (e.g., localhost):', default: 'localhost' });
-            const port = await input({ message: 'Enter Ollama port:', default: '11434' });
-            config = {
-                baseUrl: `http://${host}:${port}`
-            };
-        }
-
-        try {
-            await validateLlmConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
-            await saveConfig(config);
-            return config;
-        } catch (error) {
-            console.error(chalk.red('\nCould not connect to Ollama at ' + config.baseUrl));
-            console.error(chalk.yellow('Please check if Ollama is running and the address is correct.\n'));
-
-            const action = await withExitGuard(async () => {
-                return await select({
-                    message: 'What would you like to do?',
-                    choices: [
-                        { name: 'Retry connection', value: 'retry' },
-                        { name: 'Edit configuration', value: 'edit' },
-                        { name: 'Exit', value: 'exit' }
-                    ]
-                });
-            });
-
-            if (action === 'exit' || action === null) process.exit(0);
-            if (action === 'edit') {
-                config = null;
-                continue;
-            }
-            // if retry, loop will continue with existing config
-        }
-    }
-}
-
-async function selectExecutionMode(config: Config): Promise<boolean> {
-    const yoloEnv = process.env.YOLO?.toLowerCase();
-    let yoloActive = process.argv.some(arg => arg === '--yolo' || arg === '-y') ||
-                     yoloEnv === 'true' ||
-                     yoloEnv === '1';
-
-    if (!yoloActive && config.yolo !== undefined) {
-        yoloActive = config.yolo;
+    if (!models || models.length === 0) {
+        console.log(chalk.red('No models found in Ollama. Please pull a model first (e.g., ollama pull llama3).'));
+        return;
     }
 
-    setYoloMode(yoloActive);
-    if (yoloActive) {
-        console.log(chalk.red.bold('\n⚠️  YOLO MODE ACTIVATED: Commands will execute automatically without confirmation. ⚠️\n'));
-    }
-
-    return yoloActive;
-}
-
-async function configureModelAndContext(config: Config, models: string[]): Promise<{ model: string, numCtx: number }> {
+    // Configure model and context
     let selectedModel = config.lastModel && models.includes(config.lastModel)
         ? config.lastModel
         : null;
@@ -202,51 +119,14 @@ async function configureModelAndContext(config: Config, models: string[]): Promi
         compactionModel: resolveCompactionModel(config.compactionModel, selectedModel as string),
     });
 
-    return { model: selectedModel as string, numCtx: selectedNumCtx };
+    // Select or create session
+    const { sessionId, messages: startingMessages, model: finalModel } = await selectOrCreateSession(models, selectedModel);
+
+    // Start the chat
+    await startChat(finalModel, selectedNumCtx, sessionId, config, startingMessages);
 }
 
-async function selectOrCreateSession(models: string[], selectedModel: string): Promise<{ sessionId: number, messages?: ChatMessage[], model: string }> {
-    const savedSessions = listSessions();
-    if (savedSessions.length === 0) {
-        const sessionId = createSession('New Session', selectedModel);
-        return { sessionId, model: selectedModel };
-    }
-
-    const sessionChoice = await withExitGuard(async () => {
-        return await select<'new' | number>({
-            message: 'Start a new conversation or resume a previous one?',
-            choices: [
-                { name: chalk.green('+ New conversation'), value: 'new' },
-                ...savedSessions.slice(0, 10).map((s: Session) => ({
-                    name: `[${s.id}] ${s.name}  ${chalk.dim('(' + s.model + ' · ' + s.updated_at + ')')}`,
-                    value: s.id as 'new' | number,
-                })),
-            ],
-            pageSize: 12,
-        });
-    });
-
-    if (sessionChoice === null) process.exit(0);
-
-    let currentModel = selectedModel;
-    if (sessionChoice === 'new') {
-        const sessionId = createSession('New Session', currentModel);
-        return { sessionId, model: currentModel };
-    }
-
-    const resumedSession = savedSessions.find(s => s.id === sessionChoice);
-    if (resumedSession) {
-        if (models.includes(resumedSession.model)) {
-            currentModel = resumedSession.model;
-        } else {
-            console.log(chalk.yellow(`\n⚠️ Resumed session used model '${resumedSession.model}', which is not currently available.`));
-            console.log(chalk.yellow(`Continuing with '${currentModel}' instead.\n`));
-        }
-    }
-    const messages = loadSessionMessages(sessionChoice);
-    console.log(chalk.dim(`Resuming session [${sessionChoice}] with ${messages.length} messages.`));
-    return { sessionId: sessionChoice, messages, model: currentModel };
-}
+// --- Chat Logic ---
 
 async function startChat(
     model: string,
@@ -255,247 +135,27 @@ async function startChat(
     config: Config,
     preloadedMessages?: ChatMessage[],
 ): Promise<void> {
-    let currentModel = model;
-    let currentSessionId = sessionId;
-    const baseUrl = config.baseUrl;
-    let thinkingSupported = false;
-    let requestedNumCtx = requestedNumCtxInput;
-    let numCtx = requestedNumCtxInput;
-    let modelContextLimit: number | null = null;
+    // Create the chat session state and context
+    const { state, context } = createChatSessionState(
+        model,
+        requestedNumCtxInput,
+        sessionId,
+        config,
+        preloadedMessages,
+    );
 
-    function applyEffectiveNumCtx(): void {
-        numCtx = modelContextLimit && modelContextLimit > 0
-            ? Math.min(requestedNumCtx, modelContextLimit)
-            : requestedNumCtx;
-    }
+    // Load model metadata
+    await loadModelMetadata(state, config);
 
-    async function loadModelMetadata(modelName: string): Promise<void> {
-        thinkingSupported = false;
-        modelContextLimit = null;
-
-        try {
-            const info = await fetchLlmModelInfo(baseUrl, modelName);
-            thinkingSupported = !!(info.capabilities && info.capabilities.includes('thinking'));
-            modelContextLimit = getLlmModelContextLimit(info);
-            applyEffectiveNumCtx();
-            if (thinkingSupported) {
-                console.log(chalk.dim(`(Model ${modelName} supports thinking)`));
-            }
-            if (modelContextLimit && requestedNumCtx > modelContextLimit) {
-                console.log(
-                    chalk.yellow(
-                        `\n⚠️  Model ${modelName} reports max context num_ctx=${modelContextLimit}; ` +
-                        `using that temporarily instead of requested ${requestedNumCtx}.\n`,
-                    ),
-                );
-            }
-        } catch {
-            thinkingSupported = false;
-            modelContextLimit = null;
-            applyEffectiveNumCtx();
-        }
-    }
-
-    await loadModelMetadata(currentModel);
-
-    console.log(chalk.green(`\nChatting with ${currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
-    console.log(chalk.dim(`(Using context length num_ctx=${numCtx})`));
-    if (isYolo()) {
-        console.log(chalk.red.bold('(YOLO mode enabled — terminal commands will execute automatically!)\n'));
-    } else {
-        console.log(chalk.dim('(Tool calling enabled — the AI may request to run terminal commands.)\n'));
-    }
-    if (config.webSearch) {
-        console.log(
-            chalk.dim(
-                `(Web search defaults: maxQueries=${config.webSearch.maxQueries}, resultsPerQuery=${config.webSearch.resultsPerQuery})\n`,
-            ),
-        );
-    }
-
-    const systemPrompt =
-        'You are Locopilot, a helpful AI assistant running inside a terminal application.\n\n' +
-        getToolSystemPrompt();
-
-    let messages: ChatMessage[] = preloadedMessages && preloadedMessages.length > 0
-        ? [...preloadedMessages]
-        : [{ role: 'system', content: systemPrompt }];
-
-    // Whether the session name has been set from the first user message.
-    let sessionNamed = preloadedMessages !== undefined && preloadedMessages.length > 0;
-
-    const context: ChatContext = {
-        get baseUrl() { return baseUrl; },
-        get currentModel() { return currentModel; },
-        get numCtx() { return numCtx; },
-        get messages() { return messages; },
-        get currentSessionId() { return currentSessionId; },
-        get config() { return config; },
-        get systemPrompt() { return systemPrompt; },
-        get thinkingSupported() { return thinkingSupported; },
-        saveConfig: async (newConfig: Config) => {
-            Object.assign(config, newConfig);
-            await saveConfig(config);
-        },
-        updateNumCtx: (newNumCtx: number) => {
-            requestedNumCtx = newNumCtx;
-            applyEffectiveNumCtx();
-        },
-        saveSession: (tokenStats?: SessionTokenStats | null) =>
-            updateSessionMessages(currentSessionId, messages, tokenStats),
-        refreshTokenStatus: (
-            phase: string,
-            tokensUsedOverride?: number,
-            tokenSource: 'estimated' | 'ollama' = 'estimated',
-            modelOverride?: string,
-        ) => refreshTokenStatus(phase, tokensUsedOverride, tokenSource, modelOverride),
-        updateModel: async (model: string) => {
-            currentModel = model;
-            config.lastModel = currentModel;
-            await saveConfig(config);
-            setWebSearchConfig({
-                maxQueries: config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
-                resultsPerQuery: config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
-                perPageCharLimit: config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-                baseUrl: config.baseUrl,
-                compactionModel: resolveCompactionModel(config.compactionModel, currentModel),
-            });
-            await loadModelMetadata(currentModel);
-            console.log(chalk.green(`\nSwitched to model: ${currentModel}`));
-        },
-        updateSession: (sessionId: number, newMessages: ChatMessage[], isNamed: boolean) => {
-            replaceMessages(messages, newMessages);
-            currentSessionId = sessionId;
-            sessionNamed = isNamed;
-            lastAuthoritativeTokens = 0;
-            estimatedTokensAtAuthoritative = 0;
-        }
-    };
-
-    let lastCompactWarningTokens = 0;
-
-    // Track the last exact token count from Ollama and the local Tkiktoken estimate
-    // at that exact same point. This allows us to track tokens using the highly accurate
-    // Ollama baseline plus the delta of any new messages, rather than relying solely
-    // on the less accurate local estimator for the entire context window.
-    let lastAuthoritativeTokens = 0;
-    let estimatedTokensAtAuthoritative = 0;
-
-    function getCurrentTokenEstimate(): number {
-        const rawEstimate = countMessagesTokens(messages, currentModel);
-        if (lastAuthoritativeTokens > 0 && estimatedTokensAtAuthoritative > 0) {
-            // Apply the delta of recent messages to our last known exact count
-            return Math.max(0, lastAuthoritativeTokens + (rawEstimate - estimatedTokensAtAuthoritative));
-        }
-        return rawEstimate;
-    }
-
-    /**
-     * Checks whether the context is above AUTO_COMPACT_THRESHOLD_PCT and, if so,
-     * runs compaction automatically. Prints a one-liner to inform the user.
-     * Returns true if compaction ran (caller should re-check interrupt state).
-     */
-    async function autoCompactIfNeeded(): Promise<boolean> {
-        const tokensUsed = getCurrentTokenEstimate();
-        if (numCtx <= 0) return false;
-        const pct = (tokensUsed / numCtx) * 100;
-        if (pct < AUTO_COMPACT_THRESHOLD_PCT) return false;
-
-        clearLiveStatus();
-        console.log(
-            chalk.yellow(`\n⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...\n`)
-        );
-        try {
-            const compactionModel = resolveCompactionModel(config.compactionModel, currentModel);
-            const result = await compactHistory(
-                baseUrl,
-                compactionModel,
-                messages,
-                numCtx,
-                (status) => refreshTokenStatus(status, undefined, 'estimated', compactionModel),
-            );
-            clearLiveStatus();
-            printCompactStats(result.stats);
-            if (result.stats.newTokenCount > numCtx) {
-                console.log(chalk.red(
-                    `⚠️  Compaction reduced context but history is still over the model limit ` +
-                    `(${result.stats.newTokenCount}/${numCtx} tokens). The next turn may fail.\n`,
-                ));
-            }
-            replaceMessages(messages, result.newMessages);
-            // Append a continuation nudge so the LLM explicitly resumes the active
-            // request after seeing the compacted context, rather than asking for guidance.
-            messages.push({
-                role: 'user',
-                content:
-                    'The conversation history was automatically compacted due to context length. ' +
-                    'Your original request and the most recent tool-call results have been preserved above. ' +
-                    'Please continue working on the original task without asking for confirmation.',
-            });
-            context.saveSession();
-            
-            // Compaction completely changes the context, meaning our old baseline is no longer valid
-            lastAuthoritativeTokens = 0;
-            estimatedTokensAtAuthoritative = 0;
-        } catch (err) {
-            clearLiveStatus();
-            const msg = err instanceof Error ? err.message : String(err);
-            console.log(chalk.yellow(`⚠️  Auto-compact skipped: ${msg}\n`));
-        }
-        return true;
-    }
-    function refreshTokenStatus(
-        phase: string,
-        tokensUsedOverride?: number,
-        tokenSource: 'estimated' | 'ollama' = 'estimated',
-        modelOverride?: string,
-    ) {
-        const tokensUsed = tokensUsedOverride ?? getCurrentTokenEstimate();
-        updatePhase(phase, {
-            tokensUsed,
-            tokenLimit: numCtx,
-            model: modelOverride ?? currentModel,
-            tokenSource,
-        });
-
-        // ── Suggestion #7: Auto-compact warning (once every 500 tokens after 85%) 
-        if (numCtx > 0) {
-            const percentage = (tokensUsed / numCtx) * 100;
-            // Only warn if >85% full and we haven't warned in the last 500 tokens
-            if (percentage >= COMPACT_WARNING_THRESHOLD_PCT && (tokensUsed - lastCompactWarningTokens) > COMPACT_WARNING_TOKEN_INTERVAL) {
-                lastCompactWarningTokens = tokensUsed;
-                clearLiveStatus();
-                console.log(
-                    chalk.yellow.bold(`\n⚠️  Context is ${percentage.toFixed(0)}% full. `) +
-                    chalk.yellow(`Consider running `) + chalk.cyan(`/compact`) + chalk.yellow(` to save tokens.\n`)
-                );
-            }
-        }
-        // ─────────────────────────────────────────────────────────────
-    }
-
-    function printFinalTokenSnapshot(tokensUsed: number): void {
-        const percentage = numCtx > 0
-            ? Math.min(100, Math.round((tokensUsed / numCtx) * 100))
-            : 0;
-        const pctColor = percentage >= 90
-            ? chalk.red
-            : percentage >= 75
-                ? chalk.yellow
-                : chalk.green;
-
-        console.log(
-            chalk.dim(`[${currentModel}] `) +
-            pctColor(`${tokensUsed}/${numCtx} tokens`) +
-            chalk.dim(` (${percentage}%)`) +
-            chalk.cyan.dim(' (ollama)') +
-            chalk.dim(` (Used ${tokensUsed} ${tokensUsed === 1 ? 'token' : 'tokens'})`),
-        );
-    }
+    // Print welcome message
+    printWelcomeMessage(state);
 
     // Register cleanup for SIGINT (Ctrl+C)
-    cleanupBeforeExit = () => context.saveSession();
+    cleanupBeforeExit = () => {
+        updateSessionMessages(state.currentSessionId, state.messages);
+    };
 
+    // Main chat loop
     while (true) {
         let prompt: string;
         try {
@@ -506,45 +166,37 @@ async function startChat(
         }
 
         if (!prompt || prompt.trim() === '') continue;
-
         if (prompt.toLowerCase() === 'exit') break;
 
-        // The prompt is already visible, so we don't need to manually print it again.
-        
-        // Let's ensure string formatting is standard before sending to model
+        // Normalize prompt formatting
         prompt = prompt.replace(/^"""|"""$/g, '');
 
-        // Handle slash commands via registry
+        // Handle slash commands or add user message
         const [cmdName = ''] = prompt.trim().split(/\s+/);
         const normalizedCmdName = cmdName.toLowerCase();
+        
         if (normalizedCmdName.startsWith('/')) {
             const handler = COMMAND_HANDLERS[normalizedCmdName];
             if (handler) {
                 const result = await handler(context);
                 if (result === 'break') break;
                 if (result === true) continue;
-                // If false, it falls through to the AI turn (like /nudge)
             } else {
                 console.log(chalk.red(`\nUnknown command: ${normalizedCmdName}`));
                 continue;
             }
         } else {
             // Standard user message
-            messages.push(sanitizeChatMessage({ role: 'user', content: prompt }));
-
-            // Name the session from the first user message.
-            if (!sessionNamed) {
-                sessionNamed = true;
-                const name = prompt.trim().slice(0, SESSION_NAME_MAX_LENGTH);
-                renameSession(currentSessionId, name);
-            }
+            state.messages.push({ role: 'user', content: prompt });
+            nameSessionFromPrompt(state, prompt);
         }
 
-        const historyLengthBeforeTurn = messages.length - 1;
-        refreshTokenStatus('AI request queued...');
-        clearInterrupt();
+        // Initialize turn state
+        refreshTokenStatus(state, 'AI request queued...');
+        clearLiveStatus();
         let emptyResponseRecoveryAttempts = 0;
 
+        // Install interrupt listener for this turn
         installKeyInterruptListener('Ctrl+X');
 
         try {
@@ -553,36 +205,44 @@ async function startChat(
                 if (isInterruptRequested()) {
                     clearLiveStatus();
                     console.log(chalk.yellow('AI loop interrupted by user.\n'));
-                    context.saveSession();
+                    updateSessionMessages(state.currentSessionId, state.messages);
                     break;
                 }
 
-                // Auto-compact if we've grown too close to the context limit between iterations.
-                await autoCompactIfNeeded();
+                // Auto-compact if context is getting full
+                await autoCompactIfNeeded(state, config);
 
+                // Build streaming parameters
                 const streamParams: StreamAIResponseParams = {
-                    model: currentModel,
-                    messages,
+                    model: state.currentModel,
+                    messages: state.messages,
                     tools: TOOLS,
-                    numCtx,
-                    think: config.thinkingEnabled !== false && thinkingSupported,
+                    numCtx: state.numCtx,
+                    think: config.thinkingEnabled !== false && state.thinkingSupported,
                 };
 
-                const { assistantMessage, interrupted: interruptedDuringStream, sessionTokenStats, finalStats } = await renderTurn(
-                    baseUrl,
+                // Render the AI turn
+                const { assistantMessage, interrupted: interruptedDuringStream, sessionTokenStats } = await renderTurn(
+                    config.baseUrl,
                     streamParams,
                     {
-                        onStatusUpdate: refreshTokenStatus,
+                        onStatusUpdate: (phase: string) => refreshTokenStatus(state, phase),
                         timeoutMs: config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-                        onFinalStats: (authoritativeTokensUsed, finalStats) => {
+                        onFinalStats: (authoritativeTokensUsed: number) => {
                             clearLiveStatus();
-                            printFinalTokenSnapshot(authoritativeTokensUsed);
+                            printFinalTokenSnapshot(state, authoritativeTokensUsed);
+                            
+                            // Update authoritative token baseline
+                            if (sessionTokenStats) {
+                                state.lastAuthoritativeTokens = sessionTokenStats.promptEvalCount + sessionTokenStats.evalCount;
+                                state.estimatedTokensAtAuthoritative = countMessagesTokens(state.messages, state.currentModel);
+                            }
                         },
                     },
                 );
 
                 if (interruptedDuringStream) {
-                    context.saveSession();
+                    updateSessionMessages(state.currentSessionId, state.messages);
                     break;
                 }
 
@@ -590,87 +250,41 @@ async function startChat(
                     throw new Error('Invariant violation: assistantMessage was expected after successful renderTurn.');
                 }
 
-                const sanitizedAssistantMessage = sanitizeChatMessage(assistantMessage);
-                messages.push(sanitizedAssistantMessage);
+                // Process the AI response and tool calls
+                const turnResult = await processAITurn(state, config, assistantMessage, sessionTokenStats);
 
-                // Update our exact baseline now that the messages array includes the complete AI response
-                if (sessionTokenStats) {
-                    lastAuthoritativeTokens = sessionTokenStats.promptEvalCount + sessionTokenStats.evalCount;
-                    estimatedTokensAtAuthoritative = countMessagesTokens(messages, currentModel);
-                }
-
-                if (sanitizedAssistantMessage.tool_calls && sanitizedAssistantMessage.tool_calls.length > 0) {
-                    // Execute each tool call sequentially then feed results back
-                    for (const tc of sanitizedAssistantMessage.tool_calls) {
-                        clearLiveStatus();
-                        refreshTokenStatus(`Tool call: ${tc.function.name}`);
-                        const toolResult: ToolCallResult = await handleToolCall(
-                            tc.function.name,
-                            tc.function.arguments,
-                            (message) => {
-                                refreshTokenStatus(message);
-                            },
-                        );
-                        clearLiveStatus();
-                        messages.push(sanitizeChatMessage({
-                            role: 'tool',
-                            content: toolResult.content,
-                            ...(toolResult.images ? { images: toolResult.images } : {}),
-                        }));
-                        refreshTokenStatus(`Tool result: ${tc.function.name}`);
-
-                        // If the command failed, have the LLM summarize the error for the user
-                        if (tc.function.name === 'run_command' && toolResult.content.includes('(COMMAND FAILED') && !isInterruptRequested()) {
-                            refreshTokenStatus('Summarizing command error...');
-                            const errorSummary = await summarizeCommandError(baseUrl, currentModel, toolResult.content, numCtx);
-                            clearLiveStatus();
-                            console.log(chalk.red('AI Error Summary: ') + chalk.yellow(errorSummary) + '\n');
-                            
-                            // Include the error summary in the conversation history as a user nudge
-                            // to help the model reason about the failure in the next turn.
-                            messages.push(sanitizeChatMessage({
-                                role: 'user',
-                                content: `Command failed. AI Error Analysis: ${errorSummary}\nPlease analyze the failure and propose a correction.`
-                            }));
-                            refreshTokenStatus('Retry requested after command failure.');
-                        }
-
-                        // Check for interrupt after each individual tool call
-                        if (isInterruptRequested()) break;
-                    }
-                    // Loop again so the LLM can see the tool results and respond
-                } else {
-                    const assistantContent = assistantMessage.content?.trim() ?? '';
-
-                    if (assistantContent.length === 0 && emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
-                        emptyResponseRecoveryAttempts += 1;
-                        messages.push(sanitizeChatMessage({
-                            role: 'user',
-                            content:
-                                'Your last response was empty. Provide a direct answer now. ' +
-                                'If commands are needed, call run_command. If commands already ran, summarize their output and errors.'
-                        }));
-                        continue;
-                    }
-
-                    // No tool calls — this is the final reply.
-                    // If content was already printed during the streaming/interrupted blocks above,
-                    // we don't print it again. We only print here if content was empty and we
-                    // are showing the fallback message.
-                    if (assistantContent.length === 0) {
-                        printAIResponse('[No response content was returned by the model after tool execution.]');
-                    }
-
-                    config.lastModel = currentModel;
-                    await saveConfig(config);
-                    context.saveSession(sessionTokenStats);
+                if (turnResult.wasInterrupted) {
+                    updateSessionMessages(state.currentSessionId, state.messages);
                     break;
                 }
+
+                if (turnResult.shouldContinue) {
+                    // Continue the tool-call loop
+                    continue;
+                }
+
+                // No tool calls — check for empty response recovery
+                if (handleEmptyResponseRecovery(state, assistantMessage, emptyResponseRecoveryAttempts)) {
+                    emptyResponseRecoveryAttempts++;
+                    continue;
+                }
+
+                // Final reply — print empty fallback if needed
+                const assistantContent = assistantMessage.content?.trim() ?? '';
+                if (assistantContent.length === 0) {
+                    printAIResponse('[No response content was returned by the model after tool execution.]');
+                }
+
+                // Save session state
+                config.lastModel = state.currentModel;
+                await saveConfig(config);
+                updateSessionMessages(state.currentSessionId, state.messages, sessionTokenStats ?? undefined);
+                break;
             }
         } catch (error) {
             clearLiveStatus();
             console.error(chalk.red('Error communicating with Ollama:'), await getLlmApiErrorMessage(error));
-            context.saveSession();
+            updateSessionMessages(state.currentSessionId, state.messages);
         } finally {
             clearLiveStatus();
             removeKeyInterruptListener();
@@ -678,28 +292,21 @@ async function startChat(
     }
 }
 
-async function main(): Promise<void> {
-    printSplashScreen();
-
-    let config = await loadConfig();
-    config = await setupOllama(config);
-
-    const yoloActive = await selectExecutionMode(config);
-    config.yolo = yoloActive;
-
-    console.log(chalk.blue('Fetching models from ' + config.baseUrl + '...'));
-    const models = await getModels(config.baseUrl);
-
-    if (!models || models.length === 0) {
-        console.log(chalk.red('No models found in Ollama. Please pull a model first (e.g., ollama pull llama3).'));
-        return;
+/**
+ * Prints the welcome message with model and mode information
+ */
+function printWelcomeMessage(state: { currentModel: string; numCtx: number; thinkingSupported: boolean }): void {
+    console.log(chalk.green(`\nChatting with ${state.currentModel}. Type 'exit' or '/exit' to quit. Type '/' for commands.`));
+    console.log(chalk.dim(`(Using context length num_ctx=${state.numCtx})`));
+    
+    if (isYolo()) {
+        console.log(chalk.red.bold('(YOLO mode enabled — terminal commands will execute automatically!)\n'));
+    } else {
+        console.log(chalk.dim('(Tool calling enabled — the AI may request to run terminal commands.)\n'));
     }
-
-    const { model: selectedModel, numCtx: selectedNumCtx } = await configureModelAndContext(config, models);
-    const { sessionId, messages: startingMessages, model: finalModel } = await selectOrCreateSession(models, selectedModel);
-
-    await startChat(finalModel, selectedNumCtx, sessionId, config, startingMessages);
 }
+
+// --- Application Bootstrap ---
 
 process.on('SIGINT', () => {
     if (cleanupBeforeExit) {
