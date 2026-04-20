@@ -31,6 +31,7 @@ import {
 import {
     renameSession,
     updateSessionMessages,
+    updateSessionModel,
     type SessionTokenStats,
 } from '../history';
 import { countMessagesTokens } from './tokenizer';
@@ -153,6 +154,7 @@ function createChatContext(state: ChatSessionState, config: Config, systemPrompt
         updateModel: async (model: string) => {
             state.currentModel = model;
             config.lastModel = state.currentModel;
+            updateSessionModel(state.currentSessionId, state.currentModel);
             setWebSearchConfig({
                 maxQueries: config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
                 resultsPerQuery: config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,

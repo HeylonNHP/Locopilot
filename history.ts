@@ -98,6 +98,10 @@ const stmtUpdateSessionTimestamp = db.prepare<[number]>(
     'UPDATE sessions SET updated_at = datetime(\'now\') WHERE id = ?',
 );
 
+const stmtUpdateSessionModel = db.prepare<[string, number]>(
+    'UPDATE sessions SET model = ?, updated_at = datetime(\'now\') WHERE id = ?',
+);
+
 const stmtUpdateSessionTokenStats = db.prepare<[number, number, number, number]>(
     'UPDATE sessions SET last_prompt_eval_count = ?, last_eval_count = ?, last_total_tokens = ?, updated_at = datetime(\'now\') WHERE id = ?',
 );
@@ -192,6 +196,13 @@ export function updateSessionMessages(
         }
     });
     run();
+}
+
+/**
+ * Updates the persisted model for an existing session.
+ */
+export function updateSessionModel(sessionId: number, model: string): void {
+    stmtUpdateSessionModel.run(model, sessionId);
 }
 
 /**
