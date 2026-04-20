@@ -16,6 +16,7 @@ import {
     TOOLS,
     installKeyInterruptListener,
     removeKeyInterruptListener,
+    clearInterrupt,
     isInterruptRequested,
     setWebSearchConfig,
 } from './tools/tools';
@@ -292,6 +293,7 @@ async function startChat(
         } finally {
             clearLiveStatus();
             removeKeyInterruptListener();
+            clearInterrupt();
         }
     }
 }
