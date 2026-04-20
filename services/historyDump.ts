@@ -13,6 +13,7 @@ export interface ConversationDumpInput {
     systemPrompt: string;
     messages: ChatMessage[];
     config?: unknown;
+    webCompactionDebug?: string[];
 }
 
 export interface ConversationDumpResult {
@@ -123,6 +124,10 @@ function renderTextSection(title: string, text: string, language = 'text'): stri
         : '_No content recorded._';
 
     return [`### ${title}`, '', body].join('\n');
+}
+
+function renderDebugSection(title: string, lines: string[]): string {
+    return renderTextSection(title, lines.join('\n'));
 }
 
 function renderToolCallSection(toolCall: NonNullable<ChatMessage['tool_calls']>[number], callIndex: number): string {
@@ -240,6 +245,10 @@ export function buildConversationDumpMarkdown(input: ConversationDumpInput): str
 
     if (input.config !== undefined) {
         sections.push('', '## Runtime Config Snapshot', '', fencedBlock(safeJsonStringify(input.config), 'json'));
+    }
+
+    if (input.webCompactionDebug && input.webCompactionDebug.length > 0) {
+        sections.push('', '## Web Content Compaction Debug', '', renderDebugSection('Web Content Compaction Debug', input.webCompactionDebug));
     }
 
     sections.push(

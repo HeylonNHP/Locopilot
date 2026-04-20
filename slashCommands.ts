@@ -19,6 +19,7 @@ import { getLlmApiErrorMessage, validateLlmConnection } from './services/llm.js'
 import type { ChatMessage } from './services/llm.js';
 import { compactHistory, printCompactStats } from './services/compact.js';
 import { writeConversationHistoryDump } from './services/historyDump.js';
+import { getLastWebCompactionDebug } from './tools/impl/contentCompactor.js';
 import { getModels, resolveCompactionModel } from './services/modelManager.js';
 import {
     createSession,
@@ -292,6 +293,7 @@ const DUMP_HANDLER: SlashHandler = async (ctx) => {
     const currentSession = listSessions().find((session: Session) => session.id === ctx.currentSessionId);
 
     try {
+        const webCompactionDebug = getLastWebCompactionDebug();
         const result = await writeConversationHistoryDump({
             sessionId: ctx.currentSessionId,
             sessionName: currentSession?.name,
@@ -302,6 +304,7 @@ const DUMP_HANDLER: SlashHandler = async (ctx) => {
             systemPrompt: ctx.systemPrompt,
             messages: ctx.messages,
             config: ctx.config,
+            ...(webCompactionDebug.length > 0 ? { webCompactionDebug } : {}),
         });
 
         console.log(chalk.green(`\nConversation history dumped to ${result.filePath}\n`));

@@ -61,6 +61,12 @@ const MIN_RETRY_OUTPUT_SCALE = 0.8;
 const MIN_CHARS_PER_TOKEN = 2;
 const MAX_CHARS_PER_TOKEN = 6;
 
+let lastWebCompactionDebug: string[] = [];
+
+export function getLastWebCompactionDebug(): string[] {
+    return [...lastWebCompactionDebug];
+}
+
 function buildCompactionPrompt(content: string, charLimit: number, attempt: number): string {
     const retryNote = attempt > 1
         ? `Retry guidance: this is pass ${attempt} of ${MAX_COMPACTION_ATTEMPTS}. Be more aggressive about removing boilerplate, repetition, and non-essential exposition while preserving facts, URLs, code, tables, and direct quotes.`
@@ -118,6 +124,7 @@ export interface ContentCompactorOptions {
 export class ContentCompactor {
     private readonly settings: WebExtractionSettings;
     private readonly baseUrl: string;
+    private debugLines: string[] = [];
 
     constructor(options: ContentCompactorOptions) {
         this.settings = options.settings;
@@ -134,6 +141,7 @@ export class ContentCompactor {
             return content;
         }
 
+        this.debugLines = [];
         let compactedContent = content;
         this.logCompactionRequested(content.length, limit);
 
@@ -163,6 +171,8 @@ export class ContentCompactor {
             const finalResult = compactedContent.length <= limit ? compactedContent : compactedContent.slice(0, limit);
             this.logCompactionComplete(content.length, finalResult.length);
             return finalResult;
+        } finally {
+            lastWebCompactionDebug = [...this.debugLines];
         }
     }
 
@@ -244,6 +254,7 @@ export class ContentCompactor {
 
     private logCompactionProgress(currentLength: number): void {
         const line = `Web content compaction generating: ${currentLength} chars`;
+        this.recordDebugLine(line);
 
         if (process.stdout.isTTY) {
             process.stdout.cursorTo(0);
@@ -256,8 +267,13 @@ export class ContentCompactor {
     }
 
     private logCompactionLine(message: string): void {
+        this.recordDebugLine(message);
         this.clearCompactionProgressLine();
         console.log(message);
+    }
+
+    private recordDebugLine(line: string): void {
+        this.debugLines.push(line);
     }
 
     private clearCompactionProgressLine(): void {
