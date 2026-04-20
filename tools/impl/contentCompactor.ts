@@ -225,6 +225,11 @@ export class ContentCompactor {
         let compactedText = '';
         try {
             for await (const chunk of sendLlmChatStream(this.baseUrl, params)) {
+                const thinking = chunk.message?.thinking ?? '';
+                if (thinking.length > 0) {
+                    this.recordDebugLine(`Web content compaction thinking chunk:\n${thinking}`);
+                }
+
                 const content = chunk.message?.content ?? '';
                 if (!content) {
                     continue;
