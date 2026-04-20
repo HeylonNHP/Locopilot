@@ -205,11 +205,13 @@ export async function runCommand(
     return new Promise<string>((resolve) => {
         let settled = false;
         let returnedPartial = false;
+        let interruptHandlerId = -1;
+
         const finalize = (code: number, result?: string) => {
             if (settled) return;
             settled = true;
 
-            unregisterInterruptHandler();
+            unregisterInterruptHandler(interruptHandlerId);
             clearTimeout(timer);
             entry.done = true;
             entry.exitCode = code;
@@ -220,7 +222,7 @@ export async function runCommand(
         };
 
         // Register interrupt handler
-        registerInterruptHandler((result: string) => {
+        interruptHandlerId = registerInterruptHandler((result: string) => {
             killProcessTree(child);
             finalize(-1, result);
         });

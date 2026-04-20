@@ -13,7 +13,8 @@ let interruptRequested = false;
 
 // Resolvers registered by tools (e.g. run_command) so they can be
 // cancelled from outside without waiting for the natural finish.
-let activeInterruptHandler: ((result: string) => void) | null = null;
+const interruptHandlers = new Map<number, (result: string) => void>();
+let nextInterruptHandlerId = 1;
 
 let keyInterruptListener: ((s: string, k: readline.Key) => void) | null = null;
 let prevRawMode: boolean | null = null;
@@ -22,18 +23,24 @@ let currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
 
 export function requestInterrupt(): void {
     interruptRequested = true;
-    if (activeInterruptHandler) {
-        activeInterruptHandler('[Interrupted by user.]');
-        activeInterruptHandler = null;
+    for (const handler of interruptHandlers.values()) {
+        handler('[Interrupted by user.]');
     }
 }
 
-export function registerInterruptHandler(handler: (result: string) => void): void {
-    activeInterruptHandler = handler;
+export function registerInterruptHandler(handler: (result: string) => void): number {
+    const id = nextInterruptHandlerId++;
+    interruptHandlers.set(id, handler);
+    return id;
 }
 
-export function unregisterInterruptHandler(): void {
-    activeInterruptHandler = null;
+export function unregisterInterruptHandler(id?: number): void {
+    if (id === undefined) {
+        interruptHandlers.clear();
+        return;
+    }
+
+    interruptHandlers.delete(id);
 }
 
 export function getInterruptHint(): string {
@@ -115,7 +122,6 @@ export function removeKeyInterruptListener(): void {
 
 export function clearInterrupt(): void {
     interruptRequested = false;
-    activeInterruptHandler = null;
 }
 
 export function isInterruptRequested(): boolean {

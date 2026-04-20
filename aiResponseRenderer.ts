@@ -195,7 +195,7 @@ export async function streamAIResponse(
 
     const abortController = new AbortController();
 
-    registerInterruptHandler(() => abortController.abort());
+    const interruptHandlerId = registerInterruptHandler(() => abortController.abort());
 
     const stream = sendLlmChatStream(baseUrl, {
         model: params.model,
@@ -280,7 +280,7 @@ export async function streamAIResponse(
         if (!isInterruptRequested()) throw error;
         interrupted = true;
     } finally {
-        unregisterInterruptHandler();
+        unregisterInterruptHandler(interruptHandlerId);
     }
 
     // Tool-call-only turns may think without emitting assistant content.
