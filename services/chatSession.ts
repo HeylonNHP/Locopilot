@@ -47,6 +47,7 @@ import {
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
 } from '../constants';
 import { setWebSearchConfig } from '../tools/tools';
+import { saveConfig as persistConfig } from './configManager';
 import type { Config, ChatContext } from '../slashCommands';
 
 export interface ChatSessionState {
@@ -135,7 +136,7 @@ function createChatContext(state: ChatSessionState, config: Config, systemPrompt
         get thinkingSupported() { return state.thinkingSupported; },
         saveConfig: async (newConfig: Config) => {
             Object.assign(config, newConfig);
-            // Config saving is handled by the caller
+            await persistConfig(config);
         },
         updateNumCtx: (newNumCtx: number) => {
             state.requestedNumCtx = newNumCtx;
