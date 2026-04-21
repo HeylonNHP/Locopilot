@@ -203,7 +203,7 @@ function renderWidthAwareTable(renderer: any, token: Tokens.Table, terminalWidth
     colWidths: layout.colWidths,
     colAligns: token.align.map(align => align ?? 'left'),
     wordWrap: true,
-    wrapOnWordBoundary: true,
+    wrapOnWordBoundary: false,
     style: {
       'padding-left': layout.padding,
       'padding-right': layout.padding,
