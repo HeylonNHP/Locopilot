@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { readFile } from 'fs/promises';
 import imageType from 'image-type';
+import { fileURLToPath } from 'node:url';
 import { DEFAULT_USER_AGENT } from '../web/htmlExtractor.js';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -67,6 +68,19 @@ async function fetchRemoteImage(url: string, timeoutMs: number): Promise<Fetched
     };
 }
 
+function normalizeLocalImagePath(source: string): string {
+    try {
+        const url = new URL(source);
+        if (url.protocol === 'file:') {
+            return fileURLToPath(url);
+        }
+    } catch {
+        // Not a valid URL; treat source as a filesystem path.
+    }
+
+    return source;
+}
+
 async function fetchLocalImage(filePath: string): Promise<FetchedImage> {
     const buffer = await readFile(filePath);
 
@@ -110,10 +124,10 @@ export class FetchImageTool {
         try {
             let image: FetchedImage;
 
-            if (source.startsWith('http://') || source.startsWith('https://')) {
+            if (/^https?:\/\//i.test(source)) {
                 image = await fetchRemoteImage(source, this.timeoutMs);
             } else {
-                const filePath = source.startsWith('file://') ? source.slice(7) : source;
+                const filePath = normalizeLocalImagePath(source);
                 image = await fetchLocalImage(filePath);
             }
 
@@ -143,7 +157,7 @@ export function getToolPrompt(): string {
         '   Use this when you need to see or analyse an image. The image will be visible to you\n' +
         '   after the tool call completes. Only works with vision-capable models (e.g. llava, llama3.2-vision, gemma3).\n' +
         '   - For web images: provide a full http or https URL.\n' +
-        '   - For local files: provide an absolute file path (e.g. /home/user/photo.jpg or C:\\Users\\user\\photo.jpg).\n' +
+        '   - For local files: provide an absolute file path or file URI (e.g. /home/user/photo.jpg, C:\\Users\\user\\photo.jpg, or file:///C:/Users/user/photo.jpg).\n' +
         '   - Supported formats: JPEG, PNG, GIF, WebP, BMP. Maximum size: 10 MB.\n' +
         '   - The tool verifies the actual image content by inspecting the file\'s magic bytes,\n' +
         '     so it will reject HTML error pages even if they have an image URL or extension.\n\n'
