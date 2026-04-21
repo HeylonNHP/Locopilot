@@ -303,8 +303,10 @@ export function getToolPrompt(): string {
         '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
         '   Use this when external web context is needed. Provide explicit queries as\n' +
         '   an array when possible; for complex requests, aim to use the configured\n' +
-        '   max_queries setting, while simpler prompts may use fewer queries. The tool\n' +
-        '   will respect the max_queries limit.\n\n' +
+        '   max_queries setting, while simpler prompts may use fewer queries. Each query\\n' +
+        '   will return up to the configured results_per_query top pages, so choose enough\n' +
+        '   distinct queries to cover the user’s information need. The tool will respect\n' +
+        '   the configured max_queries limit.\n\n' +
         '   - prompt: User request text for deriving search queries if explicit queries are not supplied.\n' +
         '   - queries: Optional list of explicit search queries to run.\n' +
         '   - max_queries: Maximum number of queries to run for this call.\n' +
@@ -320,3 +322,6 @@ export function getToolPrompt(): string {
         '   - Zambrero was founded in 2005. (https://www.productreview.com.au/listings/zambrero)\n\n'
     );
 }
+
+
+
