@@ -197,16 +197,6 @@ export async function streamAIResponse(
 
     const interruptHandlerId = registerInterruptHandler(() => abortController.abort());
 
-    const stream = sendLlmChatStream(baseUrl, {
-        model: params.model,
-        messages: params.messages,
-        tools: params.tools,
-        numCtx: params.numCtx,
-        ...(params.think !== undefined ? { think: params.think } : {}),
-        signal: abortController.signal,
-        timeoutMs: opts.timeoutMs,
-    });
-
     const startTime = Date.now();
     let firstContentTime: number | null = null;
     let thinkingSummaryPrinted = false;
@@ -223,6 +213,16 @@ export async function streamAIResponse(
     }
 
     try {
+        const stream = sendLlmChatStream(baseUrl, {
+            model: params.model,
+            messages: params.messages,
+            tools: params.tools,
+            numCtx: params.numCtx,
+            ...(params.think !== undefined ? { think: params.think } : {}),
+            signal: abortController.signal,
+            timeoutMs: opts.timeoutMs,
+        });
+
         for await (const chunk of stream) {
             if (isInterruptRequested()) {
                 interrupted = true;
