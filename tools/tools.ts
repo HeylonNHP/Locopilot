@@ -154,12 +154,12 @@ export const TOOLS: OllamaTool[] = [
                         items: { type: 'string' },
                         description:
                             'Optional list of explicit search queries to run, for example: ["Cairns Lagoon opening hours", "Cairns Lagoon facts", "Cairns Lagoon entry fee"]. ' +
-                            'Provide multiple distinct queries to improve search coverage and obtain diverse information.',
+                            'Provide multiple distinct queries to improve search coverage and obtain diverse information while respecting the configured max_queries setting.',
                     },
                     max_queries: {
                         type: 'number',
                         description:
-                            'Maximum number of queries to run for this call. Uses configured default when omitted.',
+                            'Maximum number of queries to run for this call. Uses the configured max_queries setting when omitted.',
                     },
                     use_playwright: {
                         type: 'boolean',

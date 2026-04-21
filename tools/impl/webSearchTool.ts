@@ -302,8 +302,9 @@ export function getToolPrompt(): string {
         '3. web_search(prompt?, queries?, max_queries?, use_playwright?)\n' +
         '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
         '   Use this when external web context is needed. Provide explicit queries as\n' +
-        '   an array when possible; aim for 2-3 distinct queries for complex requests\n' +
-        '   to ensure comprehensive coverage. The tool will respect the max_queries limit.\n\n' +
+        '   an array when possible; for complex requests, aim to use the configured\n' +
+        '   max_queries setting, while simpler prompts may use fewer queries. The tool\n' +
+        '   will respect the max_queries limit.\n\n' +
         '   - prompt: User request text for deriving search queries if explicit queries are not supplied.\n' +
         '   - queries: Optional list of explicit search queries to run.\n' +
         '   - max_queries: Maximum number of queries to run for this call.\n' +
