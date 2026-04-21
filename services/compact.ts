@@ -612,7 +612,7 @@ export async function generateSessionTitle(
         : messages;
 
     const conversationText = trimmedHistory
-        .filter((message) => message.role !== 'system')
+        .filter((message) => message.role === 'user' || message.role === 'assistant')
         .map((message) => `[${message.role.toUpperCase()}] ${message.content ?? ''}`)
         .join('\n\n');
 
