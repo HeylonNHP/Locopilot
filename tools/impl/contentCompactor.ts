@@ -211,6 +211,7 @@ export class ContentCompactor {
             messages: messages,
             tools: [],
             numCtx,
+            think: false,
             timeoutMs: this.settings.requestTimeoutMs,
             options: {
                 temperature: 0,
