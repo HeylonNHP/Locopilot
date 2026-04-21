@@ -217,11 +217,14 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
     }[];
 
     return rows.map(row => {
-        let toolCalls = [];
+        let toolCalls: ChatMessage['tool_calls'] | undefined = undefined;
         try {
-            toolCalls = JSON.parse(row.tool_calls);
+            const parsed = JSON.parse(row.tool_calls);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                toolCalls = parsed as ChatMessage['tool_calls'];
+            }
         } catch {
-            toolCalls = [];
+            toolCalls = undefined;
         }
         let images: string[] = [];
         try {

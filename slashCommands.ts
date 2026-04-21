@@ -17,7 +17,7 @@ import {
 } from './constants.js';
 import { getLlmApiErrorMessage, validateLlmConnection } from './services/llm.js';
 import type { ChatMessage } from './services/llm.js';
-import { compactHistory, printCompactStats } from './services/compact.js';
+import { compactHistory, generateSessionTitle, printCompactStats } from './services/compact.js';
 import { writeConversationHistoryDump } from './services/historyDump.js';
 import { getLastWebCompactionDebug } from './tools/impl/contentCompactor.js';
 import { getModels, resolveCompactionModel } from './services/modelManager.js';
@@ -26,6 +26,7 @@ import {
     listSessions,
     deleteSession,
     loadSessionMessages,
+    renameSession,
 } from './history.js';
 import type { Session } from './history.js';
 import type { SessionTokenStats } from './history.js';
@@ -313,6 +314,34 @@ const DUMP_HANDLER: SlashHandler = async (ctx) => {
             chalk.red('History dump failed:'),
             error instanceof Error ? error.message : String(error),
         );
+    }
+
+    return true;
+};
+
+const TITLE_HANDLER: SlashHandler = async (ctx) => {
+    if (ctx.messages.length <= 1) {
+        console.log(chalk.yellow('Not enough conversation history to generate a title yet.'));
+        return true;
+    }
+
+    const compactionModel = resolveCompactionModel(ctx.config.compactionModel, ctx.currentModel);
+    ctx.refreshTokenStatus('Title generation queued...', undefined, 'estimated', compactionModel);
+
+    try {
+        const title = await generateSessionTitle(
+            ctx.baseUrl,
+            compactionModel,
+            ctx.messages,
+            ctx.numCtx,
+            (status) => ctx.refreshTokenStatus(status, undefined, 'estimated', compactionModel),
+        );
+
+        renameSession(ctx.currentSessionId, title);
+        console.log(chalk.green(`\nSession title updated to: ${title}\n`));
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(chalk.red('Failed to generate a session title:'), message);
     }
 
     return true;
@@ -688,6 +717,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     { name: chalk.blue('/model') + '    - Switch LLM model', value: '/model' },
     { name: chalk.blue('/settings') + ' - Change session and app settings', value: '/settings' },
     { name: chalk.blue('/compact') + '  - Summarise conversation history to save context', value: '/compact' },
+    { name: chalk.blue('/title') + '    - Generate a short title for the current session', value: '/title' },
     { name: chalk.blue('/dump') + '     - Export the current conversation as a markdown debug file', value: '/dump' },
     { name: chalk.blue('/sessions') + ' - List and switch to a previous conversation', value: '/sessions' },
     { name: chalk.blue('/delete') + '   - Delete a saved conversation', value: '/delete' },
@@ -701,6 +731,7 @@ export const COMMAND_HANDLERS: Record<string, SlashHandler> = {
     '/model': MODEL_HANDLER,
     '/settings': SETTINGS_HANDLER,
     '/compact': COMPACT_HANDLER,
+    '/title': TITLE_HANDLER,
     '/dump': DUMP_HANDLER,
     '/sessions': SESSIONS_HANDLER,
     '/delete': DELETE_HANDLER,

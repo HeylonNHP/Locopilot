@@ -585,6 +585,76 @@ export async function compactHistory(
     };
 }
 
+function buildTitleSystemPrompt(): string {
+    return (
+        'You are a concise session title generator. ' +
+        'You will be given a conversation history and asked to create a short, descriptive title for the session. ' +
+        'Return only the title text in plain language, with no quotes, bullets, or extra explanation. ' +
+        'Keep the title under 80 characters and make it suitable for display in a session list.'
+    );
+}
+
+export async function generateSessionTitle(
+    baseUrl: string,
+    model: string,
+    messages: ChatMessage[],
+    numCtx: number,
+    onProgress?: (message: string) => void,
+): Promise<string> {
+    if (messages.length <= 1) {
+        throw new Error('Not enough conversation history to generate a session title.');
+    }
+
+    onProgress?.('Generating session title...');
+
+    const trimmedHistory: ChatMessage[] = messages.length > 64
+        ? [messages[0] as ChatMessage, ...messages.slice(-63)]
+        : messages;
+
+    const conversationText = trimmedHistory
+        .filter((message) => message.role !== 'system')
+        .map((message) => `[${message.role.toUpperCase()}] ${message.content ?? ''}`)
+        .join('\n\n');
+
+    const titleMessages: ChatMessage[] = [
+        { role: 'system', content: buildTitleSystemPrompt() },
+        {
+            role: 'user',
+            content:
+                'Create a short session title from the following conversation history:\n\n' +
+                conversationText,
+        },
+    ];
+
+    const response = await sendLlmChat(baseUrl, {
+        model,
+        messages: titleMessages,
+        tools: [],
+        numCtx,
+        options: {
+            temperature: 0.2,
+            num_predict: 128,
+        },
+    });
+
+    const rawTitle = response.message?.content?.trim() ?? '';
+    if (rawTitle.length === 0) {
+        throw new Error('The model returned an empty title.');
+    }
+
+    const title = (rawTitle.split('\n')[0] ?? '')
+        .replace(/^['"]+|['"]+$/g, '')
+        .trim()
+        .slice(0, 80)
+        .trim();
+
+    if (!title) {
+        throw new Error('The model returned an invalid title.');
+    }
+
+    return title;
+}
+
 /**
  * Prints a human-readable compaction report to the terminal.
  */
