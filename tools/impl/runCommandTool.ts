@@ -108,25 +108,59 @@ function buildOutput(
     return parts.join('\n');
 }
 
+function isPidAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function killProcessTree(child: ChildProcess): void {
     const pid = child.pid;
     if (!pid) return;
 
     if (isWindows) {
-        try {
-            spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
-            return;
-        } catch {
-            try { child.kill(); } catch { /* already dead */ }
-            return;
+        const taskkillResult = spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+        if (taskkillResult.error || taskkillResult.status !== 0) {
+            // taskkill may fail on some Windows environments or when the process tree
+            // is already gone. Fall back to a direct child kill attempt.
+            try {
+                child.kill('SIGTERM');
+            } catch {
+                /* already dead */
+            }
+
+            try {
+                child.kill('SIGKILL');
+            } catch {
+                /* already dead */
+            }
         }
+        return;
     }
 
     try {
         process.kill(-pid, 'SIGTERM');
-        return;
     } catch {
-        try { child.kill('SIGTERM'); } catch { /* already dead */ }
+        /* best-effort group termination failed */
+    }
+
+    if (isPidAlive(pid)) {
+        try {
+            process.kill(-pid, 'SIGKILL');
+        } catch {
+            /* best-effort group escalation failed */
+        }
+    }
+
+    if (isPidAlive(pid)) {
+        try {
+            child.kill('SIGKILL');
+        } catch {
+            /* already dead */
+        }
     }
 }
 
