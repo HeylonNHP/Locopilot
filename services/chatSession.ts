@@ -164,6 +164,15 @@ function createChatContext(state: ChatSessionState, config: Config, systemPrompt
                 compactionModel: resolveCompactionModel(config.compactionModel, state.currentModel),
             });
             await loadModelMetadata(state, config);
+
+            if (state.visionSupported === false &&
+                state.messages.some(message => Array.isArray(message.images) && message.images.length > 0)) {
+                console.log(chalk.yellow(
+                    `\n⚠️  Model ${state.currentModel} does not support vision input; ` +
+                    `existing image attachments in this session will be ignored by the model.\n`
+                ));
+            }
+
             console.log(chalk.green(`\nSwitched to model: ${state.currentModel}`));
         },
         updateSession: (sessionId: number, newMessages: ChatMessage[], isNamed: boolean) => {
@@ -212,9 +221,6 @@ export async function loadModelMetadata(
 
         if (state.thinkingSupported) {
             console.log(chalk.dim(`(Model ${state.currentModel} supports thinking)`));
-        }
-        if (state.visionSupported === false) {
-            console.log(chalk.dim(`(Model ${state.currentModel} does not support vision input)`));
         }
         if (state.modelContextLimit && state.requestedNumCtx > state.modelContextLimit) {
             console.log(
