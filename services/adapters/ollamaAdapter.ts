@@ -94,10 +94,25 @@ function getOllamaModelContextLimit(info: LlmModelInfo): number | null {
     return null;
 }
 
+function stripImagesFromMessages(messages: ChatMessage[]): ChatMessage[] {
+    return messages.map(message => {
+        if (!message.images || message.images.length === 0) {
+            return message;
+        }
+
+        const { images, ...rest } = message;
+        return rest;
+    });
+}
+
 function buildChatPayload(params: ChatParams, stream: boolean) {
+    const messages = params.visionSupported === false
+        ? stripImagesFromMessages(params.messages)
+        : params.messages;
+
     return {
         model: params.model,
-        messages: params.messages,
+        messages,
         tools: params.tools,
         stream,
         think: params.think,

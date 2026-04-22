@@ -219,6 +219,7 @@ async function startChat(
                     tools: TOOLS,
                     numCtx: state.numCtx,
                     think: config.thinkingEnabled !== false && state.thinkingSupported,
+                    ...(state.visionSupported !== undefined ? { visionSupported: state.visionSupported } : {}),
                 };
 
                 // Create callback that updates token baseline - receive stats as parameter

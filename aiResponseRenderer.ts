@@ -40,6 +40,7 @@ export interface StreamAIResponseParams {
     tools: ToolDefinition[];
     numCtx: number;
     think?: boolean;
+    visionSupported?: boolean;
 }
 
 export interface StreamAIResponseOptions {
@@ -218,6 +219,7 @@ export async function streamAIResponse(
             messages: params.messages,
             tools: params.tools,
             numCtx: params.numCtx,
+            ...(params.visionSupported !== undefined ? { visionSupported: params.visionSupported } : {}),
             ...(params.think !== undefined ? { think: params.think } : {}),
             signal: abortController.signal,
             timeoutMs: opts.timeoutMs,

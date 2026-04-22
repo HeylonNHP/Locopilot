@@ -20,7 +20,7 @@ import {
     removeKeyInterruptListener,
     type ToolCallResult,
 } from '../tools/tools';
-import { fetchLlmModelInfo, getLlmModelContextLimit, type ChatMessage } from './llm';
+import { fetchLlmModelInfo, getLlmModelContextLimit, type ChatMessage, type LlmModelInfo } from './llm';
 import { summarizeCommandError } from './errorSummary';
 import { sanitizeChatMessage } from './textUtils';
 import {
@@ -60,6 +60,7 @@ export interface ChatSessionState {
     requestedNumCtx: number;
     modelContextLimit: number | null;
     thinkingSupported: boolean;
+    visionSupported?: boolean;
     lastAuthoritativeTokens: number;
     estimatedTokensAtAuthoritative: number;
     lastCompactWarningTokens: number;
@@ -187,6 +188,14 @@ function applyEffectiveNumCtx(state: ChatSessionState): void {
 /**
  * Loads model metadata including thinking support and context limits
  */
+function getModelVisionSupport(info: LlmModelInfo): boolean {
+    if (Array.isArray(info.capabilities)) {
+        const capabilities = info.capabilities.map(String);
+        return capabilities.includes('vision') || capabilities.includes('multimodal') || capabilities.includes('image');
+    }
+    return false;
+}
+
 export async function loadModelMetadata(
     state: ChatSessionState,
     config: Config,
@@ -197,11 +206,15 @@ export async function loadModelMetadata(
     try {
         const info = await fetchLlmModelInfo(config.baseUrl, state.currentModel);
         state.thinkingSupported = !!(info.capabilities && info.capabilities.includes('thinking'));
+        state.visionSupported = getModelVisionSupport(info);
         state.modelContextLimit = getLlmModelContextLimit(info);
         applyEffectiveNumCtx(state);
-        
+
         if (state.thinkingSupported) {
             console.log(chalk.dim(`(Model ${state.currentModel} supports thinking)`));
+        }
+        if (state.visionSupported === false) {
+            console.log(chalk.dim(`(Model ${state.currentModel} does not support vision input)`));
         }
         if (state.modelContextLimit && state.requestedNumCtx > state.modelContextLimit) {
             console.log(

@@ -49,6 +49,11 @@ export interface ChatParams {
     tools: ToolDefinition[];
     numCtx: number;
     think?: boolean;
+    /**
+     * When false, omit image attachments from the outgoing prompt payload.
+     * Undefined means unknown and preserves any existing image data.
+     */
+    visionSupported?: boolean;
     options?: Record<string, unknown>;
 }
 
