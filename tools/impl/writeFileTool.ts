@@ -13,19 +13,29 @@ function isValidMode(value: unknown): value is 'overwrite' | 'append' | 'create'
 }
 
 export class WriteFileTool {
+    private log(message: string): void {
+        console.log(`[WriteFileTool] ${message}`);
+    }
+
     async run(args: WriteFileToolArgs): Promise<string> {
         const rawPath = (args.path ?? '').trim();
         if (!rawPath) {
-            return '[write_file error: missing required argument "path".]';
+            const errorMsg = '[write_file error: missing required argument "path".]';
+            this.log(errorMsg);
+            return errorMsg;
         }
 
         if (typeof args.content !== 'string') {
-            return '[write_file error: missing required argument "content".]';
+            const errorMsg = '[write_file error: missing required argument "content".]';
+            this.log(errorMsg);
+            return errorMsg;
         }
 
         const mode = args.mode ? args.mode.trim().toLowerCase() : 'overwrite';
         if (!isValidMode(mode)) {
-            return '[write_file error: invalid "mode". Expected "overwrite", "append", or "create".]';
+            const errorMsg = '[write_file error: invalid "mode". Expected "overwrite", "append", or "create".]';
+            this.log(errorMsg);
+            return errorMsg;
         }
 
         const absPath = resolve(rawPath);
@@ -38,58 +48,72 @@ export class WriteFileTool {
             fileExists = fileStat.isFile();
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-                return `[write_file error: unable to access path: ${error instanceof Error ? error.message : String(error)}]`;
+                const errorMsg = `[write_file error: unable to access path: ${error instanceof Error ? error.message : String(error)}]`;
+                this.log(errorMsg);
+                return errorMsg;
             }
         }
 
         try {
             if (mode === 'create') {
                 if (fileExists) {
-                    return [
+                    const warning = [
                         'write_file_warning:',
                         `path: ${absPath}`,
                         'action: create',
                         'warning: file already exists. Use mode "overwrite" with confirm_overwrite: true to replace it, or mode "append" to add to it.',
                     ].join('\n');
+                    this.log(warning);
+                    return warning;
                 }
                 await writeFile(absPath, args.content, { encoding: 'utf8', flag: 'wx' });
-                return [
+                const result = [
                     'write_file_result:',
                     `path: ${absPath}`,
                     'action: create',
                     `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
                 ].join('\n');
+                this.log(result);
+                return result;
             }
 
             if (mode === 'overwrite') {
                 if (fileExists && !args.confirm_overwrite) {
-                    return [
+                    const warning = [
                         'write_file_warning:',
                         `path: ${absPath}`,
                         'action: overwrite',
                         'warning: file already exists and will be overwritten. To proceed, call write_file again with confirm_overwrite: true.',
                         'To preserve the existing file, use mode "append" or choose a different path.',
                     ].join('\n');
+                    this.log(warning);
+                    return warning;
                 }
                 await writeFile(absPath, args.content, { encoding: 'utf8' });
-                return [
+                const result = [
                     'write_file_result:',
                     `path: ${absPath}`,
                     'action: overwrite',
                     `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
                 ].join('\n');
+                this.log(result);
+                return result;
             }
 
             // mode === 'append'
             await appendFile(absPath, args.content, { encoding: 'utf8' });
-            return [
+            const result = [
                 'write_file_result:',
                 `path: ${absPath}`,
                 'action: append',
                 `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
             ].join('\n');
+            this.log(result);
+            return result;
         } catch (error) {
-            return `[write_file error: failed to write file: ${error instanceof Error ? error.message : String(error)}]`;
+            const errorMsg = `[write_file error: failed to write file: ${error instanceof Error ? error.message : String(error)}]`;
+            this.log(errorMsg);
+            return errorMsg;
         }
     }
 }

@@ -14,10 +14,16 @@ function isPositiveInteger(value: unknown): value is number {
 }
 
 export class ReadFileTool {
+    private log(message: string): void {
+        console.log(`[ReadFileTool] ${message}`);
+    }
+
     async run(args: ReadFileToolArgs): Promise<string> {
         const rawPath = (args.path ?? '').trim();
         if (!rawPath) {
-            return '[read_file error: missing required argument "path".]';
+            const errorMsg = '[read_file error: missing required argument "path".]';
+            this.log(errorMsg);
+            return errorMsg;
         }
 
         const absPath = resolve(rawPath);
@@ -25,28 +31,42 @@ export class ReadFileTool {
         try {
             fileStat = await stat(absPath);
         } catch (error) {
-            return `[read_file error: unable to access file: ${error instanceof Error ? error.message : String(error)}]`;
+            const errorMsg = `[read_file error: unable to access file: ${error instanceof Error ? error.message : String(error)}]`;
+            this.log(errorMsg);
+            return errorMsg;
         }
 
         if (!fileStat.isFile()) {
-            return '[read_file error: target path is not a regular file.]';
+            const errorMsg = '[read_file error: target path is not a regular file.]';
+            this.log(errorMsg);
+            return errorMsg;
         }
 
         const { head_chars, tail_chars, start, length } = args;
         if (head_chars !== undefined && tail_chars !== undefined) {
-            return '[read_file error: specify only one of "head_chars" or "tail_chars".]';
+            const errorMsg = '[read_file error: specify only one of "head_chars" or "tail_chars".]';
+            this.log(errorMsg);
+            return errorMsg;
         }
         if (start !== undefined && !isPositiveInteger(start)) {
-            return '[read_file error: "start" must be a non-negative integer.]';
+            const errorMsg = '[read_file error: "start" must be a non-negative integer.]';
+            this.log(errorMsg);
+            return errorMsg;
         }
         if (length !== undefined && !isPositiveInteger(length)) {
-            return '[read_file error: "length" must be a non-negative integer.]';
+            const errorMsg = '[read_file error: "length" must be a non-negative integer.]';
+            this.log(errorMsg);
+            return errorMsg;
         }
         if (head_chars !== undefined && !isPositiveInteger(head_chars)) {
-            return '[read_file error: "head_chars" must be a non-negative integer.]';
+            const errorMsg = '[read_file error: "head_chars" must be a non-negative integer.]';
+            this.log(errorMsg);
+            return errorMsg;
         }
         if (tail_chars !== undefined && !isPositiveInteger(tail_chars)) {
-            return '[read_file error: "tail_chars" must be a non-negative integer.]';
+            const errorMsg = '[read_file error: "tail_chars" must be a non-negative integer.]';
+            this.log(errorMsg);
+            return errorMsg;
         }
 
         try {
@@ -67,15 +87,20 @@ export class ReadFileTool {
                 rangeDescription = `characters ${from} to ${Math.max(from, until - 1)}`;
             }
 
-            return [
+            const result = [
                 'read_file_result:',
                 `path: ${absPath}`,
                 `range: ${rangeDescription}`,
                 'contents:',
                 excerpt.length > 0 ? excerpt : '(empty)',
             ].join('\n');
+
+            this.log(`Result for path ${absPath}:\n${result}`);
+            return result;
         } catch (error) {
-            return `[read_file error: failed to read file: ${error instanceof Error ? error.message : String(error)}]`;
+            const errorMsg = `[read_file error: failed to read file: ${error instanceof Error ? error.message : String(error)}]`;
+            this.log(errorMsg);
+            return errorMsg;
         }
     }
 }
