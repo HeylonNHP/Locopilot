@@ -17,7 +17,6 @@ export interface WebSearchToolArgs {
     prompt?: string;
     queries?: string[];
     max_queries?: number;
-    results_per_query?: number;
     use_playwright?: boolean;
 }
 
@@ -141,7 +140,7 @@ export class WebSearchTool {
             'web_search_results:',
             'REMINDER: When citing these results, use the REAL URLs (e.g. https://example.com) immediately after the relevant text. Do NOT use result_N placeholders or special tags.',
             `queries_used: ${queries.length}`,
-            `results_per_query_requested: ${effectiveResultsPerQuery}`,
+            `results_per_query: ${effectiveResultsPerQuery}`,
             '',
             querySections.join('\n\n---\n\n'),
         ].join('\n');
@@ -303,8 +302,8 @@ export function getToolPrompt(): string {
         '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
         '   Use this when external web context is needed. Provide explicit queries as\n' +
         '   an array when possible; for complex requests, aim to use the configured\n' +
-        '   max_queries setting, while simpler prompts may use fewer queries. Each query\\n' +
-        '   will return up to the configured results_per_query top pages, so choose enough\n' +
+        '   max_queries setting, while simpler prompts may use fewer queries. Each query\n' +
+        '   will return up to the configured resultsPerQuery top pages (from settings), so choose enough\n' +
         '   distinct queries to cover the user’s information need. The tool will respect\n' +
         '   the configured max_queries limit.\n\n' +
         '   - prompt: User request text for deriving search queries if explicit queries are not supplied.\n' +
@@ -322,6 +321,5 @@ export function getToolPrompt(): string {
         '   - Zambrero was founded in 2005. (https://www.productreview.com.au/listings/zambrero)\n\n'
     );
 }
-
 
 
