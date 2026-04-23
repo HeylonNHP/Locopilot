@@ -1,5 +1,6 @@
 import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
 
 export interface WriteFileToolArgs {
     path?: string;
@@ -8,13 +9,23 @@ export interface WriteFileToolArgs {
     confirm_overwrite?: boolean | undefined;
 }
 
+export interface WriteFileToolOptions {
+    output?: ToolOutputSink;
+}
+
 function isValidMode(value: unknown): value is 'overwrite' | 'append' | 'create' {
     return value === 'overwrite' || value === 'append' || value === 'create';
 }
 
 export class WriteFileTool {
+    private readonly output: ToolOutputSink;
+
+    constructor(options: WriteFileToolOptions = {}) {
+        this.output = options.output ?? terminalToolOutputSink;
+    }
+
     private log(message: string): void {
-        console.log(`[WriteFileTool] ${message}`);
+        this.output.writeLine(`[WriteFileTool] ${message}`);
     }
 
     async run(args: WriteFileToolArgs): Promise<string> {

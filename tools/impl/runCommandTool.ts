@@ -3,6 +3,7 @@ import { confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import os from 'os';
 import { isAbsolute, resolve } from 'node:path';
+import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
 import {
     sanitize,
     isYolo,
@@ -42,14 +43,14 @@ export function defaultShell(): string {
 /**
  * Determines the effective shell to use, accounting for platform-specific overrides.
  */
-function getEffectiveShell(requestedShell?: string): string {
+function getEffectiveShell(requestedShell?: string, output: ToolOutputSink = terminalToolOutputSink): string {
     const shell = (requestedShell || defaultShell()).toLowerCase();
     if (isWindows) {
         // If the model requested a POSIX-style shell on Windows, override to
         // powershell and warn so the model understands the environment.
         const posixShells = new Set(['bash', 'sh', 'zsh', 'ksh', 'fish']);
         if (posixShells.has(shell) && shell !== 'powershell') {
-            console.log(chalk.yellow(`Warning: requested shell '${shell}' is not native on Windows; using 'powershell' instead.`));
+            output.writeLine(chalk.yellow(`Warning: requested shell '${shell}' is not native on Windows; using 'powershell' instead.`));
             return 'powershell';
         }
     }
@@ -170,9 +171,10 @@ export async function runCommand(
     timeoutMs: number = DEFAULT_TIMEOUT_MS,
     onProgress?: (message: string) => void,
     cwd?: string,
+    output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<string> {
     const currentYolo = isYolo();
-    const effectiveShell = getEffectiveShell(shell);
+    const effectiveShell = getEffectiveShell(shell, output);
     const approvedYolo = currentYolo;
     const trimmedCwd = cwd?.trim();
     const workingDirectory = trimmedCwd
@@ -180,9 +182,9 @@ export async function runCommand(
         : lastWorkingDirectory;
 
     // Show the user what the AI wants to run
-    console.log(chalk.cyan(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`));
-    console.log(`${chalk.bold('  Shell:')}   ${chalk.dim(effectiveShell)}`);
-    console.log(`${chalk.bold('  Command:')} ${chalk.green(command)}\n`);
+    output.writeLine(chalk.cyan(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`));
+    output.writeLine(`${chalk.bold('  Shell:')}   ${chalk.dim(effectiveShell)}`);
+    output.writeLine(`${chalk.bold('  Command:')} ${chalk.green(command)}\n`);
 
     let approved = approvedYolo;
     if (!approved) {
@@ -197,12 +199,12 @@ export async function runCommand(
     }
 
     if (!approved) {
-        console.log(chalk.red('  Command rejected by user.\n'));
+        output.writeLine(chalk.red('  Command rejected by user.\n'));
         return '[Command was rejected by the user.]';
     }
 
     const processId = nextProcessId++;
-    console.log(chalk.dim(`  Running (id=${processId})... (${getInterruptHint()})\n`));
+    output.writeLine(chalk.dim(`  Running (id=${processId})... (${getInterruptHint()})\n`));
 
     const entry: ProcessEntry = {
         process: null as unknown as ChildProcess, // assigned immediately below
@@ -275,7 +277,7 @@ export async function runCommand(
         }, timeoutMs);
 
         child.on('close', (code) => {
-            console.log('\n' + chalk.dim(`  Process ${processId} exited with code ${code}.\n`));
+            output.writeLine('\n' + chalk.dim(`  Process ${processId} exited with code ${code}.\n`));
             onProgress?.('run_command: completed.');
             finalize(code ?? 0);
         });

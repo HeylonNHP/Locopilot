@@ -7,6 +7,7 @@
 
 import chalk from 'chalk';
 import readline from 'readline';
+import { terminalToolOutputSink } from './toolOutput.js';
 
 // Set to true by requestInterrupt(); cleared by clearInterrupt().
 let interruptRequested = false;
@@ -87,7 +88,7 @@ export function installKeyInterruptListener(keySpec = 'Ctrl+X'): void {
             : (key.name === keyName || str === keySpec);
 
         if (match) {
-            console.log(chalk.yellow(`\n[${keySpec} pressed — interrupting AI loop...]\n`));
+            terminalToolOutputSink.writeLine(chalk.yellow(`\n[${keySpec} pressed — interrupting AI loop...]\n`));
             requestInterrupt();
         }
     };

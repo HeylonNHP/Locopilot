@@ -10,6 +10,7 @@
 import { type WebExtractionSettings } from '../web/htmlExtractor.js';
 import { sendLlmChatStream, type ChatMessage, type StreamChatParams } from '../../services/llm.js';
 import { countMessagesTokens, countTextTokens } from '../../services/tokenizer.js';
+import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
 
 /**
  * Prompt template for content compaction.
@@ -167,7 +168,9 @@ export class ContentCompactor {
             this.logCompactionComplete(content.length, finalResult.length);
             return finalResult;
         } catch (error) {
-            console.warn('Content compaction failed, returning truncated content:', error instanceof Error ? error.message : String(error));
+            this.output.writeLine(
+                `Content compaction failed, returning truncated content: ${error instanceof Error ? error.message : String(error)}`,
+            );
             const finalResult = compactedContent.length <= limit ? compactedContent : compactedContent.slice(0, limit);
             this.logCompactionComplete(content.length, finalResult.length);
             return finalResult;
@@ -263,19 +266,18 @@ export class ContentCompactor {
         this.recordDebugLine(line);
 
         if (process.stdout.isTTY) {
-            process.stdout.cursorTo(0);
-            process.stdout.clearLine(0);
-            process.stdout.write(line);
+            this.output.clearInline();
+            this.output.writeInline(line);
             return;
         }
 
-        process.stdout.write(`${line}\n`);
+        this.output.writeLine(line);
     }
 
     private logCompactionLine(message: string): void {
         this.recordDebugLine(message);
         this.clearCompactionProgressLine();
-        console.log(message);
+        this.output.writeLine(message);
     }
 
     private recordDebugLine(line: string): void {
@@ -283,12 +285,7 @@ export class ContentCompactor {
     }
 
     private clearCompactionProgressLine(): void {
-        if (!process.stdout.isTTY) {
-            return;
-        }
-
-        process.stdout.cursorTo(0);
-        process.stdout.clearLine(0);
+        this.output.clearInline();
     }
 
     private logCompactionComplete(originalLength: number, finalLength: number): void {
@@ -300,6 +297,10 @@ export class ContentCompactor {
      */
     static create(settings: WebExtractionSettings, baseUrl: string): ContentCompactor {
         return new ContentCompactor({ settings, baseUrl });
+    }
+
+    private get output(): ToolOutputSink {
+        return this.settings.output ?? terminalToolOutputSink;
     }
 }
 

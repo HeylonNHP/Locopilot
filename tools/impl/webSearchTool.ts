@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { cleanText, fetchAndExtract, DEFAULT_USER_AGENT, type ExtractedLink } from '../web/htmlExtractor.js';
+import type { ToolOutputSink } from '../toolOutput.js';
 
 const DUCKDUCKGO_HTML_SEARCH_URL = 'https://duckduckgo.com/html/';
 
@@ -11,6 +12,7 @@ export interface WebSearchSettings {
     perPageCharLimit: number;
     baseUrl: string; // Required - always from config
     compactionModel: string;
+    output?: ToolOutputSink;
 }
 
 export interface WebSearchToolArgs {

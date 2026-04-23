@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
 
 export interface ReadFileToolArgs {
     path?: string;
@@ -9,13 +10,23 @@ export interface ReadFileToolArgs {
     length?: number | undefined;
 }
 
+export interface ReadFileToolOptions {
+    output?: ToolOutputSink;
+}
+
 function isPositiveInteger(value: unknown): value is number {
     return typeof value === 'number' && Number.isFinite(value) && Math.floor(value) === value && value >= 0;
 }
 
 export class ReadFileTool {
+    private readonly output: ToolOutputSink;
+
+    constructor(options: ReadFileToolOptions = {}) {
+        this.output = options.output ?? terminalToolOutputSink;
+    }
+
     private log(message: string): void {
-        console.log(`[ReadFileTool] ${message}`);
+        this.output.writeLine(`[ReadFileTool] ${message}`);
     }
 
     async run(args: ReadFileToolArgs): Promise<string> {

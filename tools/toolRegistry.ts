@@ -16,6 +16,7 @@ import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool.js';
 import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCommandTool.js';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants.js';
 import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers.js';
+import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput.js';
 
 // --- Shared mutable state ---
 
@@ -98,6 +99,7 @@ export interface IToolCommand {
     execute(
         args: ToolCallArguments,
         onProgress?: (message: string) => void,
+        output?: ToolOutputSink,
     ): Promise<ToolCallResult>;
 }
 
@@ -106,11 +108,12 @@ export interface IToolCommand {
 async function runWebSearch(
     args: WebSearchToolArgs,
     onProgress?: (message: string) => void,
+    output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<string> {
     const tool = new WebSearchTool({
         settings: webSearchSettings,
         onProgress: (message: string) => {
-            console.log(chalk.dim(message));
+            output.writeLine(chalk.dim(message));
             onProgress?.(message);
         },
     });
@@ -120,34 +123,42 @@ async function runWebSearch(
 async function runFetchUrl(
     args: FetchUrlToolArgs,
     onProgress?: (message: string) => void,
+    output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<string> {
     const tool = new FetchUrlTool({
         settings: webSearchSettings,
         onProgress: (message: string) => {
-            console.log(chalk.dim(message));
+            output.writeLine(chalk.dim(message));
             onProgress?.(message);
         },
     });
     return tool.run(args);
 }
 
-async function runReadFile(args: ReadFileToolArgs): Promise<string> {
-    const tool = new ReadFileTool();
+async function runReadFile(
+    args: ReadFileToolArgs,
+    output: ToolOutputSink = terminalToolOutputSink,
+): Promise<string> {
+    const tool = new ReadFileTool({ output });
     return tool.run(args);
 }
 
-async function runWriteFile(args: WriteFileToolArgs): Promise<string> {
-    const tool = new WriteFileTool();
+async function runWriteFile(
+    args: WriteFileToolArgs,
+    output: ToolOutputSink = terminalToolOutputSink,
+): Promise<string> {
+    const tool = new WriteFileTool({ output });
     return tool.run(args);
 }
 
 function runFetchImage(
     args: FetchImageToolArgs,
     onProgress?: (message: string) => void,
+    output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<FetchImageResult> {
     const tool = new FetchImageTool({
         onProgress: (message: string) => {
-            console.log(chalk.dim(message));
+            output.writeLine(chalk.dim(message));
             onProgress?.(message);
         },
     });
@@ -160,7 +171,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'run_command',
         {
-            async execute(args, onProgress) {
+            async execute(args, onProgress, output = terminalToolOutputSink) {
                 if (!args.command) return { content: '[Error: missing required argument "command"]' };
                 let timeoutMs = DEFAULT_TIMEOUT_MS;
                 if (args.timeout_seconds !== undefined) {
@@ -174,7 +185,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                 if (args.cwd !== undefined && cwd === undefined) {
                     return { content: '[Error: invalid argument "cwd" (expected a non-empty string)]' };
                 }
-                return { content: await runCommand(args.command, args.shell, timeoutMs, onProgress, cwd) };
+                return { content: await runCommand(args.command, args.shell, timeoutMs, onProgress, cwd, output) };
             },
         },
     ],
@@ -201,7 +212,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'web_search',
         {
-            async execute(args, onProgress) {
+            async execute(args, onProgress, output = terminalToolOutputSink) {
                 const parsedQueries = parseQueriesInput(args.queries);
                 const webArgs: WebSearchToolArgs = {};
 
@@ -226,39 +237,39 @@ export const toolRegistry = new Map<string, IToolCommand>([
                     return { content: '[Error: web_search requires either "prompt" or "queries"]' };
                 }
 
-                return { content: await runWebSearch(webArgs, onProgress) };
+                return { content: await runWebSearch(webArgs, onProgress, output) };
             },
         },
     ],
     [
         'fetch_url',
         {
-            async execute(args, onProgress) {
+            async execute(args, onProgress, output = terminalToolOutputSink) {
                 if (typeof args.url !== 'string' || args.url.trim().length === 0) {
                     return { content: '[Error: missing required argument "url"]' };
                 }
                 return { content: await runFetchUrl({ 
                     url: args.url,
                     use_playwright: args.use_playwright === true,
-                }, onProgress) };
+                }, onProgress, output) };
             },
         },
     ],
     [
         'fetch_image',
         {
-            async execute(args, onProgress) {
+            async execute(args, onProgress, output = terminalToolOutputSink) {
                 if (typeof args.source !== 'string' || args.source.trim().length === 0) {
                     return { content: '[Error: missing required argument "source"]' };
                 }
-                return runFetchImage({ source: args.source }, onProgress);
+                return runFetchImage({ source: args.source }, onProgress, output);
             },
         },
     ],
     [
         'read_file',
         {
-            async execute(args) {
+            async execute(args, _onProgress, output = terminalToolOutputSink) {
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -269,7 +280,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         tail_chars: args.tail_chars,
                         start: args.start,
                         length: args.length,
-                    }),
+                    }, output),
                 };
             },
         },
@@ -277,7 +288,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'write_file',
         {
-            async execute(args) {
+            async execute(args, _onProgress, output = terminalToolOutputSink) {
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -290,7 +301,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         content: args.content,
                         mode: args.mode,
                         confirm_overwrite: args.confirm_overwrite,
-                    }),
+                    }, output),
                 };
             },
         },

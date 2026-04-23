@@ -16,6 +16,7 @@ import * as cheerio from 'cheerio';
 import axios from 'axios';
 import { ContentCompactor } from '../impl/contentCompactor.js';
 import { buildWebRequestHeaders } from './webRequestHeaders.js';
+import type { ToolOutputSink } from '../toolOutput.js';
 
 export interface WebExtractionSettings {
     requestTimeoutMs: number;
@@ -23,6 +24,7 @@ export interface WebExtractionSettings {
     baseUrl: string; // REQUIRED - always from config, never optional
     compactionModel: string;
     cookieHeader?: string;
+    output?: ToolOutputSink;
 }
 
 export interface ExtractResult {

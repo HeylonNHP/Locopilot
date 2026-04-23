@@ -16,10 +16,13 @@ import { getToolPrompt as getReadFilePrompt } from './impl/readFileTool.js';
 import { getToolPrompt as getWriteFilePrompt } from './impl/writeFileTool.js';
 import { getToolPrompt as getRunCommandPrompt, defaultShell } from './impl/runCommandTool.js';
 import { isYolo, toolRegistry, setYoloMode, setWebSearchConfig } from './toolRegistry.js';
+import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput.js';
 import type { ToolCallArguments, ToolCallResult, ToolWebSearchConfig } from './toolRegistry.js';
 export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager.js';
 export { isYolo, setYoloMode, setWebSearchConfig };
 export type { ToolCallArguments, ToolCallResult, ToolWebSearchConfig };
+export type { ToolOutputSink } from './toolOutput.js';
+export { terminalToolOutputSink } from './toolOutput.js';
 
 /**
  * Strips ANSI escape codes and Carriage Returns from text.
@@ -345,8 +348,9 @@ export async function handleToolCall(
     name: string,
     args: ToolCallArguments,
     onProgress?: (message: string) => void,
+    output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<ToolCallResult> {
     const command = toolRegistry.get(name);
     if (!command) return { content: `[Unknown tool: ${name}]` };
-    return command.execute(args, onProgress);
+    return command.execute(args, onProgress, output);
 }
