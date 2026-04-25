@@ -64,6 +64,14 @@ export interface ChatSessionState {
     lastAuthoritativeTokens: number;
     estimatedTokensAtAuthoritative: number;
     lastCompactWarningTokens: number;
+    /** Cached total token count for state.messages — avoids re-encoding the
+     *  entire message history on every streaming chunk. Invalidated when the
+     *  messages array length changes or the active model changes. */
+    cachedTokenTotal: number;
+    /** Length of state.messages at the time cachedTokenTotal was computed. */
+    cachedMessagesLength: number;
+    /** Model name used when cachedTokenTotal was computed. */
+    cachedTokenTotalModel: string | null;
 }
 
 export interface ChatSessionOptions {
@@ -93,6 +101,17 @@ export function createSystemPrompt(): string {
         getToolSystemPrompt()
     );
 }
+
+/**
+ * Invalidates the cached token total, forcing the next call to
+ * getCurrentTokenEstimate() to recompute from scratch.
+ */
+function invalidateTokenCache(state: ChatSessionState): void {
+    state.cachedTokenTotal = 0;
+    state.cachedMessagesLength = 0;
+    state.cachedTokenTotalModel = null;
+}
+
 /**
  * Creates a new chat session state
  */
@@ -124,6 +143,9 @@ export function createChatSessionState(
         lastAuthoritativeTokens: 0,
         estimatedTokensAtAuthoritative: 0,
         lastCompactWarningTokens: 0,
+        cachedTokenTotal: 0,
+        cachedMessagesLength: 0,
+        cachedTokenTotalModel: null,
     };
 
     const context = createChatContext(state, config, systemPrompt);
@@ -189,6 +211,7 @@ function createChatContext(state: ChatSessionState, config: Config, systemPrompt
             state.sessionNamed = isNamed;
             state.lastAuthoritativeTokens = 0;
             state.estimatedTokensAtAuthoritative = 0;
+            invalidateTokenCache(state);
         }
     };
 }
@@ -246,14 +269,30 @@ export async function loadModelMetadata(
 }
 
 /**
- * Gets the current token estimate using authoritative Ollama counts when available
+ * Gets the current token estimate using authoritative Ollama counts when available.
+ *
+ * This function caches the token total for the current messages array so that
+ * callers (e.g. the per-chunk status update during streaming) do not pay the
+ * cost of re-encoding the entire message history on every invocation. The
+ * cache is invalidated automatically when messages are mutated (length change)
+ * or the active model changes.
  */
 export function getCurrentTokenEstimate(state: ChatSessionState): number {
-    const rawEstimate = countMessagesTokens(state.messages, state.currentModel);
-    if (state.lastAuthoritativeTokens > 0 && state.estimatedTokensAtAuthoritative > 0) {
-        return Math.max(0, state.lastAuthoritativeTokens + (rawEstimate - state.estimatedTokensAtAuthoritative));
+    // Recompute the cached total only when the messages array or model has changed
+    if (state.messages.length !== state.cachedMessagesLength ||
+        state.currentModel !== state.cachedTokenTotalModel ||
+        state.cachedTokenTotal === 0) {
+        const rawEstimate = countMessagesTokens(state.messages, state.currentModel);
+        state.cachedTokenTotal = rawEstimate;
+        state.cachedMessagesLength = state.messages.length;
+        state.cachedTokenTotalModel = state.currentModel;
     }
-    return rawEstimate;
+
+    // Apply authoritative anchoring
+    if (state.lastAuthoritativeTokens > 0 && state.estimatedTokensAtAuthoritative > 0) {
+        return Math.max(0, state.lastAuthoritativeTokens + (state.cachedTokenTotal - state.estimatedTokensAtAuthoritative));
+    }
+    return state.cachedTokenTotal;
 }
 
 /**
@@ -363,6 +402,7 @@ export async function autoCompactIfNeeded(
 
         state.lastAuthoritativeTokens = 0;
         state.estimatedTokensAtAuthoritative = 0;
+        invalidateTokenCache(state);
         return true;
     } catch (err) {
         clearLiveStatus();
