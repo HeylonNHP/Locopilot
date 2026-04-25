@@ -585,13 +585,34 @@ export async function compactHistory(
     };
 }
 
+function looksLikeApologyTitle(title: string): boolean {
+    return /\b(?:i['’]?m sorry|sorry|apolog(?:y|ize)|can(?:'t|not)|cannot|unable|won't|will not|no permission|cannot create|cannot write|no access|not allowed)\b/i.test(title);
+}
+
 function buildTitleSystemPrompt(): string {
     return (
         'You are a concise session title generator. ' +
         'You will be given a conversation history and asked to create a short, descriptive title for the session. ' +
         'Return only the title text in plain language, with no quotes, bullets, or extra explanation. ' +
-        'Keep the title under 80 characters and make it suitable for display in a session list.'
+        'Keep the title under 80 characters and make it suitable for display in a session list. ' +
+        'Do not mention your own limitations, refusals, or apologies in the title; summarize the session topic or user request instead.'
     );
+}
+
+function makeTitlePrompt(conversationText: string, extraInstruction?: string): string {
+    return (
+        'Create a short session title from the following conversation history:\n\n' +
+        conversationText +
+        (extraInstruction ? '\n\n' + extraInstruction : '')
+    );
+}
+
+function extractTitleFromResponse(rawTitle: string): string {
+    return (rawTitle.split('\n')[0] ?? '')
+        .replace(/^['"]+|['"]+$/g, '')
+        .trim()
+        .slice(0, 80)
+        .trim();
 }
 
 export async function generateSessionTitle(
@@ -642,14 +663,41 @@ export async function generateSessionTitle(
         throw new Error('The model returned an empty title.');
     }
 
-    const title = (rawTitle.split('\n')[0] ?? '')
-        .replace(/^['"]+|['"]+$/g, '')
-        .trim()
-        .slice(0, 80)
-        .trim();
-
+    let title = extractTitleFromResponse(rawTitle);
     if (!title) {
         throw new Error('The model returned an invalid title.');
+    }
+
+    if (looksLikeApologyTitle(title)) {
+        onProgress?.('Title looks like an apology or refusal; retrying with a clearer instruction...');
+
+        const retryMessages: ChatMessage[] = [
+            { role: 'system', content: buildTitleSystemPrompt() },
+            {
+                role: 'user',
+                content: makeTitlePrompt(
+                    conversationText,
+                    'Do not use any refusal, apology, limitation, or error language in the title. ' +
+                    'Instead, summarize the core topic, request, or task described by the conversation.',
+                ),
+            },
+        ];
+
+        const retryResponse = await sendLlmChat(baseUrl, {
+            model,
+            messages: retryMessages,
+            tools: [],
+            numCtx,
+            options: {
+                temperature: 0.2,
+                num_predict: 128,
+            },
+        });
+
+        const retryTitle = extractTitleFromResponse(retryResponse.message?.content?.trim() ?? '');
+        if (retryTitle && !looksLikeApologyTitle(retryTitle)) {
+            return retryTitle;
+        }
     }
 
     return title;
