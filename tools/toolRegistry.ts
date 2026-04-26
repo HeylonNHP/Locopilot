@@ -12,6 +12,7 @@ import { WebSearchTool, type WebSearchSettings, type WebSearchToolArgs } from '.
 import { FetchUrlTool, type FetchUrlToolArgs } from './impl/fetchUrlTool.js';
 import { FetchImageTool, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool.js';
 import { ReadFileTool, type ReadFileToolArgs } from './impl/readFileTool.js';
+import { PatchFileTool, type PatchFileToolArgs, type PatchFilePatch } from './impl/patchFileTool.js';
 import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool.js';
 import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCommandTool.js';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants.js';
@@ -78,6 +79,7 @@ export interface ToolCallArguments {
     url?: string;
     source?: string;
     path?: string;
+    patches?: PatchFilePatch[];
     head_chars?: number;
     tail_chars?: number;
     start?: number;
@@ -140,6 +142,14 @@ async function runReadFile(
     output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<string> {
     const tool = new ReadFileTool({ output });
+    return tool.run(args);
+}
+
+async function runPatchFile(
+    args: PatchFileToolArgs,
+    output: ToolOutputSink = terminalToolOutputSink,
+): Promise<string> {
+    const tool = new PatchFileTool({ output });
     return tool.run(args);
 }
 
@@ -280,6 +290,25 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         tail_chars: args.tail_chars,
                         start: args.start,
                         length: args.length,
+                    }, output),
+                };
+            },
+        },
+    ],
+    [
+        'patch_file',
+        {
+            async execute(args, _onProgress, output = terminalToolOutputSink) {
+                if (typeof args.path !== 'string' || args.path.trim().length === 0) {
+                    return { content: '[Error: missing required argument "path"]' };
+                }
+                if (!Array.isArray(args.patches) || args.patches.length === 0) {
+                    return { content: '[Error: missing required argument "patches"]' };
+                }
+                return {
+                    content: await runPatchFile({
+                        path: args.path,
+                        patches: args.patches,
                     }, output),
                 };
             },

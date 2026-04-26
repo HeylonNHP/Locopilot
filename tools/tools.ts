@@ -13,6 +13,7 @@ import { getToolPrompt as getWebSearchPrompt } from './impl/webSearchTool.js';
 import { getToolPrompt as getFetchUrlPrompt } from './impl/fetchUrlTool.js';
 import { getToolPrompt as getFetchImagePrompt } from './impl/fetchImageTool.js';
 import { getToolPrompt as getReadFilePrompt } from './impl/readFileTool.js';
+import { getToolPrompt as getPatchFilePrompt } from './impl/patchFileTool.js';
 import { getToolPrompt as getWriteFilePrompt } from './impl/writeFileTool.js';
 import { getToolPrompt as getRunCommandPrompt, defaultShell } from './impl/runCommandTool.js';
 import { isYolo, toolRegistry, setYoloMode, setWebSearchConfig } from './toolRegistry.js';
@@ -47,11 +48,24 @@ export function sanitize(text: string): string {
 
 export interface OllamaToolParameter {
     type: string;
-    description: string;
+    description?: string;
     enum?: string[];
     items?: {
         type: string;
+        description?: string;
+        enum?: string[];
+        items?: {
+            type: string;
+            description?: string;
+            enum?: string[];
+            properties?: Record<string, OllamaToolParameter>;
+            required?: string[];
+        };
+        properties?: Record<string, OllamaToolParameter>;
+        required?: string[];
     };
+    properties?: Record<string, OllamaToolParameter>;
+    required?: string[];
 }
 
 export interface OllamaTool {
@@ -262,6 +276,44 @@ export const TOOLS: OllamaTool[] = [
     {
         type: 'function',
         function: {
+            name: 'patch_file',
+            description:
+                'Applies targeted replacements to an existing file. ' +
+                'Each patch provides an exact old string and a new string. ' +
+                'Prefer this for small edits instead of rewriting the whole file.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: {
+                        type: 'string',
+                        description: 'A file path to patch, absolute or relative to the current working directory.',
+                    },
+                    patches: {
+                        type: 'array',
+                        description: 'An array of targeted replacements to apply atomically.',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                old: {
+                                    type: 'string',
+                                    description: 'The exact text to replace. Include enough surrounding context to make the match unique.',
+                                },
+                                new: {
+                                    type: 'string',
+                                    description: 'The replacement text.',
+                                },
+                            },
+                            required: ['old', 'new'],
+                        },
+                    },
+                },
+                required: ['path', 'patches'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
             name: 'write_file',
             description:
                 'Writes text to a file on the host filesystem. Supports overwrite, append, and create-only semantics. ' +
@@ -307,6 +359,7 @@ export function getToolSystemPrompt(): string {
         getFetchUrlPrompt() +
         getFetchImagePrompt() +
         getReadFilePrompt() +
+        getPatchFilePrompt() +
         getWriteFilePrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +

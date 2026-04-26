@@ -386,3 +386,8 @@ Feature summary:
   - Files: `slashCommands.ts`, `constants.ts`, `services/llm.ts`, `.github/copilot-instructions.md`
   - Summary: Added a `Connection` option to the `/settings` menu that lets users change the Ollama host and port mid-session. The handler parses the current URL to pre-fill defaults, prompts for new host/port, validates connectivity, and persists the updated `baseUrl` to `config.json` along with refreshing `setWebSearchConfig`.
   - Intent: Allow users to switch between different Ollama instances without restarting the application.
+
+- 2026-04-26: Added targeted file patch tool
+  - Files: `tools/impl/patchFileTool.ts` (new), `tools/toolRegistry.ts`, `tools/tools.ts`, `tools/impl/writeFileTool.ts`, `tools/TOOL_GUIDE.md`
+  - Summary: Added `patch_file(path, patches)` so the model can apply small atomic replacements without rewriting whole files. The tool validates each patch against the current file, tolerates line-ending and trailing-whitespace drift, rejects missing or ambiguous matches, and writes only after all patches pass validation.
+  - Intent: Reduce token usage and accidental regressions when editing large source files one or two lines at a time.

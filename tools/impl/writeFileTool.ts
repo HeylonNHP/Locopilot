@@ -131,10 +131,11 @@ export class WriteFileTool {
 
 export function getToolPrompt(): string {
     return (
-        '6. write_file(path, content, mode, confirm_overwrite)\n' +
+        '7. write_file(path, content, mode, confirm_overwrite)\n' +
         '   Write text to a local file.\n' +
         '   Use mode="overwrite" to replace an existing file (requires confirm_overwrite: true if the file already exists),\n' +
         '   mode="append" to add to an existing file or create it if missing,\n' +
-        '   and mode="create" to create a new file only if it does not already exist.\n\n'
+        '   and mode="create" to create a new file only if it does not already exist.\n' +
+        '   For small edits to an existing file, prefer patch_file instead of rewriting the whole file.\n\n'
     );
 }

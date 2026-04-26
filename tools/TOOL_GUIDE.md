@@ -29,6 +29,7 @@ The actual tool behavior is delegated to modules in `tools/impl/`:
 - `tools/impl/fetchUrlTool.ts`
 - `tools/impl/fetchImageTool.ts`
 - `tools/impl/readFileTool.ts`
+- `tools/impl/patchFileTool.ts`
 - `tools/impl/writeFileTool.ts`
 
 These modules implement the concrete runtime behavior for their respective operations.
@@ -129,9 +130,11 @@ When changing an existing tool:
   - `fetch_url`
   - `fetch_image`
   - `read_file`
+- `patch_file`
   - `write_file`
 
 - `check_process_output` accepts optional `poll_interval_seconds` so the model can intentionally slow down polling for long-running commands.
+- `patch_file` is the preferred way to make small targeted edits to an existing file because it preserves the rest of the file and rejects mismatched patches atomically.
 
 ## Validation checklist before committing
 
