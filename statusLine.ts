@@ -33,7 +33,7 @@ function render() {
     const frame = FRAMES[(spinner++ ) % FRAMES.length];
     const pctColor = pct >= 90 ? chalk.red : pct >= 75 ? chalk.yellow : chalk.green;
 
-    const left = `${chalk.dim(frame)} ${state.phase} ${chalk.dim(state.model ? '[' + state.model + ']' : '')}`.trim();
+    const left = `${chalk.dim(frame)} ${formatPhase(state.phase)} ${chalk.dim(state.model ? '[' + state.model + ']' : '')}`.trim();
     const right = state.tokenSource === 'ollama'
         ? `${pctColor(`${state.tokensUsed}/${state.tokenLimit} tokens`)} ${chalk.dim(`(${pct}%)`)}${chalk.cyan.dim(' (ollama)')}`
         : `${pctColor(`${pct}%`)}${chalk.dim(' (estimated)')}`;
@@ -48,6 +48,13 @@ function render() {
 
 function stringWidth(s: string) {
     return [...s].length;
+}
+
+function formatPhase(phase: string): string {
+    if (phase.startsWith('Tool call:')) {
+        return chalk.cyan.bold(phase);
+    }
+    return phase;
 }
 
 export function updateLiveStatus(next: StatusSnapshot) {
