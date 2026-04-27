@@ -15,6 +15,7 @@ type StatusSnapshot = {
     tokenLimit: number;
     model?: string;
     tokenSource?: 'estimated' | 'ollama';
+    vramUsed?: number | undefined;
 };
 
 let state: StatusSnapshot | null = null;
@@ -34,9 +35,14 @@ function render() {
     const pctColor = pct >= 90 ? chalk.red : pct >= 75 ? chalk.yellow : chalk.green;
 
     const left = `${chalk.dim(frame)} ${formatPhase(state.phase)} ${chalk.dim(state.model ? '[' + state.model + ']' : '')}`.trim();
-    const right = state.tokenSource === 'ollama'
+    let right = state.tokenSource === 'ollama'
         ? `${pctColor(`${state.tokensUsed}/${state.tokenLimit} tokens`)} ${chalk.dim(`(${pct}%)`)}${chalk.cyan.dim(' (ollama)')}`
         : `${pctColor(`${pct}%`)}${chalk.dim(' (estimated)')}`;
+
+    if (state.vramUsed !== undefined && state.vramUsed > 0) {
+        const gb = (state.vramUsed / (1024 ** 3)).toFixed(1);
+        right += chalk.dim(' | ') + chalk.cyan(`VRAM: ${gb} GB`);
+    }
 
     const cols = out.columns || 80;
     const gap = Math.max(1, cols - stringWidth(left) - stringWidth(right));
@@ -72,7 +78,14 @@ export function updatePhase(phase: string, stats?: Partial<Omit<StatusSnapshot, 
         tokenLimit: stats?.tokenLimit ?? state?.tokenLimit ?? 0,
         model: stats?.model ?? state?.model ?? '',
         tokenSource: stats?.tokenSource ?? state?.tokenSource ?? 'estimated',
+        vramUsed: stats?.vramUsed ?? state?.vramUsed ?? undefined,
     };
+    render();
+}
+
+export function updateVram(usedBytes?: number) {
+    if (!state) return;
+    state.vramUsed = usedBytes;
     render();
 }
 

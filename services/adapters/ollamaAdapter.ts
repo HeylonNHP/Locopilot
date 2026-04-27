@@ -16,6 +16,13 @@ interface TagsResponse {
     models: LlmModel[];
 }
 
+interface PsResponse {
+    models: Array<{
+        name: string;
+        size_vram?: number;
+    }>;
+}
+
 const CONTEXT_LIMIT_KEY_PATTERN = /(?:^|[._])(?:context_length|num_ctx|context_window)$/i;
 
 function parsePositiveInteger(value: unknown): number | null {
@@ -151,6 +158,22 @@ function getOllamaTurnStats(response: ChatApiResponse): LlmTurnStats | null {
     }
 
     return stats;
+}
+
+async function fetchOllamaRunningModelVram(baseUrl: string, modelName: string): Promise<number | null> {
+    try {
+        const response = await axios.get<PsResponse>(`${baseUrl}/api/ps`);
+        const models = response.data.models || [];
+        const model = models.find(
+            (m) => m.name === modelName || m.name.startsWith(modelName + ':'),
+        );
+        if (model && typeof model.size_vram === 'number' && model.size_vram > 0) {
+            return model.size_vram;
+        }
+        return null;
+    } catch {
+        return null;
+    }
 }
 
 async function validateOllamaConnection(baseUrl: string, timeoutMs: number = 2000): Promise<void> {
@@ -302,4 +325,5 @@ export const ollamaAdapter: LlmAdapter = {
     sendChatStream: sendOllamaChatStream,
     getApiErrorMessage: getOllamaApiErrorMessage,
     getTurnStats: getOllamaTurnStats,
+    fetchRunningModelVram: fetchOllamaRunningModelVram,
 };

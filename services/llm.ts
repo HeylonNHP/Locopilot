@@ -62,6 +62,13 @@ export function getLlmTurnStats(response: ChatApiResponse): LlmTurnStats | null 
     return activeAdapter.getTurnStats(response);
 }
 
+export function fetchLlmRunningModelVram(baseUrl: string, modelName: string): Promise<number | null> {
+    if (!activeAdapter.fetchRunningModelVram) {
+        return Promise.resolve(null);
+    }
+    return activeAdapter.fetchRunningModelVram(baseUrl, modelName);
+}
+
 export type {
     ChatApiResponse,
     ChatMessage,

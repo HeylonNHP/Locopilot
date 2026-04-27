@@ -20,13 +20,13 @@ import {
     isInterruptRequested,
     setWebSearchConfig,
 } from './tools/tools';
-import { getLlmApiErrorMessage, type ChatMessage, type LlmTurnStats } from './services/llm';
+import { getLlmApiErrorMessage, type ChatMessage, type LlmTurnStats, fetchLlmRunningModelVram } from './services/llm';
 import { printAIResponse, renderTurn, type StreamAIResponseParams } from './aiResponseRenderer';
 import { updateSessionMessages } from './history';
 import { COMMAND_HANDLERS, getMultilineInput, withExitGuard, type Config } from './slashCommands';
 import { getModels, resolveCompactionModel } from './services/modelManager';
 import { countMessagesTokens } from './services/tokenizer';
-import { clearLiveStatus } from './statusLine';
+import { clearLiveStatus, updateVram } from './statusLine';
 import {
     DEFAULT_NUM_CTX,
     DEFAULT_WEB_SEARCH_MAX_QUERIES,
@@ -154,6 +154,16 @@ async function startChat(
     cleanupBeforeExit = () => {
         updateSessionMessages(state.currentSessionId, state.messages);
     };
+
+    // Start polling model VRAM usage every 5 seconds
+    const vramPollInterval = setInterval(async () => {
+        try {
+            const vram = await fetchLlmRunningModelVram(config.baseUrl, state.currentModel);
+            updateVram(vram ?? undefined);
+        } catch {
+            // Silently ignore polling errors
+        }
+    }, 5000);
 
     // Main chat loop
     while (true) {
@@ -297,6 +307,8 @@ async function startChat(
             clearInterrupt();
         }
     }
+
+    clearInterval(vramPollInterval);
 }
 
 /**

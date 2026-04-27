@@ -118,4 +118,5 @@ export interface LlmAdapter {
     sendChatStream(baseUrl: string, params: StreamChatParams): AsyncGenerator<ChatApiResponse>;
     getApiErrorMessage(error: unknown): Promise<string>;
     getTurnStats(response: ChatApiResponse): LlmTurnStats | null;
+    fetchRunningModelVram?(baseUrl: string, modelName: string): Promise<number | null>;
 }
