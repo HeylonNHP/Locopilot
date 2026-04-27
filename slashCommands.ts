@@ -172,6 +172,7 @@ export async function getMultilineInput(promptStr: string): Promise<string> {
 
         process.stdin.on('keypress', onKeypress);
 
+        clearLiveStatus();
         rl.prompt();
 
         rl.on('line', (line) => {
@@ -342,6 +343,8 @@ const TITLE_HANDLER: SlashHandler = async (ctx) => {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(chalk.red('Failed to generate a session title:'), message);
+    } finally {
+        clearLiveStatus();
     }
 
     return true;
