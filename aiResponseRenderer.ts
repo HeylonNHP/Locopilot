@@ -256,7 +256,11 @@ export async function streamAIResponse(
                 if (thinking.length > 0 && !thinkingSummaryPrinted) {
                     printThinkingSummary(Date.now() - startTime, thinking.length);
                 }
-                // Track tool calls for the final result
+                // Track the latest complete tool-call snapshot for the final
+                // result. Ollama emits tool_calls as a full array in the chunk
+                // that carries them, so replacing avoids duplicate execution if
+                // the same snapshot is repeated.
+                toolCalls.length = 0;
                 toolCalls.push(...chunk.message.tool_calls);
                 
                 // Track RAW tool call text (accumulated arguments) to show progress while OLLAMA is still generating them.
