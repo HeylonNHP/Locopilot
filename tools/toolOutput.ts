@@ -126,6 +126,7 @@ export function formatToolTranscript(options: ToolTranscriptOptions): string {
 
 export const terminalToolOutputSink: ToolOutputSink = {
     writeLine(message: string): void {
+        this.clearInline();
         console.log(message);
     },
     writeInline(message: string): void {

@@ -35,7 +35,8 @@ import {
     type SessionTokenStats,
 } from '../history';
 import { countMessagesTokens } from './tokenizer';
-import { updatePhase, clearLiveStatus } from '../statusLine';
+import { updatePhase, clearLiveStatus, updateVram } from '../statusLine';
+import { fetchLlmRunningModelVram } from './llm';
 import { compactHistory, printCompactStats } from './compact';
 import { resolveCompactionModel } from './modelManager';
 import {
@@ -53,6 +54,7 @@ import type { Config, ChatContext } from '../slashCommands';
 
 export interface ChatSessionState {
     currentModel: string;
+    baseUrl: string;
     currentSessionId: number;
     messages: ChatMessage[];
     sessionNamed: boolean;
@@ -131,6 +133,7 @@ export function createChatSessionState(
 
     const state: ChatSessionState = {
         currentModel: initialModel,
+        baseUrl: config.baseUrl,
         currentSessionId: sessionId,
         messages: preloadedMessages && preloadedMessages.length > 0
             ? [...preloadedMessages]
@@ -168,6 +171,7 @@ function createChatContext(state: ChatSessionState, config: Config, systemPrompt
         get thinkingSupported() { return state.thinkingSupported; },
         saveConfig: async (newConfig: Config) => {
             Object.assign(config, newConfig);
+            state.baseUrl = config.baseUrl;
             await persistConfig(config);
         },
         updateNumCtx: (newNumCtx: number) => {
@@ -223,6 +227,15 @@ function applyEffectiveNumCtx(state: ChatSessionState): void {
     state.numCtx = state.modelContextLimit && state.modelContextLimit > 0
         ? Math.min(state.requestedNumCtx, state.modelContextLimit)
         : state.requestedNumCtx;
+}
+
+async function refreshVram(state: ChatSessionState): Promise<void> {
+    try {
+        const vram = await fetchLlmRunningModelVram(state.baseUrl, state.currentModel);
+        updateVram(vram ?? undefined);
+    } catch {
+        // Ignore VRAM fetch failures; they are non-fatal.
+    }
 }
 
 /**
@@ -313,6 +326,8 @@ export function refreshTokenStatus(
         tokenSource,
     });
 
+    void refreshVram(state);
+
     if (state.numCtx > 0) {
         const percentage = (tokensUsed / state.numCtx) * 100;
         if (percentage >= COMPACT_WARNING_THRESHOLD_PCT && 
@@ -347,6 +362,8 @@ export function printFinalTokenSnapshot(state: ChatSessionState, tokensUsed: num
         chalk.cyan.dim(' (ollama)') +
         chalk.dim(` (Used ${tokensUsed} ${tokensUsed === 1 ? 'token' : 'tokens'})`),
     );
+
+    void refreshVram(state);
 }
 
 /**
