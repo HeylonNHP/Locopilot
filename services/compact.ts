@@ -373,8 +373,8 @@ export async function compactHistory(
     let historySplit = splitHistoryForCompaction(historyMessages, model, numCtx, aggressiveFactor);
 
     // If the split leaves too little content to summarize, expand the summarised
-    // section — but still respect the latest-user-message anchor so it is never
-    // compacted away.
+    // section only when there is pre-anchor history to include. Otherwise keep
+    // the anchored split and let the too-short guard abort compaction.
     const splitEstimate = countMessagesTokens(historySplit.messagesToSummarise, model);
     if (splitEstimate < MIN_SUMMARISE_TOKENS && historySplit.preservedRecentMessages.length > 0) {
         const anchorIndex = findLatestUserMessageIndex(historyMessages);
@@ -384,14 +384,18 @@ export async function compactHistory(
                 preservedRecentMessages: historyMessages.slice(anchorIndex),
                 preservedRecentTokens: countMessagesTokens(historyMessages.slice(anchorIndex), model),
             };
-        } else {
-            // No prior history before the anchor (or no user message found) —
-            // fall back to summarising the full history as a last resort.
+        } else if (anchorIndex < 0) {
+            // No user anchor found — fall back to summarising the full history as
+            // a last resort.
             historySplit = {
                 messagesToSummarise: historyMessages,
                 preservedRecentMessages: [],
                 preservedRecentTokens: 0,
             };
+        } else {
+            // Latest user message is the first history entry. Keep the anchored
+            // split intact so the later too-short guard can fail closed instead
+            // of compacting away the prompt.
         }
     }
 
