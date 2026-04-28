@@ -8,6 +8,7 @@
  */
 import readline from 'readline';
 import chalk from 'chalk';
+import { getTerminalWidth } from './terminalWidth.js';
 
 type StatusSnapshot = {
     phase: string;
@@ -44,7 +45,7 @@ function render() {
         right += chalk.dim(' | ') + chalk.cyan(`VRAM: ${gb} GB`);
     }
 
-    const cols = out.columns || 80;
+    const cols = getTerminalWidth(out);
     const gap = Math.max(1, cols - stringWidth(left) - stringWidth(right));
 
     readline.cursorTo(out, 0);

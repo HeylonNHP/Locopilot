@@ -1,6 +1,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
+import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
 
 export interface PatchFilePatch {
     old: string;
@@ -263,20 +263,33 @@ export class PatchFileTool {
     }
 
     private log(message: string): void {
-        this.output.writeLine(`[PatchFileTool] ${message}`);
+        this.output.writeLine(message);
     }
 
     async run(args: PatchFileToolArgs): Promise<string> {
         const rawPath = (args.path ?? '').trim();
         if (!rawPath) {
             const errorMsg = '[patch_file error: missing required argument "path".]';
-            this.log(errorMsg);
+            this.log(formatToolTranscript({
+                title: 'patch_file error',
+                tone: 'error',
+                rows: [
+                    { label: 'reason', value: 'missing required argument "path".' },
+                ],
+            }));
             return errorMsg;
         }
 
         if (!Array.isArray(args.patches) || args.patches.length === 0) {
             const errorMsg = '[patch_file error: missing required argument "patches".]';
-            this.log(errorMsg);
+            this.log(formatToolTranscript({
+                title: 'patch_file error',
+                tone: 'error',
+                rows: [
+                    { label: 'path', value: resolve(rawPath), kind: 'path' },
+                    { label: 'reason', value: 'missing required argument "patches".' },
+                ],
+            }));
             return errorMsg;
         }
 
@@ -286,13 +299,27 @@ export class PatchFileTool {
             fileStat = await stat(absPath);
         } catch (error) {
             const errorMsg = `[patch_file error: unable to access file: ${error instanceof Error ? error.message : String(error)}]`;
-            this.log(errorMsg);
+            this.log(formatToolTranscript({
+                title: 'patch_file error',
+                tone: 'error',
+                rows: [
+                    { label: 'path', value: absPath, kind: 'path' },
+                    { label: 'reason', value: error instanceof Error ? error.message : String(error), kind: 'block' },
+                ],
+            }));
             return errorMsg;
         }
 
         if (!fileStat.isFile()) {
             const errorMsg = '[patch_file error: target path is not a regular file.]';
-            this.log(errorMsg);
+            this.log(formatToolTranscript({
+                title: 'patch_file error',
+                tone: 'error',
+                rows: [
+                    { label: 'path', value: absPath, kind: 'path' },
+                    { label: 'reason', value: 'target path is not a regular file.' },
+                ],
+            }));
             return errorMsg;
         }
 
@@ -302,26 +329,54 @@ export class PatchFileTool {
         for (const [index, patch] of args.patches.entries()) {
             if (!patch || typeof patch !== 'object') {
                 const errorMsg = formatPatchError(absPath, index, args.patches.length, 'must be an object with "old" and "new" strings');
-                this.log(errorMsg);
+                this.log(formatToolTranscript({
+                    title: 'patch_file error',
+                    tone: 'error',
+                    rows: [
+                        { label: 'path', value: absPath, kind: 'path' },
+                        { label: 'details', value: errorMsg, kind: 'block' },
+                    ],
+                }));
                 return errorMsg;
             }
 
             if (typeof patch.old !== 'string' || patch.old.length === 0) {
                 const errorMsg = formatPatchError(absPath, index, args.patches.length, 'is missing the required "old" string', patch, content);
-                this.log(errorMsg);
+                this.log(formatToolTranscript({
+                    title: 'patch_file error',
+                    tone: 'error',
+                    rows: [
+                        { label: 'path', value: absPath, kind: 'path' },
+                        { label: 'details', value: errorMsg, kind: 'block' },
+                    ],
+                }));
                 return errorMsg;
             }
 
             if (typeof patch.new !== 'string') {
                 const errorMsg = formatPatchError(absPath, index, args.patches.length, 'is missing the required "new" string', patch, content);
-                this.log(errorMsg);
+                this.log(formatToolTranscript({
+                    title: 'patch_file error',
+                    tone: 'error',
+                    rows: [
+                        { label: 'path', value: absPath, kind: 'path' },
+                        { label: 'details', value: errorMsg, kind: 'block' },
+                    ],
+                }));
                 return errorMsg;
             }
 
             const resolved = resolvePatchMatch(content, patch);
             if ('error' in resolved) {
                 const errorMsg = formatPatchError(absPath, index, args.patches.length, resolved.error, patch, content, resolved.matches);
-                this.log(errorMsg);
+                this.log(formatToolTranscript({
+                    title: 'patch_file error',
+                    tone: 'error',
+                    rows: [
+                        { label: 'path', value: absPath, kind: 'path' },
+                        { label: 'details', value: errorMsg, kind: 'block' },
+                    ],
+                }));
                 return errorMsg;
             }
 
@@ -360,7 +415,16 @@ export class PatchFileTool {
             `bytes_written: ${updatedContent === content ? 0 : Buffer.byteLength(updatedContent, 'utf8')}`,
         ].join('\n');
 
-        this.log(result);
+        this.log(formatToolTranscript({
+            title: 'patch_file result',
+            tone: 'success',
+            rows: [
+                { label: 'path', value: absPath, kind: 'path' },
+                { label: 'action', value: 'patch' },
+                { label: 'patches_applied', value: String(patchMatches.length) },
+                { label: 'bytes_written', value: String(updatedContent === content ? 0 : Buffer.byteLength(updatedContent, 'utf8')) },
+            ],
+        }));
         return result;
     }
 }

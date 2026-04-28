@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { getTerminalWidth } from '../terminalWidth.js';
 
 const LOGO_LINES = [
     `    __                        _ __      __ `,
@@ -10,8 +11,7 @@ const LOGO_LINES = [
 ];
 
 export function printSplashScreen(): void {
-    // Get terminal width, fallback to 80 if not running in a TTY
-    const columns = process.stdout.columns || 80;
+    const columns = getTerminalWidth();
     
     console.log(); // Top padding
     

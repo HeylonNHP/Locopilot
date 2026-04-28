@@ -141,6 +141,16 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-28: Centralized terminal width lookup
+  - Files: `terminalWidth.ts`, `statusLine.ts`, `services/markdownRenderer.ts`, `services/splashScreen.ts`, `tools/toolOutput.ts`
+  - Summary: Added a shared `getTerminalWidth()` helper and replaced the direct terminal-width reads in the status line, markdown renderer, splash screen, and tool transcript formatter.
+  - Intent: Keep width detection consistent across the CLI and make future terminal-layout changes use one source of truth.
+
+- 2026-04-28: Added compact terminal tool transcripts
+  - Files: `tools/toolOutput.ts`, `tools/impl/readFileTool.ts`, `tools/impl/writeFileTool.ts`, `tools/impl/patchFileTool.ts`
+  - Summary: Added a shared terminal transcript formatter for tool output and switched the file tools to render compact, sectioned blocks. Absolute file paths are shortened only when the rendered line would exceed the current terminal width.
+  - Intent: Improve terminal readability while keeping the model-facing tool result strings unchanged and preserving the live spinner/status UX.
+
 - 2026-04-18: Added configurable poll interval for long-running command checks
   - Files: `tools/impl/runCommandTool.ts`, `tools/toolRegistry.ts`, `tools/tools.ts`, `tools/TOOL_GUIDE.md`, `.github/copilot-instructions.md`
   - Summary: Added optional `poll_interval_seconds` to `check_process_output`, wired the dispatcher to honor it, and updated the command tool prompt/schema so the model can intentionally sample long-running command output less often.

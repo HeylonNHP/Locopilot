@@ -4,9 +4,9 @@ import Table from 'cli-table3';
 import chalk from 'chalk';
 import stringWidth from 'string-width';
 import type { Token, Tokens } from 'marked';
+import { getTerminalWidth } from '../terminalWidth.js';
 
 const TAB_WIDTH = 4;
-const DEFAULT_TERMINAL_WIDTH = 80;
 
 function countLeadingIndentColumns(line: string): number {
   let columns = 0;
@@ -101,11 +101,6 @@ function normalizeMarkdownIndentation(text: string): string {
   }
 
   return lines.join('\n');
-}
-
-function getTerminalWidth(): number {
-  const cols = process.stdout.isTTY ? process.stdout.columns : undefined;
-  return typeof cols === 'number' && cols > 0 ? cols : DEFAULT_TERMINAL_WIDTH;
 }
 
 function visibleWidth(text: string): number {

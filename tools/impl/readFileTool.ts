@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
+import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
 
 export interface ReadFileToolArgs {
     path?: string;
@@ -26,14 +26,20 @@ export class ReadFileTool {
     }
 
     private log(message: string): void {
-        this.output.writeLine(`[ReadFileTool] ${message}`);
+        this.output.writeLine(message);
     }
 
     async run(args: ReadFileToolArgs): Promise<string> {
         const rawPath = (args.path ?? '').trim();
         if (!rawPath) {
             const errorMsg = '[read_file error: missing required argument "path".]';
-            this.log(errorMsg);
+            this.log(formatToolTranscript({
+                title: 'read_file error',
+                tone: 'error',
+                rows: [
+                    { label: 'reason', value: 'missing required argument "path".' },
+                ],
+            }));
             return errorMsg;
         }
 
@@ -43,13 +49,27 @@ export class ReadFileTool {
             fileStat = await stat(absPath);
         } catch (error) {
             const errorMsg = `[read_file error: unable to access file: ${error instanceof Error ? error.message : String(error)}]`;
-            this.log(errorMsg);
+            this.log(formatToolTranscript({
+                title: 'read_file error',
+                tone: 'error',
+                rows: [
+                    { label: 'path', value: absPath, kind: 'path' },
+                    { label: 'reason', value: error instanceof Error ? error.message : String(error), kind: 'block' },
+                ],
+            }));
             return errorMsg;
         }
 
         if (!fileStat.isFile()) {
             const errorMsg = '[read_file error: target path is not a regular file.]';
-            this.log(errorMsg);
+            this.log(formatToolTranscript({
+                title: 'read_file error',
+                tone: 'error',
+                rows: [
+                    { label: 'path', value: absPath, kind: 'path' },
+                    { label: 'reason', value: 'target path is not a regular file.' },
+                ],
+            }));
             return errorMsg;
         }
 
@@ -106,11 +126,26 @@ export class ReadFileTool {
                 excerpt.length > 0 ? excerpt : '(empty)',
             ].join('\n');
 
-            this.log(`Result for path ${absPath}:\n${result}`);
+            this.log(formatToolTranscript({
+                title: 'read_file result',
+                tone: 'success',
+                rows: [
+                    { label: 'path', value: absPath, kind: 'path' },
+                    { label: 'range', value: rangeDescription },
+                    { label: 'contents', value: excerpt, kind: 'block' },
+                ],
+            }));
             return result;
         } catch (error) {
             const errorMsg = `[read_file error: failed to read file: ${error instanceof Error ? error.message : String(error)}]`;
-            this.log(errorMsg);
+            this.log(formatToolTranscript({
+                title: 'read_file error',
+                tone: 'error',
+                rows: [
+                    { label: 'path', value: absPath, kind: 'path' },
+                    { label: 'reason', value: error instanceof Error ? error.message : String(error), kind: 'block' },
+                ],
+            }));
             return errorMsg;
         }
     }
