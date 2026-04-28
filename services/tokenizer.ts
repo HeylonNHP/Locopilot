@@ -4,6 +4,7 @@ import { stripSpecialTokens } from './textUtils.js';
 
 let encoder: Tiktoken | null = null;
 let currentEncoderModel: string | null = null;
+const IMAGE_TOKEN_ESTIMATE = 1024;
 
 function getEncoder(model: string): Tiktoken {
     if (encoder && currentEncoderModel === model) return encoder;
@@ -40,12 +41,18 @@ export function countMessagesTokens(messages: ChatMessage[], model: string): num
         total += 4;
         total += countTextTokensWithEncoder(message.role, activeEncoder);
         total += countTextTokensWithEncoder(message.content ?? '', activeEncoder);
+        total += countTextTokensWithEncoder(message.thinking ?? '', activeEncoder);
 
         if (message.tool_calls && message.tool_calls.length > 0) {
             for (const toolCall of message.tool_calls) {
                 total += countTextTokensWithEncoder(toolCall.function.name, activeEncoder);
                 total += countTextTokensWithEncoder(JSON.stringify(toolCall.function.arguments), activeEncoder);
             }
+        }
+
+        if (message.images && message.images.length > 0) {
+            // Vision payloads are not text tokens, so use a fixed conservative budget per image.
+            total += message.images.length * IMAGE_TOKEN_ESTIMATE;
         }
     }
 

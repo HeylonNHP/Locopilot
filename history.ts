@@ -63,6 +63,7 @@ db.exec(`
         session_id INTEGER NOT NULL,
         role       TEXT    NOT NULL,
         content    TEXT    NOT NULL DEFAULT '',
+        thinking   TEXT    NOT NULL DEFAULT '',
         tool_calls TEXT    NOT NULL DEFAULT '[]',
         images     TEXT    NOT NULL DEFAULT '[]',
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -80,6 +81,7 @@ function addColumnIfMissing(sql: string): void {
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_prompt_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_total_tokens INTEGER');
+addColumnIfMissing('ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT \'\'');
 addColumnIfMissing('ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT \'[]\'');
 
 // ---------------------------------------------------------------------------
@@ -118,12 +120,12 @@ const stmtDeleteMessages = db.prepare<[number]>(
     'DELETE FROM messages WHERE session_id = ?',
 );
 
-const stmtInsertMessage = db.prepare<[number, string, string, string, string]>(
-    'INSERT INTO messages (session_id, role, content, tool_calls, images) VALUES (?, ?, ?, ?, ?)',
+const stmtInsertMessage = db.prepare<[number, string, string, string, string, string]>(
+    'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images) VALUES (?, ?, ?, ?, ?, ?)',
 );
 
 const stmtLoadMessages = db.prepare<[number]>(
-    'SELECT role, content, tool_calls, images FROM messages WHERE session_id = ? ORDER BY id ASC',
+    'SELECT role, content, thinking, tool_calls, images FROM messages WHERE session_id = ? ORDER BY id ASC',
 );
 
 // ---------------------------------------------------------------------------
@@ -179,6 +181,7 @@ export function updateSessionMessages(
                 sessionId,
                 sanitizedMessage.role,
                 sanitizedMessage.content ?? '',
+                sanitizedMessage.thinking ?? '',
                 JSON.stringify(sanitizedMessage.tool_calls ?? []),
                 JSON.stringify(sanitizedMessage.images ?? []),
             );
@@ -212,6 +215,7 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
     const rows = stmtLoadMessages.all(sessionId) as {
         role: string;
         content: string;
+        thinking: string;
         tool_calls: string;
         images: string;
     }[];
@@ -236,6 +240,9 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
             role: row.role as ChatMessage['role'],
             content: row.content,
         };
+        if (row.thinking) {
+            msg.thinking = row.thinking;
+        }
         if (toolCalls && toolCalls.length > 0) {
             msg.tool_calls = toolCalls;
         }
