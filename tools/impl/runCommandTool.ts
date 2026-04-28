@@ -109,15 +109,6 @@ function buildOutput(
     return parts.join('\n');
 }
 
-function isPidAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
 function killProcessTree(child: ChildProcess): void {
     const pid = child.pid;
     if (!pid) return;
@@ -148,20 +139,16 @@ function killProcessTree(child: ChildProcess): void {
         /* best-effort group termination failed */
     }
 
-    if (isPidAlive(pid)) {
-        try {
-            process.kill(-pid, 'SIGKILL');
-        } catch {
-            /* best-effort group escalation failed */
-        }
+    try {
+        process.kill(-pid, 'SIGKILL');
+    } catch {
+        /* best-effort group escalation failed */
     }
 
-    if (isPidAlive(pid)) {
-        try {
-            child.kill('SIGKILL');
-        } catch {
-            /* already dead */
-        }
+    try {
+        child.kill('SIGKILL');
+    } catch {
+        /* already dead */
     }
 }
 
@@ -259,8 +246,9 @@ export async function runCommand(
 
         // Register interrupt handler
         interruptHandlerId = registerInterruptHandler((result: string) => {
+            entry.stderr += `${entry.stderr ? '\n' : ''}${result}`;
             killProcessTree(child);
-            finalize(-1, result);
+            finalize(-1);
         });
 
         const timer = setTimeout(() => {
