@@ -54,7 +54,8 @@ function render() {
 }
 
 function stringWidth(s: string) {
-    return [...s].length;
+    const stripped = s.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
+    return [...stripped].length;
 }
 
 function formatPhase(phase: string): string {
