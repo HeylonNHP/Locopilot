@@ -350,29 +350,31 @@ export const TOOLS: OllamaTool[] = [
         function: {
             name: 'run_subagents',
             description:
-                'Runs one or more isolated sub-agents sequentially. ' +
-                'Each sub-agent receives only the prompt you provide for it, not the parent conversation history. ' +
-                'All sub-agents must finish before control returns to you. ' +
-                'Only the final response from each sub-agent is returned.',
+                'Delegate one or more bounded, independent tasks to isolated sub-agents so you can tackle complex work in parallel logical streams without polluting the parent conversation context. ' +
+                'Ideal for: research across multiple topics, independent file edits, multi-step investigations, comparisons, or any work that can be cleanly decomposed into separate units. ' +
+                'Each sub-agent runs its own full tool-calling loop with access to all normal tools, so it can read files, run commands, search the web, and iterate autonomously until its task is complete. ' +
+                'Only the final response from each sub-agent is returned to you, keeping the parent history concise. ' +
+                'Sub-agents are sequential and each receives only the prompt you write for it — include all required context inline.',
             parameters: {
                 type: 'object',
                 properties: {
                     agents: {
                         type: 'array',
                         description:
-                            'One or more sub-agents to run sequentially. ' +
-                            'Each one needs a short id and a fully self-contained prompt.',
+                            'One or more sub-agents to run sequentially. Each one needs a short id and a fully self-contained prompt. ' +
+                            'Write each prompt as if the sub-agent has no prior context — include file paths, goals, constraints, and any relevant background.',
                         items: {
                             type: 'object',
                             properties: {
                                 id: {
                                     type: 'string',
-                                    description: 'A short identifier used to label this sub-agent in logs and results.',
+                                    description: 'A short identifier for this sub-agent, used to label its output in logs and results (e.g. "research", "edit-auth", "summarise-logs").',
                                 },
                                 prompt: {
                                     type: 'string',
                                     description:
-                                        'A complete prompt for this sub-agent. Include all required context because it cannot see the parent conversation history.',
+                                        'A fully self-contained task prompt for this sub-agent. ' +
+                                        'Include all file paths, background context, goals, and constraints — the sub-agent cannot see the parent conversation history.',
                                 },
                             },
                             required: ['id', 'prompt'],

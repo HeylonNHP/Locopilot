@@ -334,10 +334,16 @@ export class SubAgentTool implements IToolCommand {
 export function getToolPrompt(): string {
     return (
         '8. run_subagents(agents)\n' +
-        '   Run one or more isolated sub-agents sequentially.\n' +
-        '   Each agent must include a short id and a fully self-contained prompt with all required context.\n' +
-        '   Sub-agents do NOT see the parent conversation history.\n' +
-        '   They can use the normal tools, but they cannot spawn more sub-agents.\n' +
-        '   Only the final response from each sub-agent is returned to you after all agents finish.\n\n'
+        '   Delegate independent subtasks to isolated workers that each run their own full tool-calling loop.\n' +
+        '   USE THIS TOOL when a task can be broken into separate, bounded units of work — for example:\n' +
+        '     • Researching multiple topics independently\n' +
+        '     • Editing several unrelated files without cross-contaminating context\n' +
+        '     • Running multi-step investigations in parallel logical streams\n' +
+        '     • Performing comparisons, audits, or summaries across independent sources\n' +
+        '   Each sub-agent has access to all normal tools (run_command, web_search, read_file, patch_file, etc.)\n' +
+        '   and iterates autonomously until its task is complete — you get only the final answer back.\n' +
+        '   This keeps the parent conversation concise and focused while sub-agents do the heavy lifting.\n' +
+        '   Constraints: sub-agents are sequential; each sees only its own prompt (include all context inline);\n' +
+        '   sub-agents cannot spawn further sub-agents.\n\n'
     );
 }
