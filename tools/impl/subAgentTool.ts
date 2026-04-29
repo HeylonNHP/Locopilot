@@ -1,7 +1,10 @@
 import chalk from 'chalk';
 
+import { AUTO_COMPACT_THRESHOLD_PCT } from '../../constants.js';
+import { compactHistory } from '../../services/compact.js';
 import { sendLlmChat, type ChatMessage, type ToolCall, type ToolDefinition } from '../../services/llm.js';
 import { sanitizeChatMessage } from '../../services/textUtils.js';
+import { countMessagesTokens } from '../../services/tokenizer.js';
 import { isInterruptRequested } from '../interruptManager.js';
 import {
     getSubAgentConfig,
@@ -25,6 +28,11 @@ interface CompletedSubAgent {
     id: string;
     content: string;
 }
+
+const SUB_AGENT_AUTO_COMPACT_NOTICE =
+    'The conversation history was automatically compacted due to context length. ' +
+    'The original orchestrator request has been preserved verbatim above. ' +
+    'Please continue working on that request without asking for confirmation.';
 
 function buildSubAgentSystemPrompt(): string {
     const dateTimeStr = new Date().toLocaleString('en-US', {
@@ -72,6 +80,73 @@ function makeLabeledSink(baseSink: ToolOutputSink, id: string): ToolOutputSink {
             // Suppress nested live updates to avoid noisy overlapping spinners.
         },
     };
+}
+
+async function autoCompactSubAgentIfNeeded(
+    messages: ChatMessage[],
+    config: ReturnType<typeof getSubAgentConfig>,
+    output: ToolOutputSink,
+    agentId: string,
+    orchestratorPrompt: ChatMessage,
+): Promise<boolean> {
+    if (config.numCtx <= 0) {
+        return false;
+    }
+
+    const tokensUsed = countMessagesTokens(messages, config.model);
+    const pct = (tokensUsed / config.numCtx) * 100;
+    if (pct < AUTO_COMPACT_THRESHOLD_PCT) {
+        return false;
+    }
+
+    const labeledOutput = makeLabeledSink(output, agentId);
+    labeledOutput.writeLine(
+        chalk.yellow(`⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...`),
+    );
+
+    try {
+        const result = await compactHistory(
+            config.baseUrl,
+            config.model,
+            messages,
+            config.numCtx,
+        );
+
+        const orchestratorPromptIndex = result.newMessages.findIndex(
+            (message, index) =>
+                index > 0 &&
+                message.role === 'user' &&
+                message.content === orchestratorPrompt.content,
+        );
+
+        if (orchestratorPromptIndex > 1) {
+            result.newMessages.splice(orchestratorPromptIndex, 1);
+            result.newMessages.splice(1, 0, orchestratorPrompt);
+        } else if (orchestratorPromptIndex < 0) {
+            result.newMessages.splice(1, 0, orchestratorPrompt);
+        }
+
+        messages.splice(0, messages.length, ...result.newMessages);
+        messages.push({
+            role: 'user',
+            content: SUB_AGENT_AUTO_COMPACT_NOTICE,
+        });
+
+        if (result.stats.newTokenCount > config.numCtx) {
+            labeledOutput.writeLine(
+                chalk.red(
+                    `⚠ Compaction reduced context but history is still over the model limit ` +
+                    `(${result.stats.newTokenCount}/${config.numCtx} tokens). The next turn may fail.`,
+                ),
+            );
+        }
+
+        return true;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        labeledOutput.writeLine(chalk.red(`⚠ Auto-compaction failed: ${message}`));
+        return false;
+    }
 }
 
 function validateAgentSpecs(agents: SubAgentSpec[] | undefined): string | null {
@@ -157,14 +232,20 @@ async function runSingleAgent(
     onProgress?: (message: string) => void,
 ): Promise<string> {
     const config = getSubAgentConfig();
+    const orchestratorPrompt: ChatMessage = { role: 'user', content: agent.prompt };
     const messages: ChatMessage[] = [
         { role: 'system', content: buildSubAgentSystemPrompt() },
-        { role: 'user', content: agent.prompt },
+        orchestratorPrompt,
     ];
 
     let finalContent = '';
 
     while (!isInterruptRequested()) {
+        await autoCompactSubAgentIfNeeded(messages, config, output, agent.id, orchestratorPrompt);
+        if (isInterruptRequested()) {
+            break;
+        }
+
         onProgress?.(`Sub-agent ${agent.id}: thinking`);
 
         const response = await sendLlmChat(config.baseUrl, {
