@@ -58,6 +58,7 @@ function syncSubAgentConfig(state: ChatSessionState, config: Config): void {
         baseUrl: config.baseUrl,
         model: state.currentModel,
         numCtx: state.numCtx,
+        compactionModel: resolveCompactionModel(config.compactionModel, state.currentModel),
         tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
     });
 }

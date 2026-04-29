@@ -107,7 +107,7 @@ async function autoCompactSubAgentIfNeeded(
     try {
         const result = await compactHistory(
             config.baseUrl,
-            config.model,
+            config.compactionModel,
             messages,
             config.numCtx,
         );

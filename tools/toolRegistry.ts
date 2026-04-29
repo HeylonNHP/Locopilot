@@ -39,6 +39,7 @@ const DEFAULT_SUB_AGENT_CONFIG: SubAgentConfig = {
     baseUrl: '',
     model: '',
     numCtx: 0,
+    compactionModel: '',
     tools: [],
 };
 
@@ -64,6 +65,7 @@ export interface SubAgentConfig {
     baseUrl: string;
     model: string;
     numCtx: number;
+    compactionModel: string;
     tools: ToolDefinition[];
 }
 
@@ -85,6 +87,7 @@ export function setSubAgentConfig(config: SubAgentConfig): void {
         baseUrl: config.baseUrl,
         model: config.model,
         numCtx: Math.max(0, Math.floor(config.numCtx)),
+        compactionModel: config.compactionModel.trim(),
         tools: [...config.tools],
     };
 }
