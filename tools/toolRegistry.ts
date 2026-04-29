@@ -18,6 +18,7 @@ import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCo
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants.js';
 import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers.js';
 import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput.js';
+import type { ToolDefinition } from '../services/llm.js';
 
 // --- Shared mutable state ---
 
@@ -33,6 +34,15 @@ const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
 };
 
 let webSearchSettings: WebSearchSettings = { ...DEFAULT_WEB_SEARCH_SETTINGS };
+
+const DEFAULT_SUB_AGENT_CONFIG: SubAgentConfig = {
+    baseUrl: '',
+    model: '',
+    numCtx: 0,
+    tools: [],
+};
+
+let subAgentConfig: SubAgentConfig = { ...DEFAULT_SUB_AGENT_CONFIG };
 
 export function isYolo(): boolean {
     return isYoloMode;
@@ -50,6 +60,13 @@ export interface ToolWebSearchConfig {
     compactionModel: string;
 }
 
+export interface SubAgentConfig {
+    baseUrl: string;
+    model: string;
+    numCtx: number;
+    tools: ToolDefinition[];
+}
+
 export function setWebSearchConfig(config: ToolWebSearchConfig): void {
     webSearchSettings = {
         ...webSearchSettings,
@@ -60,6 +77,22 @@ export function setWebSearchConfig(config: ToolWebSearchConfig): void {
             : DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
         baseUrl: config.baseUrl, // ALWAYS use the config's base URL
         compactionModel: config.compactionModel.trim(),
+    };
+}
+
+export function setSubAgentConfig(config: SubAgentConfig): void {
+    subAgentConfig = {
+        baseUrl: config.baseUrl,
+        model: config.model,
+        numCtx: Math.max(0, Math.floor(config.numCtx)),
+        tools: [...config.tools],
+    };
+}
+
+export function getSubAgentConfig(): SubAgentConfig {
+    return {
+        ...subAgentConfig,
+        tools: [...subAgentConfig.tools],
     };
 }
 
@@ -87,6 +120,10 @@ export interface ToolCallArguments {
     content?: string;
     mode?: 'overwrite' | 'append' | 'create';
     confirm_overwrite?: boolean;
+    agents?: Array<{
+        id?: string;
+        prompt?: string;
+    }>;
 }
 
 /** Result returned by a tool command. Most tools only set content; vision tools also set images. */
@@ -332,6 +369,16 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         confirm_overwrite: args.confirm_overwrite,
                     }, output),
                 };
+            },
+        },
+    ],
+    [
+        'run_subagents',
+        {
+            async execute(args, onProgress, output = terminalToolOutputSink) {
+                const { SubAgentTool } = await import('./impl/subAgentTool.js');
+                const tool = new SubAgentTool();
+                return tool.execute(args, onProgress, output);
             },
         },
     ],

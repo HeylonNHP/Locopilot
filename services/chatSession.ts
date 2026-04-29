@@ -18,6 +18,8 @@ import {
     installKeyInterruptListener,
     isInterruptRequested,
     removeKeyInterruptListener,
+    setSubAgentConfig,
+    setWebSearchConfig,
     type ToolCallResult,
 } from '../tools/tools';
 import { fetchLlmModelInfo, getLlmModelContextLimit, type ChatMessage, type LlmModelInfo } from './llm';
@@ -48,9 +50,17 @@ import {
     DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
 } from '../constants';
-import { setWebSearchConfig } from '../tools/tools';
 import { saveConfig as persistConfig } from './configManager';
 import type { Config, ChatContext } from '../slashCommands';
+
+function syncSubAgentConfig(state: ChatSessionState, config: Config): void {
+    setSubAgentConfig({
+        baseUrl: config.baseUrl,
+        model: state.currentModel,
+        numCtx: state.numCtx,
+        tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
+    });
+}
 
 export interface ChatSessionState {
     currentModel: string;
@@ -173,10 +183,12 @@ function createChatContext(state: ChatSessionState, config: Config, systemPrompt
             Object.assign(config, newConfig);
             state.baseUrl = config.baseUrl;
             await persistConfig(config);
+            syncSubAgentConfig(state, config);
         },
         updateNumCtx: (newNumCtx: number) => {
             state.requestedNumCtx = newNumCtx;
             applyEffectiveNumCtx(state);
+            syncSubAgentConfig(state, config);
         },
         saveSession: (tokenStats?: SessionTokenStats | null) =>
             updateSessionMessages(state.currentSessionId, state.messages, tokenStats),
@@ -279,6 +291,8 @@ export async function loadModelMetadata(
         state.modelContextLimit = null;
         applyEffectiveNumCtx(state);
     }
+
+    syncSubAgentConfig(state, config);
 }
 
 /**

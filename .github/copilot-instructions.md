@@ -79,9 +79,11 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
 
 Feature summary:
 - **`run_command`**: Request shell commands. Uses a process registry for tracking and `Ctrl+X` for interruption.
+- **`run_subagents`**: Run one or more isolated sub-agents sequentially. Each sub-agent gets a fresh ephemeral history, the normal tool set except `run_subagents` itself, and returns only its final answer back to the parent agent.
 - **Process Registry**: Long-running commands are tracked by ID, allowing the AI to poll for output using a `check_process_output` tool if a command exceeds the initial 30s timeout.
 - **Shell Precision**: On Windows, PowerShell is preferred. Commands are fed via `stdin` (e.g., `powershell -Command -`) to avoid quoting/tokenization issues across different shells. POSIX shell requests on Windows are automatically remapped to PowerShell with a warning.
 - **Failure Analysis**: Non-zero exit codes trigger an AI-powered error summary ([errorSummary.ts](errorSummary.ts)) that distills technical `stderr` into a brief fix suggestion, which is then fed back into the history as a user-role nudge.
+- **Sub-agent Terminal Output**: Sub-agent tool output is tagged with `[sub-agent: id]` for attribution. Nested `run_command` requests still surface the normal approval prompt in standard mode, preceded by a sub-agent context header so the user knows which worker requested it.
 - **Interruption**: `Ctrl+X` interrupts the tool-call loop or kills the running process without exiting the application. `Ctrl+C` remains a global exit signal.
 
 ## Markdown rendering
@@ -140,6 +142,11 @@ Feature summary:
     - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
+
+- 2026-04-29: Added isolated `run_subagents` tool
+  - Files: `tools/impl/subAgentTool.ts` (new), `tools/toolRegistry.ts`, `tools/tools.ts`, `services/chatSession.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a new `run_subagents` tool that runs multiple sub-agents sequentially in isolated ephemeral histories, reuses the existing tool registry except for a recursion guard that withholds `run_subagents` from sub-agents, and returns only each sub-agent's final response to the parent agent. Added runtime sub-agent config syncing from the active chat session and labeled nested tool transcripts with `[sub-agent: id]`; nested `run_command` requests still surface approval prompts with a sub-agent context header.
+  - Intent: Let the orchestrator offload bounded subtasks to isolated workers without polluting the parent conversation history, while preserving existing safety and approval UX.
 
 - 2026-04-28: Centralized terminal width lookup
   - Files: `terminalWidth.ts`, `statusLine.ts`, `services/markdownRenderer.ts`, `services/splashScreen.ts`, `tools/toolOutput.ts`

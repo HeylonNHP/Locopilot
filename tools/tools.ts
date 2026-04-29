@@ -15,13 +15,14 @@ import { getToolPrompt as getFetchImagePrompt } from './impl/fetchImageTool.js';
 import { getToolPrompt as getReadFilePrompt } from './impl/readFileTool.js';
 import { getToolPrompt as getPatchFilePrompt } from './impl/patchFileTool.js';
 import { getToolPrompt as getWriteFilePrompt } from './impl/writeFileTool.js';
+import { getToolPrompt as getSubAgentPrompt } from './impl/subAgentTool.js';
 import { getToolPrompt as getRunCommandPrompt, defaultShell } from './impl/runCommandTool.js';
-import { isYolo, toolRegistry, setYoloMode, setWebSearchConfig } from './toolRegistry.js';
+import { isYolo, toolRegistry, setSubAgentConfig, setYoloMode, setWebSearchConfig } from './toolRegistry.js';
 import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput.js';
-import type { ToolCallArguments, ToolCallResult, ToolWebSearchConfig } from './toolRegistry.js';
+import type { SubAgentConfig, ToolCallArguments, ToolCallResult, ToolWebSearchConfig } from './toolRegistry.js';
 export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager.js';
-export { isYolo, setYoloMode, setWebSearchConfig };
-export type { ToolCallArguments, ToolCallResult, ToolWebSearchConfig };
+export { isYolo, setSubAgentConfig, setYoloMode, setWebSearchConfig };
+export type { SubAgentConfig, ToolCallArguments, ToolCallResult, ToolWebSearchConfig };
 export type { ToolOutputSink } from './toolOutput.js';
 export { terminalToolOutputSink } from './toolOutput.js';
 
@@ -344,6 +345,44 @@ export const TOOLS: OllamaTool[] = [
             },
         },
     },
+    {
+        type: 'function',
+        function: {
+            name: 'run_subagents',
+            description:
+                'Runs one or more isolated sub-agents sequentially. ' +
+                'Each sub-agent receives only the prompt you provide for it, not the parent conversation history. ' +
+                'All sub-agents must finish before control returns to you. ' +
+                'Only the final response from each sub-agent is returned.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    agents: {
+                        type: 'array',
+                        description:
+                            'One or more sub-agents to run sequentially. ' +
+                            'Each one needs a short id and a fully self-contained prompt.',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                id: {
+                                    type: 'string',
+                                    description: 'A short identifier used to label this sub-agent in logs and results.',
+                                },
+                                prompt: {
+                                    type: 'string',
+                                    description:
+                                        'A complete prompt for this sub-agent. Include all required context because it cannot see the parent conversation history.',
+                                },
+                            },
+                            required: ['id', 'prompt'],
+                        },
+                    },
+                },
+                required: ['agents'],
+            },
+        },
+    },
 ];
 
 /**
@@ -361,6 +400,7 @@ export function getToolSystemPrompt(): string {
         getReadFilePrompt() +
         getPatchFilePrompt() +
         getWriteFilePrompt() +
+        getSubAgentPrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n' +
