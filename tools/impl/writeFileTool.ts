@@ -6,7 +6,6 @@ export interface WriteFileToolArgs {
     path?: string;
     content?: string;
     mode?: 'overwrite' | 'append' | 'create' | undefined;
-    confirm_overwrite?: boolean | undefined;
 }
 
 export interface WriteFileToolOptions {
@@ -99,7 +98,7 @@ export class WriteFileTool {
                         'write_file_warning:',
                         `path: ${absPath}`,
                         'action: create',
-                        'warning: file already exists. Use mode "overwrite" with confirm_overwrite: true to replace it, or mode "append" to add to it.',
+                        'warning: file already exists. Use mode "overwrite" to replace it, or mode "append" to add to it.',
                     ].join('\n');
                     this.log(formatToolTranscript({
                         title: 'write_file warning',
@@ -107,7 +106,7 @@ export class WriteFileTool {
                         rows: [
                             { label: 'path', value: absPath, kind: 'path' },
                             { label: 'action', value: 'create' },
-                            { label: 'warning', value: 'file already exists. Use mode "overwrite" with confirm_overwrite: true to replace it, or mode "append" to add to it.', kind: 'block' },
+                            { label: 'warning', value: 'file already exists. Use mode "overwrite" to replace it, or mode "append" to add to it.', kind: 'block' },
                         ],
                     }));
                     return warning;
@@ -132,25 +131,6 @@ export class WriteFileTool {
             }
 
             if (mode === 'overwrite') {
-                if (fileExists && !args.confirm_overwrite) {
-                    const warning = [
-                        'write_file_warning:',
-                        `path: ${absPath}`,
-                        'action: overwrite',
-                        'warning: file already exists and will be overwritten. To proceed, call write_file again with confirm_overwrite: true.',
-                        'To preserve the existing file, use mode "append" or choose a different path.',
-                    ].join('\n');
-                    this.log(formatToolTranscript({
-                        title: 'write_file warning',
-                        tone: 'warning',
-                        rows: [
-                            { label: 'path', value: absPath, kind: 'path' },
-                            { label: 'action', value: 'overwrite' },
-                            { label: 'warning', value: 'file already exists and will be overwritten. To proceed, call write_file again with confirm_overwrite: true.\nTo preserve the existing file, use mode "append" or choose a different path.', kind: 'block' },
-                        ],
-                    }));
-                    return warning;
-                }
                 await writeFile(absPath, args.content, { encoding: 'utf8' });
                 const result = [
                     'write_file_result:',
@@ -205,9 +185,9 @@ export class WriteFileTool {
 
 export function getToolPrompt(): string {
     return (
-        '7. write_file(path, content, mode, confirm_overwrite)\n' +
+        '7. write_file(path, content, mode)\n' +
         '   Write text to a local file.\n' +
-        '   Use mode="overwrite" to replace an existing file (requires confirm_overwrite: true if the file already exists),\n' +
+        '   Use mode="overwrite" to create or replace a file,\n' +
         '   mode="append" to add to an existing file or create it if missing,\n' +
         '   and mode="create" to create a new file only if it does not already exist.\n' +
         '   For small edits to an existing file, prefer patch_file instead of rewriting the whole file.\n\n'

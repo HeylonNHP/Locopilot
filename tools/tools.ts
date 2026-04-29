@@ -318,7 +318,8 @@ export const TOOLS: OllamaTool[] = [
             name: 'write_file',
             description:
                 'Writes text to a file on the host filesystem. Supports overwrite, append, and create-only semantics. ' +
-                'If a target file already exists and overwrite is requested, the tool will warn first and require explicit confirm_overwrite=true.',
+                'If a target file already exists and overwrite is requested, the tool will replace it immediately. ' +
+                'Use mode="create" to ensure a file is only created when missing.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -334,11 +335,6 @@ export const TOOLS: OllamaTool[] = [
                         type: 'string',
                         description: 'The write mode: overwrite, append, or create.',
                         enum: ['overwrite', 'append', 'create'],
-                    },
-                    confirm_overwrite: {
-                        type: 'boolean',
-                        description:
-                            'Required when overwriting an existing file. If the file exists and confirm_overwrite is not true, the tool will return a warning instead of writing.',
                     },
                 },
                 required: ['path', 'content'],

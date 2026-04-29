@@ -122,7 +122,6 @@ export interface ToolCallArguments {
     length?: number;
     content?: string;
     mode?: 'overwrite' | 'append' | 'create';
-    confirm_overwrite?: boolean;
     agents?: Array<{
         id?: string;
         prompt?: string;
@@ -369,7 +368,6 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         path: args.path,
                         content: args.content,
                         mode: args.mode,
-                        confirm_overwrite: args.confirm_overwrite,
                     }, output),
                 };
             },
