@@ -1,19 +1,19 @@
 import chalk from 'chalk';
 
-import { AUTO_COMPACT_THRESHOLD_PCT } from '../../constants.js';
-import { compactHistory } from '../../services/compact.js';
-import { sendLlmChat, type ChatMessage, type ToolCall, type ToolDefinition } from '../../services/llm.js';
-import { sanitizeChatMessage } from '../../services/textUtils.js';
-import { countMessagesTokens } from '../../services/tokenizer.js';
-import { isInterruptRequested } from '../interruptManager.js';
+import { AUTO_COMPACT_THRESHOLD_PCT } from '../../constants';
+import { compactHistory } from '../../services/compact';
+import { sendLlmChat, type ChatMessage, type ToolCall, type ToolDefinition } from '../../services/llm';
+import { sanitizeChatMessage } from '../../services/textUtils';
+import { countMessagesTokens } from '../../services/tokenizer';
+import { isInterruptRequested } from '../interruptManager';
 import {
     getSubAgentConfig,
     toolRegistry,
     type IToolCommand,
     type ToolCallArguments,
     type ToolCallResult,
-} from '../toolRegistry.js';
-import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
+} from '../toolRegistry';
+import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 
 interface SubAgentSpec {
     id?: string;
@@ -214,15 +214,15 @@ async function executeNestedToolCall(
     }
 
     if (toolName === 'run_command') {
-        terminalToolOutputSink.writeLine(chalk.yellow(`\n[Sub-agent: ${agentId}] is requesting a command:`));
+        output.writeLine(chalk.yellow(`\n[Sub-agent: ${agentId}] is requesting a command:`));
         return command.execute(
             toolCall.function.arguments,
             nestedProgress,
-            makeLabeledSink(terminalToolOutputSink, agentId),
+            output,
         );
     }
 
-    return command.execute(toolCall.function.arguments, nestedProgress, makeLabeledSink(output, agentId));
+    return command.execute(toolCall.function.arguments, nestedProgress, output);
 }
 
 async function runSingleAgent(
@@ -233,6 +233,7 @@ async function runSingleAgent(
 ): Promise<string> {
     const config = getSubAgentConfig();
     const orchestratorPrompt: ChatMessage = { role: 'user', content: agent.prompt };
+    const labeledOutput = makeLabeledSink(output, agent.id);
     const messages: ChatMessage[] = [
         { role: 'system', content: buildSubAgentSystemPrompt() },
         orchestratorPrompt,
@@ -241,7 +242,7 @@ async function runSingleAgent(
     let finalContent = '';
 
     while (!isInterruptRequested()) {
-        await autoCompactSubAgentIfNeeded(messages, config, output, agent.id, orchestratorPrompt);
+        await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orchestratorPrompt);
         if (isInterruptRequested()) {
             break;
         }
@@ -274,7 +275,7 @@ async function runSingleAgent(
 
             onProgress?.(`Sub-agent ${agent.id}: ${toolCall.function.name}`);
 
-            const toolResult = await executeNestedToolCall(agent.id, toolCall, output, onProgress);
+            const toolResult = await executeNestedToolCall(agent.id, toolCall, labeledOutput, onProgress);
             messages.push(sanitizeChatMessage({
                 role: 'tool',
                 content: toolResult.content,

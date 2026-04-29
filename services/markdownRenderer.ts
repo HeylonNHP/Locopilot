@@ -4,7 +4,7 @@ import Table from 'cli-table3';
 import chalk from 'chalk';
 import stringWidth from 'string-width';
 import type { Token, Tokens } from 'marked';
-import { getTerminalWidth } from '../terminalWidth.js';
+import { getTerminalWidth } from '../terminalWidth';
 
 const TAB_WIDTH = 4;
 

@@ -9,22 +9,22 @@
  * poll for incremental output via the `check_process_output` tool.
  */
 
-import { getToolPrompt as getWebSearchPrompt } from './impl/webSearchTool.js';
-import { getToolPrompt as getFetchUrlPrompt } from './impl/fetchUrlTool.js';
-import { getToolPrompt as getFetchImagePrompt } from './impl/fetchImageTool.js';
-import { getToolPrompt as getReadFilePrompt } from './impl/readFileTool.js';
-import { getToolPrompt as getPatchFilePrompt } from './impl/patchFileTool.js';
-import { getToolPrompt as getWriteFilePrompt } from './impl/writeFileTool.js';
-import { getToolPrompt as getSubAgentPrompt } from './impl/subAgentTool.js';
-import { getToolPrompt as getRunCommandPrompt, defaultShell } from './impl/runCommandTool.js';
-import { isYolo, toolRegistry, setSubAgentConfig, setYoloMode, setWebSearchConfig } from './toolRegistry.js';
-import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput.js';
-import type { SubAgentConfig, ToolCallArguments, ToolCallResult, ToolWebSearchConfig } from './toolRegistry.js';
-export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager.js';
+import { getToolPrompt as getWebSearchPrompt } from './impl/webSearchTool';
+import { getToolPrompt as getFetchUrlPrompt } from './impl/fetchUrlTool';
+import { getToolPrompt as getFetchImagePrompt } from './impl/fetchImageTool';
+import { getToolPrompt as getReadFilePrompt } from './impl/readFileTool';
+import { getToolPrompt as getPatchFilePrompt } from './impl/patchFileTool';
+import { getToolPrompt as getWriteFilePrompt } from './impl/writeFileTool';
+import { getToolPrompt as getSubAgentPrompt } from './impl/subAgentTool';
+import { getToolPrompt as getRunCommandPrompt, defaultShell } from './impl/runCommandTool';
+import { isYolo, toolRegistry, setSubAgentConfig, setYoloMode, setWebSearchConfig } from './toolRegistry';
+import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput';
+import type { SubAgentConfig, ToolCallArguments, ToolCallResult, ToolWebSearchConfig } from './toolRegistry';
+export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager';
 export { isYolo, setSubAgentConfig, setYoloMode, setWebSearchConfig };
 export type { SubAgentConfig, ToolCallArguments, ToolCallResult, ToolWebSearchConfig };
-export type { ToolOutputSink } from './toolOutput.js';
-export { terminalToolOutputSink } from './toolOutput.js';
+export type { ToolOutputSink } from './toolOutput';
+export { terminalToolOutputSink } from './toolOutput';
 
 /**
  * Strips ANSI escape codes and Carriage Returns from text.
@@ -116,7 +116,7 @@ export const TOOLS: OllamaTool[] = [
                     cwd: {
                         type: 'string',
                         description:
-                            'Optional working directory for the command. If omitted, Locopilot uses the tool\'s current default working directory.',
+                            'Optional working directory for the command. If omitted, Locopilot defaults to the current agent working directory, which starts at the user home directory (Linux HOME or Windows USERPROFILE).',
                     },
                 },
                 required: ['command'],
@@ -251,7 +251,7 @@ export const TOOLS: OllamaTool[] = [
                 properties: {
                     path: {
                         type: 'string',
-                        description: 'A file path to read from, absolute or relative to the current working directory.',
+                        description: 'A file path to read from, absolute or relative to the current agent working directory.',
                     },
                     head_chars: {
                         type: 'number',
@@ -287,7 +287,7 @@ export const TOOLS: OllamaTool[] = [
                 properties: {
                     path: {
                         type: 'string',
-                        description: 'A file path to patch, absolute or relative to the current working directory.',
+                        description: 'A file path to patch, absolute or relative to the current agent working directory.',
                     },
                     patches: {
                         type: 'array',
@@ -325,7 +325,7 @@ export const TOOLS: OllamaTool[] = [
                 properties: {
                     path: {
                         type: 'string',
-                        description: 'A file path to write to, absolute or relative to the current working directory.',
+                        description: 'A file path to write to, absolute or relative to the current agent working directory.',
                     },
                     content: {
                         type: 'string',

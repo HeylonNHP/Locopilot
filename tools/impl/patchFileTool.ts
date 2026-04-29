@@ -1,6 +1,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
+import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { resolveAgentPath } from '../workingDirectory';
 
 export interface PatchFilePatch {
     old: string;
@@ -280,20 +280,20 @@ export class PatchFileTool {
             return errorMsg;
         }
 
+        const absPath = resolveAgentPath(this.output, rawPath);
+
         if (!Array.isArray(args.patches) || args.patches.length === 0) {
             const errorMsg = '[patch_file error: missing required argument "patches".]';
             this.log(formatToolTranscript({
                 title: 'patch_file error',
                 tone: 'error',
                 rows: [
-                    { label: 'path', value: resolve(rawPath), kind: 'path' },
+                    { label: 'path', value: absPath, kind: 'path' },
                     { label: 'reason', value: 'missing required argument "patches".' },
                 ],
             }));
             return errorMsg;
         }
-
-        const absPath = resolve(rawPath);
         let fileStat;
         try {
             fileStat = await stat(absPath);
@@ -433,6 +433,7 @@ export function getToolPrompt(): string {
     return (
         '6. patch_file(path, patches)\n' +
         '   Applies one or more targeted text replacements to an existing file.\n' +
+        '   Relative paths resolve against the current agent working directory.\n' +
         '   Each patch must provide an exact "old" string and a "new" string.\n' +
         '   The tool first tries an exact match, then tolerates line-ending and trailing-whitespace differences.\n' +
         '   If any patch is missing, ambiguous, or overlaps another patch, the entire request is rejected without writing.\n' +

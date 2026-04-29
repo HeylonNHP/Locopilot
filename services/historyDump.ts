@@ -1,7 +1,7 @@
 import { writeFile } from 'fs/promises';
 import path from 'path';
 
-import type { ChatMessage } from './llm.js';
+import type { ChatMessage } from './llm';
 
 export interface ConversationDumpInput {
     sessionId: number;

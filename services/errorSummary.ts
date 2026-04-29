@@ -6,8 +6,8 @@
  * technical stderr output into a brief, human-readable summary.
  */
 
-import { sendLlmChat } from './llm.js';
-import type { ChatMessage } from './llm.js';
+import { sendLlmChat } from './llm';
+import type { ChatMessage } from './llm';
 
 const ERROR_SUMMARY_SYSTEM_PROMPT =
     'You are a technical support assistant. You will be given the output and exit code of a failed terminal command. ' +

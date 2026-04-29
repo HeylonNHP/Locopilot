@@ -14,8 +14,8 @@
 
 import Database from 'better-sqlite3';
 import path from 'path';
-import { type ChatMessage } from './services/llm.js';
-import { sanitizeChatMessage } from './services/textUtils.js';
+import { type ChatMessage } from './services/llm';
+import { sanitizeChatMessage } from './services/textUtils';
 
 // ---------------------------------------------------------------------------
 // Types

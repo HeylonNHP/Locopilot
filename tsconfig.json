@@ -42,8 +42,7 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
 
-    "moduleResolution": "node10",
-    "ignoreDeprecations": "6.0",
+    "moduleResolution": "bundler",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
   }

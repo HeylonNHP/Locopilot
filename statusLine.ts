@@ -8,7 +8,7 @@
  */
 import readline from 'readline';
 import chalk from 'chalk';
-import { getTerminalWidth } from './terminalWidth.js';
+import { getTerminalWidth } from './terminalWidth';
 
 type StatusSnapshot = {
     phase: string;

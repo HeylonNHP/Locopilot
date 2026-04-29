@@ -6,7 +6,7 @@
  * from assistant content, tool results, and persisted messages so the
  * tokenizer and provider do not see invalid internal markers.
  */
-import type { ChatMessage, ToolCall } from './adapters/llmAdapter.js';
+import type { ChatMessage, ToolCall } from './adapters/llmAdapter';
 
 const SPECIAL_LLM_TOKENS = [
     '<|fim_prefix|>',

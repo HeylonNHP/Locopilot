@@ -8,17 +8,17 @@
  */
 
 import chalk from 'chalk';
-import { WebSearchTool, type WebSearchSettings, type WebSearchToolArgs } from './impl/webSearchTool.js';
-import { FetchUrlTool, type FetchUrlToolArgs } from './impl/fetchUrlTool.js';
-import { FetchImageTool, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool.js';
-import { ReadFileTool, type ReadFileToolArgs } from './impl/readFileTool.js';
-import { PatchFileTool, type PatchFileToolArgs, type PatchFilePatch } from './impl/patchFileTool.js';
-import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool.js';
-import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCommandTool.js';
-import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants.js';
-import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers.js';
-import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput.js';
-import type { ToolDefinition } from '../services/llm.js';
+import { WebSearchTool, type WebSearchSettings, type WebSearchToolArgs } from './impl/webSearchTool';
+import { FetchUrlTool, type FetchUrlToolArgs } from './impl/fetchUrlTool';
+import { FetchImageTool, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool';
+import { ReadFileTool, type ReadFileToolArgs } from './impl/readFileTool';
+import { PatchFileTool, type PatchFileToolArgs, type PatchFilePatch } from './impl/patchFileTool';
+import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool';
+import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCommandTool';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants';
+import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers';
+import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput';
+import type { ToolDefinition } from '../services/llm';
 
 // --- Shared mutable state ---
 

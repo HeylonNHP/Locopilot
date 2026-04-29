@@ -1,6 +1,7 @@
 import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
+import { dirname } from 'node:path';
+import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { resolveAgentPath } from '../workingDirectory';
 
 export interface WriteFileToolArgs {
     path?: string;
@@ -41,13 +42,15 @@ export class WriteFileTool {
             return errorMsg;
         }
 
+        const absPath = resolveAgentPath(this.output, rawPath);
+
         if (typeof args.content !== 'string') {
             const errorMsg = '[write_file error: missing required argument "content".]';
             this.log(formatToolTranscript({
                 title: 'write_file error',
                 tone: 'error',
                 rows: [
-                    { label: 'path', value: resolve(rawPath), kind: 'path' },
+                    { label: 'path', value: absPath, kind: 'path' },
                     { label: 'reason', value: 'missing required argument "content".' },
                 ],
             }));
@@ -61,14 +64,12 @@ export class WriteFileTool {
                 title: 'write_file error',
                 tone: 'error',
                 rows: [
-                    { label: 'path', value: resolve(rawPath), kind: 'path' },
+                    { label: 'path', value: absPath, kind: 'path' },
                     { label: 'reason', value: 'invalid "mode". Expected "overwrite", "append", or "create".' },
                 ],
             }));
             return errorMsg;
         }
-
-        const absPath = resolve(rawPath);
         const parent = dirname(absPath);
         await mkdir(parent, { recursive: true });
 
@@ -187,6 +188,7 @@ export function getToolPrompt(): string {
     return (
         '7. write_file(path, content, mode)\n' +
         '   Write text to a local file.\n' +
+        '   Relative paths resolve against the current agent working directory.\n' +
         '   Use mode="overwrite" to create or replace a file,\n' +
         '   mode="append" to add to an existing file or create it if missing,\n' +
         '   and mode="create" to create a new file only if it does not already exist.\n' +

@@ -19,17 +19,17 @@
  */
 
 import chalk from 'chalk';
-import { renderMarkdown } from './services/markdownRenderer.js';
-import { clearLiveStatus } from './statusLine.js';
+import { renderMarkdown } from './services/markdownRenderer';
+import { clearLiveStatus } from './statusLine';
 import {
     sanitize,
     isInterruptRequested,
     registerInterruptHandler,
     unregisterInterruptHandler,
-} from './tools/tools.js';
-import { sendLlmChatStream, getLlmTurnStats } from './services/llm.js';
-import { stripSpecialTokens } from './services/textUtils.js';
-import type { ToolCall, ToolDefinition, ChatMessage, LlmTurnStats } from './services/llm.js';
+} from './tools/tools';
+import { sendLlmChatStream, getLlmTurnStats } from './services/llm';
+import { stripSpecialTokens } from './services/textUtils';
+import type { ToolCall, ToolDefinition, ChatMessage, LlmTurnStats } from './services/llm';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

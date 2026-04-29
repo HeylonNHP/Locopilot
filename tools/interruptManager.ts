@@ -7,7 +7,7 @@
 
 import chalk from 'chalk';
 import readline from 'readline';
-import { terminalToolOutputSink } from './toolOutput.js';
+import { terminalToolOutputSink } from './toolOutput';
 
 // Set to true by requestInterrupt(); cleared by clearInterrupt().
 let interruptRequested = false;

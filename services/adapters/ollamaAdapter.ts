@@ -10,7 +10,7 @@ import type {
     LlmModelInfo,
     LlmTurnStats,
     StreamChatParams,
-} from './llmAdapter.js';
+} from './llmAdapter';
 
 interface TagsResponse {
     models: LlmModel[];

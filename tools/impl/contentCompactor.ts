@@ -7,10 +7,10 @@
  * elements like code snippets, tables, and structured data.
  */
 
-import { type WebExtractionSettings } from '../web/htmlExtractor.js';
-import { sendLlmChatStream, type ChatMessage, type StreamChatParams } from '../../services/llm.js';
-import { countMessagesTokens, countTextTokens } from '../../services/tokenizer.js';
-import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
+import { type WebExtractionSettings } from '../web/htmlExtractor';
+import { sendLlmChatStream, type ChatMessage, type StreamChatParams } from '../../services/llm';
+import { countMessagesTokens, countTextTokens } from '../../services/tokenizer';
+import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 
 /**
  * Prompt template for content compaction.

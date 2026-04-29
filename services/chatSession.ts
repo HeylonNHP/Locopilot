@@ -59,7 +59,7 @@ function syncSubAgentConfig(state: ChatSessionState, config: Config): void {
         model: state.currentModel,
         numCtx: state.numCtx,
         compactionModel: resolveCompactionModel(config.compactionModel, state.currentModel),
-        tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
+        tools: TOOLS.filter((tool: (typeof TOOLS)[number]) => tool.function.name !== 'run_subagents'),
     });
 }
 
@@ -406,7 +406,7 @@ export async function autoCompactIfNeeded(
             compactionModel,
             state.messages,
             state.numCtx,
-            (status) => refreshTokenStatus(state, status, undefined, 'estimated', compactionModel),
+            (status: string) => refreshTokenStatus(state, status, undefined, 'estimated', compactionModel),
         );
         clearLiveStatus();
         printCompactStats(result.stats);

@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { isAbsolute, parse } from 'node:path';
-import { getTerminalWidth } from '../terminalWidth.js';
+import { getTerminalWidth } from '../terminalWidth';
 
 export interface ToolOutputSink {
     writeLine(message: string): void;

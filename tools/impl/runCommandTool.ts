@@ -2,15 +2,15 @@ import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import os from 'os';
-import { isAbsolute, resolve } from 'node:path';
-import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
+import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { getAgentWorkingDirectory, resolveAgentPath, setAgentWorkingDirectory } from '../workingDirectory';
 import {
     sanitize,
     isYolo,
     getInterruptHint,
     registerInterruptHandler,
     unregisterInterruptHandler,
-} from '../tools.js';
+} from '../tools';
 
 interface ProcessEntry {
     process: ChildProcess;
@@ -25,7 +25,7 @@ interface ProcessEntry {
 
 const processRegistry = new Map<number, ProcessEntry>();
 let nextProcessId = 1;
-let lastWorkingDirectory = process.cwd();
+const WORKDIR_MARKER = '__LOCOPILOT_WORKDIR__:';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -73,6 +73,18 @@ function getShellConfig(shell: string): { bin: string; args: string[] } {
 
     // bash, sh, zsh, fish, etc. can read commands directly from stdin.
     return { bin: shell, args: [] };
+}
+
+function appendWorkingDirectoryProbe(command: string, shell: string): string {
+    if (shell === 'cmd' || shell === 'cmd.exe') {
+        return `${command} & echo ${WORKDIR_MARKER}%CD%`;
+    }
+
+    if (shell === 'powershell') {
+        return `${command}; Write-Output ${WORKDIR_MARKER}$PWD`;
+    }
+
+    return `${command}; printf '%s\n' "${WORKDIR_MARKER}$PWD"`;
 }
 
 function buildOutput(
@@ -163,10 +175,12 @@ export async function runCommand(
     const currentYolo = isYolo();
     const effectiveShell = getEffectiveShell(shell, output);
     const approvedYolo = currentYolo;
+    const agentOutput = output ?? terminalToolOutputSink;
     const trimmedCwd = cwd?.trim();
     const workingDirectory = trimmedCwd
-        ? (isAbsolute(trimmedCwd) ? resolve(trimmedCwd) : resolve(lastWorkingDirectory, trimmedCwd))
-        : lastWorkingDirectory;
+        ? resolveAgentPath(agentOutput, trimmedCwd)
+        : getAgentWorkingDirectory(agentOutput);
+    const commandToExecute = appendWorkingDirectoryProbe(command, effectiveShell);
 
     // Show the user what the AI wants to run
     output.writeLine(chalk.cyan(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`));
@@ -212,9 +226,6 @@ export async function runCommand(
         cwd: workingDirectory,
     });
     entry.process = child;
-    child.once('spawn', () => {
-        lastWorkingDirectory = workingDirectory;
-    });
 
     child.stdout?.on('data', (chunk: Buffer) => { entry.stdout += chunk.toString(); });
     child.stderr?.on('data', (chunk: Buffer) => { entry.stderr += chunk.toString(); });
@@ -265,9 +276,33 @@ export async function runCommand(
         }, timeoutMs);
 
         child.on('close', (code) => {
+            const exitCode = code ?? 0;
+            const stdoutLines = entry.stdout.split(/\r?\n/);
+            let markerLineIndex = -1;
+            let detectedWorkingDirectory: string | null = null;
+
+            for (let index = 0; index < stdoutLines.length; index += 1) {
+                const line = stdoutLines[index] ?? '';
+                if (!line.startsWith(WORKDIR_MARKER)) {
+                    continue;
+                }
+
+                const candidate = line.slice(WORKDIR_MARKER.length).trim();
+                if (candidate.length > 0) {
+                    detectedWorkingDirectory = candidate;
+                    markerLineIndex = index;
+                }
+            }
+
+            if (detectedWorkingDirectory) {
+                stdoutLines.splice(markerLineIndex, 1);
+                entry.stdout = stdoutLines.join('\n').trimEnd();
+                setAgentWorkingDirectory(agentOutput, detectedWorkingDirectory);
+            }
+
             output.writeLine('\n' + chalk.dim(`  Process ${processId} exited with code ${code}.\n`));
             onProgress?.('run_command: completed.');
-            finalize(code ?? 0);
+            finalize(exitCode);
         });
 
         child.on('error', (err) => {
@@ -290,7 +325,7 @@ export async function runCommand(
         });
 
         try {
-            child.stdin.write(command + '\n');
+            child.stdin.write(commandToExecute + '\n');
             child.stdin.end();
         } catch (err: unknown) {
             entry.stderr += `\nstdin write error: ${err instanceof Error ? err.message : String(err)}`;
@@ -370,11 +405,11 @@ export async function checkProcessOutput(
 export function getToolPrompt(isYolo: boolean): string {
     return (
         '1. run_command(command, shell?, timeout_seconds?, cwd?)\n' +
-        '   Execute a shell command on the host machine. Each call is stateless with respect to shell state, so a previous cd does not persist unless you pass cwd. ' +
+        '   Execute a shell command on the host machine. Each call is stateless with respect to shell state, but if the command changes directories with cd and completes successfully, that directory will be preserved for later tool calls by the same agent. ' +
         (isYolo
             ? 'The command will run automatically with user consent.'
             : 'The user will be asked to approve it before it runs.') + '\n' +
-        '   If cwd is omitted, the tool uses its current default working directory.\n' +
+        '   If cwd is omitted, the tool uses the current agent working directory, which starts at the user home directory (Linux HOME or Windows USERPROFILE).\n' +
         '   Returns stdout/stderr when the command finishes, or partial\n' +
         `   output plus a process_id if still running after the timeout (default ${DEFAULT_TIMEOUT_MS / 1000}s).\n\n` +
         '2. check_process_output(process_id, poll_interval_seconds?)\n' +

@@ -14,9 +14,9 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import * as cheerio from 'cheerio';
 import axios from 'axios';
-import { ContentCompactor } from '../impl/contentCompactor.js';
-import { buildWebRequestHeaders } from './webRequestHeaders.js';
-import type { ToolOutputSink } from '../toolOutput.js';
+import { ContentCompactor } from '../impl/contentCompactor';
+import { buildWebRequestHeaders } from './webRequestHeaders';
+import type { ToolOutputSink } from '../toolOutput';
 
 export interface WebExtractionSettings {
     requestTimeoutMs: number;

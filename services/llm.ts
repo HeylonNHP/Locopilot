@@ -1,4 +1,4 @@
-import { ollamaAdapter } from './adapters/ollamaAdapter.js';
+import { ollamaAdapter } from './adapters/ollamaAdapter';
 import type {
     ChatApiResponse,
     ChatMessage,
@@ -10,7 +10,7 @@ import type {
     StreamChatParams,
     ToolCall,
     ToolDefinition,
-} from './adapters/llmAdapter.js';
+} from './adapters/llmAdapter';
 
 let activeAdapter: LlmAdapter = ollamaAdapter;
 

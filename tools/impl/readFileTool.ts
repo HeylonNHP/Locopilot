@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput.js';
+import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { resolveAgentPath } from '../workingDirectory';
 
 export interface ReadFileToolArgs {
     path?: string;
@@ -43,7 +43,7 @@ export class ReadFileTool {
             return errorMsg;
         }
 
-        const absPath = resolve(rawPath);
+        const absPath = resolveAgentPath(this.output, rawPath);
         let fileStat;
         try {
             fileStat = await stat(absPath);
@@ -155,6 +155,7 @@ export function getToolPrompt(): string {
     return (
         '5. read_file(path, head_chars, tail_chars, start, length)\n' +
         '   Read a local file from the host machine.\n' +
+        '   Relative paths resolve against the current agent working directory.\n' +
         '   Use head_chars to read only the first N characters, tail_chars to read only the last N characters,\n' +
         '   or start/length to read a specific character range.\n\n'
     );

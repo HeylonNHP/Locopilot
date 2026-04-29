@@ -1,6 +1,6 @@
 import { encoding_for_model, get_encoding, Tiktoken } from '@dqbd/tiktoken';
-import { type ChatMessage } from './llm.js';
-import { stripSpecialTokens } from './textUtils.js';
+import { type ChatMessage } from './llm';
+import { stripSpecialTokens } from './textUtils';
 
 let encoder: Tiktoken | null = null;
 let currentEncoderModel: string | null = null;

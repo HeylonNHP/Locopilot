@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { getTerminalWidth } from '../terminalWidth.js';
+import { getTerminalWidth } from '../terminalWidth';
 
 const LOGO_LINES = [
     `    __                        _ __      __ `,

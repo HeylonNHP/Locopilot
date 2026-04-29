@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-import { fetchLlmModels, getLlmApiErrorMessage } from './llm.js';
+import { fetchLlmModels, getLlmApiErrorMessage } from './llm';
 
 export async function getModels(baseUrl: string): Promise<string[]> {
     try {

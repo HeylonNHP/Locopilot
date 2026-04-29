@@ -1,4 +1,4 @@
-import type { ToolCallArguments } from '../../tools/tools.js';
+import type { ToolCallArguments } from '../../tools/tools';
 
 export interface ToolCall {
     function: {

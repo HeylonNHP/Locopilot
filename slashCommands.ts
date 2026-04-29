@@ -5,8 +5,8 @@ import {
     getToolUseNudge,
     setYoloMode,
     setWebSearchConfig,
-} from './tools/tools.js';
-import { parseNonNegativeInteger } from './tools/commandHelpers.js';
+} from './tools/tools';
+import { parseNonNegativeInteger } from './tools/commandHelpers';
 import {
     DEFAULT_NUM_CTX,
     DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
@@ -14,23 +14,23 @@ import {
     DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
     OLLAMA_CONNECT_TIMEOUT_MS,
-} from './constants.js';
-import { getLlmApiErrorMessage, validateLlmConnection } from './services/llm.js';
-import type { ChatMessage } from './services/llm.js';
-import { compactHistory, generateSessionTitle, printCompactStats } from './services/compact.js';
-import { writeConversationHistoryDump } from './services/historyDump.js';
-import { getLastWebCompactionDebug } from './tools/impl/contentCompactor.js';
-import { getModels, resolveCompactionModel } from './services/modelManager.js';
+} from './constants';
+import { getLlmApiErrorMessage, validateLlmConnection } from './services/llm';
+import type { ChatMessage } from './services/llm';
+import { compactHistory, generateSessionTitle, printCompactStats } from './services/compact';
+import { writeConversationHistoryDump } from './services/historyDump';
+import { getLastWebCompactionDebug } from './tools/impl/contentCompactor';
+import { getModels, resolveCompactionModel } from './services/modelManager';
 import {
     createSession,
     listSessions,
     deleteSession,
     loadSessionMessages,
     renameSession,
-} from './history.js';
-import type { Session } from './history.js';
-import type { SessionTokenStats } from './history.js';
-import { clearLiveStatus } from './statusLine.js';
+} from './history';
+import type { Session } from './history';
+import type { SessionTokenStats } from './history';
+import { clearLiveStatus } from './statusLine';
 
 // --- TypeScript Interfaces ---
 
