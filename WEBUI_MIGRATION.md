@@ -261,10 +261,9 @@ npm start       # Production server
 
 ### Top Priority Fixes
 
-1. **Implement `/dump`** (MEDIUM)
-   - The `writeConversationHistoryDump()` function exists in `services/historyDump.ts`.
-   - Create a `POST /api/dump` endpoint.
-   - Return `{ filePath }` or trigger a file download.
+1. **Implement `/dump`** (completed)
+  - Added `POST /api/dump` to rebuild the existing markdown export for the web UI.
+  - The slash command now triggers a browser download of the generated `.md` file.
 
 ### Architecture Improvements
 
@@ -288,8 +287,8 @@ When resuming work, verify these in order:
 7. [ ] New chat starts clean (no stale messages)
 8. [ ] Session switch loads correct messages
 9. [ ] Session delete removes from sidebar
-10. [ ] `/clear`, `/model`, `/help` slash commands work
-11. [ ] `/dump` shows "not implemented" (until fixed)
+10. [x] `/dump` downloads a markdown file in the browser
+11. [ ] `/clear`, `/model`, `/help` slash commands work
 12. [ ] Approval modal appears in Standard mode and blocks execution until approved or rejected
 13. [ ] YOLO mode toggle works
 14. [ ] Thinking toggle works

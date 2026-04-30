@@ -34,6 +34,58 @@ export function useSlashCommands({
 }: SlashCommandDeps) {
   const { state, dispatch } = useChat();
 
+  const parseDownloadFileName = (contentDisposition: string | null): string => {
+    if (!contentDisposition) {
+      return 'locopilot-history.md';
+    }
+
+    const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+    const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+    const encodedName = filenameStarMatch?.[1] ?? filenameMatch?.[1];
+
+    if (!encodedName) {
+      return 'locopilot-history.md';
+    }
+
+    try {
+      return decodeURIComponent(encodedName);
+    } catch {
+      return encodedName;
+    }
+  };
+
+  const triggerDownload = (content: string, fileName: string): void => {
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const downloadUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+
+    anchor.href = downloadUrl;
+    anchor.download = fileName;
+    anchor.rel = 'noopener';
+    anchor.style.display = 'none';
+
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+  };
+
+  const readErrorMessage = async (response: Response): Promise<string> => {
+    const responseText = await response.text().catch(() => '');
+
+    try {
+      const parsed = JSON.parse(responseText) as { error?: unknown };
+      if (typeof parsed.error === 'string' && parsed.error.trim().length > 0) {
+        return parsed.error;
+      }
+    } catch {
+      // Ignore JSON parse failures and fall back to the raw response body.
+    }
+
+    return responseText.trim().length > 0 ? responseText.trim() : `HTTP ${response.status}`;
+  };
+
   const handleSlashCommand = useCallback(
     async (message: string) => {
       const parts = message.slice(1).split(' ');
@@ -287,7 +339,47 @@ export function useSlashCommands({
         }
 
         case 'dump': {
-          addSystem('Not yet implemented in web UI: /dump');
+          const currentMessages = refs.messagesRef.current;
+          if (abortRef.current) {
+            addSystem('Stop the current response before running /dump.');
+            return;
+          }
+          if (isCompactingRef.current) {
+            addSystem('Wait for compaction to finish before running /dump.');
+            return;
+          }
+          if (isGeneratingTitleRef.current) {
+            addSystem('Wait for title generation to finish before running /dump.');
+            return;
+          }
+          if (!refs.modelRef.current.trim()) {
+            addSystem('Select a model before running /dump.');
+            return;
+          }
+
+          try {
+            const response = await fetch('/api/dump', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                messages: currentMessages,
+                model: refs.modelRef.current,
+                numCtx: refs.numCtxRef.current,
+                baseUrl: refs.baseUrlRef.current,
+                sessionId: refs.sessionIdRef.current,
+              }),
+            });
+
+            if (!response.ok) {
+              throw new Error(await readErrorMessage(response));
+            }
+
+            const markdown = await response.text();
+            const fileName = parseDownloadFileName(response.headers.get('content-disposition'));
+            triggerDownload(markdown, fileName);
+          } catch (error) {
+            addSystem(`Conversation dump failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
           return;
         }
 

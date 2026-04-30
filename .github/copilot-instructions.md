@@ -143,6 +143,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-05-01: Enabled web UI `/dump` markdown downloads
+  - Files: `app/api/dump/route.ts` (new), `app/hooks/useSlashCommands.ts`, `services/historyDump.ts`, `WEBUI_MIGRATION.md`
+  - Summary: Added a dedicated dump endpoint that rebuilds the existing conversation export markdown on the web server, returns it as a markdown attachment, and wired the slash command to fetch the response and trigger a browser download of the generated `.md` file.
+  - Intent: Bring `/dump` to parity with the CLI while keeping the web flow local and download-based.
+
 - 2026-05-01: Fixed web UI assistant-turn boundaries after tool results
   - Files: `app/lib/chatStore.ts`, `app/hooks/useChatStream.ts`, `app/hooks/useSlashCommands.ts`, `app/page.tsx`, `WEBUI_MIGRATION.md`, `.github/copilot-instructions.md`
   - Summary: Replaced the `needsNewAssistantRef` heuristic with a reducer-driven assistant-delta action that creates an assistant message on demand when `thinking` or `chunk` events arrive after tool/system messages. Removed the placeholder assistant insert and the stale flag plumbing from the page and slash-command hooks.

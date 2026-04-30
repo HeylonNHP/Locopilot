@@ -4,7 +4,7 @@ import path from 'path';
 import type { ChatMessage } from './llm';
 
 export interface ConversationDumpInput {
-    sessionId: number;
+    sessionId?: number | null | undefined;
     sessionName?: string | undefined;
     currentModel: string;
     baseUrl: string;
@@ -110,10 +110,13 @@ function countImages(messages: ChatMessage[]): number {
     return messages.reduce((total, message) => total + (message.images?.length ?? 0), 0);
 }
 
-function buildDumpFileName(input: ConversationDumpInput): string {
+export function buildDumpFileName(input: ConversationDumpInput): string {
     const timestamp = formatTimestamp();
     const sessionSlug = input.sessionName ? sanitizeFileSegment(input.sessionName) : '';
-    const sessionPart = sessionSlug ? `session-${input.sessionId}-${sessionSlug}` : `session-${input.sessionId}`;
+    const sessionIdPart = typeof input.sessionId === 'number' && Number.isFinite(input.sessionId) && input.sessionId > 0
+        ? String(Math.trunc(input.sessionId))
+        : 'unsaved';
+    const sessionPart = sessionSlug ? `session-${sessionIdPart}-${sessionSlug}` : `session-${sessionIdPart}`;
     return `locopilot-history-${sessionPart}-${timestamp}.md`;
 }
 
@@ -219,7 +222,7 @@ export function buildConversationDumpMarkdown(input: ConversationDumpInput): str
 
     const summaryLines = [
         `- Generated at: ${new Date().toISOString()}`,
-        `- Session ID: ${input.sessionId}`,
+        `- Session ID: ${typeof input.sessionId === 'number' && Number.isFinite(input.sessionId) && input.sessionId > 0 ? Math.trunc(input.sessionId) : '(unsaved)'}`,
         `- Session Name: ${trimmedSessionName && trimmedSessionName.length > 0 ? trimmedSessionName : '(unnamed)'}`,
         `- Current Model: ${input.currentModel}`,
         `- Base URL: ${input.baseUrl}`,
