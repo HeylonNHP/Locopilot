@@ -12,7 +12,6 @@ import type { StableRefs } from './useStableRefs';
 export function useChatStream(
   refs: StableRefs,
   abortRef: MutableRefObject<AbortController | null>,
-  needsNewAssistantRef: MutableRefObject<boolean>,
   loadSessions: () => Promise<void>,
 ) {
   const { state, dispatch } = useChat();
@@ -21,21 +20,11 @@ export function useChatStream(
     (event: string, data: any) => {
       switch (event) {
         case 'thinking':
-          if (needsNewAssistantRef.current) {
-            dispatch({ type: 'ADD_MESSAGE', message: { role: 'assistant', content: '', thinking: data.content ?? data } });
-            needsNewAssistantRef.current = false;
-          } else {
-            dispatch({ type: 'UPDATE_LAST_MESSAGE', thinking: data.content ?? data });
-          }
+          dispatch({ type: 'APPLY_ASSISTANT_DELTA', thinking: data.content ?? data });
           break;
 
         case 'chunk':
-          if (needsNewAssistantRef.current) {
-            dispatch({ type: 'ADD_MESSAGE', message: { role: 'assistant', content: data.content ?? data } });
-            needsNewAssistantRef.current = false;
-          } else {
-            dispatch({ type: 'UPDATE_LAST_MESSAGE', content: data.content ?? data });
-          }
+          dispatch({ type: 'APPLY_ASSISTANT_DELTA', content: data.content ?? data });
           break;
 
         case 'tool_call':
@@ -68,7 +57,6 @@ export function useChatStream(
               name: data.name,
             },
           });
-          needsNewAssistantRef.current = true;
           break;
 
         case 'tool_progress':
@@ -83,7 +71,6 @@ export function useChatStream(
           if (Array.isArray(data.messages)) {
             dispatch({ type: 'SET_MESSAGES', messages: data.messages });
           }
-          needsNewAssistantRef.current = true;
           dispatch({
             type: 'ADD_MESSAGE',
             message: {
@@ -107,7 +94,7 @@ export function useChatStream(
           break;
       }
     },
-    [dispatch, needsNewAssistantRef],
+    [dispatch],
   );
 
   const sendChatMessage = useCallback(
@@ -125,8 +112,6 @@ export function useChatStream(
       dispatch({ type: 'ADD_MESSAGE', message: userMessage });
       dispatch({ type: 'SET_STREAMING', isStreaming: true });
       dispatch({ type: 'SET_ERROR', error: null });
-      needsNewAssistantRef.current = false;
-      dispatch({ type: 'ADD_MESSAGE', message: { role: 'assistant', content: '' } });
 
       const abortController = new AbortController();
       abortRef.current = abortController;
@@ -213,7 +198,7 @@ export function useChatStream(
         loadSessions();
       }
     },
-    [state.isStreaming, dispatch, handleEvent, refs, abortRef, needsNewAssistantRef, loadSessions],
+    [state.isStreaming, dispatch, handleEvent, refs, abortRef, loadSessions],
   );
 
   return { sendChatMessage, handleEvent };

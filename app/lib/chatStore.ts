@@ -56,6 +56,7 @@ type ChatAction =
   | { type: 'SET_MESSAGES'; messages: ChatMessage[] }
   | { type: 'ADD_MESSAGE'; message: ChatMessage }
   | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string }
+  | { type: 'APPLY_ASSISTANT_DELTA'; content?: string; thinking?: string }
   | { type: 'APPEND_TOOL_PROGRESS'; content: string; name?: string }
   | { type: 'SET_SESSIONS'; sessions: Session[] }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
@@ -83,6 +84,26 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           ...(action.thinking !== undefined ? { thinking: (last.thinking || '') + action.thinking } : {}),
         };
       }
+      return { ...state, messages: msgs };
+    }
+    case 'APPLY_ASSISTANT_DELTA': {
+      const msgs = [...state.messages];
+      const last = msgs[msgs.length - 1];
+
+      if (!last || last.role !== 'assistant') {
+        msgs.push({
+          role: 'assistant',
+          content: action.content ?? '',
+          ...(action.thinking !== undefined ? { thinking: action.thinking } : {}),
+        });
+        return { ...state, messages: msgs };
+      }
+
+      msgs[msgs.length - 1] = {
+        ...last,
+        ...(action.content !== undefined ? { content: last.content + action.content } : {}),
+        ...(action.thinking !== undefined ? { thinking: (last.thinking || '') + action.thinking } : {}),
+      };
       return { ...state, messages: msgs };
     }
     case 'APPEND_TOOL_PROGRESS': {

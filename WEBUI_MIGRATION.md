@@ -119,50 +119,48 @@ npm start       # Production server
 - The web chat route now strips leaked control tokens such as `<|channel|>` from streamed assistant text before rendering it in the browser.
 - If a turn still ends without meaningful assistant content and there are no tool calls, the route automatically nudges the model to answer directly and retries up to 3 times instead of silently ending on reasoning-only output.
 
+**5. Assistant Turn Boundary After Tool Results**
+- The web client no longer relies on a `needsNewAssistantRef` flag to decide when to start the next assistant message after tool output.
+- Assistant `thinking` and `chunk` events now flow through a reducer action that creates an assistant message on demand when the last message is not already assistant, so post-tool reasoning/content always attaches to the correct turn.
+
 ## Known Bugs
 
 ### 🔴 Critical
 
 ### 🟡 Medium
 
-**3. Race Condition: Thinking After Tool Result**
-- `tool_result` sets `needsNewAssistantRef.current = true`.
-- If the next LLM turn emits `thinking` before `chunk`, a new assistant message is created.
-- However, if multiple `thinking` events arrive in rapid succession, or if `thinking` and `chunk` interleave, the logic may create duplicate assistant messages or append thinking to the wrong message.
-- **Fix needed**: Use a more robust message tracking system, or have the API send explicit event types (`new_assistant_turn`) to signal when to create a new message.
-
-**4. chatTimeoutMs Ignored**
+**3. chatTimeoutMs Ignored**
 - The frontend sends `chatTimeoutMs` in the chat request body.
 - `/api/chat/route.ts` never passes it to `sendLlmChatStream()`.
 - **Fix needed**: Thread `chatTimeoutMs` through to the LLM adapter call.
 
 ### 🟢 Low
 
-**5. React Key Warning / Index Keys**
+**4. React Key Warning / Index Keys**
 - Messages are mapped with `key={i}` in `page.tsx`.
 - React may misidentify DOM nodes when messages are added/removed mid-stream.
 - **Fix needed**: Use a stable message ID (timestamp or counter) instead of array index.
 
-**6. Textarea Never Auto-Resizes**
+**5. Textarea Never Auto-Resizes**
 - `ChatInput` uses `rows={1}` with `resize: 'none'`.
 - No auto-grow logic, so long messages are cramped in a single line.
 - **Fix needed**: Add auto-resize logic (measure scrollHeight and adjust rows).
 
-**7. Missing Error Handling on Config Save**
+**6. Missing Error Handling on Config Save**
 - Settings modal catches fetch errors silently (`catch {}`).
 - Users are never notified if config fails to persist.
 - **Fix needed**: Show toast/error message on config save failure.
 
-**8. Session Delete No Confirmation**
+**7. Session Delete No Confirmation**
 - Clicking the `×` button on a session immediately deletes it without confirmation.
 - **Fix needed**: Add a confirmation dialog.
 
-**9. Config File Path Ambiguity**
+**8. Config File Path Ambiguity**
 - `config.json` is read from `process.cwd()`.
 - In a Next.js production build (`next start`), the cwd may not be the project root, causing config loss.
 - **Fix needed**: Resolve config path relative to `__dirname` or use an environment variable.
 
-**10. Models Not Auto-Refreshed in Settings**
+**9. Models Not Auto-Refreshed in Settings**
 - Settings modal shows whatever models were loaded on mount.
 - If Ollama gains/loses models, the dropdown is stale until page reload.
 - **Fix needed**: Add a "Refresh" button or auto-refresh when opening settings.

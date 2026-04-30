@@ -23,7 +23,6 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
-  const needsNewAssistantRef = useRef(false);
 
   // Keep isCompacting/isGeneratingTitle accessible as refs for async guards
   useEffect(() => { isCompactingRef.current = isCompacting; }, [isCompacting]);
@@ -36,7 +35,7 @@ export default function Home() {
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
 
   // SSE streaming
-  const { sendChatMessage } = useChatStream(refs, abortRef, needsNewAssistantRef, loadSessions);
+  const { sendChatMessage } = useChatStream(refs, abortRef, loadSessions);
 
   // Settings opener — defined before useSlashCommands so it can be passed in
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
@@ -46,7 +45,6 @@ export default function Home() {
   const { handleSlashCommand } = useSlashCommands({
     refs,
     abortRef,
-    needsNewAssistantRef,
     isCompactingRef,
     isGeneratingTitleRef,
     setIsCompacting,

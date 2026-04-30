@@ -143,6 +143,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-05-01: Fixed web UI assistant-turn boundaries after tool results
+  - Files: `app/lib/chatStore.ts`, `app/hooks/useChatStream.ts`, `app/hooks/useSlashCommands.ts`, `app/page.tsx`, `WEBUI_MIGRATION.md`, `.github/copilot-instructions.md`
+  - Summary: Replaced the `needsNewAssistantRef` heuristic with a reducer-driven assistant-delta action that creates an assistant message on demand when `thinking` or `chunk` events arrive after tool/system messages. Removed the placeholder assistant insert and the stale flag plumbing from the page and slash-command hooks.
+  - Intent: Make streamed post-tool reasoning/content attach to the correct assistant turn without depending on fragile event-order heuristics.
+
 - 2026-05-01: Added empty-response recovery for the web chat route
   - Files: `app/api/chat/route.ts`, `services/textUtils.ts`, `WEBUI_MIGRATION.md`, `.github/copilot-instructions.md`
   - Summary: The web SSE route now strips leaked channel/control markers from streamed assistant text and retries up to three times when a non-tool turn ends without meaningful answer content.

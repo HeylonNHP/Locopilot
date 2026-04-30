@@ -9,7 +9,6 @@ import type { StableRefs } from './useStableRefs';
 interface SlashCommandDeps {
   refs: StableRefs;
   abortRef: MutableRefObject<AbortController | null>;
-  needsNewAssistantRef: MutableRefObject<boolean>;
   isCompactingRef: MutableRefObject<boolean>;
   isGeneratingTitleRef: MutableRefObject<boolean>;
   setIsCompacting: Dispatch<SetStateAction<boolean>>;
@@ -25,7 +24,6 @@ interface SlashCommandDeps {
 export function useSlashCommands({
   refs,
   abortRef,
-  needsNewAssistantRef,
   isCompactingRef,
   isGeneratingTitleRef,
   setIsCompacting,
@@ -210,7 +208,6 @@ export function useSlashCommands({
             if (!Array.isArray(data?.messages)) throw new Error('Compaction returned an invalid message list.');
 
             dispatch({ type: 'SET_MESSAGES', messages: data.messages as ChatMessage[] });
-            needsNewAssistantRef.current = true;
             addSystem(`⚡ Conversation compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`);
 
             if (typeof data?.stats?.newTokenCount === 'number' && data.stats.newTokenCount > refs.numCtxRef.current) {
@@ -329,7 +326,6 @@ export function useSlashCommands({
       dispatch,
       refs,
       abortRef,
-      needsNewAssistantRef,
       isCompactingRef,
       isGeneratingTitleRef,
       setIsCompacting,
