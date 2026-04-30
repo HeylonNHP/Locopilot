@@ -20,7 +20,7 @@
 import { NextRequest } from 'next/server';
 import { sendLlmChatStream } from '../../../services/llm';
 import type { ChatMessage, StreamChatParams } from '../../../services/llm';
-import { TOOLS, handleToolCall, setWebSearchConfig, setYoloMode } from '../../../tools/tools';
+import { TOOLS, handleToolCall, setSubAgentConfig, setWebSearchConfig, setYoloMode } from '../../../tools/tools';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
 import { createSession, updateSessionMessages } from '../../../history';
@@ -96,10 +96,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                 );
             }
 
-            // Safety limit to prevent infinite tool-calling loops.
-            const MAX_TOOL_LOOPS = 20;
-            let loopCount = 0;
-
             // Deep-clone the incoming messages so we never mutate the request body.
             const currentMessages: ChatMessage[] = JSON.parse(JSON.stringify(messages));
 
@@ -124,14 +120,40 @@ export async function POST(req: NextRequest): Promise<Response> {
                         if (typeof config.yolo === 'boolean') {
                             setYoloMode(config.yolo);
                         }
+
+                        // Configure the sub-agent tool with the current session parameters
+                        // so that run_subagents can spawn isolated workers with the right model/context.
+                        setSubAgentConfig({
+                            baseUrl: config.baseUrl || effectiveBaseUrl,
+                            model: model as string,
+                            numCtx: effectiveNumCtx,
+                            compactionModel: resolveCompactionModel(config.compactionModel, model as string),
+                            tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
+                        });
+                    } else {
+                        // No config file — set sub-agent config with request defaults.
+                        setSubAgentConfig({
+                            baseUrl: effectiveBaseUrl,
+                            model: model as string,
+                            numCtx: effectiveNumCtx,
+                            compactionModel: model as string,
+                            tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
+                        });
                     }
                 } catch {
                     // Config load is best-effort; defaults already apply.
+                    // Ensure sub-agent config is set even when config load fails.
+                    setSubAgentConfig({
+                        baseUrl: effectiveBaseUrl,
+                        model: model as string,
+                        numCtx: effectiveNumCtx,
+                        compactionModel: model as string,
+                        tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
+                    });
                 }
 
                 // ── Main tool-calling loop ──────────────────────────────────
-                while (loopCount < MAX_TOOL_LOOPS) {
-                    loopCount += 1;
+                while (true) {
 
                     // Signal that we are about to start an LLM call.
                     sendEvent('status', {
@@ -293,10 +315,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     return;
                 }
 
-                // ── Safety limit reached ────────────────────────────────────
-                sendEvent('error', {
-                    message: `Tool-calling loop reached the safety limit of ${MAX_TOOL_LOOPS} iterations. The last assistant response may have been incomplete.`,
-                });
+
             } catch (err: unknown) {
                 // If the request was aborted (client disconnected), close silently.
                 if (err instanceof DOMException && err.name === 'AbortError') {
