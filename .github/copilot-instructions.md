@@ -143,6 +143,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-30: Surfaced web tool progress in the web UI
+  - Files: `app/api/chat/route.ts`, `app/lib/chatStore.ts`, `app/page.tsx`, `tools/toolRegistry.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a web-only tool output sink for `web_search` and `fetch_url` in the chat SSE route, threaded that sink through the web search/fetch settings so `ContentCompactor` uses it, and appended `tool_progress` events into the active tool bubble on the client.
+  - Intent: Show web search pagination and web content compaction progress in the browser instead of printing those messages only to the server terminal.
+
 - 2026-04-30: Added immediate pending-state feedback for web UI `/compact`
   - Files: `app/page.tsx`, `.github/copilot-instructions.md`
   - Summary: The `/compact` slash command now flips the composer into a visible `Compacting conversation...` state as soon as the request starts and blocks duplicate manual compaction requests until the current one finishes.

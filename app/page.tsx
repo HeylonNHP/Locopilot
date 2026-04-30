@@ -199,6 +199,14 @@ export default function Home() {
           needsNewAssistantRef.current = true;
           break;
 
+        case 'tool_progress':
+          dispatch({
+            type: 'APPEND_TOOL_PROGRESS',
+            name: data.name,
+            content: data.message ?? data.content ?? String(data),
+          });
+          break;
+
         case 'compact':
           // The server has compacted the conversation history. Replace the
           // client's message list so the next request sends the shorter history,

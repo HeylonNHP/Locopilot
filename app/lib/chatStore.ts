@@ -55,6 +55,7 @@ type ChatAction =
   | { type: 'SET_MESSAGES'; messages: ChatMessage[] }
   | { type: 'ADD_MESSAGE'; message: ChatMessage }
   | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string }
+  | { type: 'APPEND_TOOL_PROGRESS'; content: string; name?: string }
   | { type: 'SET_SESSIONS'; sessions: Session[] }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
   | { type: 'SET_MODELS'; models: LLmModel[] }
@@ -82,6 +83,38 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         };
       }
       return { ...state, messages: msgs };
+    }
+    case 'APPEND_TOOL_PROGRESS': {
+      const msgs = [...state.messages];
+      for (let i = msgs.length - 1; i >= 0; i -= 1) {
+        const candidate = msgs[i];
+        if (!candidate || candidate.role !== 'tool') {
+          continue;
+        }
+        if (action.name && candidate.name && candidate.name !== action.name) {
+          continue;
+        }
+
+        msgs[i] = {
+          ...candidate,
+          content: candidate.content
+            ? `${candidate.content}\n${action.content}`
+            : action.content,
+        };
+        return { ...state, messages: msgs };
+      }
+
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          {
+            role: 'tool',
+            content: action.content,
+            ...(action.name ? { name: action.name } : {}),
+          },
+        ],
+      };
     }
     case 'SET_SESSIONS':
       return { ...state, sessions: action.sessions };

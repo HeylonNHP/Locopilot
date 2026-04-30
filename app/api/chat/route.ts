@@ -20,7 +20,7 @@
 import { NextRequest } from 'next/server';
 import { sendLlmChatStream } from '../../../services/llm';
 import type { ChatMessage, StreamChatParams } from '../../../services/llm';
-import { TOOLS, handleToolCall, setSubAgentConfig, setWebSearchConfig, setYoloMode } from '../../../tools/tools';
+import { TOOLS, handleToolCall, sanitize, setSubAgentConfig, setWebSearchConfig, setYoloMode, type ToolOutputSink } from '../../../tools/tools';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
 import { createSession, updateSessionMessages } from '../../../history';
@@ -317,10 +317,27 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                             const startTime = Date.now();
 
+                            const shouldSurfaceToolProgress = toolName === 'web_search' || toolName === 'fetch_url';
+                            const webToolOutput: ToolOutputSink = {
+                                writeLine(message: string): void {
+                                    sendEvent('tool_progress', {
+                                        name: toolName,
+                                        message: sanitize(message),
+                                    });
+                                },
+                                writeInline(_message: string): void {
+                                    // Ignore inline progress updates in the web UI to avoid
+                                    // spamming one message with token-by-token churn.
+                                },
+                                clearInline(): void {
+                                    // No-op for the web UI.
+                                },
+                            };
+
                             // Execute the tool via the registry.
-                            // Note: onProgress is omitted here; the web UI can rely
-                            // on the tool_call / tool_result / status events instead.
-                            const result = await handleToolCall(toolName, toolArgs);
+                            const result = shouldSurfaceToolProgress
+                                ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput)
+                                : await handleToolCall(toolName, toolArgs);
 
                             const duration = Date.now() - startTime;
 

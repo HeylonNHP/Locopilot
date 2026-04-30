@@ -152,7 +152,10 @@ async function runWebSearch(
     output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<string> {
     const tool = new WebSearchTool({
-        settings: webSearchSettings,
+        settings: {
+            ...webSearchSettings,
+            output,
+        },
         onProgress: (message: string) => {
             output.writeLine(chalk.dim(message));
             onProgress?.(message);
@@ -167,7 +170,10 @@ async function runFetchUrl(
     output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<string> {
     const tool = new FetchUrlTool({
-        settings: webSearchSettings,
+        settings: {
+            ...webSearchSettings,
+            output,
+        },
         onProgress: (message: string) => {
             output.writeLine(chalk.dim(message));
             onProgress?.(message);
