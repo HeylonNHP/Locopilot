@@ -19,6 +19,7 @@ import { getToolPrompt as getSubAgentPrompt } from './impl/subAgentTool';
 import { getToolPrompt as getRunCommandPrompt, defaultShell } from './impl/runCommandTool';
 import { isYolo, toolRegistry, setSubAgentConfig, setYoloMode, setWebSearchConfig } from './toolRegistry';
 import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput';
+import { buildToolUseNudge } from '../services/toolUseNudge';
 import type { SubAgentConfig, ToolCallArguments, ToolCallResult, ToolWebSearchConfig } from './toolRegistry';
 export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager';
 export { isYolo, setSubAgentConfig, setYoloMode, setWebSearchConfig };
@@ -424,15 +425,7 @@ export function getToolSystemPrompt(): string {
 // reminder text is provided by `getToolUseNudge()` below.
 
 export function getToolUseNudge(): string {
-    return (
-        'Tool-use reminder: your previous response appears uncertain or incomplete. ' +
-        'If you are not entirely certain, call web_search now and then answer using the fetched evidence. ' +
-        'Do not use result_N placeholders; cite full URLs inline. ' +
-        'If terminal access is needed, call run_command directly now. ' +
-        (isYolo()
-            ? 'The command will execute automatically.'
-            : 'I (the app) will ask the human user for approval before execution.')
-    );
+    return buildToolUseNudge(isYolo());
 }
 
 export async function handleToolCall(

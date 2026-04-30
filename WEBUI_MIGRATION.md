@@ -85,7 +85,7 @@ npm start       # Production server
 | `/compact` (actual implementation) | ✅ Done | `POST /api/compact` now wraps `compactHistory()`, and the slash command replaces the client message list with the compacted history. |
 | `/title` (auto-generate session title) | ✅ Done | `POST /api/title` now wraps `generateSessionTitle()`, renames the active session, and the slash command refreshes the sidebar with the new title. |
 | `/dump` (export markdown) | 🟡 Medium | Stubbed in web UI. CLI exports full conversation to `.md` file. |
-| `/nudge` (inject tool-use reminder) | 🟡 Medium | Stubbed in web UI. CLI adds a system message reminding the AI to use tools. |
+| `/nudge` (inject tool-use reminder) | ✅ Done | The slash command now injects the shared tool-use reminder and immediately continues the normal AI request flow with that nudge as a user message. |
 | Auto-compaction during chat | ✅ Done | Auto-compacts at 92% context usage; sends `compact` SSE event to replace client message list. Sub-agents already auto-compact via `autoCompactSubAgentIfNeeded`. |
 | Connection test in settings | 🟡 Medium | CLI validates Ollama connection before saving baseUrl. Web UI saves without testing. |
 | Multiline input (`"""` block, `\` continuation) | 🟡 Medium | Web input is single-line textarea only. No paste detection or block mode. |
@@ -273,10 +273,6 @@ npm start       # Production server
    - Create a `POST /api/dump` endpoint.
    - Return `{ filePath }` or trigger a file download.
 
-3. **Implement `/nudge`** (MEDIUM)
-   - The `getToolUseNudge()` function exists in `tools/tools.ts`.
-   - This is trivial — just inject the nudge text as a system message and continue the chat loop.
-
 ### Architecture Improvements
 
 - **Consider WebSockets for Chat**: SSE is one-way. For approval flows, WebSockets would allow the server to pause and wait for client input without complex HTTP request/response choreography.
@@ -300,7 +296,7 @@ When resuming work, verify these in order:
 8. [ ] Session switch loads correct messages
 9. [ ] Session delete removes from sidebar
 10. [ ] `/clear`, `/model`, `/help` slash commands work
-11. [ ] `/dump`, `/nudge` show "not implemented" (until fixed)
+11. [ ] `/dump` shows "not implemented" (until fixed)
 12. [ ] Approval modal appears in Standard mode (but doesn't block execution yet)
 13. [ ] YOLO mode toggle works
 14. [ ] Thinking toggle works

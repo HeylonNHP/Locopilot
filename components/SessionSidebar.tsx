@@ -1,6 +1,8 @@
 'use client';
 
 import { useChat, type Session } from '@/app/lib/chatStore';
+import type { KeyboardEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 
 interface Props {
   onNewSession: () => void;
@@ -11,6 +13,20 @@ interface Props {
 
 export default function SessionSidebar({ onNewSession, onSelectSession, onDeleteSession, onSettings }: Props) {
   const { state } = useChat();
+
+  const handleActionKeyDown = (
+    event: KeyboardEvent<HTMLDivElement>,
+    action: () => void,
+  ) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      action();
+    }
+  };
+
+  const clearPointerFocus = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.currentTarget.blur();
+  };
   
   return (
     <div style={{
@@ -62,47 +78,64 @@ export default function SessionSidebar({ onNewSession, onSelectSession, onDelete
             No sessions yet
           </p>
         ) : (
-          state.sessions.map((session) => (
-            <div
-              key={session.id}
-              onClick={() => onSelectSession(session.id)}
-              style={{
-                padding: '10px 12px',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                marginBottom: '4px',
-                background: state.currentSessionId === session.id ? 'var(--bg-tertiary)' : 'transparent',
-                fontSize: '13px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <span style={{
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                flex: 1,
-              }}>
-                {session.name || `Session ${session.id}`}
-              </span>
-              <button
-                onClick={(e) => { e.stopPropagation(); onDeleteSession(session.id); }}
-                title="Delete session"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  padding: '2px 4px',
-                  opacity: 0.5,
-                }}
+          state.sessions.map((session) => {
+            const isSelected = state.currentSessionId === session.id;
+
+            return (
+              <div
+                key={session.id}
+                className="session-row"
+                data-selected={isSelected ? 'true' : undefined}
               >
-                ×
-              </button>
-            </div>
-          ))
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectSession(session.id)}
+                  onKeyDown={(event) => handleActionKeyDown(event, () => onSelectSession(session.id))}
+                  onPointerUp={clearPointerFocus}
+                  title={session.name || `Session ${session.id}`}
+                  className="session-row__action"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    padding: '10px 12px',
+                    color: 'var(--text-primary)',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{
+                    display: 'block',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {session.name || `Session ${session.id}`}
+                  </span>
+                </div>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onDeleteSession(session.id)}
+                  onKeyDown={(event) => handleActionKeyDown(event, () => onDeleteSession(session.id))}
+                  onPointerUp={clearPointerFocus}
+                  title="Delete session"
+                  className="session-row__action"
+                  style={{
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    padding: '10px 12px 10px 4px',
+                    opacity: 0.5,
+                    flexShrink: 0,
+                  }}
+                >
+                  ×
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
       <div

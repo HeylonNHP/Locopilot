@@ -8,6 +8,7 @@ import SessionSidebar from '@/components/SessionSidebar';
 import ApprovalModal from '@/components/ApprovalModal';
 import StatusBar from '@/components/StatusBar';
 import SettingsModal from '@/components/SettingsModal';
+import { buildToolUseNudge } from '@/services/toolUseNudge';
 
 export default function Home() {
   const { state, dispatch } = useChat();
@@ -18,6 +19,7 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
+  const sessionLoadRequestIdRef = useRef(0);
 
   // ── Refs to avoid stale closures in the SSE streaming callback ──
   const messagesRef = useRef(state.messages);
@@ -124,14 +126,23 @@ export default function Home() {
   };
 
   const loadSessionMessages = async (sessionId: number) => {
+    const requestId = sessionLoadRequestIdRef.current + 1;
+    sessionLoadRequestIdRef.current = requestId;
+    dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
+
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.messages) {
-          dispatch({ type: 'SET_MESSAGES', messages: data.messages });
-        }
-        dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
+      if (!res.ok || sessionLoadRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const data = await res.json();
+      if (sessionLoadRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      if (data.messages) {
+        dispatch({ type: 'SET_MESSAGES', messages: data.messages });
       }
     } catch {
       // Silently ignore
@@ -246,6 +257,105 @@ export default function Home() {
       }
     },
     [dispatch],
+  );
+
+  const sendChatMessage = useCallback(
+    async (message: string) => {
+      if (state.isStreaming) return;
+
+      if (!modelRef.current.trim()) {
+        dispatch({ type: 'SET_ERROR', error: 'Please select a model first' });
+        return;
+      }
+
+      const currentMessages = messagesRef.current;
+      const userMessage: ChatMessage = { role: 'user', content: message };
+
+      dispatch({
+        type: 'ADD_MESSAGE',
+        message: userMessage,
+      });
+      dispatch({ type: 'SET_STREAMING', isStreaming: true });
+      dispatch({ type: 'SET_ERROR', error: null });
+      needsNewAssistantRef.current = false;
+
+      dispatch({
+        type: 'ADD_MESSAGE',
+        message: { role: 'assistant', content: '' },
+      });
+
+      const abortController = new AbortController();
+      abortRef.current = abortController;
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: [...currentMessages, userMessage],
+            model: modelRef.current,
+            numCtx: numCtxRef.current,
+            baseUrl: baseUrlRef.current,
+            sessionId: sessionIdRef.current,
+            yolo: yoloRef.current,
+            think: thinkingEnabledRef.current,
+            compactionModel: compactionModelRef.current,
+            chatTimeoutMs: chatTimeoutMsRef.current,
+            webSearch: webSearchRef.current,
+          }),
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => 'Unknown error');
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No response body stream');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let currentEvent = '';
+        let currentData = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              currentData = line.slice(6).trim();
+            } else if (line === '' && currentEvent && currentData) {
+              try {
+                const parsed = JSON.parse(currentData);
+                handleEvent(currentEvent, parsed);
+              } catch {
+                handleEvent(currentEvent, currentData);
+              }
+              currentEvent = '';
+              currentData = '';
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          dispatch({ type: 'SET_ERROR', error: err.message });
+        }
+      } finally {
+        dispatch({ type: 'SET_STREAMING', isStreaming: false });
+        abortRef.current = null;
+        loadSessions();
+      }
+    },
+    [state.isStreaming, dispatch, handleEvent],
   );
 
   // ── Slash command handler ───────────────────────────────────────
@@ -668,13 +778,7 @@ export default function Home() {
           return;
         }
         case 'nudge': {
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'system',
-              content: 'Not yet implemented in web UI: /nudge',
-            },
-          });
+          await sendChatMessage(buildToolUseNudge(yoloRef.current));
           return;
         }
         case 'ctx': {
@@ -717,7 +821,7 @@ export default function Home() {
         }
       }
     },
-    [dispatch, state.sessions, state.currentSessionId],
+    [dispatch, sendChatMessage, state.sessions, state.currentSessionId],
   );
 
   // ── Send message via SSE streaming ──────────────────────────────
@@ -729,111 +833,9 @@ export default function Home() {
         await handleSlashCommand(trimmed);
         return;
       }
-      if (state.isStreaming) return;
-
-      // Guard: require a model
-      if (!modelRef.current.trim()) {
-        dispatch({ type: 'SET_ERROR', error: 'Please select a model first' });
-        return;
-      }
-
-      const currentMessages = messagesRef.current;
-      const userMessage: ChatMessage = { role: 'user', content: message };
-
-      // Add user message to the UI immediately
-      dispatch({
-        type: 'ADD_MESSAGE',
-        message: userMessage,
-      });
-      dispatch({ type: 'SET_STREAMING', isStreaming: true });
-      dispatch({ type: 'SET_ERROR', error: null });
-      needsNewAssistantRef.current = false;
-
-      // Add placeholder assistant message that will be updated via SSE
-      dispatch({
-        type: 'ADD_MESSAGE',
-        message: { role: 'assistant', content: '' },
-      });
-
-      const abortController = new AbortController();
-      abortRef.current = abortController;
-
-      try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: [...currentMessages, userMessage],
-            model: modelRef.current,
-            numCtx: numCtxRef.current,
-            baseUrl: baseUrlRef.current,
-            sessionId: sessionIdRef.current,
-            yolo: yoloRef.current,
-            think: thinkingEnabledRef.current,
-            compactionModel: compactionModelRef.current,
-            chatTimeoutMs: chatTimeoutMsRef.current,
-            webSearch: webSearchRef.current,
-          }),
-          signal: abortController.signal,
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => 'Unknown error');
-          throw new Error(`HTTP ${response.status}: ${errorText}`);
-        }
-
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('No response body stream');
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let currentEvent = '';
-        let currentData = '';
-
-        // Read the SSE stream
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          // Process complete lines from the buffer
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? ''; // Keep incomplete trailing data
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              currentEvent = line.slice(7).trim();
-            } else if (line.startsWith('data: ')) {
-              currentData = line.slice(6).trim();
-            } else if (line === '' && currentEvent && currentData) {
-              // Empty line signals end of an SSE message
-              try {
-                const parsed = JSON.parse(currentData);
-                handleEvent(currentEvent, parsed);
-              } catch {
-                // If data is not JSON, pass it as raw string
-                handleEvent(currentEvent, currentData);
-              }
-              currentEvent = '';
-              currentData = '';
-            }
-          }
-        }
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          dispatch({ type: 'SET_ERROR', error: err.message });
-        }
-      } finally {
-        dispatch({ type: 'SET_STREAMING', isStreaming: false });
-        abortRef.current = null;
-        // Reload sessions so the new/updated session appears in the sidebar
-        loadSessions();
-      }
+      await sendChatMessage(message);
     },
-    // Only re-create handleSend when isStreaming or dispatch changes,
-    // NOT when messages change – we use the ref for messages.
-    [state.isStreaming, dispatch, handleEvent, handleSlashCommand],
+    [handleSlashCommand, sendChatMessage],
   );
 
   // ── Abort streaming ─────────────────────────────────────────────

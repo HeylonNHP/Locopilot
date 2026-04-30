@@ -143,6 +143,16 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-30: Fixed web UI session highlight race during sidebar switches
+  - Files: `app/page.tsx`, `.github/copilot-instructions.md`
+  - Summary: `loadSessionMessages()` now marks the clicked session as current before the fetch resolves and tracks a monotonically increasing request id so older `/api/sessions/:id` responses cannot overwrite a newer selection.
+  - Intent: Remove timing-dependent sidebar highlight glitches and stale session re-selection when different browsers return session loads in a different order.
+
+- 2026-04-30: Added web UI `/nudge` slash command implementation
+  - Files: `app/page.tsx`, `services/toolUseNudge.ts` (new), `tools/tools.ts`, `WEBUI_MIGRATION.md`
+  - Summary: Extracted the manual tool-use reminder text into a shared helper so both CLI and web use the same nudge content. Wired the web UI `/nudge` slash command to inject that reminder as a user message and immediately continue through the normal chat SSE request path instead of showing a stub.
+  - Intent: Bring manual AI nudging in the web UI to parity with the CLI flow without maintaining two divergent reminder strings.
+
 - 2026-04-30: Added web UI `/title` slash command implementation
   - Files: `app/api/title/route.ts` (new), `app/page.tsx`, `WEBUI_MIGRATION.md`
   - Summary: Added a dedicated `POST /api/title` endpoint that resolves the effective base URL, context length, and compaction model, runs `generateSessionTitle()`, renames the active session in SQLite, and returns the new title. Wired the web UI `/title` slash command to call this endpoint, refresh the sidebar session list, and show immediate pending feedback while the title request is in flight.

@@ -131,3 +131,39 @@ body {
 .markdown-message--thinking a {
   color: #b4d4ff;
 }
+
+/* ── Session sidebar rows ─────────────────────────────────── */
+.session-row {
+  margin-bottom: 4px;
+  border-radius: 8px;
+  background-color: var(--bg-secondary);
+  border: 1px solid transparent;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.session-row[data-selected='true'] {
+  background-color: var(--bg-tertiary);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.session-row__action {
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.session-row__action:focus {
+  outline: none;
+}
+
+.session-row__action:focus-visible {
+  outline: none;
+}
+
+.session-row__action::-moz-focus-inner {
+  border: 0;
+}
