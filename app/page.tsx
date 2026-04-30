@@ -84,14 +84,29 @@ export default function Home() {
   const handleStop = useCallback(() => { abortRef.current?.abort(); }, []);
 
   // ── Approval modal ────────────────────────────────────────────────
-  const handleApprove = useCallback(() => {
+  const handleApprove = useCallback(async () => {
+    const requestId = state.pendingApprovalId;
     dispatch({ type: 'SHOW_APPROVAL', command: null });
-  }, [dispatch]);
+    if (requestId) {
+      await fetch('/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId, approved: true }),
+      }).catch(() => { /* ignore – backend timeout already handles this */ });
+    }
+  }, [dispatch, state.pendingApprovalId]);
 
-  const handleReject = useCallback(() => {
+  const handleReject = useCallback(async () => {
+    const requestId = state.pendingApprovalId;
     dispatch({ type: 'SHOW_APPROVAL', command: null });
-    dispatch({ type: 'ADD_MESSAGE', message: { role: 'tool', content: '⛔ Command rejected by user.' } });
-  }, [dispatch]);
+    if (requestId) {
+      await fetch('/api/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId, approved: false }),
+      }).catch(() => { /* ignore – backend timeout already handles this */ });
+    }
+  }, [dispatch, state.pendingApprovalId]);
 
   // ── Session management ────────────────────────────────────────────
   const handleNewSession = useCallback(async () => {

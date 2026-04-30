@@ -43,6 +43,7 @@ interface ChatState {
   // Approval dialog
   pendingCommand: { name: string; args: any } | null;
   showApproval: boolean;
+  pendingApprovalId: string | null;
   // Additional config fields from CLI
   yolo: boolean;
   thinkingEnabled: boolean;
@@ -63,7 +64,7 @@ type ChatAction =
   | { type: 'SET_STREAMING'; isStreaming: boolean }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
-  | { type: 'SHOW_APPROVAL'; command: { name: string; args: any } | null }
+  | { type: 'SHOW_APPROVAL'; command: { name: string; args: any } | null; requestId?: string }
   | { type: 'CLEAR_MESSAGES' };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
@@ -131,7 +132,12 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'SET_CONFIG':
       return { ...state, ...action.config };
     case 'SHOW_APPROVAL':
-      return { ...state, pendingCommand: action.command, showApproval: action.command !== null };
+      return {
+        ...state,
+        pendingCommand: action.command,
+        showApproval: action.command !== null,
+        pendingApprovalId: action.requestId ?? null,
+      };
     case 'CLEAR_MESSAGES':
       return { ...state, messages: [] };
     default:
@@ -151,6 +157,7 @@ const initialState: ChatState = {
   error: null,
   pendingCommand: null,
   showApproval: false,
+  pendingApprovalId: null,
   yolo: false,
   thinkingEnabled: true,
   compactionModel: '',

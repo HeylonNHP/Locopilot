@@ -81,7 +81,7 @@ npm start       # Production server
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| **Command Approval Flow** | 🔴 **Critical** | Approval modal UI exists but is NOT wired to backend. Backend runs tools unconditionally. No API endpoint to send approve/reject decisions. |
+| **Command Approval Flow** | ✅ Done | Approval modal is now wired to the backend. `run_command` pauses in standard mode, `POST /api/approve` resolves the approval, and YOLO mode continues to bypass confirmation. |
 | `/compact` (actual implementation) | ✅ Done | `POST /api/compact` now wraps `compactHistory()`, and the slash command replaces the client message list with the compacted history. |
 | `/title` (auto-generate session title) | ✅ Done | `POST /api/title` now wraps `generateSessionTitle()`, renames the active session, and the slash command refreshes the sidebar with the new title. |
 | `/dump` (export markdown) | 🟡 Medium | Stubbed in web UI. CLI exports full conversation to `.md` file. |
@@ -103,12 +103,10 @@ npm start       # Production server
 
 ### 🔴 Critical
 
-**1. Approval Modal is Non-Functional**
-- The `ApprovalModal` renders when `state.showApproval` is true, but `/api/chat` calls `handleToolCall()` directly without checking for user approval.
-- There is no API endpoint to send an approve/reject decision back to the server.
-- `handleApprove()` in `page.tsx` merely hides the modal — the command already ran.
-- **Workaround**: Use YOLO mode (automatic execution). Standard mode is effectively YOLO in the web UI.
-- **Fix needed**: Add a `/api/tools/approve` endpoint or redesign the chat API to pause on tool calls and wait for client approval before continuing the SSE stream.
+**1. Command Approval Flow Wired**
+- `ApprovalModal` now receives an `approval_request` SSE event from `/api/chat` when the model requests `run_command`.
+- The web UI posts `{ requestId, approved }` to `POST /api/approve` to resolve the paused backend execution.
+- Standard mode waits for explicit approval before executing the command; YOLO mode continues to bypass confirmation.
 
 ### 🟡 Medium
 
@@ -223,6 +221,8 @@ npm start       # Production server
 | `components/ApprovalModal.tsx` | Command approval dialog (**UI only, not wired**) |
 | `components/StatusBar.tsx` | Footer showing streaming/model/message count |
 | `app/api/chat/route.ts` | SSE streaming chat API with full agent loop |
+| `app/api/approve/route.ts` | Approval endpoint for paused `run_command` requests |
+| `app/lib/approvalRegistry.ts` | Server-side approval promise registry for command approval requests |
 | `app/api/compact/route.ts` | Manual compaction endpoint used by the `/compact` slash command |
 | `app/api/title/route.ts` | Session-title generation endpoint used by the `/title` slash command |
 | `app/api/config/route.ts` | Config read/write |

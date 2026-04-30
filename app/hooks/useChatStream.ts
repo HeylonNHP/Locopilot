@@ -49,6 +49,16 @@ export function useChatStream(
           });
           break;
 
+        case 'approval_request':
+          // The backend is paused waiting for the user to approve or reject
+          // the run_command request.  Show the ApprovalModal.
+          dispatch({
+            type: 'SHOW_APPROVAL',
+            command: { name: data.toolName ?? data.name, args: data.args },
+            requestId: data.requestId,
+          });
+          break;
+
         case 'tool_result':
           dispatch({
             type: 'ADD_MESSAGE',

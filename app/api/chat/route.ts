@@ -17,10 +17,12 @@
  *   event: error\ndata: {"message":"…"}\n\n
  */
 
+import { randomUUID } from 'crypto';
 import { NextRequest } from 'next/server';
 import { sendLlmChatStream } from '../../../services/llm';
 import type { ChatMessage, StreamChatParams } from '../../../services/llm';
 import { TOOLS, handleToolCall, sanitize, setSubAgentConfig, setWebSearchConfig, setYoloMode, type ToolOutputSink } from '../../../tools/tools';
+import { waitForApproval, resolveApproval } from '../../lib/approvalRegistry';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
 import { createSession, updateSessionMessages } from '../../../history';
@@ -109,6 +111,9 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Last authoritative token count from Ollama; used by the auto-compact
             // check so it matches the CLI's anchored estimate.
             let lastAuthoritativeTokens = 0;
+            // Whether YOLO mode is active (set from config below). When true,
+            // run_command skips the approval gate and executes unconditionally.
+            let effectiveYolo = false;
 
             try {
                 // Load runtime tool configuration from disk so that web search
@@ -127,6 +132,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         }
                         if (typeof config.yolo === 'boolean') {
                             setYoloMode(config.yolo);
+                            effectiveYolo = config.yolo;
                         }
 
                         effectiveCompactionModel = resolveCompactionModel(config.compactionModel, model as string);
@@ -314,6 +320,44 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 name: toolName,
                                 arguments: toolArgs,
                             });
+
+                            // ── Approval gate for run_command (skipped in YOLO mode) ────
+                            if (toolName === 'run_command' && !effectiveYolo) {
+                                const requestId = randomUUID();
+
+                                // Race the user decision against an abort signal so the
+                                // server doesn't hang if the client disconnects.
+                                const abortPromise = new Promise<boolean>((resolve) => {
+                                    if (req.signal.aborted) { resolve(false); return; }
+                                    req.signal.addEventListener('abort', () => resolve(false), { once: true });
+                                });
+
+                                sendEvent('approval_request', {
+                                    requestId,
+                                    toolName,
+                                    args: toolArgs,
+                                });
+
+                                const approved = await Promise.race([
+                                    waitForApproval(requestId),
+                                    abortPromise,
+                                ]);
+
+                                // Clean up registry entry when the abort path won the race.
+                                resolveApproval(requestId, false);
+
+                                if (!approved) {
+                                    const rejectedResult = '[Command rejected by user]';
+                                    sendEvent('tool_result', {
+                                        name: toolName,
+                                        result: rejectedResult,
+                                        duration: 0,
+                                    });
+                                    currentMessages.push({ role: 'tool', content: rejectedResult });
+                                    continue;
+                                }
+                            }
+                            // ────────────────────────────────────────────────────────────
 
                             const startTime = Date.now();
 
