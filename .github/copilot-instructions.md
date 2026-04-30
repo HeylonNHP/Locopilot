@@ -143,6 +143,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-30: Added web UI `/title` slash command implementation
+  - Files: `app/api/title/route.ts` (new), `app/page.tsx`, `WEBUI_MIGRATION.md`
+  - Summary: Added a dedicated `POST /api/title` endpoint that resolves the effective base URL, context length, and compaction model, runs `generateSessionTitle()`, renames the active session in SQLite, and returns the new title. Wired the web UI `/title` slash command to call this endpoint, refresh the sidebar session list, and show immediate pending feedback while the title request is in flight.
+  - Intent: Bring manual session title generation in the web UI to parity with the CLI flow instead of leaving `/title` as a stub.
+
 - 2026-04-30: Surfaced web tool progress in the web UI
   - Files: `app/api/chat/route.ts`, `app/lib/chatStore.ts`, `app/page.tsx`, `tools/toolRegistry.ts`, `.github/copilot-instructions.md`
   - Summary: Added a web-only tool output sink for `web_search` and `fetch_url` in the chat SSE route, threaded that sink through the web search/fetch settings so `ContentCompactor` uses it, and appended `tool_progress` events into the active tool bubble on the client.

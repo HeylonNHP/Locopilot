@@ -66,6 +66,7 @@ npm start       # Production server
 
 ### API Routes ✅ Working
 - `POST /api/chat` — SSE streaming with full tool loop
+- `POST /api/title` — Generate and persist a session title for the active session
 - `GET /api/config` — Read `config.json`
 - `PUT /api/config` — Write `config.json` (deep merge for webSearch)
 - `GET /api/models` — Ollama model listing
@@ -82,7 +83,7 @@ npm start       # Production server
 |---------|----------|-------|
 | **Command Approval Flow** | 🔴 **Critical** | Approval modal UI exists but is NOT wired to backend. Backend runs tools unconditionally. No API endpoint to send approve/reject decisions. |
 | `/compact` (actual implementation) | ✅ Done | `POST /api/compact` now wraps `compactHistory()`, and the slash command replaces the client message list with the compacted history. |
-| `/title` (auto-generate session title) | 🟡 Medium | Stubbed in web UI. CLI generates title via LLM and renames session. |
+| `/title` (auto-generate session title) | ✅ Done | `POST /api/title` now wraps `generateSessionTitle()`, renames the active session, and the slash command refreshes the sidebar with the new title. |
 | `/dump` (export markdown) | 🟡 Medium | Stubbed in web UI. CLI exports full conversation to `.md` file. |
 | `/nudge` (inject tool-use reminder) | 🟡 Medium | Stubbed in web UI. CLI adds a system message reminding the AI to use tools. |
 | Auto-compaction during chat | ✅ Done | Auto-compacts at 92% context usage; sends `compact` SSE event to replace client message list. Sub-agents already auto-compact via `autoCompactSubAgentIfNeeded`. |
@@ -223,6 +224,7 @@ npm start       # Production server
 | `components/StatusBar.tsx` | Footer showing streaming/model/message count |
 | `app/api/chat/route.ts` | SSE streaming chat API with full agent loop |
 | `app/api/compact/route.ts` | Manual compaction endpoint used by the `/compact` slash command |
+| `app/api/title/route.ts` | Session-title generation endpoint used by the `/title` slash command |
 | `app/api/config/route.ts` | Config read/write |
 | `app/api/models/route.ts` | Ollama model listing |
 | `app/api/sessions/route.ts` | Session list/create |
@@ -266,17 +268,12 @@ npm start       # Production server
      - Resumes the loop with the approval result
    - Alternative: Use WebSockets instead of SSE for bidirectional communication.
 
-2. **Implement `/title`** (MEDIUM)
-   - The `generateSessionTitle()` function exists in `services/compact.ts`.
-   - Create a `POST /api/title` endpoint or add it to the session API.
-   - Wire up `/title` to call it and update the session name in SQLite.
-
-3. **Implement `/dump`** (MEDIUM)
+2. **Implement `/dump`** (MEDIUM)
    - The `writeConversationHistoryDump()` function exists in `services/historyDump.ts`.
    - Create a `POST /api/dump` endpoint.
    - Return `{ filePath }` or trigger a file download.
 
-4. **Implement `/nudge`** (MEDIUM)
+3. **Implement `/nudge`** (MEDIUM)
    - The `getToolUseNudge()` function exists in `tools/tools.ts`.
    - This is trivial — just inject the nudge text as a system message and continue the chat loop.
 
@@ -303,7 +300,7 @@ When resuming work, verify these in order:
 8. [ ] Session switch loads correct messages
 9. [ ] Session delete removes from sidebar
 10. [ ] `/clear`, `/model`, `/help` slash commands work
-11. [ ] `/title`, `/dump`, `/nudge` show "not implemented" (until fixed)
+11. [ ] `/dump`, `/nudge` show "not implemented" (until fixed)
 12. [ ] Approval modal appears in Standard mode (but doesn't block execution yet)
 13. [ ] YOLO mode toggle works
 14. [ ] Thinking toggle works

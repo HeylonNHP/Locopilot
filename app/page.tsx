@@ -13,9 +13,11 @@ export default function Home() {
   const { state, dispatch } = useChat();
   const [showSettings, setShowSettings] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
+  const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isCompactingRef = useRef(false);
+  const isGeneratingTitleRef = useRef(false);
 
   // ── Refs to avoid stale closures in the SSE streaming callback ──
   const messagesRef = useRef(state.messages);
@@ -43,6 +45,7 @@ export default function Home() {
   useEffect(() => { chatTimeoutMsRef.current = state.chatTimeoutMs; }, [state.chatTimeoutMs]);
   useEffect(() => { webSearchRef.current = state.webSearch; }, [state.webSearch]);
   useEffect(() => { isCompactingRef.current = isCompacting; }, [isCompacting]);
+  useEffect(() => { isGeneratingTitleRef.current = isGeneratingTitle; }, [isGeneratingTitle]);
 
   // ── Auto-scroll when messages change ────────────────────────────
   useEffect(() => {
@@ -539,13 +542,119 @@ export default function Home() {
           return;
         }
         case 'title': {
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'system',
-              content: 'Not yet implemented in web UI: /title',
-            },
-          });
+          const currentMessages = messagesRef.current;
+          if (abortRef.current) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'Stop the current response before running /title.',
+              },
+            });
+            return;
+          }
+
+          if (isCompactingRef.current) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'Wait for compaction to finish before running /title.',
+              },
+            });
+            return;
+          }
+
+          if (isGeneratingTitleRef.current) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'Title generation is already in progress.',
+              },
+            });
+            return;
+          }
+
+          if (!modelRef.current.trim()) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'Select a model before running /title.',
+              },
+            });
+            return;
+          }
+
+          if (currentMessages.length <= 1) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'Not enough conversation history to generate a title yet.',
+              },
+            });
+            return;
+          }
+
+          if (!sessionIdRef.current) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'This conversation does not have a saved session yet. Send a message and wait for the reply first.',
+              },
+            });
+            return;
+          }
+
+          isGeneratingTitleRef.current = true;
+          setIsGeneratingTitle(true);
+
+          try {
+            const response = await fetch('/api/title', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                messages: currentMessages,
+                model: modelRef.current,
+                numCtx: numCtxRef.current,
+                baseUrl: baseUrlRef.current,
+                compactionModel: compactionModelRef.current,
+                sessionId: sessionIdRef.current,
+              }),
+            });
+
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+              throw new Error(data?.error ?? `HTTP ${response.status}`);
+            }
+
+            if (typeof data?.title !== 'string' || data.title.trim().length === 0) {
+              throw new Error('Title generation returned an invalid title.');
+            }
+
+            await loadSessions();
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: `Session title updated to: ${data.title}`,
+              },
+            });
+          } catch (error) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: `Title generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              },
+            });
+          } finally {
+            isGeneratingTitleRef.current = false;
+            setIsGeneratingTitle(false);
+          }
           return;
         }
         case 'dump': {
@@ -929,6 +1038,19 @@ export default function Home() {
             >
               <span style={{ color: 'var(--accent)', fontSize: '14px' }}>
                 ● Compacting conversation...
+              </span>
+            </div>
+          ) : isGeneratingTitle ? (
+            <div
+              style={{
+                display: 'flex',
+                gap: '8px',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <span style={{ color: 'var(--accent)', fontSize: '14px' }}>
+                ● Generating session title...
               </span>
             </div>
           ) : (
