@@ -14,6 +14,8 @@ const SPECIAL_LLM_TOKENS = [
     '<|fim_middle|>',
     '<|fim_pad|>',
     '<|endoftext|>',
+    '<|channel|>',
+    '<channel|>',
 ];
 
 const SPECIAL_LLM_TOKENS_PATTERN = new RegExp(

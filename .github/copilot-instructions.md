@@ -143,6 +143,16 @@ Feature summary:
 
 ## Change History
 
+- 2026-05-01: Added empty-response recovery for the web chat route
+  - Files: `app/api/chat/route.ts`, `services/textUtils.ts`, `WEBUI_MIGRATION.md`, `.github/copilot-instructions.md`
+  - Summary: The web SSE route now strips leaked channel/control markers from streamed assistant text and retries up to three times when a non-tool turn ends without meaningful answer content.
+  - Intent: Prevent web sessions from stalling on reasoning-only or marker-only assistant output and bring final-answer recovery closer to the CLI behavior.
+
+- 2026-04-30: Fixed multi-line SSE parsing in the web client
+  - Files: `app/hooks/useChatStream.ts`, `WEBUI_MIGRATION.md`, `.github/copilot-instructions.md`
+  - Summary: Updated the manual fetch-stream parser to accumulate repeated `data:` lines for one SSE event, join them with newlines per the SSE spec, and flush any buffered trailing event when the stream ends.
+  - Intent: Prevent truncated or invalid event payloads when the server emits multi-line SSE data and keep the migration notes aligned with the actual parser behavior.
+
 - 2026-04-30: Fixed web UI session highlight race during sidebar switches
   - Files: `app/page.tsx`, `.github/copilot-instructions.md`
   - Summary: `loadSessionMessages()` now marks the clicked session as current before the fetch resolves and tracks a monotonically increasing request id so older `/api/sessions/:id` responses cannot overwrite a newer selection.

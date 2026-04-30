@@ -161,7 +161,26 @@ export function useChatStream(
         const decoder = new TextDecoder();
         let buffer = '';
         let currentEvent = '';
-        let currentData = '';
+        let currentDataLines: string[] = [];
+
+        const flushEvent = () => {
+          if (!currentEvent || currentDataLines.length === 0) {
+            currentEvent = '';
+            currentDataLines = [];
+            return;
+          }
+
+          const currentData = currentDataLines.join('\n');
+          try {
+            const parsed = JSON.parse(currentData);
+            handleEvent(currentEvent, parsed);
+          } catch {
+            handleEvent(currentEvent, currentData);
+          }
+
+          currentEvent = '';
+          currentDataLines = [];
+        };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -174,20 +193,16 @@ export function useChatStream(
           for (const line of lines) {
             if (line.startsWith('event: ')) {
               currentEvent = line.slice(7).trim();
-            } else if (line.startsWith('data: ')) {
-              currentData = line.slice(6).trim();
-            } else if (line === '' && currentEvent && currentData) {
-              try {
-                const parsed = JSON.parse(currentData);
-                handleEvent(currentEvent, parsed);
-              } catch {
-                handleEvent(currentEvent, currentData);
-              }
-              currentEvent = '';
-              currentData = '';
+            } else if (line.startsWith('data:')) {
+              const value = line.slice(5).replace(/^ /, '');
+              currentDataLines.push(value);
+            } else if (line === '') {
+              flushEvent();
             }
           }
         }
+
+        flushEvent();
       } catch (err: any) {
         if (err.name !== 'AbortError') {
           dispatch({ type: 'SET_ERROR', error: err.message });

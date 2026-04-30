@@ -29,9 +29,27 @@ import { createSession, updateSessionMessages } from '../../../history';
 import { compactHistory } from '../../../services/compact';
 import { countMessagesTokens } from '../../../services/tokenizer';
 import { AUTO_COMPACT_THRESHOLD_PCT } from '../../../constants';
+import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
 
 // Prevent static generation – this route must always run on the server.
 export const dynamic = 'force-dynamic';
+
+const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 3;
+const CHANNEL_LABEL_ONLY_PATTERN = /^\s*(?:thought|analysis|final|commentary)\s*$/i;
+
+function sanitizeAssistantTextFragment(text: string): string {
+    const cleaned = stripSpecialTokens(text ?? '');
+    return CHANNEL_LABEL_ONLY_PATTERN.test(cleaned.trim()) ? '' : cleaned;
+}
+
+function hasMeaningfulAssistantContent(message: ChatMessage): boolean {
+    const cleanedContent = sanitizeAssistantTextFragment(message.content ?? '').trim();
+    if (cleanedContent.length === 0) {
+        return false;
+    }
+
+    return !CHANNEL_LABEL_ONLY_PATTERN.test(cleanedContent);
+}
 
 export async function POST(req: NextRequest): Promise<Response> {
     // ── Parse & validate the request body ──────────────────────────────
@@ -114,6 +132,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Whether YOLO mode is active (set from config below). When true,
             // run_command skips the approval gate and executes unconditionally.
             let effectiveYolo = false;
+            let emptyResponseRecoveryAttempts = 0;
 
             try {
                 // Load runtime tool configuration from disk so that web search
@@ -259,14 +278,20 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                         // Stream thinking token chunks (e.g. for deep-thinking models).
                         if (msg?.thinking) {
-                            thinking += msg.thinking;
-                            sendEvent('thinking', msg.thinking);
+                            const thinkingChunk = sanitizeAssistantTextFragment(msg.thinking);
+                            if (thinkingChunk) {
+                                thinking += thinkingChunk;
+                                sendEvent('thinking', thinkingChunk);
+                            }
                         }
 
                         // Stream regular content chunks.
                         if (msg?.content) {
-                            content += msg.content;
-                            sendEvent('chunk', msg.content);
+                            const contentChunk = sanitizeAssistantTextFragment(msg.content);
+                            if (contentChunk) {
+                                content += contentChunk;
+                                sendEvent('chunk', contentChunk);
+                            }
                         }
 
                         // Capture tool calls from the final (or any) chunk.
@@ -286,10 +311,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                     lastAuthoritativeTokens = promptEvalCount + evalCount;
 
                     // -- Build the assistant message --------------------------
-                    const assistantMessage: ChatMessage = {
+                    const assistantMessage = sanitizeChatMessage({
                         role: 'assistant',
                         content,
-                    };
+                    });
                     if (thinking) {
                         assistantMessage.thinking = thinking;
                     }
@@ -298,6 +323,21 @@ export async function POST(req: NextRequest): Promise<Response> {
                     }
 
                     currentMessages.push(assistantMessage);
+
+                    if ((!toolCalls || toolCalls.length === 0) && !hasMeaningfulAssistantContent(assistantMessage)) {
+                        if (emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
+                            emptyResponseRecoveryAttempts += 1;
+                            currentMessages.push({
+                                role: 'user',
+                                content:
+                                    'Your last response was empty. Provide a direct answer now. ' +
+                                    'If commands are needed, call run_command. If commands already ran, summarize their output and errors.',
+                            });
+                            continue;
+                        }
+                    } else {
+                        emptyResponseRecoveryAttempts = 0;
+                    }
 
                     // -- Handle tool calls if present -------------------------
                     if (toolCalls && toolCalls.length > 0) {

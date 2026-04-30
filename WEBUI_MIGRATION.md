@@ -91,7 +91,7 @@ npm start       # Production server
 | Multiline input (`"""` block, `\` continuation) | 🟡 Medium | Web input is single-line textarea only. No paste detection or block mode. |
 | Interrupt handling (Ctrl+X) | 🟡 Medium | CLI has key interrupt listener + AbortController. Web only has Stop button. |
 | Token stats display | 🟢 Low | CLI shows live token usage. Web receives `tokenStats` in `done` event but doesn't display them. |
-| Empty response recovery | 🟢 Low | CLI handles empty assistant responses with retry loop. Web does not. |
+| Empty response recovery | ✅ Done | The web chat route now retries up to 3 times when a turn ends with no meaningful assistant content after stripping leaked control tokens/channel markers. |
 | Session rename | 🟢 Low | CLI has `renameSession`. Web UI does not expose it. |
 | Vision support toggle | 🟢 Low | CLI passes `visionSupported` to stream params. Web UI ignores this. |
 | Inline slash command menu (`/`) | 🟢 Low | CLI shows `@inquirer/prompts` select menu on typing `/`. Web has autocomplete dropdown instead. |
@@ -99,63 +99,70 @@ npm start       # Production server
 
 ---
 
-## Known Bugs
+## Fixed Bugs
 
-### 🔴 Critical
+### ✅ Fixed
 
 **1. Command Approval Flow Wired**
 - `ApprovalModal` now receives an `approval_request` SSE event from `/api/chat` when the model requests `run_command`.
 - The web UI posts `{ requestId, approved }` to `POST /api/approve` to resolve the paused backend execution.
 - Standard mode waits for explicit approval before executing the command; YOLO mode continues to bypass confirmation.
 
+**2. Auto-Compaction**
+- The `/api/chat` route now checks token usage at the start of each tool-calling loop iteration. When usage reaches 92% (`AUTO_COMPACT_THRESHOLD_PCT`), `compactHistory()` is called, the resulting shorter history replaces `currentMessages`, and a `compact` SSE event is sent to the client so it updates its `state.messages`. A yellow system notice is injected into the conversation. Sub-agents already used `autoCompactSubAgentIfNeeded` and are unaffected.
+
+**3. SSE Parser Handles Multi-Line Data**
+- The client-side parser in `app/hooks/useChatStream.ts` now accumulates all `data:` lines for a single SSE event and joins them with `\n` before parsing.
+- The parser also flushes any buffered event when the stream ends, so a valid trailing event is not dropped just because the transport ended without another blank separator.
+
+**4. Empty Final-Answer Recovery**
+- The web chat route now strips leaked control tokens such as `<|channel|>` from streamed assistant text before rendering it in the browser.
+- If a turn still ends without meaningful assistant content and there are no tool calls, the route automatically nudges the model to answer directly and retries up to 3 times instead of silently ending on reasoning-only output.
+
+## Known Bugs
+
+### 🔴 Critical
+
 ### 🟡 Medium
 
-**2. Auto-Compaction** — Fixed. The `/api/chat` route now checks token usage at the start of each tool-calling loop iteration. When usage reaches 92% (`AUTO_COMPACT_THRESHOLD_PCT`), `compactHistory()` is called, the resulting shorter history replaces `currentMessages`, and a `compact` SSE event is sent to the client so it updates its `state.messages`. A yellow system notice is injected into the conversation. Sub-agents already used `autoCompactSubAgentIfNeeded` and are unaffected.
-
-**3. SSE Parser Loses Multi-Line Data**
-- The SSE parser in `page.tsx` only keeps one `data:` line per event (`currentData = line.slice(6).trim()`).
-- Standard SSE allows multiple `data:` lines per event, which should be concatenated with `\n`.
-- If the API ever sends multi-line JSON, the parser will drop lines.
-- **Fix needed**: Accumulate all `data:` lines for a single event and join with `\n` before parsing.
-
-**4. Race Condition: Thinking After Tool Result**
+**3. Race Condition: Thinking After Tool Result**
 - `tool_result` sets `needsNewAssistantRef.current = true`.
 - If the next LLM turn emits `thinking` before `chunk`, a new assistant message is created.
 - However, if multiple `thinking` events arrive in rapid succession, or if `thinking` and `chunk` interleave, the logic may create duplicate assistant messages or append thinking to the wrong message.
 - **Fix needed**: Use a more robust message tracking system, or have the API send explicit event types (`new_assistant_turn`) to signal when to create a new message.
 
-**5. chatTimeoutMs Ignored**
+**4. chatTimeoutMs Ignored**
 - The frontend sends `chatTimeoutMs` in the chat request body.
 - `/api/chat/route.ts` never passes it to `sendLlmChatStream()`.
 - **Fix needed**: Thread `chatTimeoutMs` through to the LLM adapter call.
 
 ### 🟢 Low
 
-**6. React Key Warning / Index Keys**
+**5. React Key Warning / Index Keys**
 - Messages are mapped with `key={i}` in `page.tsx`.
 - React may misidentify DOM nodes when messages are added/removed mid-stream.
 - **Fix needed**: Use a stable message ID (timestamp or counter) instead of array index.
 
-**7. Textarea Never Auto-Resizes**
+**6. Textarea Never Auto-Resizes**
 - `ChatInput` uses `rows={1}` with `resize: 'none'`.
 - No auto-grow logic, so long messages are cramped in a single line.
 - **Fix needed**: Add auto-resize logic (measure scrollHeight and adjust rows).
 
-**8. Missing Error Handling on Config Save**
+**7. Missing Error Handling on Config Save**
 - Settings modal catches fetch errors silently (`catch {}`).
 - Users are never notified if config fails to persist.
 - **Fix needed**: Show toast/error message on config save failure.
 
-**9. Session Delete No Confirmation**
+**8. Session Delete No Confirmation**
 - Clicking the `×` button on a session immediately deletes it without confirmation.
 - **Fix needed**: Add a confirmation dialog.
 
-**10. Config File Path Ambiguity**
+**9. Config File Path Ambiguity**
 - `config.json` is read from `process.cwd()`.
 - In a Next.js production build (`next start`), the cwd may not be the project root, causing config loss.
 - **Fix needed**: Resolve config path relative to `__dirname` or use an environment variable.
 
-**11. Models Not Auto-Refreshed in Settings**
+**10. Models Not Auto-Refreshed in Settings**
 - Settings modal shows whatever models were loaded on mount.
 - If Ollama gains/loses models, the dropdown is stale until page reload.
 - **Fix needed**: Add a "Refresh" button or auto-refresh when opening settings.
@@ -218,7 +225,7 @@ npm start       # Production server
 | `components/ChatMessageBubble.tsx` | Render user/assistant/tool/system messages |
 | `components/SessionSidebar.tsx` | Session list, new chat, delete, settings button |
 | `components/SettingsModal.tsx` | Full settings editor |
-| `components/ApprovalModal.tsx` | Command approval dialog (**UI only, not wired**) |
+| `components/ApprovalModal.tsx` | Command approval dialog for standard-mode `run_command` requests |
 | `components/StatusBar.tsx` | Footer showing streaming/model/message count |
 | `app/api/chat/route.ts` | SSE streaming chat API with full agent loop |
 | `app/api/approve/route.ts` | Approval endpoint for paused `run_command` requests |
@@ -256,19 +263,7 @@ npm start       # Production server
 
 ### Top Priority Fixes
 
-1. **Wire up Approval Modal** (CRITICAL)
-   - The `ApprovalModal` component exists in `components/ApprovalModal.tsx`.
-   - It receives `command`, `onApprove`, `onReject` props.
-   - Currently, `onApprove` and `onReject` just call `dispatch({ type: 'SHOW_APPROVAL', command: null })`.
-   - The `/api/chat` route never pauses for approval — it just runs tools.
-   - **Approach**: Redesign the chat API so that when a tool needs approval, it:
-     - Sends a `needs_approval` event to the client
-     - Pauses the loop (does not close the SSE stream)
-     - Waits for a client message (maybe via a separate POST to `/api/tools/approve`)
-     - Resumes the loop with the approval result
-   - Alternative: Use WebSockets instead of SSE for bidirectional communication.
-
-2. **Implement `/dump`** (MEDIUM)
+1. **Implement `/dump`** (MEDIUM)
    - The `writeConversationHistoryDump()` function exists in `services/historyDump.ts`.
    - Create a `POST /api/dump` endpoint.
    - Return `{ filePath }` or trigger a file download.
@@ -297,7 +292,7 @@ When resuming work, verify these in order:
 9. [ ] Session delete removes from sidebar
 10. [ ] `/clear`, `/model`, `/help` slash commands work
 11. [ ] `/dump` shows "not implemented" (until fixed)
-12. [ ] Approval modal appears in Standard mode (but doesn't block execution yet)
+12. [ ] Approval modal appears in Standard mode and blocks execution until approved or rejected
 13. [ ] YOLO mode toggle works
 14. [ ] Thinking toggle works
 15. [ ] `npx tsc --noEmit` passes with zero errors
