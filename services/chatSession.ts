@@ -39,7 +39,7 @@ import {
 import { countMessagesTokens } from './tokenizer';
 import { updatePhase, clearLiveStatus, updateVram } from '../statusLine';
 import { fetchLlmRunningModelVram } from './llm';
-import { compactHistory, printCompactStats } from './compact';
+import { compactHistory, printCompactStats, type CompactStats } from './compact';
 import { resolveCompactionModel } from './modelManager';
 import {
     AUTO_COMPACT_THRESHOLD_PCT,
@@ -85,6 +85,8 @@ export interface ChatSessionState {
     cachedMessagesLength: number;
     /** Model name used when cachedTokenTotal was computed. */
     cachedTokenTotalModel: string | null;
+    /** Callback fired whenever session messages are updated. */
+    onSessionUpdate?: (sessionId: number, messages: ChatMessage[], sessionNamed: boolean) => void;
 }
 
 export interface ChatSessionOptions {
@@ -134,6 +136,7 @@ export function createChatSessionState(
     sessionId: number,
     config: Config,
     preloadedMessages?: ChatMessage[],
+    onSessionUpdate?: (sessionId: number, messages: ChatMessage[], sessionNamed: boolean) => void,
 ): {
     state: ChatSessionState;
     messages: ChatMessage[];
@@ -141,6 +144,7 @@ export function createChatSessionState(
     systemPrompt: string;
 } {
     const systemPrompt = createSystemPrompt();
+
 
     const state: ChatSessionState = {
         currentModel: initialModel,
@@ -160,6 +164,7 @@ export function createChatSessionState(
         cachedTokenTotal: 0,
         cachedMessagesLength: 0,
         cachedTokenTotalModel: null,
+        ...(onSessionUpdate ? { onSessionUpdate } : {}),
     };
 
     const context = createChatContext(state, config, systemPrompt);
@@ -229,6 +234,7 @@ function createChatContext(state: ChatSessionState, config: Config, systemPrompt
             state.lastAuthoritativeTokens = 0;
             state.estimatedTokensAtAuthoritative = 0;
             invalidateTokenCache(state);
+            state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
         }
     };
 }
@@ -360,7 +366,18 @@ export function refreshTokenStatus(
 /**
  * Prints the final token snapshot after an AI turn
  */
-export function printFinalTokenSnapshot(state: ChatSessionState, tokensUsed: number): void {
+export interface TokenSnapshotStats {
+    tokensUsed: number;
+    tokenLimit: number;
+    percentage: number;
+    model: string;
+}
+
+export function printFinalTokenSnapshot(
+    state: ChatSessionState,
+    tokensUsed: number,
+    onStats?: (stats: TokenSnapshotStats) => void,
+): void {
     const percentage = state.numCtx > 0
         ? Math.min(100, Math.round((tokensUsed / state.numCtx) * 100))
         : 0;
@@ -377,6 +394,13 @@ export function printFinalTokenSnapshot(state: ChatSessionState, tokensUsed: num
         chalk.cyan.dim(' (ollama)') +
         chalk.dim(` (Used ${tokensUsed} ${tokensUsed === 1 ? 'token' : 'tokens'})`),
     );
+
+    onStats?.({
+        tokensUsed,
+        tokenLimit: state.numCtx,
+        percentage,
+        model: state.currentModel,
+    });
 
     void refreshVram(state);
 }
@@ -407,9 +431,12 @@ export async function autoCompactIfNeeded(
             state.messages,
             state.numCtx,
             (status: string) => refreshTokenStatus(state, status, undefined, 'estimated', compactionModel),
+            1.0,
+            2,
+            (stats) => {
+                printCompactStats(stats);
+            },
         );
-        clearLiveStatus();
-        printCompactStats(result.stats);
         
         if (result.stats.newTokenCount > state.numCtx) {
             console.log(chalk.red(
@@ -435,6 +462,7 @@ export async function autoCompactIfNeeded(
         state.lastAuthoritativeTokens = 0;
         state.estimatedTokensAtAuthoritative = 0;
         invalidateTokenCache(state);
+        state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
         return true;
     } catch (err) {
         clearLiveStatus();
@@ -465,6 +493,8 @@ export async function processAITurn(
         state.estimatedTokensAtAuthoritative = countMessagesTokens(state.messages, state.currentModel);
     }
 
+    state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
+
     if (sanitizedAssistantMessage.tool_calls && sanitizedAssistantMessage.tool_calls.length > 0) {
         for (const tc of sanitizedAssistantMessage.tool_calls) {
             clearLiveStatus();
@@ -483,6 +513,7 @@ export async function processAITurn(
                 ...(tokenResult.images ? { images: tokenResult.images } : {}),
             }));
             refreshTokenStatus(state, `Token result: ${tc.function.name}`);
+            state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
 
             if (tc.function.name === 'run_command' && 
                 tokenResult.content.includes('(COMMAND FAILED') && 
@@ -502,6 +533,7 @@ export async function processAITurn(
                     content: `Command failed. AI Error Analysis: ${errorSummary}\nPlease analyze the failure and propose a correction.`
                 }));
                 refreshTokenStatus(state, 'Retry requested after command failure.');
+                state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
             }
 
             if (isInterruptRequested()) {
@@ -531,6 +563,7 @@ export function handleEmptyResponseRecovery(
                 'Your last response was empty. Provide a direct answer now. ' +
                 'If commands are needed, call run_command. If commands already ran, summarize their output and errors.'
         }));
+        state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
         return true;
     }
     

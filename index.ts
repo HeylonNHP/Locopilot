@@ -126,13 +126,64 @@ async function main(): Promise<void> {
     await startChat(finalModel, selectedNumCtx, sessionId, config, startingMessages);
 }
 
-// --- Chat Logic ---
+// --- Chat Orchestrator (Reusable Core) ---
 
-async function startChat(
+/**
+ * Callbacks for the chat orchestrator.
+ * These allow the core chat loop to be used in non-CLI contexts
+ * (e.g., GUI applications, testing, etc.)
+ */
+export interface ChatOrchestratorCallbacks {
+    /**
+     * Called when the orchestrator needs a prompt from the user.
+     * @param prompt - The prompt prefix to display
+     * @returns The user's input text
+     */
+    onPromptNeeded(prompt: string): Promise<string>;
+
+    /**
+     * Called when the AI produces a response that should be displayed.
+     * @param content - The response content
+     */
+    onAIResponse(content: string): void;
+
+    /**
+     * Called when the orchestrator wants to update the user on status.
+     * @param phase - A description of the current phase/stage
+     */
+    onStatusUpdate(phase: string): void;
+
+    /**
+     * Called when the chat session ends (after user types 'exit' or '/exit').
+     * Use for cleanup, final saves, etc.
+     */
+    onExit(): void | Promise<void>;
+
+    /**
+     * Called whenever the session messages are updated.
+     * Use for real-time sync in web clients.
+     */
+    onSessionUpdate?: (sessionId: number, messages: ChatMessage[], sessionNamed: boolean) => void;
+}
+
+/**
+ * Creates a reusable chat orchestrator that handles the core chat loop.
+ * Takes the same parameters as startChat() but uses callbacks instead of
+ * directly calling terminal functions.
+ *
+ * @param model - The model name to chat with
+ * @param requestedNumCtxInput - The requested context length
+ * @param sessionId - The session ID
+ * @param config - The application configuration
+ * @param callbacks - The callbacks for UI interactions
+ * @param preloadedMessages - Optional pre-loaded messages for the session
+ */
+export async function createChatOrchestrator(
     model: string,
     requestedNumCtxInput: number,
     sessionId: number,
     config: Config,
+    callbacks: ChatOrchestratorCallbacks,
     preloadedMessages?: ChatMessage[],
 ): Promise<void> {
     // Create the chat session state and context
@@ -142,6 +193,7 @@ async function startChat(
         sessionId,
         config,
         preloadedMessages,
+        callbacks.onSessionUpdate,
     );
 
     // Load model metadata
@@ -150,16 +202,12 @@ async function startChat(
     // Print welcome message
     printWelcomeMessage(state);
 
-    // Register cleanup for SIGINT (Ctrl+C)
-    cleanupBeforeExit = () => {
-        updateSessionMessages(state.currentSessionId, state.messages);
-    };
-
     // Main chat loop
     while (true) {
         let prompt: string;
         try {
-            prompt = await getMultilineInput(chalk.cyan('You > '));
+            const inputFn = context.promptProvider ?? getMultilineInput;
+            prompt = await inputFn(chalk.cyan('You > '));
         } catch (e: unknown) {
             if (e instanceof Error && e.name === 'ExitPromptError') break;
             throw e;
@@ -174,7 +222,7 @@ async function startChat(
         // Handle slash commands or add user message
         const [cmdName = ''] = prompt.trim().split(/\s+/);
         const normalizedCmdName = cmdName.toLowerCase();
-        
+
         if (normalizedCmdName.startsWith('/')) {
             const handler = COMMAND_HANDLERS[normalizedCmdName];
             if (handler) {
@@ -192,7 +240,7 @@ async function startChat(
         }
 
         // Initialize turn state
-        refreshTokenStatus(state, 'AI request queued...');
+        callbacks.onStatusUpdate('AI request queued...');
         clearLiveStatus();
         let emptyResponseRecoveryAttempts = 0;
 
@@ -226,7 +274,7 @@ async function startChat(
                 const onFinalStats = (authoritativeTokensUsed: number, stats: LlmTurnStats | null) => {
                     clearLiveStatus();
                     printFinalTokenSnapshot(state, authoritativeTokensUsed);
-                    
+
                     // Update authoritative token baseline
                     if (stats) {
                         state.lastAuthoritativeTokens = stats.promptEvalCount + stats.evalCount;
@@ -239,7 +287,7 @@ async function startChat(
                     config.baseUrl,
                     streamParams,
                     {
-                        onStatusUpdate: (phase: string) => refreshTokenStatus(state, phase),
+                        onStatusUpdate: (phase: string) => callbacks.onStatusUpdate(phase),
                         timeoutMs: config.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
                         onFinalStats,
                     },
@@ -278,7 +326,7 @@ async function startChat(
                 // Final reply — print empty fallback if needed
                 const assistantContent = assistantMessage.content?.trim() ?? '';
                 if (assistantContent.length === 0) {
-                    printAIResponse('[No response content was returned by the model after tool execution.]');
+                    callbacks.onAIResponse('[No response content was returned by the model after tool execution.]');
                 }
 
                 // Save session state
@@ -297,6 +345,48 @@ async function startChat(
             clearInterrupt();
         }
     }
+
+    // Call exit callback
+    await callbacks.onExit();
+}
+
+// --- Chat Logic ---
+
+async function startChat(
+    model: string,
+    requestedNumCtxInput: number,
+    sessionId: number,
+    config: Config,
+    preloadedMessages?: ChatMessage[],
+): Promise<void> {
+    // Register cleanup for SIGINT (Ctrl+C) before starting
+    const { state: initialState } = createChatSessionState(
+        model,
+        requestedNumCtxInput,
+        sessionId,
+        config,
+        preloadedMessages,
+    );
+    cleanupBeforeExit = () => {
+        updateSessionMessages(initialState.currentSessionId, initialState.messages);
+    };
+
+    const cliCallbacks: ChatOrchestratorCallbacks = {
+        onPromptNeeded: async (prompt: string) => {
+            return await getMultilineInput(prompt);
+        },
+        onAIResponse: (content: string) => {
+            printAIResponse(content);
+        },
+        onStatusUpdate: (phase: string) => {
+            refreshTokenStatus(initialState, phase);
+        },
+        onExit: () => {
+            // CLI cleanup is handled via SIGINT handler
+        },
+    };
+
+    await createChatOrchestrator(model, requestedNumCtxInput, sessionId, config, cliCallbacks, preloadedMessages);
 }
 
 /**

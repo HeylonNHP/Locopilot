@@ -8,6 +8,8 @@ export interface ToolOutputSink {
     clearInline(): void;
 }
 
+export type ConfirmationPrompt = (message: string) => Promise<boolean>;
+
 export type ToolTranscriptTone = 'info' | 'success' | 'warning' | 'error';
 
 export type ToolTranscriptRowKind = 'text' | 'path' | 'block';
@@ -141,3 +143,13 @@ export const terminalToolOutputSink: ToolOutputSink = {
         process.stdout.clearLine(0);
     },
 };
+
+let activeOutputSink: ToolOutputSink = terminalToolOutputSink;
+
+export function getActiveOutputSink(): ToolOutputSink {
+    return activeOutputSink;
+}
+
+export function setActiveOutputSink(sink: ToolOutputSink): void {
+    activeOutputSink = sink;
+}

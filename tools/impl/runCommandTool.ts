@@ -12,6 +12,13 @@ import {
     unregisterInterruptHandler,
 } from '../tools';
 
+// Swappable command confirmation function (default: Inquirer confirm prompt)
+let confirmCommand: (msg: string) => Promise<boolean> = async (msg) => confirm({ message: msg, default: false });
+
+export function setCommandConfirmationPrompt(fn: (msg: string) => Promise<boolean>): void {
+    confirmCommand = fn;
+}
+
 interface ProcessEntry {
     process: ChildProcess;
     command: string;
@@ -190,7 +197,7 @@ export async function runCommand(
     let approved = approvedYolo;
     if (!approved) {
         try {
-            approved = await confirm({ message: 'Allow this command to run?', default: false });
+            approved = await confirmCommand('Allow this command to run?');
         } catch (e: unknown) {
             if (e instanceof Error && e.name === 'ExitPromptError') {
                 return '[Command rejected: user exited prompt]';

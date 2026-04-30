@@ -75,14 +75,16 @@ const SUMMARY_PREAMBLE =
     'summary of everything important that has occurred so far. Treat it as ' +
     'authoritative context for continuing the conversation.]';
 
+export interface CompactStats {
+    oldTokenCount: number;
+    newTokenCount: number;
+}
+
 export interface CompactResult {
     /** The new, compacted message array that should replace the live history. */
     newMessages: ChatMessage[];
     /** Token counts for display purposes. */
-    stats: {
-        oldTokenCount: number;
-        newTokenCount: number;
-    };
+    stats: CompactStats;
 }
 
 interface HistorySplit {
@@ -360,6 +362,7 @@ export async function compactHistory(
     onProgress?: (message: string) => void,
     aggressiveFactor: number = 1.0,
     remainingRetries: number = 2,
+    onStats?: (stats: CompactStats) => void,
 ): Promise<CompactResult> {
     const oldTokenCount = await measureConversationTokens(baseUrl, model, messages, numCtx, onProgress);
 
@@ -568,7 +571,7 @@ export async function compactHistory(
             `retrying with ${retryFactor.toFixed(1)}x stronger compression (${remainingRetries} attempt(s) left)...`,
         );
         const retryResult = await compactHistory(
-            baseUrl, model, newMessages, numCtx, onProgress, retryFactor, remainingRetries - 1,
+            baseUrl, model, newMessages, numCtx, onProgress, retryFactor, remainingRetries - 1, onStats,
         );
         // Report stats relative to the original pre-compaction history.
         return {
@@ -579,6 +582,11 @@ export async function compactHistory(
             },
         };
     }
+
+    onStats?.({
+        oldTokenCount,
+        newTokenCount,
+    });
 
     return {
         newMessages,

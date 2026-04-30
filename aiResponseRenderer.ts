@@ -75,6 +75,35 @@ export interface RenderTurnOptions extends StreamAIResponseOptions {
     onFinalStats?: (authoritativeTokensUsed: number, finalStats: LlmTurnStats) => void;
 }
 
+// ─── Injectable Renderers ─────────────────────────────────────────────────────
+
+/** Renderer type for AI response output. */
+export type AIResponseRenderer = (content: string, opts?: { interrupted?: boolean }) => void;
+
+/** Renderer type for thinking summary output. */
+export type ThinkingSummaryRenderer = (durationMs: number, thinkingChars: number) => void;
+
+/** The currently active AI response renderer (defaults to `printAIResponse`). */
+let renderAIResponse: AIResponseRenderer = printAIResponse;
+
+/** The currently active thinking summary renderer (defaults to `printThinkingSummary`). */
+let renderThinkingSummary: ThinkingSummaryRenderer = printThinkingSummary;
+
+/**
+ * Replace the default AI response renderer.
+ * Useful for testing, custom UIs, or suppressing output.
+ */
+export function setAIResponseRenderer(fn: AIResponseRenderer): void {
+    renderAIResponse = fn;
+}
+
+/**
+ * Replace the default thinking summary renderer.
+ */
+export function setThinkingSummaryRenderer(fn: ThinkingSummaryRenderer): void {
+    renderThinkingSummary = fn;
+}
+
 /**
  * Convenience wrapper that streams an AI turn and returns a ready-to-insert
  * `assistant` chat message plus session token stats when available.
@@ -163,6 +192,22 @@ export function printAIResponse(
 }
 
 /**
+ * Renders a thinking-summary line to the terminal.
+ *
+ * @param durationMs     - How long the model spent thinking (ms).
+ * @param thinkingChars  - Number of thinking characters accumulated.
+ */
+export function printThinkingSummary(durationMs: number, thinkingChars: number): void {
+    const durationSec = durationMs / 1000;
+    const durationStr = durationSec > 60
+        ? `${Math.floor(durationSec / 60)}m ${Math.floor(durationSec % 60)}s`
+        : `${durationSec.toFixed(1)}s`;
+
+    clearLiveStatus();
+    console.log(chalk.dim(`(Thought for ${durationStr} · ${thinkingChars} chars)`));
+}
+
+/**
  * Streams an AI response and shows a live character count on the status line.
  *
  * Opens the active LLM provider chat stream internally, wires up the interrupt handler, and
@@ -210,7 +255,6 @@ export async function streamAIResponse(
 
         clearLiveStatus();
         console.log(chalk.dim(`(Thought for ${durationStr} · ${thinkingChars} chars)`));
-        thinkingSummaryPrinted = true;
     }
 
     try {
@@ -243,7 +287,7 @@ export async function streamAIResponse(
                 if (firstContentTime === null) {
                     firstContentTime = Date.now();
                     if (thinking.length > 0) {
-                        printThinkingSummary(firstContentTime - startTime, thinking.length);
+                        renderThinkingSummary(firstContentTime - startTime, thinking.length);
                     }
                 }
                 content += chunkContent;
@@ -254,7 +298,7 @@ export async function streamAIResponse(
                 // If thinking preceded these tool calls, emit the persistent thought
                 // summary now — same timing as for the first content chunk above.
                 if (thinking.length > 0 && !thinkingSummaryPrinted) {
-                    printThinkingSummary(Date.now() - startTime, thinking.length);
+                    renderThinkingSummary(Date.now() - startTime, thinking.length);
                 }
                 // Track the latest complete tool-call snapshot for the final
                 // result. Ollama emits tool_calls as a full array in the chunk
@@ -292,14 +336,14 @@ export async function streamAIResponse(
     // Tool-call-only turns may think without emitting assistant content.
     // Print a final thought summary so the thinking duration/chars are visible.
     if (!interrupted && thinking.length > 0 && !thinkingSummaryPrinted) {
-        printThinkingSummary(Date.now() - startTime, thinking.length);
+        renderThinkingSummary(Date.now() - startTime, thinking.length);
     }
 
     const cleanedContent = stripSpecialTokens(content);
     const cleanedThinking = stripSpecialTokens(thinking);
 
     if (cleanedContent.trim().length > 0) {
-        printAIResponse(cleanedContent, { interrupted });
+        renderAIResponse(cleanedContent, { interrupted });
     }
 
     const result: StreamAIResponseResult = { 

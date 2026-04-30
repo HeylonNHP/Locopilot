@@ -5,6 +5,9 @@
  * thinking or tools are executing. It shows the current phase, optional model
  * name, and token usage with a spinner. The status line is updated on a short
  * interval and cleared when the turn is complete.
+ *
+ * The backend is swappable via setStatusLineBackend(), allowing the web UI
+ * to intercept status updates with its own rendering logic.
  */
 import readline from 'readline';
 import chalk from 'chalk';
@@ -17,6 +20,9 @@ type StatusSnapshot = {
     model?: string;
     tokenSource?: 'estimated' | 'ollama';
     vramUsed?: number | undefined;
+    cachedTokens?: number | undefined;
+    cachedMessagesLen?: number | undefined;
+    cachedModel?: string | undefined;
 };
 
 let state: StatusSnapshot | null = null;
@@ -65,12 +71,54 @@ function formatPhase(phase: string): string {
     return phase;
 }
 
+// -------------------------------------------------------------------------
+// Swappable backend
+// -------------------------------------------------------------------------
+
+export interface StatusLineBackend {
+    update(snapshot: StatusSnapshot): void;
+    clear(): void;
+}
+
+/**
+ * Default terminal-based status line backend.
+ */
+const defaultBackend: StatusLineBackend = {
+    update(next: StatusSnapshot) {
+        state = next;
+        render();
+        if (ticker) return;
+        ticker = setInterval(render, 120);
+        ticker.unref();
+    },
+    clear() {
+        if (ticker) {
+            clearInterval(ticker);
+            ticker = null;
+        }
+        state = null;
+        if (!process.stdout.isTTY) return;
+        readline.cursorTo(process.stdout, 0);
+        readline.clearLine(process.stdout, 0);
+    },
+};
+
+let activeBackend: StatusLineBackend = defaultBackend;
+
+/**
+ * Replace the active StatusLineBackend.
+ * Pass a custom backend to intercept status updates (e.g., for the web UI).
+ */
+export function setStatusLineBackend(backend: StatusLineBackend): void {
+    activeBackend = backend;
+}
+
+// -------------------------------------------------------------------------
+// Public API (delegates to activeBackend)
+// -------------------------------------------------------------------------
+
 export function updateLiveStatus(next: StatusSnapshot) {
-    state = next;
-    render();
-    if (ticker) return;
-    ticker = setInterval(render, 120);
-    ticker.unref();
+    activeBackend.update(next);
 }
 
 export function updatePhase(phase: string, stats?: Partial<Omit<StatusSnapshot, 'phase'>>) {
@@ -80,7 +128,10 @@ export function updatePhase(phase: string, stats?: Partial<Omit<StatusSnapshot, 
         tokenLimit: stats?.tokenLimit ?? state?.tokenLimit ?? 0,
         model: stats?.model ?? state?.model ?? '',
         tokenSource: stats?.tokenSource ?? state?.tokenSource ?? 'estimated',
-        vramUsed: stats?.vramUsed ?? state?.vramUsed ?? undefined,
+        vramUsed: stats?.vramUsed ?? (state?.vramUsed ?? undefined) as number | undefined,
+        cachedTokens: stats?.cachedTokens ?? (state?.cachedTokens ?? undefined) as number | undefined,
+        cachedMessagesLen: stats?.cachedMessagesLen ?? (state?.cachedMessagesLen ?? undefined) as number | undefined,
+        cachedModel: stats?.cachedModel ?? (state?.cachedModel ?? undefined) as string | undefined,
     };
     render();
 }
@@ -92,12 +143,5 @@ export function updateVram(usedBytes?: number) {
 }
 
 export function clearLiveStatus() {
-    if (ticker) {
-        clearInterval(ticker);
-        ticker = null;
-    }
-    state = null;
-    if (!process.stdout.isTTY) return;
-    readline.cursorTo(process.stdout, 0);
-    readline.clearLine(process.stdout, 0);
+    activeBackend.clear();
 }

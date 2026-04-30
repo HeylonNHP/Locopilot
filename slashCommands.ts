@@ -74,6 +74,8 @@ export interface ChatContext {
     ) => void;
     updateModel: (model: string) => Promise<void>;
     updateSession: (sessionId: number, messages: ChatMessage[], sessionNamed: boolean) => void;
+    /** Optional override for message input (web API injects this) */
+    promptProvider?: (prompt: string) => Promise<string>;
 }
 
 export type SlashHandler = (ctx: ChatContext) => Promise<boolean | 'break'>;
