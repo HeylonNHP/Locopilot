@@ -3,11 +3,23 @@
 import React, { createContext, useContext, useReducer, type ReactNode } from 'react';
 
 export interface ChatMessage {
+  /** Stable client-only identity used as React list key. Never sent to the server. */
+  id?: string;
   role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
   thinking?: string;
   tool_calls?: any[];
   name?: string;
+}
+
+// Monotonic counter — module-level so it survives re-renders but resets on
+// full page reload, which is fine since IDs only need to be stable within a
+// single client session.
+let msgCounter = 0;
+
+/** Return a copy of msg with a stable `id` field if it doesn't already have one. */
+function withId(msg: ChatMessage): ChatMessage {
+  return msg.id !== undefined ? msg : { ...msg, id: String(++msgCounter) };
 }
 
 export interface Session {
@@ -71,9 +83,9 @@ type ChatAction =
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SET_MESSAGES':
-      return { ...state, messages: action.messages };
+      return { ...state, messages: action.messages.map(withId) };
     case 'ADD_MESSAGE':
-      return { ...state, messages: [...state.messages, action.message] };
+      return { ...state, messages: [...state.messages, withId(action.message)] };
     case 'UPDATE_LAST_MESSAGE': {
       const msgs = [...state.messages];
       const last = msgs[msgs.length - 1];
@@ -91,11 +103,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const last = msgs[msgs.length - 1];
 
       if (!last || last.role !== 'assistant') {
-        msgs.push({
+        msgs.push(withId({
           role: 'assistant',
           content: action.content ?? '',
           ...(action.thinking !== undefined ? { thinking: action.thinking } : {}),
-        });
+        }));
         return { ...state, messages: msgs };
       }
 
@@ -130,11 +142,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...state,
         messages: [
           ...state.messages,
-          {
+          withId({
             role: 'tool',
             content: action.content,
             ...(action.name ? { name: action.name } : {}),
-          },
+          }),
         ],
       };
     }

@@ -190,7 +190,7 @@ export default function Home() {
             </div>
           ) : (
             state.messages.map((msg, i) => (
-              <ChatMessageBubble key={i} message={msg} />
+              <ChatMessageBubble key={msg.id ?? i} message={msg} />
             ))
           )}
 
