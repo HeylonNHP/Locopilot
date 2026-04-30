@@ -1,7 +1,8 @@
 'use client';
 
 import { type ChatMessage } from '@/app/lib/chatStore';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import MarkdownMessage from './MarkdownMessage';
 
 interface Props {
   message: ChatMessage;
@@ -9,6 +10,14 @@ interface Props {
 
 export default function ChatMessageBubble({ message }: Props) {
   const [showThinking, setShowThinking] = useState(false);
+  const hasThinking = Boolean(message.thinking?.trim());
+  const hasContent = Boolean(message.content?.trim());
+
+  useEffect(() => {
+    if (hasThinking && !hasContent) {
+      setShowThinking(true);
+    }
+  }, [hasThinking, hasContent]);
   
   if (message.role === 'user') {
     return (
@@ -74,7 +83,7 @@ export default function ChatMessageBubble({ message }: Props) {
   // AI message
   return (
     <div style={{ marginBottom: '12px' }}>
-      {message.thinking && (
+      {hasThinking && (
         <div style={{ marginBottom: '4px' }}>
           <button
             onClick={() => setShowThinking(!showThinking)}
@@ -87,7 +96,7 @@ export default function ChatMessageBubble({ message }: Props) {
               padding: '4px 0',
             }}
           >
-            {showThinking ? 'Hide' : 'Show'} reasoning ({message.thinking.length} chars)
+            {showThinking ? 'Hide' : 'Show'} reasoning ({message.thinking?.length ?? 0} chars)
           </button>
           {showThinking && (
             <div style={{
@@ -96,28 +105,49 @@ export default function ChatMessageBubble({ message }: Props) {
               borderRadius: '8px',
               fontSize: '13px',
               color: 'var(--text-secondary)',
-              fontStyle: 'italic',
               borderLeft: '3px solid var(--accent)',
-              whiteSpace: 'pre-wrap',
               marginTop: '4px',
             }}>
-              {message.thinking}
+              <MarkdownMessage source={message.thinking ?? ''} className="markdown-message--thinking" />
             </div>
           )}
         </div>
       )}
-      <div style={{
-        maxWidth: '80%',
-        padding: '10px 16px',
-        borderRadius: '16px 16px 16px 4px',
-        background: 'var(--bg-secondary)',
-        border: '1px solid #333',
-        fontSize: '14px',
-        lineHeight: '1.6',
-        whiteSpace: 'pre-wrap',
-      }}>
-        {message.content || (message.role === 'assistant' ? '...' : '')}
-      </div>
+      {hasContent || !hasThinking || !showThinking ? (
+        <div
+          onClick={hasThinking && !hasContent ? () => setShowThinking((prev) => !prev) : undefined}
+          onKeyDown={
+            hasThinking && !hasContent
+              ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setShowThinking((prev) => !prev);
+                  }
+                }
+              : undefined
+          }
+          role={hasThinking && !hasContent ? 'button' : undefined}
+          tabIndex={hasThinking && !hasContent ? 0 : undefined}
+          title={hasThinking && !hasContent ? (showThinking ? 'Hide reasoning' : 'Show reasoning') : undefined}
+          style={{
+            maxWidth: '80%',
+            padding: '10px 16px',
+            borderRadius: '16px 16px 16px 4px',
+            background: 'var(--bg-secondary)',
+            border: '1px solid #333',
+            fontSize: '14px',
+            lineHeight: '1.6',
+            whiteSpace: 'normal',
+            cursor: hasThinking && !hasContent ? 'pointer' : 'default',
+          }}
+        >
+          {hasContent || message.role !== 'assistant' ? (
+            <MarkdownMessage source={message.content} />
+          ) : (
+            '...'
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
