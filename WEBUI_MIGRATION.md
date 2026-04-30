@@ -85,7 +85,7 @@ npm start       # Production server
 | `/title` (auto-generate session title) | 🟡 Medium | Stubbed in web UI. CLI generates title via LLM and renames session. |
 | `/dump` (export markdown) | 🟡 Medium | Stubbed in web UI. CLI exports full conversation to `.md` file. |
 | `/nudge` (inject tool-use reminder) | 🟡 Medium | Stubbed in web UI. CLI adds a system message reminding the AI to use tools. |
-| Auto-compaction during chat | 🔴 High | CLI auto-compacts when context is full. Web UI never compacts automatically — will eventually hit token limits and fail. |
+| Auto-compaction during chat | ✅ Done | Auto-compacts at 92% context usage; sends `compact` SSE event to replace client message list. Sub-agents already auto-compact via `autoCompactSubAgentIfNeeded`. |
 | Connection test in settings | 🟡 Medium | CLI validates Ollama connection before saving baseUrl. Web UI saves without testing. |
 | Multiline input (`"""` block, `\` continuation) | 🟡 Medium | Web input is single-line textarea only. No paste detection or block mode. |
 | Interrupt handling (Ctrl+X) | 🟡 Medium | CLI has key interrupt listener + AbortController. Web only has Stop button. |
@@ -111,10 +111,7 @@ npm start       # Production server
 
 ### 🟡 Medium
 
-**2. Auto-Compaction Missing**
-- The CLI auto-compacts conversation history when approaching the context limit.
-- The web UI never triggers compaction, so long conversations will eventually fail with "context length exceeded" errors from Ollama.
-- **Fix needed**: Port the `autoCompactIfNeeded()` logic from `services/chatSession.ts` into the `/api/chat` route, or add a `/api/compact` endpoint callable from the frontend.
+**2. Auto-Compaction** — Fixed. The `/api/chat` route now checks token usage at the start of each tool-calling loop iteration. When usage reaches 92% (`AUTO_COMPACT_THRESHOLD_PCT`), `compactHistory()` is called, the resulting shorter history replaces `currentMessages`, and a `compact` SSE event is sent to the client so it updates its `state.messages`. A yellow system notice is injected into the conversation. Sub-agents already used `autoCompactSubAgentIfNeeded` and are unaffected.
 
 **3. SSE Parser Loses Multi-Line Data**
 - The SSE parser in `page.tsx` only keeps one `data:` line per event (`currentData = line.slice(6).trim()`).

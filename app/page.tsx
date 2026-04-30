@@ -196,6 +196,24 @@ export default function Home() {
           needsNewAssistantRef.current = true;
           break;
 
+        case 'compact':
+          // The server has compacted the conversation history. Replace the
+          // client's message list so the next request sends the shorter history,
+          // then surface an informational notice to the user.
+          if (Array.isArray(data.messages)) {
+            dispatch({ type: 'SET_MESSAGES', messages: data.messages });
+          }
+          // Ensure the next streamed chunk opens a fresh assistant bubble.
+          needsNewAssistantRef.current = true;
+          dispatch({
+            type: 'ADD_MESSAGE',
+            message: {
+              role: 'system',
+              content: `⚡ Conversation auto-compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`,
+            },
+          });
+          break;
+
         case 'done':
           if (data.sessionId) {
             dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });

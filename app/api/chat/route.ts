@@ -24,6 +24,9 @@ import { TOOLS, handleToolCall, setSubAgentConfig, setWebSearchConfig, setYoloMo
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
 import { createSession, updateSessionMessages } from '../../../history';
+import { compactHistory } from '../../../services/compact';
+import { countMessagesTokens } from '../../../services/tokenizer';
+import { AUTO_COMPACT_THRESHOLD_PCT } from '../../../constants';
 
 // Prevent static generation – this route must always run on the server.
 export const dynamic = 'force-dynamic';
@@ -101,6 +104,11 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             let finalContent = '';
             let finalThinking = '';
+            // Compaction model resolved from config (set below); starts as the chat model.
+            let effectiveCompactionModel: string = model as string;
+            // Last authoritative token count from Ollama; used by the auto-compact
+            // check so it matches the CLI's anchored estimate.
+            let lastAuthoritativeTokens = 0;
 
             try {
                 // Load runtime tool configuration from disk so that web search
@@ -120,6 +128,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                         if (typeof config.yolo === 'boolean') {
                             setYoloMode(config.yolo);
                         }
+
+                        effectiveCompactionModel = resolveCompactionModel(config.compactionModel, model as string);
 
                         // Configure the sub-agent tool with the current session parameters
                         // so that run_subagents can spawn isolated workers with the right model/context.
@@ -154,6 +164,62 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                 // ── Main tool-calling loop ──────────────────────────────────
                 while (true) {
+
+                    // Auto-compact when approaching the context limit, mirroring the
+                    // CLI's autoCompactIfNeeded() in services/chatSession.ts.
+                    if (effectiveNumCtx > 0) {
+                        const tokensUsed = lastAuthoritativeTokens > 0
+                            ? lastAuthoritativeTokens
+                            : countMessagesTokens(currentMessages, model as string);
+                        const usagePct = (tokensUsed / effectiveNumCtx) * 100;
+
+                        if (usagePct >= AUTO_COMPACT_THRESHOLD_PCT) {
+                            sendEvent('status', {
+                                phase: 'compacting',
+                                tokensUsed,
+                                tokenLimit: effectiveNumCtx,
+                            });
+                            try {
+                                const compactResult = await compactHistory(
+                                    effectiveBaseUrl,
+                                    effectiveCompactionModel,
+                                    currentMessages,
+                                    effectiveNumCtx,
+                                );
+                                // Send the compacted message list to the client BEFORE
+                                // appending the LLM-only continuation nudge, so the
+                                // client's state mirrors the clean compacted history.
+                                sendEvent('compact', {
+                                    messages: compactResult.newMessages,
+                                    stats: compactResult.stats,
+                                });
+                                // Replace server-side history with the compacted result.
+                                currentMessages.splice(0, currentMessages.length, ...compactResult.newMessages);
+                                // LLM-only nudge – not sent to the client.
+                                currentMessages.push({
+                                    role: 'user',
+                                    content:
+                                        'The conversation history was automatically compacted due to context length. ' +
+                                        'Please continue working on the original task without asking for confirmation.',
+                                });
+                                lastAuthoritativeTokens = 0;
+                                if (compactResult.stats.newTokenCount > effectiveNumCtx) {
+                                    sendEvent('status', {
+                                        phase: 'compact_overflow',
+                                        tokensUsed: compactResult.stats.newTokenCount,
+                                        tokenLimit: effectiveNumCtx,
+                                    });
+                                }
+                            } catch (compactErr) {
+                                // Non-fatal — log and continue with existing messages.
+                                sendEvent('status', {
+                                    phase: 'compact_failed',
+                                    tokensUsed,
+                                    tokenLimit: effectiveNumCtx,
+                                });
+                            }
+                        }
+                    }
 
                     // Signal that we are about to start an LLM call.
                     sendEvent('status', {
@@ -208,6 +274,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                             evalCount = chunk.eval_count ?? 0;
                         }
                     }
+
+                    // Anchor the token estimate to Ollama's authoritative count so
+                    // the next loop iteration's auto-compact check is accurate.
+                    lastAuthoritativeTokens = promptEvalCount + evalCount;
 
                     // -- Build the assistant message --------------------------
                     const assistantMessage: ChatMessage = {
