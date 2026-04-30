@@ -143,6 +143,16 @@ Feature summary:
 
 ## Change History
 
+- 2026-04-30: Added immediate pending-state feedback for web UI `/compact`
+  - Files: `app/page.tsx`, `.github/copilot-instructions.md`
+  - Summary: The `/compact` slash command now flips the composer into a visible `Compacting conversation...` state as soon as the request starts and blocks duplicate manual compaction requests until the current one finishes.
+  - Intent: Prevent the web UI from feeling unresponsive when manual compaction takes a while and stop accidental repeat submissions.
+
+- 2026-04-30: Added web UI `/compact` slash command implementation
+  - Files: `app/api/compact/route.ts` (new), `app/page.tsx`, `WEBUI_MIGRATION.md`
+  - Summary: Added a dedicated `POST /api/compact` endpoint that resolves the effective base URL, context length, and compaction model, runs `compactHistory()`, persists the compacted history for the active session when one exists, and returns the new messages plus token stats. Wired the web UI `/compact` slash command to call this endpoint, replace the current client message list, and show compaction notices consistent with auto-compaction.
+  - Intent: Bring manual history compaction in the web UI to parity with the CLI flow instead of leaving `/compact` as a stub.
+
 - 2026-04-29: Added isolated `run_subagents` tool
   - Files: `tools/impl/subAgentTool.ts` (new), `tools/toolRegistry.ts`, `tools/tools.ts`, `services/chatSession.ts`, `.github/copilot-instructions.md`
   - Summary: Added a new `run_subagents` tool that runs multiple sub-agents sequentially in isolated ephemeral histories, reuses the existing tool registry except for a recursion guard that withholds `run_subagents` from sub-agents, and returns only each sub-agent's final response to the parent agent. Added runtime sub-agent config syncing from the active chat session and labeled nested tool transcripts with `[sub-agent: id]`; nested `run_command` requests still surface approval prompts with a sub-agent context header.

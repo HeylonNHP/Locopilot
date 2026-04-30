@@ -12,8 +12,10 @@ import SettingsModal from '@/components/SettingsModal';
 export default function Home() {
   const { state, dispatch } = useChat();
   const [showSettings, setShowSettings] = useState(false);
+  const [isCompacting, setIsCompacting] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isCompactingRef = useRef(false);
 
   // ── Refs to avoid stale closures in the SSE streaming callback ──
   const messagesRef = useRef(state.messages);
@@ -40,6 +42,7 @@ export default function Home() {
   useEffect(() => { compactionModelRef.current = state.compactionModel; }, [state.compactionModel]);
   useEffect(() => { chatTimeoutMsRef.current = state.chatTimeoutMs; }, [state.chatTimeoutMs]);
   useEffect(() => { webSearchRef.current = state.webSearch; }, [state.webSearch]);
+  useEffect(() => { isCompactingRef.current = isCompacting; }, [isCompacting]);
 
   // ── Auto-scroll when messages change ────────────────────────────
   useEffect(() => {
@@ -416,13 +419,115 @@ export default function Home() {
           return;
         }
         case 'compact': {
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'system',
-              content: 'Not yet implemented in web UI: /compact',
-            },
-          });
+          const currentMessages = messagesRef.current;
+          if (abortRef.current) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'Stop the current response before running /compact.',
+              },
+            });
+            return;
+          }
+
+          if (isCompactingRef.current) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'Compaction is already in progress.',
+              },
+            });
+            return;
+          }
+
+          if (!modelRef.current.trim()) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'Select a model before running /compact.',
+              },
+            });
+            return;
+          }
+
+          if (currentMessages.length <= 1) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: 'Nothing to compact yet — continue the conversation and try again.',
+              },
+            });
+            return;
+          }
+
+          isCompactingRef.current = true;
+          setIsCompacting(true);
+
+          try {
+            const response = await fetch('/api/compact', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                messages: currentMessages,
+                model: modelRef.current,
+                numCtx: numCtxRef.current,
+                baseUrl: baseUrlRef.current,
+                compactionModel: compactionModelRef.current,
+                sessionId: sessionIdRef.current,
+              }),
+            });
+
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+              throw new Error(data?.error ?? `HTTP ${response.status}`);
+            }
+
+            if (!Array.isArray(data?.messages)) {
+              throw new Error('Compaction returned an invalid message list.');
+            }
+
+            dispatch({ type: 'SET_MESSAGES', messages: data.messages as ChatMessage[] });
+            needsNewAssistantRef.current = true;
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: `⚡ Conversation compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`,
+              },
+            });
+
+            if (
+              typeof data?.stats?.newTokenCount === 'number' &&
+              data.stats.newTokenCount > numCtxRef.current
+            ) {
+              dispatch({
+                type: 'ADD_MESSAGE',
+                message: {
+                  role: 'system',
+                  content:
+                    `⚠️ Compaction reduced the history but it is still over the current context limit ` +
+                    `(${data.stats.newTokenCount}/${numCtxRef.current} tokens). The next turn may fail.`,
+                },
+              });
+            }
+
+            await loadSessions();
+          } catch (error) {
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: {
+                role: 'system',
+                content: `Compaction failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              },
+            });
+          } finally {
+            isCompactingRef.current = false;
+            setIsCompacting(false);
+          }
           return;
         }
         case 'title': {
@@ -804,6 +909,19 @@ export default function Home() {
               >
                 Stop
               </button>
+            </div>
+          ) : isCompacting ? (
+            <div
+              style={{
+                display: 'flex',
+                gap: '8px',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <span style={{ color: 'var(--accent)', fontSize: '14px' }}>
+                ● Compacting conversation...
+              </span>
             </div>
           ) : (
             <ChatInput onSend={handleSend} disabled={false} />
