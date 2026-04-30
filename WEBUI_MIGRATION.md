@@ -131,6 +131,10 @@ npm start       # Production server
 - The chat input now grows with its content instead of staying fixed to a single row.
 - Long prompts remain readable while still capping the textarea height so the layout stays usable.
 
+**8. Config Save Errors Surface in the UI**
+- Settings save now checks the `/api/config` response and shows an inline error banner if persistence fails.
+- The modal stays open on failure so the user can retry without losing their edits.
+
 ## Known Bugs
 
 ### 🔴 Critical
@@ -144,21 +148,16 @@ npm start       # Production server
 
 ### 🟢 Low
 
-**4. Missing Error Handling on Config Save**
-- Settings modal catches fetch errors silently (`catch {}`).
-- Users are never notified if config fails to persist.
-- **Fix needed**: Show toast/error message on config save failure.
-
-**5. Session Delete No Confirmation**
+**4. Session Delete No Confirmation**
 - Clicking the `×` button on a session immediately deletes it without confirmation.
 - **Fix needed**: Add a confirmation dialog.
 
-**6. Config File Path Ambiguity**
+**5. Config File Path Ambiguity**
 - `config.json` is read from `process.cwd()`.
 - In a Next.js production build (`next start`), the cwd may not be the project root, causing config loss.
 - **Fix needed**: Resolve config path relative to `__dirname` or use an environment variable.
 
-**7. Models Not Auto-Refreshed in Settings**
+**6. Models Not Auto-Refreshed in Settings**
 - Settings modal shows whatever models were loaded on mount.
 - If Ollama gains/loses models, the dropdown is stale until page reload.
 - **Fix needed**: Add a "Refresh" button or auto-refresh when opening settings.

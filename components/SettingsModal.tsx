@@ -19,8 +19,12 @@ export default function SettingsModal({ onClose }: Props) {
   const [webMaxQueries, setWebMaxQueries] = useState(String(state.webSearch.maxQueries));
   const [webResultsPerQuery, setWebResultsPerQuery] = useState(String(state.webSearch.resultsPerQuery));
   const [webPerPageCharLimit, setWebPerPageCharLimit] = useState(String(state.webSearch.perPageCharLimit));
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async () => {
+    setSaveError(null);
+
     const parsedNumCtx = parseInt(numCtx) || 131072;
     const parsedChatTimeoutMs = parseInt(chatTimeoutMs) || 720_000;
     const parsedWebMaxQueries = parseInt(webMaxQueries) || 3;
@@ -43,17 +47,44 @@ export default function SettingsModal({ onClose }: Props) {
     };
 
     dispatch({ type: 'SET_CONFIG', config });
+    setIsSaving(true);
 
-    // Save to backend
     try {
-      await fetch('/api/config', {
+      const response = await fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       });
-    } catch {}
 
-    onClose();
+      if (!response.ok) {
+        const responseText = await response.text();
+        let message = `Failed to save config (${response.status})`;
+
+        if (responseText) {
+          try {
+            const payload = JSON.parse(responseText) as { error?: unknown };
+            if (typeof payload.error === 'string' && payload.error.trim()) {
+              message = payload.error.trim();
+            } else if (responseText.trim()) {
+              message = responseText.trim();
+            }
+          } catch {
+            if (responseText.trim()) {
+              message = responseText.trim();
+            }
+          }
+        }
+
+        throw new Error(message);
+      }
+
+      onClose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save config.';
+      setSaveError(message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const inputStyle: React.CSSProperties = {
@@ -109,6 +140,24 @@ export default function SettingsModal({ onClose }: Props) {
         }}
       >
         <h3 style={{ margin: '0 0 16px 0', fontSize: '18px' }}>Settings</h3>
+
+        {saveError && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: '16px',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              border: '1px solid #e94560',
+              background: '#3d1f1f',
+              color: '#ffb3c1',
+              fontSize: '13px',
+              lineHeight: 1.5,
+            }}
+          >
+            {saveError}
+          </div>
+        )}
 
         <div style={rowStyle}>
           <label style={labelStyle}>Model</label>
@@ -248,17 +297,18 @@ export default function SettingsModal({ onClose }: Props) {
           </button>
           <button
             onClick={handleSave}
+            disabled={isSaving}
             style={{
               padding: '8px 16px',
               borderRadius: '6px',
               border: 'none',
-              background: 'var(--accent)',
+              background: isSaving ? '#7a4a56' : 'var(--accent)',
               color: 'white',
-              cursor: 'pointer',
+              cursor: isSaving ? 'progress' : 'pointer',
               fontWeight: 'bold',
             }}
           >
-            Save
+            {isSaving ? 'Saving...' : 'Save'}
           </button>
         </div>
       </div>
