@@ -1,11 +1,16 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 
 interface Props {
   onSend: (message: string) => void;
   disabled?: boolean;
 }
+
+const MIN_TEXTAREA_HEIGHT = 44;
+const MAX_TEXTAREA_HEIGHT = 200;
+
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 const COMMANDS = [
   { command: '/clear', description: 'Clear conversation' },
@@ -28,6 +33,39 @@ export default function ChatInput({ onSend, disabled }: Props) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const resizeTextarea = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = '0px';
+    const nextHeight = Math.min(
+      Math.max(textarea.scrollHeight, MIN_TEXTAREA_HEIGHT),
+      MAX_TEXTAREA_HEIGHT,
+    );
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden';
+  }, []);
+
+  useIsomorphicLayoutEffect(() => {
+    resizeTextarea();
+  }, [input, disabled, resizeTextarea]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    const container = textarea?.parentElement;
+
+    if (!container || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      resizeTextarea();
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [resizeTextarea]);
 
   const filtered = input.startsWith('/')
     ? COMMANDS.filter((c) => c.command.toLowerCase().startsWith(input.toLowerCase()))
@@ -147,6 +185,8 @@ export default function ChatInput({ onSend, disabled }: Props) {
             color: 'var(--text-primary)',
             fontSize: '14px',
             resize: 'none',
+            overflowY: 'hidden',
+            maxHeight: `${MAX_TEXTAREA_HEIGHT}px`,
             fontFamily: 'inherit',
             outline: 'none',
             boxSizing: 'border-box',

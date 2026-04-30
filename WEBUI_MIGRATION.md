@@ -123,6 +123,14 @@ npm start       # Production server
 - The web client no longer relies on a `needsNewAssistantRef` flag to decide when to start the next assistant message after tool output.
 - Assistant `thinking` and `chunk` events now flow through a reducer action that creates an assistant message on demand when the last message is not already assistant, so post-tool reasoning/content always attaches to the correct turn.
 
+**6. React Key Warning / Index Keys Fixed**
+- Messages are now assigned stable IDs instead of using array indices for `key` in `page.tsx`.
+- This prevents React from misidentifying DOM nodes when messages are added or removed mid-stream.
+
+**7. Textarea Auto-Resize Added**
+- The chat input now grows with its content instead of staying fixed to a single row.
+- Long prompts remain readable while still capping the textarea height so the layout stays usable.
+
 ## Known Bugs
 
 ### 🔴 Critical
@@ -136,31 +144,21 @@ npm start       # Production server
 
 ### 🟢 Low
 
-**4. React Key Warning / Index Keys**
-- Messages are mapped with `key={i}` in `page.tsx`.
-- React may misidentify DOM nodes when messages are added/removed mid-stream.
-- **Fix needed**: Use a stable message ID (timestamp or counter) instead of array index.
-
-**5. Textarea Never Auto-Resizes**
-- `ChatInput` uses `rows={1}` with `resize: 'none'`.
-- No auto-grow logic, so long messages are cramped in a single line.
-- **Fix needed**: Add auto-resize logic (measure scrollHeight and adjust rows).
-
-**6. Missing Error Handling on Config Save**
+**4. Missing Error Handling on Config Save**
 - Settings modal catches fetch errors silently (`catch {}`).
 - Users are never notified if config fails to persist.
 - **Fix needed**: Show toast/error message on config save failure.
 
-**7. Session Delete No Confirmation**
+**5. Session Delete No Confirmation**
 - Clicking the `×` button on a session immediately deletes it without confirmation.
 - **Fix needed**: Add a confirmation dialog.
 
-**8. Config File Path Ambiguity**
+**6. Config File Path Ambiguity**
 - `config.json` is read from `process.cwd()`.
 - In a Next.js production build (`next start`), the cwd may not be the project root, causing config loss.
 - **Fix needed**: Resolve config path relative to `__dirname` or use an environment variable.
 
-**9. Models Not Auto-Refreshed in Settings**
+**7. Models Not Auto-Refreshed in Settings**
 - Settings modal shows whatever models were loaded on mount.
 - If Ollama gains/loses models, the dropdown is stale until page reload.
 - **Fix needed**: Add a "Refresh" button or auto-refresh when opening settings.
@@ -271,8 +269,8 @@ npm start       # Production server
 - **Async SQLite**: `better-sqlite3` is synchronous. For a web server, consider migrating to `sqlite3` (async) or using a worker thread.
 - **Config Path Resolution**: Use `path.resolve(__dirname, '../../config.json')` in API routes instead of `process.cwd()`.
 - **Token Stats UI**: The `done` event sends `tokenStats`. Display these in the status bar or a tooltip.
-- **Auto-Resize Textarea**: Add CSS `field-sizing: content` (modern browsers) or JavaScript measurement for auto-growing textarea.
-- **Message IDs**: Replace `key={i}` with stable IDs to prevent React reconciliation issues during streaming.
+- **Auto-Resize Textarea**: Implemented in `components/ChatInput.tsx` with measured height growth and a max-height cap.
+- **Message IDs**: Fixed with stable client-side IDs in `app/lib/chatStore.ts`; `page.tsx` now keys messages by `msg.id`.
 
 ### Testing Checklist for Next Session
 
@@ -321,4 +319,4 @@ The `config.json` format (auto-generated):
 
 ## Last Updated
 
-2026-04-30
+2026-05-01
