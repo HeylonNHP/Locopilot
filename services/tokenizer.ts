@@ -1,28 +1,61 @@
-import { encoding_for_model, get_encoding, Tiktoken } from '@dqbd/tiktoken';
 import { type ChatMessage } from './llm';
 import { stripSpecialTokens } from './textUtils';
 
-let encoder: Tiktoken | null = null;
+let encoder: TiktokenLike | null = null;
 let currentEncoderModel: string | null = null;
 const IMAGE_TOKEN_ESTIMATE = 1024;
 
-function getEncoder(model: string): Tiktoken {
+interface TiktokenLike {
+    encode(text: string): number[];
+}
+
+// Fallback approximate encoder when the real tiktoken WASM fails to load.
+// Uses a rough heuristic of ~4 characters per token (typical for GPT-like tokenizers).
+const fallbackEncoder: TiktokenLike = {
+    encode(text: string): number[] {
+        const estimated = Math.max(1, Math.ceil(text.length / 4));
+        return new Array(estimated).fill(0);
+    },
+};
+
+function loadTiktoken(): { encoding_for_model: (model: string) => TiktokenLike; get_encoding: (encoding: string) => TiktokenLike } | null {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        return require('@dqbd/tiktoken');
+    } catch {
+        return null;
+    }
+}
+
+function getEncoder(model: string): TiktokenLike {
     if (encoder && currentEncoderModel === model) return encoder;
 
+    const tiktoken = loadTiktoken();
+    if (!tiktoken) {
+        encoder = fallbackEncoder;
+        currentEncoderModel = model;
+        return encoder;
+    }
+
     try {
-        encoder = encoding_for_model(model as Parameters<typeof encoding_for_model>[0]);
+        encoder = tiktoken.encoding_for_model(model);
         currentEncoderModel = model;
     } catch {
         if (!encoder) {
-            encoder = get_encoding('cl100k_base');
-            currentEncoderModel = 'cl100k_base';
+            try {
+                encoder = tiktoken.get_encoding('cl100k_base');
+                currentEncoderModel = 'cl100k_base';
+            } catch {
+                encoder = fallbackEncoder;
+                currentEncoderModel = 'cl100k_base';
+            }
         }
     }
 
     return encoder;
 }
 
-function countTextTokensWithEncoder(text: string, activeEncoder: Tiktoken): number {
+function countTextTokensWithEncoder(text: string, activeEncoder: TiktokenLike): number {
     const cleanedText = stripSpecialTokens(text);
     if (!cleanedText) return 0;
     return activeEncoder.encode(cleanedText).length;

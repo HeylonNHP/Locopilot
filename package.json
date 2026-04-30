@@ -5,7 +5,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "tsx index.ts",
+    "start:cli": "tsx index.ts",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -23,13 +26,19 @@
     "jsdom": "^28.1.0",
     "marked": "^15.0.12",
     "marked-terminal": "^7.3.0",
-    "playwright": "^1.59.1"
+    "next": "14.2.29",
+    "playwright": "^1.59.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/jsdom": "^27.0.0",
     "@types/marked-terminal": "^6.1.1",
     "@types/node": "^25.5.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "copy-webpack-plugin": "^14.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

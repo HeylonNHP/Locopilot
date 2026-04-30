@@ -1,0 +1,144 @@
+'use client';
+
+import React, { createContext, useContext, useReducer, type ReactNode } from 'react';
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: string;
+  thinking?: string;
+  tool_calls?: any[];
+  name?: string;
+}
+
+export interface Session {
+  id: number;
+  name: string;
+  model: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LLmModel {
+  name: string;
+  modified_at?: string;
+  size?: number;
+}
+
+export interface WebSearchConfig {
+  maxQueries: number;
+  resultsPerQuery: number;
+  perPageCharLimit: number;
+}
+
+interface ChatState {
+  messages: ChatMessage[];
+  sessions: Session[];
+  currentSessionId: number | null;
+  model: string;
+  models: LLmModel[];
+  isStreaming: boolean;
+  baseUrl: string;
+  numCtx: number;
+  error: string | null;
+  // Approval dialog
+  pendingCommand: { name: string; args: any } | null;
+  showApproval: boolean;
+  // Additional config fields from CLI
+  yolo: boolean;
+  thinkingEnabled: boolean;
+  compactionModel: string;
+  chatTimeoutMs: number;
+  webSearch: WebSearchConfig;
+}
+
+type ChatAction =
+  | { type: 'SET_MESSAGES'; messages: ChatMessage[] }
+  | { type: 'ADD_MESSAGE'; message: ChatMessage }
+  | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string }
+  | { type: 'SET_SESSIONS'; sessions: Session[] }
+  | { type: 'SET_CURRENT_SESSION'; id: number | null }
+  | { type: 'SET_MODELS'; models: LLmModel[] }
+  | { type: 'SET_MODEL'; model: string }
+  | { type: 'SET_STREAMING'; isStreaming: boolean }
+  | { type: 'SET_ERROR'; error: string | null }
+  | { type: 'SET_CONFIG'; config: Partial<ChatState> }
+  | { type: 'SHOW_APPROVAL'; command: { name: string; args: any } | null }
+  | { type: 'CLEAR_MESSAGES' };
+
+function chatReducer(state: ChatState, action: ChatAction): ChatState {
+  switch (action.type) {
+    case 'SET_MESSAGES':
+      return { ...state, messages: action.messages };
+    case 'ADD_MESSAGE':
+      return { ...state, messages: [...state.messages, action.message] };
+    case 'UPDATE_LAST_MESSAGE': {
+      const msgs = [...state.messages];
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === 'assistant') {
+        msgs[msgs.length - 1] = {
+          ...last,
+          ...(action.content !== undefined ? { content: last.content + action.content } : {}),
+          ...(action.thinking !== undefined ? { thinking: (last.thinking || '') + action.thinking } : {}),
+        };
+      }
+      return { ...state, messages: msgs };
+    }
+    case 'SET_SESSIONS':
+      return { ...state, sessions: action.sessions };
+    case 'SET_CURRENT_SESSION':
+      return { ...state, currentSessionId: action.id };
+    case 'SET_MODELS':
+      return { ...state, models: action.models };
+    case 'SET_MODEL':
+      return { ...state, model: action.model };
+    case 'SET_STREAMING':
+      return { ...state, isStreaming: action.isStreaming };
+    case 'SET_ERROR':
+      return { ...state, error: action.error };
+    case 'SET_CONFIG':
+      return { ...state, ...action.config };
+    case 'SHOW_APPROVAL':
+      return { ...state, pendingCommand: action.command, showApproval: action.command !== null };
+    case 'CLEAR_MESSAGES':
+      return { ...state, messages: [] };
+    default:
+      return state;
+  }
+}
+
+const initialState: ChatState = {
+  messages: [],
+  sessions: [],
+  currentSessionId: null,
+  model: '',
+  models: [],
+  isStreaming: false,
+  baseUrl: 'http://localhost:11434',
+  numCtx: 131072,
+  error: null,
+  pendingCommand: null,
+  showApproval: false,
+  yolo: false,
+  thinkingEnabled: true,
+  compactionModel: '',
+  chatTimeoutMs: 720_000,
+  webSearch: {
+    maxQueries: 3,
+    resultsPerQuery: 3,
+    perPageCharLimit: 5000,
+  },
+};
+
+const ChatContext = createContext<{
+  state: ChatState;
+  dispatch: React.Dispatch<ChatAction>;
+}>({ state: initialState, dispatch: () => {} });
+
+export function ChatProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(chatReducer, initialState);
+  return React.createElement(ChatContext.Provider, { value: { state, dispatch } }, children);
+}
+
+export function useChat() {
+  return useContext(ChatContext);
+}

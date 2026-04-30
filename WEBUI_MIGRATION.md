@@ -1,0 +1,348 @@
+# Locopilot Web UI Migration
+
+**Objective:** Convert the terminal-based Locopilot CLI app into a Next.js web UI that runs locally via `npm run dev` / `npm start`.
+
+**Branch:** `feat/web-ui` (created from `master`)
+
+**Date:** 2026-04-30
+
+---
+
+## Quick Start
+
+```bash
+npm run dev     # Development server on localhost:3000
+npm run build   # Production build
+npm start       # Production server
+```
+
+---
+
+## Implemented Features
+
+### Chat Interface ✅ Working
+- SSE streaming with real-time token/chunk delivery
+- Stop streaming button (AbortController)
+- Auto-scroll to bottom on new messages
+- Error banner with dismiss button
+- Empty state welcome screen
+
+### Message Rendering ✅ Working
+- User messages (right-aligned, accent color)
+- Assistant messages with collapsible thinking/reasoning section
+- Tool call / tool result messages (monospace, max-height scrollable with scrollbar)
+- System messages (centered, muted styling)
+
+### Chat Input ✅ Working
+- Textarea with Enter-to-send, Shift+Enter for newlines
+- Slash command autocomplete with Tab/Enter/Arrow keys
+- Disabled while streaming
+
+### Session Management ✅ Working
+- Sidebar with session list, click to switch
+- "+ New chat" button
+- Delete session button (⚠️ no confirmation)
+- Session persistence in SQLite via shared `history.ts`
+
+### Settings Modal ✅ Working
+- Model selection dropdown (populated from Ollama)
+- Ollama base URL
+- Context size (numCtx)
+- Execution Mode toggle (Standard / YOLO)
+- Thinking toggle (Enabled / Disabled)
+- Chat timeout (ms)
+- Compaction model selection
+- Web search config: max queries, results per query, page char limit
+
+### Tool Calling ✅ Working (Backend)
+- Full agent loop in `/api/chat` (LLM → tool calls → execute → loop back)
+- Tool call and tool result events streamed to UI
+- Max 20 tool loop iterations safety limit
+- Config (yolo, web search settings) loaded from `config.json` and applied per-request
+
+### State Management ✅ Working
+- React Context + `useReducer` in `chatStore.ts`
+- Ref-based stale-closure avoidance for streaming callback
+
+### API Routes ✅ Working
+- `POST /api/chat` — SSE streaming with full tool loop
+- `GET /api/config` — Read `config.json`
+- `PUT /api/config` — Write `config.json` (deep merge for webSearch)
+- `GET /api/models` — Ollama model listing
+- `GET /api/sessions` — List sessions
+- `POST /api/sessions` — Create session
+- `GET /api/sessions/[id]` — Load session messages
+- `DELETE /api/sessions/[id]` — Delete session
+
+---
+
+## Missing Features (from CLI)
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| **Command Approval Flow** | 🔴 **Critical** | Approval modal UI exists but is NOT wired to backend. Backend runs tools unconditionally. No API endpoint to send approve/reject decisions. |
+| `/compact` (actual implementation) | 🔴 High | Stubbed in web UI (shows "Not yet implemented"). CLI version fully compacts history via LLM. |
+| `/title` (auto-generate session title) | 🟡 Medium | Stubbed in web UI. CLI generates title via LLM and renames session. |
+| `/dump` (export markdown) | 🟡 Medium | Stubbed in web UI. CLI exports full conversation to `.md` file. |
+| `/nudge` (inject tool-use reminder) | 🟡 Medium | Stubbed in web UI. CLI adds a system message reminding the AI to use tools. |
+| Auto-compaction during chat | 🔴 High | CLI auto-compacts when context is full. Web UI never compacts automatically — will eventually hit token limits and fail. |
+| Connection test in settings | 🟡 Medium | CLI validates Ollama connection before saving baseUrl. Web UI saves without testing. |
+| Multiline input (`"""` block, `\` continuation) | 🟡 Medium | Web input is single-line textarea only. No paste detection or block mode. |
+| Interrupt handling (Ctrl+X) | 🟡 Medium | CLI has key interrupt listener + AbortController. Web only has Stop button. |
+| Token stats display | 🟢 Low | CLI shows live token usage. Web receives `tokenStats` in `done` event but doesn't display them. |
+| Empty response recovery | 🟢 Low | CLI handles empty assistant responses with retry loop. Web does not. |
+| Session rename | 🟢 Low | CLI has `renameSession`. Web UI does not expose it. |
+| Vision support toggle | 🟢 Low | CLI passes `visionSupported` to stream params. Web UI ignores this. |
+| Inline slash command menu (`/`) | 🟢 Low | CLI shows `@inquirer/prompts` select menu on typing `/`. Web has autocomplete dropdown instead. |
+| Readline history/completer | 🟢 Low | CLI has 500-line history and tab completion. Web has no history. |
+
+---
+
+## Known Bugs
+
+### 🔴 Critical
+
+**1. Approval Modal is Non-Functional**
+- The `ApprovalModal` renders when `state.showApproval` is true, but `/api/chat` calls `handleToolCall()` directly without checking for user approval.
+- There is no API endpoint to send an approve/reject decision back to the server.
+- `handleApprove()` in `page.tsx` merely hides the modal — the command already ran.
+- **Workaround**: Use YOLO mode (automatic execution). Standard mode is effectively YOLO in the web UI.
+- **Fix needed**: Add a `/api/tools/approve` endpoint or redesign the chat API to pause on tool calls and wait for client approval before continuing the SSE stream.
+
+### 🟡 Medium
+
+**2. Auto-Compaction Missing**
+- The CLI auto-compacts conversation history when approaching the context limit.
+- The web UI never triggers compaction, so long conversations will eventually fail with "context length exceeded" errors from Ollama.
+- **Fix needed**: Port the `autoCompactIfNeeded()` logic from `services/chatSession.ts` into the `/api/chat` route, or add a `/api/compact` endpoint callable from the frontend.
+
+**3. SSE Parser Loses Multi-Line Data**
+- The SSE parser in `page.tsx` only keeps one `data:` line per event (`currentData = line.slice(6).trim()`).
+- Standard SSE allows multiple `data:` lines per event, which should be concatenated with `\n`.
+- If the API ever sends multi-line JSON, the parser will drop lines.
+- **Fix needed**: Accumulate all `data:` lines for a single event and join with `\n` before parsing.
+
+**4. Race Condition: Thinking After Tool Result**
+- `tool_result` sets `needsNewAssistantRef.current = true`.
+- If the next LLM turn emits `thinking` before `chunk`, a new assistant message is created.
+- However, if multiple `thinking` events arrive in rapid succession, or if `thinking` and `chunk` interleave, the logic may create duplicate assistant messages or append thinking to the wrong message.
+- **Fix needed**: Use a more robust message tracking system, or have the API send explicit event types (`new_assistant_turn`) to signal when to create a new message.
+
+**5. chatTimeoutMs Ignored**
+- The frontend sends `chatTimeoutMs` in the chat request body.
+- `/api/chat/route.ts` never passes it to `sendLlmChatStream()`.
+- **Fix needed**: Thread `chatTimeoutMs` through to the LLM adapter call.
+
+### 🟢 Low
+
+**6. React Key Warning / Index Keys**
+- Messages are mapped with `key={i}` in `page.tsx`.
+- React may misidentify DOM nodes when messages are added/removed mid-stream.
+- **Fix needed**: Use a stable message ID (timestamp or counter) instead of array index.
+
+**7. Textarea Never Auto-Resizes**
+- `ChatInput` uses `rows={1}` with `resize: 'none'`.
+- No auto-grow logic, so long messages are cramped in a single line.
+- **Fix needed**: Add auto-resize logic (measure scrollHeight and adjust rows).
+
+**8. Missing Error Handling on Config Save**
+- Settings modal catches fetch errors silently (`catch {}`).
+- Users are never notified if config fails to persist.
+- **Fix needed**: Show toast/error message on config save failure.
+
+**9. Session Delete No Confirmation**
+- Clicking the `×` button on a session immediately deletes it without confirmation.
+- **Fix needed**: Add a confirmation dialog.
+
+**10. Config File Path Ambiguity**
+- `config.json` is read from `process.cwd()`.
+- In a Next.js production build (`next start`), the cwd may not be the project root, causing config loss.
+- **Fix needed**: Resolve config path relative to `__dirname` or use an environment variable.
+
+**11. Models Not Auto-Refreshed in Settings**
+- Settings modal shows whatever models were loaded on mount.
+- If Ollama gains/loses models, the dropdown is stale until page reload.
+- **Fix needed**: Add a "Refresh" button or auto-refresh when opening settings.
+
+---
+
+## Architecture
+
+### Framework
+- Next.js 14 (App Router, not Pages Router)
+- React 18
+- TypeScript (strict mode, `verbatimModuleSyntax`, `exactOptionalPropertyTypes`)
+
+### State Management
+- **Single global store**: React Context (`ChatContext`) + `useReducer`
+- **Not using**: Zustand, Redux, Jotai
+- **Stale closure fix**: Refs (`messagesRef`, `modelRef`, `numCtxRef`, etc.) synced via `useEffect`
+
+### Styling
+- Inline styles throughout (no Tailwind, no CSS-in-JS library)
+- CSS variables defined in `app/globals.css` for theming
+
+### Streaming
+- **Server**: `ReadableStream` with `TextEncoder` in `/api/chat/route.ts`
+- **Client**: `fetch()` + `response.body.getReader()` + `TextDecoder`
+- **Event format**: Custom SSE-like protocol (`event: name\ndata: json\n\n`)
+
+### Shared Backend
+- Web UI reuses the same core modules as the CLI:
+  - `history.ts` — SQLite session persistence
+  - `tools/` — All tool implementations (run_command, read_file, web_search, etc.)
+  - `services/llm.ts` — LLM adapter layer
+  - `services/configManager.ts` — Config file read/write
+- CLI entry point (`index.ts`) was removed; `start:cli` script may fail if called
+
+### Database
+- SQLite via `better-sqlite3`
+- **Synchronous API** used inside async Next.js route handlers
+- **Warning**: Under high concurrency, this blocks the server thread
+
+### Security
+- **No auth** — intended for local single-user use
+- **No rate limiting**
+- **No CORS configuration**
+- User messages sent straight to LLM without escaping (XSS-safe because React escapes text content)
+
+---
+
+## File Map
+
+### New Web UI Files
+
+| File | Purpose |
+|------|---------|
+| `app/page.tsx` | Main chat page — SSE handler, slash commands, session management |
+| `app/layout.tsx` | Root layout with `ChatProvider` |
+| `app/globals.css` | Dark theme CSS variables |
+| `app/lib/chatStore.ts` | React Context + reducer for all chat state |
+| `components/ChatInput.tsx` | Textarea input with slash autocomplete |
+| `components/ChatMessageBubble.tsx` | Render user/assistant/tool/system messages |
+| `components/SessionSidebar.tsx` | Session list, new chat, delete, settings button |
+| `components/SettingsModal.tsx` | Full settings editor |
+| `components/ApprovalModal.tsx` | Command approval dialog (**UI only, not wired**) |
+| `components/StatusBar.tsx` | Footer showing streaming/model/message count |
+| `app/api/chat/route.ts` | SSE streaming chat API with full agent loop |
+| `app/api/config/route.ts` | Config read/write |
+| `app/api/models/route.ts` | Ollama model listing |
+| `app/api/sessions/route.ts` | Session list/create |
+| `app/api/sessions/[id]/route.ts` | Session get/delete |
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `package.json` | Added Next.js/React deps; updated scripts (`dev`, `build`, `start`, `start:cli`) |
+| `tsconfig.json` | Added `"jsx": "preserve"`, `"plugins": [{"name": "next"}]`, `"allowJs": true`, `"paths": {"@/*": ["./*"]}`, `"moduleResolution": "bundler"` |
+| `next.config.mjs` | Next.js config with webpack `copy-webpack-plugin` for tiktoken WASM |
+| `.gitignore` | Added `.next/` and `next-env.d.ts` |
+| `tools/toolRegistry.ts` | Fixed dynamic import (`./impl/subAgentTool` instead of `./impl/subAgentTool.js`) |
+| `tools/toolOutput.ts` | Added `setActiveOutputSink()` / `getActiveOutputSink()` for swappable output |
+| `tools/impl/runCommandTool.ts` | Added `setCommandConfirmationPrompt()` for swappable approval |
+| `aiResponseRenderer.ts` | Added `setAIResponseRenderer()` / `setThinkingSummaryRenderer()` |
+| `statusLine.ts` | Added `setStatusLineBackend()` for swappable status |
+
+### Deleted Files
+
+| File | Reason |
+|------|--------|
+| `index.ts` | CLI entry point no longer needed |
+
+---
+
+## Continuation Notes / Scratchpad
+
+### Top Priority Fixes
+
+1. **Wire up Approval Modal** (CRITICAL)
+   - The `ApprovalModal` component exists in `components/ApprovalModal.tsx`.
+   - It receives `command`, `onApprove`, `onReject` props.
+   - Currently, `onApprove` and `onReject` just call `dispatch({ type: 'SHOW_APPROVAL', command: null })`.
+   - The `/api/chat` route never pauses for approval — it just runs tools.
+   - **Approach**: Redesign the chat API so that when a tool needs approval, it:
+     - Sends a `needs_approval` event to the client
+     - Pauses the loop (does not close the SSE stream)
+     - Waits for a client message (maybe via a separate POST to `/api/tools/approve`)
+     - Resumes the loop with the approval result
+   - Alternative: Use WebSockets instead of SSE for bidirectional communication.
+
+2. **Implement `/compact`** (HIGH)
+   - The `compactHistory()` function exists in `services/compact.ts`.
+   - It needs `baseUrl`, `compactionModel`, `messages`, `numCtx`, and an `onStatus` callback.
+   - Create a `POST /api/compact` endpoint that wraps this function.
+   - Wire up the `/compact` slash command to call this endpoint.
+   - The endpoint should return `{ newMessages, stats }` and the frontend should replace the current session messages.
+
+3. **Implement `/title`** (MEDIUM)
+   - The `generateSessionTitle()` function exists in `services/compact.ts`.
+   - Create a `POST /api/title` endpoint or add it to the session API.
+   - Wire up `/title` to call it and update the session name in SQLite.
+
+4. **Implement `/dump`** (MEDIUM)
+   - The `writeConversationHistoryDump()` function exists in `services/historyDump.ts`.
+   - Create a `POST /api/dump` endpoint.
+   - Return `{ filePath }` or trigger a file download.
+
+5. **Implement `/nudge`** (MEDIUM)
+   - The `getToolUseNudge()` function exists in `tools/tools.ts`.
+   - This is trivial — just inject the nudge text as a system message and continue the chat loop.
+
+### Architecture Improvements
+
+- **Consider WebSockets for Chat**: SSE is one-way. For approval flows, WebSockets would allow the server to pause and wait for client input without complex HTTP request/response choreography.
+- **Async SQLite**: `better-sqlite3` is synchronous. For a web server, consider migrating to `sqlite3` (async) or using a worker thread.
+- **Config Path Resolution**: Use `path.resolve(__dirname, '../../config.json')` in API routes instead of `process.cwd()`.
+- **Token Stats UI**: The `done` event sends `tokenStats`. Display these in the status bar or a tooltip.
+- **Auto-Resize Textarea**: Add CSS `field-sizing: content` (modern browsers) or JavaScript measurement for auto-growing textarea.
+- **Message IDs**: Replace `key={i}` with stable IDs to prevent React reconciliation issues during streaming.
+
+### Testing Checklist for Next Session
+
+When resuming work, verify these in order:
+
+1. [ ] `npm run dev` starts without errors
+2. [ ] Can select a model in settings
+3. [ ] Can send a message and receive a streaming response
+4. [ ] Tool calls display correctly (tool call + tool result)
+5. [ ] Final LLM response appears AFTER tool results
+6. [ ] Settings (web search results per query, max queries) are respected
+7. [ ] New chat starts clean (no stale messages)
+8. [ ] Session switch loads correct messages
+9. [ ] Session delete removes from sidebar
+10. [ ] `/clear`, `/model`, `/help` slash commands work
+11. [ ] `/compact`, `/title`, `/dump`, `/nudge` show "not implemented" (until fixed)
+12. [ ] Approval modal appears in Standard mode (but doesn't block execution yet)
+13. [ ] YOLO mode toggle works
+14. [ ] Thinking toggle works
+15. [ ] `npx tsc --noEmit` passes with zero errors
+
+---
+
+## Configuration Reference
+
+The `config.json` format (auto-generated):
+
+```json
+{
+  "baseUrl": "http://localhost:11434",
+  "lastModel": "llama3.2",
+  "compactionModel": "llama3.2",
+  "numCtx": 4096,
+  "chatTimeoutMs": 720000,
+  "yolo": false,
+  "thinkingEnabled": true,
+  "webSearch": {
+    "maxQueries": 3,
+    "resultsPerQuery": 5,
+    "perPageCharLimit": 5000
+  }
+}
+```
+
+---
+
+## Last Updated
+
+2026-04-30

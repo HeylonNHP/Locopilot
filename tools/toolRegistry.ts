@@ -377,7 +377,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
         'run_subagents',
         {
             async execute(args, onProgress, output = terminalToolOutputSink) {
-                const { SubAgentTool } = await import('./impl/subAgentTool.js');
+                const { SubAgentTool } = await import('./impl/subAgentTool');
                 const tool = new SubAgentTool();
                 return tool.execute(args, onProgress, output);
             },
