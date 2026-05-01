@@ -135,6 +135,7 @@ export function useChatStream(
           if (Array.isArray(data.messages)) {
             dispatch({ type: 'SET_MESSAGES', messages: data.messages });
           }
+          dispatch({ type: 'CLEAR_TOKEN_STATS' });
           dispatch({
             type: 'ADD_MESSAGE',
             message: {
