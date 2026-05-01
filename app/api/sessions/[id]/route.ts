@@ -5,10 +5,11 @@ import { loadSessionMessages, deleteSession, listSessions } from '../../../../hi
 
 export async function GET(
     _request: NextRequest,
-    { params }: { params: { id: string } },
+    { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
     try {
-        const sessionId = Number(params.id);
+        const { id } = await params;
+        const sessionId = Number(id);
         if (Number.isNaN(sessionId)) {
             return NextResponse.json(
                 { error: 'Invalid session ID. Must be a number.' },
@@ -39,10 +40,11 @@ export async function GET(
 
 export async function DELETE(
     _request: NextRequest,
-    { params }: { params: { id: string } },
+    { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
     try {
-        const sessionId = Number(params.id);
+        const { id } = await params;
+        const sessionId = Number(id);
         if (Number.isNaN(sessionId)) {
             return NextResponse.json(
                 { error: 'Invalid session ID. Must be a number.' },
