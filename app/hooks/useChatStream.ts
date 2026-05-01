@@ -41,6 +41,18 @@ export function useChatStream(
       }
 
       switch (event) {
+        case 'session_created':
+          // The server created a new session before the agent loop started.
+          // Update the buffer-owner ref so events are routed to the right session
+          // if the user navigates away before the turn completes.
+          if (typeof data.sessionId === 'number') {
+            streamingSessionIdRef.current = data.sessionId;
+            bufferOwnerSessionIdRef.current = data.sessionId;
+            dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });
+          }
+          loadSessions();
+          break;
+
         case 'thinking':
           dispatch({ type: 'APPLY_ASSISTANT_DELTA', thinking: data.content ?? data });
           break;

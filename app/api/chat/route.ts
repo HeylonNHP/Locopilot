@@ -25,7 +25,7 @@ import { TOOLS, handleToolCall, sanitize, setSubAgentConfig, setWebSearchConfig,
 import { waitForApproval, resolveApproval } from '../../lib/approvalRegistry';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
-import { createSession, updateSessionMessages } from '../../../history';
+import { createSession, renameSession, updateSessionMessages } from '../../../history';
 import { compactHistory } from '../../../services/compact';
 import { countMessagesTokens } from '../../../services/tokenizer';
 import { AUTO_COMPACT_THRESHOLD_PCT } from '../../../constants';
@@ -133,6 +133,16 @@ export async function POST(req: NextRequest): Promise<Response> {
             // run_command skips the approval gate and executes unconditionally.
             let effectiveYolo = false;
             let emptyResponseRecoveryAttempts = 0;
+
+            // ── Eagerly create the session so it appears in the sidebar immediately ──
+            // If the client already has a session ID (resuming), use it as-is.
+            // Otherwise create a placeholder session now and rename it once we have
+            // the actual AI response content.
+            let activeSessionId: number | undefined = parsedSessionId;
+            if (!activeSessionId) {
+                activeSessionId = createSession('New chat', model as string);
+                sendEvent('session_created', { sessionId: activeSessionId });
+            }
 
             try {
                 // Load runtime tool configuration from disk so that web search
@@ -475,11 +485,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                     finalContent = content;
                     finalThinking = thinking;
 
-                    // Create or update session in the database.
-                    let currentSessionId = parsedSessionId;
-                    if (!currentSessionId) {
-                        const sessionName = content.trim().slice(0, 60) || 'Chat';
-                        currentSessionId = createSession(sessionName, model as string);
+                    // Rename the session from the placeholder to a content-derived title.
+                    const currentSessionId = activeSessionId!;
+                    if (!parsedSessionId) {
+                        renameSession(currentSessionId, content.trim().slice(0, 60) || 'Chat');
                     }
 
                     updateSessionMessages(currentSessionId, currentMessages, {
