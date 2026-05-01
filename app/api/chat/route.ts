@@ -19,7 +19,7 @@
 
 import { randomUUID } from 'crypto';
 import { NextRequest } from 'next/server';
-import { sendLlmChatStream } from '../../../services/llm';
+import { sendLlmChatStream, getLlmApiErrorMessage } from '../../../services/llm';
 import type { ChatMessage, StreamChatParams } from '../../../services/llm';
 import { TOOLS, handleToolCall, sanitize, setSubAgentConfig, setWebSearchConfig, setYoloMode, type ToolOutputSink } from '../../../tools/tools';
 import { waitForApproval, resolveApproval } from '../../lib/approvalRegistry';
@@ -532,7 +532,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     return;
                 }
 
-                const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+                const message = await getLlmApiErrorMessage(err);
 
                 try {
                     sendEvent('error', { message });
