@@ -249,7 +249,31 @@ export function useChatStream(
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => 'Unknown error');
-          throw new Error(`HTTP ${response.status}: ${errorText}`);
+          // Try to extract a message from SSE-formatted error responses
+          // (e.g., "event: error\ndata: {\"message\":\"...\"}\n\n")
+          const dataMatch = errorText.match(/data:\s*({.+?})\s*$/m);
+          if (dataMatch) {
+            try {
+              const parsed = JSON.parse(dataMatch[1] ?? '{}');
+              if (typeof parsed.message === 'string' && parsed.message.length > 0) {
+                throw new Error(`HTTP ${response.status}: ${parsed.message}`);
+              }
+            } catch {
+              // Fall through to default error format
+            }
+          }
+          // Also try to extract message from plain JSON error
+          try {
+            const parsed = JSON.parse(errorText);
+            const msg = parsed.message || parsed.error;
+            if (typeof msg === 'string' && msg.length > 0) {
+              throw new Error(`HTTP ${response.status}: ${msg}`);
+            }
+          } catch {
+            // Not JSON, use raw text (but truncate if too long)
+            const truncated = errorText.length > 200 ? errorText.slice(0, 200) + '...' : errorText;
+            throw new Error(`HTTP ${response.status}: ${truncated}`);
+          }
         }
 
         const reader = response.body?.getReader();
