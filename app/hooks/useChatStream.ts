@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import type { MutableRefObject } from 'react';
 import { useChat, type ChatMessage } from '@/app/lib/chatStore';
 import type { StableRefs } from './useStableRefs';
@@ -16,8 +16,30 @@ export function useChatStream(
 ) {
   const { state, dispatch } = useChat();
 
+  // --- Background-stream buffering ------------------------------------------
+  // When the user switches to a different session while a stream is active,
+  // events are buffered instead of dispatched so they don't bleed into the
+  // wrong session's message list.  Switching back replays the buffer on top
+  // of the freshly-loaded DB messages so live output resumes seamlessly.
+  const streamingSessionIdRef = useRef<number | null | undefined>(undefined);
+  const bufferOwnerSessionIdRef = useRef<number | null | undefined>(undefined);
+  const bufferedEventsRef = useRef<Array<{ event: string; data: any }>>([]);
+  const streamActiveRef = useRef(false);
+  // --------------------------------------------------------------------------
+
   const handleEvent = useCallback(
     (event: string, data: any) => {
+      // If a stream is active and the user has navigated to a different session,
+      // buffer this event so it doesn't land in the wrong message list.
+      if (
+        streamActiveRef.current &&
+        streamingSessionIdRef.current !== undefined &&
+        refs.sessionIdRef.current !== streamingSessionIdRef.current
+      ) {
+        bufferedEventsRef.current.push({ event, data });
+        return;
+      }
+
       switch (event) {
         case 'thinking':
           dispatch({ type: 'APPLY_ASSISTANT_DELTA', thinking: data.content ?? data });
@@ -90,6 +112,9 @@ export function useChatStream(
 
         case 'done':
           if (data.sessionId) {
+            // Sync refs so switch-back replay uses the server-assigned session ID.
+            streamingSessionIdRef.current = data.sessionId;
+            bufferOwnerSessionIdRef.current = data.sessionId;
             dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });
           }
           break;
@@ -103,6 +128,32 @@ export function useChatStream(
       }
     },
     [dispatch],
+  );
+
+  /**
+   * Call this after loading a session's messages to replay any SSE events that
+   * were buffered while the user was viewing a different session.  No-op when
+   * no stream is active or the target session doesn't own the active stream.
+   */
+  const replayBufferedEvents = useCallback(
+    (targetSessionId: number | null) => {
+      if (!streamActiveRef.current) {
+        // Stream already finished; DB copy loaded by loadSessionMessages is
+        // authoritative — clear any stale buffer and return.
+        bufferedEventsRef.current = [];
+        return;
+      }
+      if (bufferOwnerSessionIdRef.current !== targetSessionId) {
+        return;
+      }
+      const events = [...bufferedEventsRef.current];
+      bufferedEventsRef.current = [];
+      // We are now on the owning session so handleEvent will dispatch normally.
+      for (const { event, data } of events) {
+        handleEvent(event, data);
+      }
+    },
+    [handleEvent],
   );
 
   const sendChatMessage = useCallback(
@@ -123,6 +174,13 @@ export function useChatStream(
 
       const abortController = new AbortController();
       abortRef.current = abortController;
+
+      // Record which session owns this stream so events can be buffered when
+      // the user navigates away and replayed when they switch back.
+      streamingSessionIdRef.current = refs.sessionIdRef.current;
+      bufferOwnerSessionIdRef.current = refs.sessionIdRef.current;
+      streamActiveRef.current = true;
+      bufferedEventsRef.current = [];
 
       try {
         const response = await fetch('/api/chat', {
@@ -201,6 +259,13 @@ export function useChatStream(
           dispatch({ type: 'SET_ERROR', error: err.message });
         }
       } finally {
+        // Mark stream inactive and clear the buffer.  If the stream ended while
+        // the user was on another session, loadSessionMessages will load the
+        // completed turn from DB — the buffer is no longer needed.
+        streamActiveRef.current = false;
+        bufferedEventsRef.current = [];
+        streamingSessionIdRef.current = undefined;
+        bufferOwnerSessionIdRef.current = undefined;
         dispatch({ type: 'SET_STREAMING', isStreaming: false });
         abortRef.current = null;
         loadSessions();
@@ -209,5 +274,5 @@ export function useChatStream(
     [state.isStreaming, dispatch, handleEvent, refs, abortRef, loadSessions],
   );
 
-  return { sendChatMessage, handleEvent };
+  return { sendChatMessage, handleEvent, replayBufferedEvents };
 }

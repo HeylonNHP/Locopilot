@@ -35,7 +35,7 @@ export default function Home() {
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
 
   // SSE streaming
-  const { sendChatMessage } = useChatStream(refs, abortRef, loadSessions);
+  const { sendChatMessage, replayBufferedEvents } = useChatStream(refs, abortRef, loadSessions);
 
   // Settings opener — defined before useSlashCommands so it can be passed in
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
@@ -108,10 +108,23 @@ export default function Home() {
 
   // ── Session management ────────────────────────────────────────────
   const handleNewSession = useCallback(async () => {
+    // Abort any in-flight stream so its events don't land in the new session.
+    abortRef.current?.abort();
     dispatch({ type: 'CLEAR_MESSAGES' });
     dispatch({ type: 'SET_CURRENT_SESSION', id: null });
     await loadSessions();
-  }, [dispatch, loadSessions]);
+  }, [dispatch, loadSessions, abortRef]);
+
+  // Keep the stream alive when switching to another session: the hook buffers
+  // events while away and replays them when the user switches back, so live
+  // subagent (and other) output resumes without bleed into the wrong session.
+  const handleSelectSession = useCallback(
+    async (sessionId: number) => {
+      await loadSessionMessages(sessionId);
+      replayBufferedEvents(sessionId);
+    },
+    [loadSessionMessages, replayBufferedEvents],
+  );
 
   const handleDeleteSession = useCallback(
     async (id: number) => {
@@ -142,7 +155,7 @@ export default function Home() {
       {/* Sidebar */}
       <SessionSidebar
         onNewSession={handleNewSession}
-        onSelectSession={loadSessionMessages}
+        onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
         onSettings={handleOpenSettings}
       />
