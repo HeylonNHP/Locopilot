@@ -29,17 +29,21 @@ export default function ApprovalModal({ command, onApprove, onReject }: Props) {
           Allow this command to run?
         </h3>
         <div style={{
-          background: 'var(--bg-tertiary)',
           borderRadius: '8px',
-          padding: '12px',
+          background: 'var(--bg-tertiary)',
           marginBottom: '16px',
-          fontFamily: 'monospace',
-          fontSize: '13px',
-          whiteSpace: 'pre-wrap',
-          maxHeight: '200px',
-          overflow: 'auto',
+          overflow: 'hidden',
         }}>
-          {typeof command.args === 'string' ? command.args : JSON.stringify(command.args, null, 2)}
+          <div style={{
+            padding: '12px',
+            fontFamily: 'monospace',
+            fontSize: '13px',
+            whiteSpace: 'pre-wrap',
+            maxHeight: '200px',
+            overflow: 'auto',
+          }}>
+            {typeof command.args === 'string' ? command.args : JSON.stringify(command.args, null, 2)}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
           <button

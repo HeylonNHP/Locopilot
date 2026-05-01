@@ -131,14 +131,22 @@ export default function SettingsModal({ onClose }: Props) {
         style={{
           background: 'var(--bg-secondary)',
           borderRadius: '12px',
-          padding: '24px',
           width: '480px',
           maxWidth: '90%',
           maxHeight: '90vh',
-          overflowY: 'auto',
           border: '1px solid #444',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
+        <div
+          style={{
+            padding: '24px',
+            overflowY: 'auto',
+            flex: 1,
+          }}
+        >
         <h3 style={{ margin: '0 0 16px 0', fontSize: '18px' }}>Settings</h3>
 
         {saveError && (
@@ -312,6 +320,7 @@ export default function SettingsModal({ onClose }: Props) {
           </button>
         </div>
       </div>
+    </div>
     </div>
   );
 }

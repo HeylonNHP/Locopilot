@@ -51,18 +51,22 @@ export default function ChatMessageBubble({ message }: Props) {
       <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '4px' }}>
         <div style={{
           maxWidth: '90%',
-          padding: '8px 12px',
           borderRadius: '8px',
           background: 'var(--bg-tertiary)',
           border: '1px solid #333',
-          fontFamily: 'monospace',
-          fontSize: '12px',
-          color: 'var(--text-secondary)',
-          whiteSpace: 'pre-wrap',
-          overflow: 'auto',
-          maxHeight: '200px',
+          overflow: 'hidden',
         }}>
-          {message.content}
+          <div style={{
+            padding: '8px 12px',
+            fontFamily: 'monospace',
+            fontSize: '12px',
+            color: 'var(--text-secondary)',
+            whiteSpace: 'pre-wrap',
+            overflow: 'auto',
+            maxHeight: '200px',
+          }}>
+            {message.content}
+          </div>
         </div>
       </div>
     );
