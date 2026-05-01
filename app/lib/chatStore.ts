@@ -73,7 +73,7 @@ type ChatAction =
   | { type: 'APPLY_ASSISTANT_DELTA'; content?: string; thinking?: string }
   | { type: 'APPEND_TOOL_PROGRESS'; content: string; name?: string }
   | { type: 'SUBAGENT_OUTPUT'; agentId: string; message: string }
-  | { type: 'SUBAGENT_CHUNK'; agentId: string; chunkType: 'thinking' | 'content'; text: string }
+  | { type: 'SUBAGENT_CHUNK'; agentId: string; text: string }
   | { type: 'SET_SESSIONS'; sessions: Session[] }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
   | { type: 'SET_MODELS'; models: LLmModel[] }
@@ -155,9 +155,8 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case 'SUBAGENT_CHUNK': {
-      // Append raw token text to the matching subagent_log bubble without
-      // inserting a newline — this preserves natural paragraph flow.
-      // Thinking tokens go to the `thinking` field; content to `content`.
+      // Append raw token text (thinking or content) inline to the same content
+      // field so it reads in order alongside tool call output.
       const msgs = [...state.messages];
       for (let i = msgs.length - 1; i >= 0; i -= 1) {
         const candidate = msgs[i];
@@ -167,9 +166,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         if (candidate.subagentId !== action.agentId) {
           continue;
         }
-        msgs[i] = action.chunkType === 'thinking'
-          ? { ...candidate, thinking: (candidate.thinking ?? '') + action.text }
-          : { ...candidate, content: candidate.content + action.text };
+        msgs[i] = { ...candidate, content: candidate.content + action.text };
         return { ...state, messages: msgs };
       }
       // No bubble yet — create one.
@@ -177,9 +174,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...state,
         messages: [
           ...state.messages,
-          withId(action.chunkType === 'thinking'
-            ? { role: 'subagent_log', content: '', thinking: action.text, subagentId: action.agentId }
-            : { role: 'subagent_log', content: action.text, subagentId: action.agentId }),
+          withId({ role: 'subagent_log', content: action.text, subagentId: action.agentId }),
         ],
       };
     }

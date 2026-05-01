@@ -113,7 +113,6 @@ export function useChatStream(
           dispatch({
             type: 'SUBAGENT_CHUNK',
             agentId: typeof data.agentId === 'string' ? data.agentId : '__subagent__',
-            chunkType: data.type === 'thinking' ? 'thinking' : 'content',
             text: typeof data.text === 'string' ? data.text : String(data.text ?? ''),
           });
           break;
