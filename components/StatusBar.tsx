@@ -12,9 +12,11 @@ export default function StatusBar() {
   // When authoritative SSE stats arrive they override this.
   const estimatedTokens = useMemo(() => estimateMessagesTokens(messages), [messages]);
 
-  // Use authoritative stats when available, otherwise fall back to estimate
+  // Always use state.numCtx as the token limit — it's the user's current
+  // setting and what the backend actually uses. tokenStats may contain a
+  // stale tokenLimit from a previous turn.
   const totalTokens = tokenStats?.totalTokens ?? estimatedTokens;
-  const tokenLimit = tokenStats?.tokenLimit ?? state.numCtx;
+  const tokenLimit = state.numCtx;
 
   const pct = tokenLimit > 0 ? Math.round((totalTokens / tokenLimit) * 100) : 0;
 

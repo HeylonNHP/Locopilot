@@ -118,7 +118,6 @@ export function useChatStream(
           break;
 
         case 'status':
-          console.log('[SSE status]', data);
           if (data.tokensUsed !== undefined && data.tokensUsed !== null) {
             dispatch({
               type: 'SET_TOKEN_STATS',
@@ -146,7 +145,6 @@ export function useChatStream(
           break;
 
         case 'done':
-          console.log('[SSE done]', data);
           if (data.sessionId) {
             // Sync refs so switch-back replay uses the server-assigned session ID.
             streamingSessionIdRef.current = data.sessionId;
