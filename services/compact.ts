@@ -643,30 +643,26 @@ function looksLikeApologyTitle(title: string): boolean {
     return /\b(?:i['’]?m sorry|sorry|apolog(?:y|ize)|can(?:'t|not)|cannot|unable|won't|will not|no permission|cannot create|cannot write|no access|not allowed)\b/i.test(title);
 }
 
-function buildTitleSystemPrompt(): string {
-    return (
-        'You are a concise session title generator. ' +
-        'You will be given a conversation history and asked to create a short, descriptive title for the session. ' +
-        'Return only the title text in plain language, with no quotes, bullets, or extra explanation. ' +
-        'Keep the title under 80 characters and make it suitable for display in a session list. ' +
-        'Do not mention your own limitations, refusals, or apologies in the title; summarize the session topic or user request instead.'
-    );
-}
-
-function makeTitlePrompt(conversationText: string, extraInstruction?: string): string {
-    return (
-        'Create a short session title from the following conversation history:\n\n' +
-        conversationText +
-        (extraInstruction ? '\n\n' + extraInstruction : '')
-    );
-}
-
 function extractTitleFromResponse(rawTitle: string): string {
-    return (rawTitle.split('\n')[0] ?? '')
-        .replace(/^['"]+|['"]+$/g, '')
-        .trim()
-        .slice(0, 80)
-        .trim();
+    // Take the first non-empty line
+    const lines = rawTitle.split('\n').filter((l) => l.trim().length > 0);
+    if (lines.length === 0) return '';
+
+    let title = (lines[0] ?? '').trim();
+
+    // Strip surrounding quotes (both single and double, including smart quotes)
+    title = title.replace(/^['""'']+|['""'']+$/g, '');
+
+    // Strip common prefixes like "Title:", "Title - ", etc.
+    title = title.replace(/^(?:title|session|conversation|chat)\s*[:\-–—]\s*/i, '');
+
+    // Strip trailing punctuation that isn't part of the actual title
+    title = title.replace(/[.,;:!?]+$/, '');
+
+    // Collapse multiple spaces
+    title = title.replace(/\s{2,}/g, ' ');
+
+    return title.trim().slice(0, 80).trim();
 }
 
 export async function generateSessionTitle(
@@ -680,8 +676,7 @@ export async function generateSessionTitle(
         throw new Error('Not enough conversation history to generate a session title.');
     }
 
-    onProgress?.('Generating session title...');
-
+    // Prepare conversation text (shared across retries)
     const trimmedHistory: ChatMessage[] = messages.length > 64
         ? [messages[0] as ChatMessage, ...messages.slice(-63)]
         : messages;
@@ -691,70 +686,121 @@ export async function generateSessionTitle(
         .map((message) => `[${message.role.toUpperCase()}] ${message.content ?? ''}`)
         .join('\n\n');
 
-    const titleMessages: ChatMessage[] = [
-        { role: 'system', content: buildTitleSystemPrompt() },
+    // Get first user message for fallback
+    const firstUserContent = messages.find((m) => m.role === 'user')?.content?.trim() ?? '';
+
+    // Multiple prompt strategies tried in order
+    const promptStrategies: Array<{ system: string; user: string }> = [
+        // Strategy 1: Standard prompt with few-shot examples
         {
-            role: 'user',
-            content:
-                'Create a short session title from the following conversation history:\n\n' +
-                conversationText,
+            system:
+                'You are a concise session title generator. Given a conversation between a user and an AI assistant, ' +
+                'generate a short descriptive title (2-8 words).\n' +
+                '\n' +
+                'Examples:\n' +
+                '[USER] How do I fix a 503 error on Nginx?\n' +
+                '[ASSISTANT] Check upstream server configs and restart.\n' +
+                'Title: Nginx 503 Error Troubleshooting\n' +
+                '\n' +
+                '[USER] Explain how Python async/await works\n' +
+                '[ASSISTANT] Async/await is syntactic sugar over coroutines...\n' +
+                'Title: Python Async/Await Explained\n' +
+                '\n' +
+                'Rules:\n' +
+                '- Return ONLY the title — no quotes, no prefixes, no explanation\n' +
+                '- 2 to 8 words, under 80 characters\n' +
+                '- Capture the main topic or task\n' +
+                '- Use descriptive, active language\n' +
+                '- Do NOT include refusals, apologies, or limitation language in the title',
+            user:
+                'Generate a short session title for this conversation:\n\n' + conversationText + '\n\nTitle:',
+        },
+        // Strategy 2: Direct instruction, no examples (different prompt shape)
+        {
+            system:
+                'You generate short titles for chat conversations. Output exactly one line of plain text. ' +
+                'No quotes, no formatting, no prefixes like "Title:". Just the title.',
+            user:
+                'Conversation:\n' + conversationText.slice(0, 2000) + '\n\nShort title (2-8 words):',
+        },
+        // Strategy 3: Minimalist prompt (some models work better with less noise)
+        {
+            system: 'Generate a brief title for this chat. Output only the title text.',
+            user:
+                conversationText.slice(0, 1500) + '\n\nTitle:',
         },
     ];
 
-    const response = await sendLlmChat(baseUrl, {
-        model,
-        messages: titleMessages,
-        tools: [],
-        numCtx,
-        options: {
-            temperature: 0.2,
-            num_predict: 128,
-        },
-    });
+    let lastError: string | null = null;
 
-    const rawTitle = response.message?.content?.trim() ?? '';
-    if (rawTitle.length === 0) {
-        throw new Error('The model returned an empty title.');
-    }
+    for (let attempt = 0; attempt < promptStrategies.length; attempt += 1) {
+        const strategy = promptStrategies[attempt]!;
 
-    let title = extractTitleFromResponse(rawTitle);
-    if (!title) {
-        throw new Error('The model returned an invalid title.');
-    }
+        if (attempt > 0) {
+            onProgress?.(`Retrying title generation (attempt ${attempt + 1}/${promptStrategies.length})...`);
+        } else {
+            onProgress?.('Generating session title...');
+        }
 
-    if (looksLikeApologyTitle(title)) {
-        onProgress?.('Title looks like an apology or refusal; retrying with a clearer instruction...');
+        try {
+            const response = await sendLlmChat(baseUrl, {
+                model,
+                messages: [
+                    { role: 'system', content: strategy.system },
+                    { role: 'user', content: strategy.user },
+                ],
+                tools: [],
+                numCtx,
+                options: {
+                    temperature: 0.2,
+                    num_predict: 128,
+                },
+            });
 
-        const retryMessages: ChatMessage[] = [
-            { role: 'system', content: buildTitleSystemPrompt() },
-            {
-                role: 'user',
-                content: makeTitlePrompt(
-                    conversationText,
-                    'Do not use any refusal, apology, limitation, or error language in the title. ' +
-                    'Instead, summarize the core topic, request, or task described by the conversation.',
-                ),
-            },
-        ];
+            const rawContent = response.message?.content?.trim() ?? '';
+            if (rawContent.length === 0) {
+                lastError = 'empty response';
+                continue;
+            }
 
-        const retryResponse = await sendLlmChat(baseUrl, {
-            model,
-            messages: retryMessages,
-            tools: [],
-            numCtx,
-            options: {
-                temperature: 0.2,
-                num_predict: 128,
-            },
-        });
+            const title = extractTitleFromResponse(rawContent);
+            if (!title) {
+                lastError = 'extracted title was empty';
+                continue;
+            }
 
-        const retryTitle = extractTitleFromResponse(retryResponse.message?.content?.trim() ?? '');
-        if (retryTitle && !looksLikeApologyTitle(retryTitle)) {
-            return retryTitle;
+            if (looksLikeApologyTitle(title)) {
+                lastError = 'apology or refusal detected';
+                continue;
+            }
+
+            // Success — return the first valid title
+            return title;
+        } catch (err) {
+            lastError = err instanceof Error ? err.message : 'Unknown error';
+            continue;
         }
     }
 
-    return title;
+    // ── Fallback: derive title from first user message ────────────────────
+    if (firstUserContent.length > 0) {
+        const fallback = firstUserContent
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 60)
+            .trim();
+        if (fallback.length > 0) {
+            onProgress?.('Using first message as fallback title.');
+            return fallback;
+        }
+    }
+
+    // ── Ultimate fallback ────────────────────────────────────────────────
+    throw new Error(
+        lastError
+            ? `Title generation failed after ${promptStrategies.length} attempts: ${lastError}`
+            : 'The model returned an empty title after multiple attempts.',
+    );
 }
 
 /**
