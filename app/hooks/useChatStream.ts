@@ -4,6 +4,7 @@ import { useCallback, useRef } from 'react';
 import type { MutableRefObject } from 'react';
 import { useChat, type ChatMessage } from '@/app/lib/chatStore';
 import type { StableRefs } from './useStableRefs';
+import { EventSourceParserStream } from 'eventsource-parser/stream';
 
 /**
  * Owns the SSE event dispatcher and the sendChatMessage driver that runs a
@@ -276,54 +277,24 @@ export function useChatStream(
           }
         }
 
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('No response body stream');
+        if (!response.body) throw new Error('No response body stream');
 
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let currentEvent = '';
-        let currentDataLines: string[] = [];
+        const eventStream = response.body
+          .pipeThrough(new TextDecoderStream())
+          .pipeThrough(new EventSourceParserStream());
 
-        const flushEvent = () => {
-          if (!currentEvent || currentDataLines.length === 0) {
-            currentEvent = '';
-            currentDataLines = [];
-            return;
-          }
-
-          const currentData = currentDataLines.join('\n');
-          try {
-            const parsed = JSON.parse(currentData);
-            handleEvent(currentEvent, parsed);
-          } catch {
-            handleEvent(currentEvent, currentData);
-          }
-
-          currentEvent = '';
-          currentDataLines = [];
-        };
-
+        const reader = eventStream.getReader();
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              currentEvent = line.slice(7).trim();
-            } else if (line.startsWith('data:')) {
-              const value = line.slice(5).replace(/^ /, '');
-              currentDataLines.push(value);
-            } else if (line === '') {
-              flushEvent();
-            }
+          try {
+            const parsed = JSON.parse(value.data);
+            handleEvent(value.event || 'message', parsed);
+          } catch {
+            handleEvent(value.event || 'message', value.data);
           }
         }
-
-        flushEvent();
       } catch (err: any) {
         if (err.name !== 'AbortError') {
           dispatch({ type: 'SET_ERROR', error: err.message });
