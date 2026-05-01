@@ -443,6 +443,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 },
                                 writeInline(_message: string): void {},
                                 clearInline(): void {},
+                                writeAgentChunk(agentId: string, type: 'thinking' | 'content', text: string): void {
+                                    if (text) {
+                                        sendEvent('subagent_chunk', { agentId, type, text });
+                                    }
+                                },
                             };
 
                             // Execute the tool via the registry.

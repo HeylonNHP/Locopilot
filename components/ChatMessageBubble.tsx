@@ -90,6 +90,8 @@ export default function ChatMessageBubble({ message }: Props) {
   }
 
   if (message.role === 'subagent_log') {
+    const hasThinkingTrace = Boolean(message.thinking?.trim());
+    const hasContentTrace = Boolean(message.content?.trim());
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '4px' }}>
         <div style={{
@@ -117,24 +119,68 @@ export default function ChatMessageBubble({ message }: Props) {
             }}
           >
             <span>{subagentCollapsed ? '\u25b6' : '\u25bc'}</span>
-            <span>\uD83E\uDD16 Sub-agent: {message.subagentId ?? 'unknown'}</span>
+            <span>🤖 Sub-agent: {message.subagentId ?? 'unknown'}</span>
           </button>
           {!subagentCollapsed && (
-            <pre
-              ref={subagentLogRef}
-              style={{
-                margin: 0,
-                padding: '8px 12px',
-                fontFamily: 'monospace',
-                fontSize: '12px',
-                color: 'var(--text-secondary)',
-                whiteSpace: 'pre-wrap',
-                overflowY: 'auto',
-                maxHeight: '300px',
-              }}
-            >
-              {message.content}
-            </pre>
+            <div>
+              {hasThinkingTrace && (
+                <details style={{ borderBottom: hasContentTrace ? '1px solid #333' : 'none' }}>
+                  <summary style={{
+                    padding: '4px 10px',
+                    fontSize: '11px',
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    opacity: 0.7,
+                  }}>
+                    Reasoning ({message.thinking!.length} chars)
+                  </summary>
+                  <pre style={{
+                    margin: 0,
+                    padding: '6px 12px',
+                    fontFamily: 'monospace',
+                    fontSize: '11px',
+                    color: 'var(--text-secondary)',
+                    whiteSpace: 'pre-wrap',
+                    overflowY: 'auto',
+                    maxHeight: '200px',
+                    borderTop: '1px solid #333',
+                    opacity: 0.75,
+                  }}>
+                    {message.thinking}
+                  </pre>
+                </details>
+              )}
+              {hasContentTrace && (
+                <pre
+                  ref={subagentLogRef}
+                  style={{
+                    margin: 0,
+                    padding: '8px 12px',
+                    fontFamily: 'monospace',
+                    fontSize: '12px',
+                    color: 'var(--text-secondary)',
+                    whiteSpace: 'pre-wrap',
+                    overflowY: 'auto',
+                    maxHeight: '300px',
+                  }}
+                >
+                  {message.content}
+                </pre>
+              )}
+              {!hasThinkingTrace && !hasContentTrace && (
+                <pre style={{
+                  margin: 0,
+                  padding: '8px 12px',
+                  fontFamily: 'monospace',
+                  fontSize: '12px',
+                  color: 'var(--text-secondary)',
+                  opacity: 0.5,
+                }}>
+                  Waiting...
+                </pre>
+              )}
+            </div>
           )}
         </div>
       </div>

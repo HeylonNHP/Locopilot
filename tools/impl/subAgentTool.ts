@@ -254,7 +254,22 @@ async function runSingleAgent(
             messages,
             tools,
             numCtx: config.numCtx,
+        }, (chunk) => {
+            // Route live thinking/content tokens to the output sink so web
+            // callers can stream them into the subagent bubble in real time.
+            // A newline is prepended the first time each type appears in this
+            // chunk sequence so thinking and content are visually separated.
+            if (chunk.message?.thinking) {
+                output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
+            }
+            if (chunk.message?.content) {
+                output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
+            }
         });
+
+        // Emit a trailing newline so successive tool outputs and the next LLM
+        // turn are visually separated from the streamed response text.
+        output.writeAgentChunk?.(agent.id, 'content', '\n');
 
         const assistantMessage = sanitizeChatMessage(response.message);
         messages.push(assistantMessage);
