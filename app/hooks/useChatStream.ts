@@ -67,6 +67,14 @@ export function useChatStream(
           });
           break;
 
+        case 'subagent_output':
+          dispatch({
+            type: 'SUBAGENT_OUTPUT',
+            agentId: typeof data.agentId === 'string' ? data.agentId : '__subagent__',
+            message: typeof data.message === 'string' ? data.message : String(data.message ?? ''),
+          });
+          break;
+
         case 'compact':
           if (Array.isArray(data.messages)) {
             dispatch({ type: 'SET_MESSAGES', messages: data.messages });

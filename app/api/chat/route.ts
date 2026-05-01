@@ -418,10 +418,29 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 },
                             };
 
+                            // Subagent output sink: strips ANSI, parses the [sub-agent: id]
+                            // prefix that makeLabeledSink prepends, and emits per-agent SSE
+                            // events so the client can render each agent in its own bubble.
+                            const subagentOutputSink: ToolOutputSink = {
+                                writeLine(message: string): void {
+                                    const clean = sanitize(message);
+                                    const match = clean.match(/^\[sub-agent:\s*([^\]]+)\]\s([\s\S]*)$/);
+                                    const agentId = match ? match[1]!.trim() : '__subagent__';
+                                    const text = match ? (match[2] ?? '').trimEnd() : clean.trimEnd();
+                                    if (text.trim()) {
+                                        sendEvent('subagent_output', { agentId, message: text });
+                                    }
+                                },
+                                writeInline(_message: string): void {},
+                                clearInline(): void {},
+                            };
+
                             // Execute the tool via the registry.
                             const result = shouldSurfaceToolProgress
                                 ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput)
-                                : await handleToolCall(toolName, toolArgs);
+                                : toolName === 'run_subagents'
+                                    ? await handleToolCall(toolName, toolArgs, undefined, subagentOutputSink)
+                                    : await handleToolCall(toolName, toolArgs);
 
                             const duration = Date.now() - startTime;
 

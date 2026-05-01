@@ -1,7 +1,7 @@
 'use client';
 
 import { type ChatMessage } from '@/app/lib/chatStore';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import MarkdownMessage from './MarkdownMessage';
 
 interface Props {
@@ -10,6 +10,8 @@ interface Props {
 
 export default function ChatMessageBubble({ message }: Props) {
   const [showThinking, setShowThinking] = useState(false);
+  const [subagentCollapsed, setSubagentCollapsed] = useState(false);
+  const subagentLogRef = useRef<HTMLPreElement>(null);
   const hasThinking = Boolean(message.thinking?.trim());
   const hasContent = Boolean(message.content?.trim());
 
@@ -18,6 +20,13 @@ export default function ChatMessageBubble({ message }: Props) {
       setShowThinking(true);
     }
   }, [hasThinking, hasContent]);
+
+  // Auto-scroll the subagent log to the bottom as new lines arrive.
+  useEffect(() => {
+    if (!subagentCollapsed && subagentLogRef.current) {
+      subagentLogRef.current.scrollTop = subagentLogRef.current.scrollHeight;
+    }
+  }, [message.content, subagentCollapsed]);
   
   if (message.role === 'user') {
     return (
@@ -75,6 +84,58 @@ export default function ChatMessageBubble({ message }: Props) {
           textAlign: 'center',
         }}>
           {message.content}
+        </div>
+      </div>
+    );
+  }
+
+  if (message.role === 'subagent_log') {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '4px' }}>
+        <div style={{
+          maxWidth: '90%',
+          borderRadius: '8px',
+          background: 'var(--bg-tertiary)',
+          border: '1px solid #444',
+          overflow: 'hidden',
+        }}>
+          <button
+            onClick={() => setSubagentCollapsed((c) => !c)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              width: '100%',
+              background: 'none',
+              border: 'none',
+              borderBottom: subagentCollapsed ? 'none' : '1px solid #444',
+              cursor: 'pointer',
+              padding: '6px 10px',
+              color: 'var(--text-secondary)',
+              fontSize: '12px',
+              textAlign: 'left',
+            }}
+          >
+            <span>{subagentCollapsed ? '\u25b6' : '\u25bc'}</span>
+            <span>\uD83E\uDD16 Sub-agent: {message.subagentId ?? 'unknown'}</span>
+          </button>
+          {!subagentCollapsed && (
+            <pre
+              ref={subagentLogRef}
+              style={{
+                margin: 0,
+                padding: '8px 12px',
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                color: 'var(--text-secondary)',
+                whiteSpace: 'pre-wrap',
+                overflowY: 'auto',
+                maxHeight: '300px',
+              }}
+            >
+              {message.content}
+            </pre>
+          )}
         </div>
       </div>
     );

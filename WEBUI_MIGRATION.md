@@ -135,6 +135,12 @@ npm start       # Production server
 - Settings save now checks the `/api/config` response and shows an inline error banner if persistence fails.
 - The modal stays open on failure so the user can retry without losing their edits.
 
+**9. Subagent Live Output in Web UI**
+- `run_subagents` tool calls now stream their output to the browser via a new `subagent_output` SSE event.
+- Each distinct sub-agent gets its own collapsible bubble (collapsed state is toggled with a ▶/▼ button); the bubble expands by default so output is visible while the agent runs.
+- The log auto-scrolls to the latest line as messages arrive.
+- The `[sub-agent: id]` prefix emitted by `makeLabeledSink` is stripped and used to route output to the correct bubble; unrecognised lines fall back to a `__subagent__` bucket.
+
 ## Known Bugs
 
 ### 🔴 Critical

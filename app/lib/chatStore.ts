@@ -5,11 +5,13 @@ import React, { createContext, useContext, useReducer, type ReactNode } from 're
 export interface ChatMessage {
   /** Stable client-only identity used as React list key. Never sent to the server. */
   id?: string;
-  role: 'user' | 'assistant' | 'tool' | 'system';
+  role: 'user' | 'assistant' | 'tool' | 'system' | 'subagent_log';
   content: string;
   thinking?: string;
   tool_calls?: any[];
   name?: string;
+  /** Set on subagent_log messages to identify which sub-agent produced the output. */
+  subagentId?: string;
 }
 
 // Monotonic counter — module-level so it survives re-renders but resets on
@@ -70,6 +72,7 @@ type ChatAction =
   | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string }
   | { type: 'APPLY_ASSISTANT_DELTA'; content?: string; thinking?: string }
   | { type: 'APPEND_TOOL_PROGRESS'; content: string; name?: string }
+  | { type: 'SUBAGENT_OUTPUT'; agentId: string; message: string }
   | { type: 'SET_SESSIONS'; sessions: Session[] }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
   | { type: 'SET_MODELS'; models: LLmModel[] }
@@ -146,6 +149,37 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             role: 'tool',
             content: action.content,
             ...(action.name ? { name: action.name } : {}),
+          }),
+        ],
+      };
+    }
+    case 'SUBAGENT_OUTPUT': {
+      const msgs = [...state.messages];
+      for (let i = msgs.length - 1; i >= 0; i -= 1) {
+        const candidate = msgs[i];
+        if (!candidate || candidate.role !== 'subagent_log') {
+          continue;
+        }
+        if (candidate.subagentId !== action.agentId) {
+          continue;
+        }
+        msgs[i] = {
+          ...candidate,
+          content: candidate.content
+            ? `${candidate.content}\n${action.message}`
+            : action.message,
+        };
+        return { ...state, messages: msgs };
+      }
+      // No existing bubble for this agent — create one.
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          withId({
+            role: 'subagent_log',
+            content: action.message,
+            subagentId: action.agentId,
           }),
         ],
       };
