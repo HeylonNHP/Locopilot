@@ -53,6 +53,8 @@ interface ChatState {
   isStreaming: boolean;
   baseUrl: string;
   numCtx: number;
+  requestedNumCtx: number;
+  modelContextLimit: number | null;
   error: string | null;
   // Approval dialog
   pendingCommand: { name: string; args: any } | null;
@@ -87,6 +89,7 @@ type ChatAction =
   | { type: 'SET_STREAMING'; isStreaming: boolean }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
+  | { type: 'SET_MODEL_CONTEXT_LIMIT'; limit: number | null }
   | { type: 'SHOW_APPROVAL'; command: { name: string; args: any } | null; requestId?: string }
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats'] }
@@ -229,8 +232,15 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, isStreaming: action.isStreaming };
     case 'SET_ERROR':
       return { ...state, error: action.error };
-    case 'SET_CONFIG':
-      return { ...state, ...action.config };
+    case 'SET_CONFIG': {
+      const requestedNumCtx = action.config.numCtx ?? state.requestedNumCtx;
+      const modelContextLimit = state.modelContextLimit;
+      const effectiveNumCtx = modelContextLimit && modelContextLimit > 0
+        ? Math.min(requestedNumCtx, modelContextLimit)
+        : requestedNumCtx;
+      const { numCtx: _, ...restConfig } = action.config;
+      return { ...state, requestedNumCtx, numCtx: effectiveNumCtx, ...restConfig };
+    }
     case 'SHOW_APPROVAL':
       return {
         ...state,
@@ -238,6 +248,12 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         showApproval: action.command !== null,
         pendingApprovalId: action.requestId ?? null,
       };
+    case 'SET_MODEL_CONTEXT_LIMIT': {
+      const effectiveNumCtx = action.limit && action.limit > 0
+        ? Math.min(state.requestedNumCtx, action.limit)
+        : state.requestedNumCtx;
+      return { ...state, modelContextLimit: action.limit, numCtx: effectiveNumCtx };
+    }
     case 'CLEAR_MESSAGES':
       return { ...state, messages: [] };
     case 'SET_TOKEN_STATS':
@@ -258,6 +274,8 @@ const initialState: ChatState = {
   isStreaming: false,
   baseUrl: 'http://localhost:11434',
   numCtx: 131072,
+  requestedNumCtx: 131072,
+  modelContextLimit: null,
   error: null,
   pendingCommand: null,
   showApproval: false,

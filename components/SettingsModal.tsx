@@ -171,7 +171,20 @@ export default function SettingsModal({ onClose }: Props) {
           <label style={labelStyle}>Model</label>
           <select
             value={model}
-            onChange={(e) => setModel(e.target.value)}
+            onChange={async (e) => {
+              const newModel = e.target.value;
+              setModel(newModel);
+              // Fetch the model's actual context limit from Ollama
+              try {
+                const res = await fetch(`/api/models/${encodeURIComponent(newModel)}/info`);
+                if (res.ok) {
+                  const data = await res.json();
+                  dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.contextLimit ?? null });
+                }
+              } catch {
+                // Silently ignore
+              }
+            }}
             style={inputStyle}
           >
             <option value="">Select a model...</option>

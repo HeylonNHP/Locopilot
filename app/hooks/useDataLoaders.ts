@@ -26,6 +26,21 @@ export function useDataLoaders(refs: StableRefs) {
     }
   }, [dispatch]);
 
+  /**
+   * Fetches the model's actual context limit from Ollama and applies the clamp.
+   */
+  const loadModelContextLimit = async (modelName: string) => {
+    try {
+      const res = await fetch(`/api/models/${encodeURIComponent(modelName)}/info`);
+      if (res.ok) {
+        const data = await res.json();
+        dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.contextLimit ?? null });
+      }
+    } catch {
+      // Silently ignore – model context limit will remain null
+    }
+  };
+
   // Optimistic selection: mark the session immediately and discard stale responses.
   const loadSessionMessages = useCallback(async (sessionId: number) => {
     const requestId = sessionLoadRequestIdRef.current + 1;
@@ -38,6 +53,9 @@ export function useDataLoaders(refs: StableRefs) {
       const data = await res.json();
       if (sessionLoadRequestIdRef.current !== requestId) return;
       if (data.messages) dispatch({ type: 'SET_MESSAGES', messages: data.messages });
+      if (data.session?.model) {
+        await loadModelContextLimit(data.session.model);
+      }
       if (data.session?.last_total_tokens && data.session?.last_prompt_eval_count !== undefined && data.session?.last_eval_count !== undefined) {
         dispatch({
           type: 'SET_TOKEN_STATS',
@@ -67,7 +85,10 @@ export function useDataLoaders(refs: StableRefs) {
         dispatch({ type: 'SET_MODELS', models: modelList });
         if (!refs.modelRef.current && modelList.length > 0) {
           const firstModel = typeof modelList[0] === 'string' ? modelList[0] : (modelList[0].name ?? '');
-          if (firstModel) dispatch({ type: 'SET_MODEL', model: firstModel });
+          if (firstModel) {
+            dispatch({ type: 'SET_MODEL', model: firstModel });
+            await loadModelContextLimit(firstModel);
+          }
         }
       }
     } catch {
@@ -95,11 +116,16 @@ export function useDataLoaders(refs: StableRefs) {
             webSearch: config.webSearch ?? state.webSearch,
           },
         });
+        // Fetch and apply model context limit after config is loaded
+        const modelName = config.model || config.lastModel || refs.modelRef.current;
+        if (modelName) {
+          await loadModelContextLimit(modelName);
+        }
       }
     } catch {
       // Silently ignore
     }
   };
 
-  return { loadSessions, loadSessionMessages, loadModels, loadConfig };
+  return { loadSessions, loadSessionMessages, loadModels, loadConfig, loadModelContextLimit };
 }

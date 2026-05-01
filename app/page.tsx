@@ -32,7 +32,7 @@ export default function Home() {
   const refs = useStableRefs(state);
 
   // Data loading helpers
-  const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
+  const { loadSessions, loadSessionMessages, loadModels, loadConfig, loadModelContextLimit } = useDataLoaders(refs);
 
   // SSE streaming
   const { sendChatMessage, replayBufferedEvents } = useChatStream(refs, abortRef, loadSessions);
