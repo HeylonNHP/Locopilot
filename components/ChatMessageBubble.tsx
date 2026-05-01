@@ -30,16 +30,8 @@ export default function ChatMessageBubble({ message }: Props) {
   
   if (message.role === 'user') {
     return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
-        <div style={{
-          maxWidth: '70%',
-          padding: '10px 16px',
-          borderRadius: '16px 16px 4px 16px',
-          background: 'var(--accent)',
-          color: 'white',
-          fontSize: '14px',
-          lineHeight: '1.5',
-        }}>
+      <div className="bubble-user-wrap">
+        <div className="bubble-user">
           {message.content}
         </div>
       </div>
@@ -48,23 +40,9 @@ export default function ChatMessageBubble({ message }: Props) {
   
   if (message.role === 'tool') {
     return (
-      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '4px' }}>
-        <div style={{
-          maxWidth: '90%',
-          borderRadius: '8px',
-          background: 'var(--bg-tertiary)',
-          border: '1px solid #333',
-          overflow: 'hidden',
-        }}>
-          <div style={{
-            padding: '8px 12px',
-            fontFamily: 'monospace',
-            fontSize: '12px',
-            color: 'var(--text-secondary)',
-            whiteSpace: 'pre-wrap',
-            overflow: 'auto',
-            maxHeight: '200px',
-          }}>
+      <div className="bubble-tool-wrap">
+        <div className="bubble-tool">
+          <div className="bubble-tool-content">
             {message.content}
           </div>
         </div>
@@ -74,19 +52,8 @@ export default function ChatMessageBubble({ message }: Props) {
   
   if (message.role === 'system') {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '12px' }}>
-        <div style={{
-          maxWidth: '80%',
-          padding: '8px 12px',
-          borderRadius: '8px',
-          background: 'var(--bg-tertiary)',
-          border: '1px solid #444',
-          fontSize: '13px',
-          lineHeight: '1.5',
-          color: 'var(--text-secondary)',
-          whiteSpace: 'pre-wrap',
-          textAlign: 'center',
-        }}>
+      <div className="bubble-system-wrap">
+        <div className="bubble-system">
           {message.content}
         </div>
       </div>
@@ -95,30 +62,15 @@ export default function ChatMessageBubble({ message }: Props) {
 
   if (message.role === 'subagent_log') {
     return (
-      <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '4px' }}>
-        <div style={{
-          maxWidth: '90%',
-          borderRadius: '8px',
-          background: 'var(--bg-tertiary)',
-          border: '1px solid #444',
-          overflow: 'hidden',
-        }}>
+      <div className="bubble-subagent-wrap">
+        <div className="bubble-subagent">
           <button
             onClick={() => setSubagentCollapsed((c) => !c)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              width: '100%',
-              background: 'none',
-              border: 'none',
-              borderBottom: subagentCollapsed ? 'none' : '1px solid #444',
-              cursor: 'pointer',
-              padding: '6px 10px',
-              color: 'var(--text-secondary)',
-              fontSize: '12px',
-              textAlign: 'left',
-            }}
+            className={
+              subagentCollapsed
+                ? 'bubble-subagent-toggle'
+                : 'bubble-subagent-toggle bubble-subagent-toggle-open'
+            }
           >
             <span>{subagentCollapsed ? '\u25b6' : '\u25bc'}</span>
             <span>🤖 Sub-agent: {message.subagentId ?? 'unknown'}</span>
@@ -126,16 +78,7 @@ export default function ChatMessageBubble({ message }: Props) {
           {!subagentCollapsed && (
             <pre
               ref={subagentLogRef}
-              style={{
-                margin: 0,
-                padding: '8px 12px',
-                fontFamily: 'monospace',
-                fontSize: '12px',
-                color: 'var(--text-secondary)',
-                whiteSpace: 'pre-wrap',
-                overflowY: 'auto',
-                maxHeight: '300px',
-              }}
+              className="bubble-subagent-log"
             >
               {message.content || 'Waiting...'}
             </pre>
@@ -147,32 +90,17 @@ export default function ChatMessageBubble({ message }: Props) {
 
   // AI message
   return (
-    <div style={{ marginBottom: '12px' }}>
+    <div className="bubble-ai-wrap">
       {hasThinking && (
-        <div style={{ marginBottom: '4px' }}>
+        <div className="mb-4">
           <button
             onClick={() => setShowThinking(!showThinking)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-secondary)',
-              cursor: 'pointer',
-              fontSize: '12px',
-              padding: '4px 0',
-            }}
+            className="bubble-thinking-btn"
           >
             {showThinking ? 'Hide' : 'Show'} reasoning ({message.thinking?.length ?? 0} chars)
           </button>
           {showThinking && (
-            <div style={{
-              padding: '8px 12px',
-              background: 'var(--bg-tertiary)',
-              borderRadius: '8px',
-              fontSize: '13px',
-              color: 'var(--text-secondary)',
-              borderLeft: '3px solid var(--accent)',
-              marginTop: '4px',
-            }}>
+            <div className="bubble-thinking-box">
               <MarkdownMessage source={message.thinking ?? ''} className="markdown-message--thinking" />
             </div>
           )}
@@ -194,17 +122,7 @@ export default function ChatMessageBubble({ message }: Props) {
           role={hasThinking && !hasContent ? 'button' : undefined}
           tabIndex={hasThinking && !hasContent ? 0 : undefined}
           title={hasThinking && !hasContent ? (showThinking ? 'Hide reasoning' : 'Show reasoning') : undefined}
-          style={{
-            maxWidth: '80%',
-            padding: '10px 16px',
-            borderRadius: '16px 16px 16px 4px',
-            background: 'var(--bg-secondary)',
-            border: '1px solid #333',
-            fontSize: '14px',
-            lineHeight: '1.6',
-            whiteSpace: 'normal',
-            cursor: hasThinking && !hasContent ? 'pointer' : 'default',
-          }}
+          className={`bubble-ai-msg${hasThinking && !hasContent ? ' cursor-pointer' : ''}`}
         >
           {hasContent || message.role !== 'assistant' ? (
             <MarkdownMessage source={message.content} />

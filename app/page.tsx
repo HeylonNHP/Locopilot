@@ -145,14 +145,7 @@ export default function Home() {
 
   // ── Render ──────────────────────────────────────────────────────
   return (
-    <div
-      style={{
-        display: 'flex',
-        height: '100vh',
-        width: '100vw',
-        overflow: 'hidden',
-      }}
-    >
+    <div className="app-root">
       {/* Sidebar */}
       <SessionSidebar
         onNewSession={handleNewSession}
@@ -162,42 +155,17 @@ export default function Home() {
       />
 
       {/* Main chat area */}
-      <div
-        style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          minWidth: 0,
-        }}
-      >
+      <div className="main-area">
         {/* Messages area */}
-        <div
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: '16px',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
+        <div className="messages-area">
           {state.messages.length === 0 ? (
-            <div
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--text-secondary)',
-                flexDirection: 'column',
-                gap: '8px',
-              }}
-            >
-              <h1 style={{ fontSize: '24px', fontWeight: 'normal', margin: 0 }}>
+            <div className="empty-state">
+              <h1 className="font-24 font-normal m-0">
                 Locopilot
               </h1>
-              <p style={{ margin: 0 }}>Local, Private, Safe AI Assistant</p>
+              <p className="m-0">Local, Private, Safe AI Assistant</p>
               {state.models.length > 0 && (
-                <p style={{ fontSize: '13px', margin: 0 }}>
+                <p className="font-13 m-0">
                   {state.models.length} model{state.models.length !== 1 ? 's' : ''} available
                 </p>
               )}
@@ -210,29 +178,11 @@ export default function Home() {
 
           {/* Error banner */}
           {state.error && (
-            <div
-              style={{
-                padding: '12px',
-                marginTop: '8px',
-                background: '#3d1f1f',
-                border: '1px solid #e94560',
-                borderRadius: '8px',
-                color: '#ff6b81',
-                fontSize: '13px',
-              }}
-            >
+            <div className="error-banner">
               {state.error}
               <button
                 onClick={() => dispatch({ type: 'SET_ERROR', error: null })}
-                style={{
-                  marginLeft: '12px',
-                  background: 'none',
-                  border: 'none',
-                  color: '#ff6b81',
-                  cursor: 'pointer',
-                  textDecoration: 'underline',
-                  fontSize: '13px',
-                }}
+                className="error-dismiss-btn"
               >
                 Dismiss
               </button>
@@ -244,63 +194,28 @@ export default function Home() {
         </div>
 
         {/* Input area */}
-        <div
-          style={{
-            padding: '16px',
-            borderTop: '1px solid #333',
-            background: 'var(--bg-secondary)',
-          }}
-        >
+        <div className="input-area">
           {state.isStreaming ? (
-            <div
-              style={{
-                display: 'flex',
-                gap: '8px',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <span style={{ color: 'var(--accent)', fontSize: '14px' }}>
+            <div className="streaming-indicator">
+              <span className="text-accent font-14">
                 ● Streaming...
               </span>
               <button
                 onClick={handleStop}
-                style={{
-                  padding: '8px 20px',
-                  borderRadius: '8px',
-                  border: '1px solid #e94560',
-                  background: 'transparent',
-                  color: '#e94560',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                }}
+                className="stop-btn"
               >
                 Stop
               </button>
             </div>
           ) : isCompacting ? (
-            <div
-              style={{
-                display: 'flex',
-                gap: '8px',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <span style={{ color: 'var(--accent)', fontSize: '14px' }}>
+            <div className="streaming-indicator">
+              <span className="text-accent font-14">
                 ● Compacting conversation...
               </span>
             </div>
           ) : isGeneratingTitle ? (
-            <div
-              style={{
-                display: 'flex',
-                gap: '8px',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <span style={{ color: 'var(--accent)', fontSize: '14px' }}>
+            <div className="streaming-indicator">
+              <span className="text-accent font-14">
                 ● Generating session title...
               </span>
             </div>

@@ -1,0 +1,762 @@
+/* ================================================================
+   Locopilot Styles – BEM-like naming
+   Replaces all inline styles so Dark Reader will not inject
+   --darkreader-inline-* attributes.
+   ================================================================ */
+
+/* ------------------------------------------------------------------
+   CSS Custom Properties (define once on :root)
+   ------------------------------------------------------------------ */
+:root {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-tertiary: #0f3460;
+  --accent: #e94560;
+  --text-primary: #eaeaea;
+  --text-secondary: #a0a0a0;
+  --text-white: #ffffff;
+}
+
+/* ------------------------------------------------------------------
+   Layout utilities
+   ------------------------------------------------------------------ */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.flex-1 { flex: 1; }
+.flex-shrink-0 { flex-shrink: 0; }
+
+.items-center { align-items: center; }
+.items-start { align-items: flex-start; }
+.justify-center { justify-content: center; }
+.justify-end { justify-content: flex-end; }
+.justify-between { justify-content: space-between; }
+
+.gap-4 { gap: 4px; }
+.gap-6 { gap: 6px; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
+
+.w-full { width: 100%; }
+.w-260 { width: 260px; }
+.h-screen { height: 100vh; }
+.min-w-0 { min-width: 0; }
+
+.max-w-70 { max-width: 70%; }
+.max-w-80 { max-width: 80%; }
+.max-w-90 { max-width: 90%; }
+.max-w-500 { max-width: 500px; }
+
+.max-h-200 { max-height: 200px; }
+.max-h-300 { max-height: 300px; }
+.max-h-screen-90 { max-height: 90vh; }
+
+.overflow-hidden { overflow: hidden; }
+.overflow-auto { overflow: auto; }
+.overflow-y-auto { overflow-y: auto; }
+.overflow-x-auto { overflow-x: auto; }
+
+.relative { position: relative; }
+.absolute { position: absolute; }
+.fixed { position: fixed; }
+.inset-0 { inset: 0; }
+.z-10 { z-index: 10; }
+.z-1000 { z-index: 1000; }
+
+.box-border { box-sizing: border-box; }
+.outline-none { outline: none; }
+
+/* ------------------------------------------------------------------
+   Spacing
+   ------------------------------------------------------------------ */
+.p-0 { padding: 0; }
+.p-4 { padding: 4px; }
+.p-6 { padding: 6px; }
+.p-8 { padding: 8px; }
+.p-10 { padding: 10px; }
+.p-12 { padding: 12px; }
+.p-16 { padding: 16px; }
+.p-24 { padding: 24px; }
+
+.px-8 { padding-left: 8px; padding-right: 8px; }
+.px-10 { padding-left: 10px; padding-right: 10px; }
+.px-12 { padding-left: 12px; padding-right: 12px; }
+.px-16 { padding-left: 16px; padding-right: 16px; }
+.px-20 { padding-left: 20px; padding-right: 20px; }
+
+.py-6 { padding-top: 6px; padding-bottom: 6px; }
+.py-8 { padding-top: 8px; padding-bottom: 8px; }
+.py-10 { padding-top: 10px; padding-bottom: 10px; }
+.py-12 { padding-top: 12px; padding-bottom: 12px; }
+
+.m-0 { margin: 0; }
+.mb-4 { margin-bottom: 4px; }
+.mb-8 { margin-bottom: 8px; }
+.mb-12 { margin-bottom: 12px; }
+.mb-16 { margin-bottom: 16px; }
+.mt-4 { margin-top: 4px; }
+.mt-8 { margin-top: 8px; }
+.ml-12 { margin-left: 12px; }
+
+/* ------------------------------------------------------------------
+   Typography
+   ------------------------------------------------------------------ */
+.text-primary { color: var(--text-primary); }
+.text-secondary { color: var(--text-secondary); }
+.text-white { color: var(--text-white); }
+.text-accent { color: var(--accent); }
+.text-error { color: #e94560; }
+.text-error-light { color: #ff6b81; }
+.text-green { color: #4ade80; }
+.text-yellow { color: #facc15; }
+.text-red { color: #f87171; }
+
+.text-center { text-align: center; }
+.text-left { text-align: left; }
+
+.font-mono { font-family: monospace; }
+.font-inherit { font-family: inherit; }
+.font-bold { font-weight: bold; }
+.font-normal { font-weight: normal; }
+
+.font-12 { font-size: 12px; }
+.font-13 { font-size: 13px; }
+.font-14 { font-size: 14px; }
+.font-16 { font-size: 16px; }
+.font-18 { font-size: 18px; }
+.font-24 { font-size: 24px; }
+
+.line-125 { line-height: 1.25; }
+.line-15 { line-height: 1.5; }
+.line-16 { line-height: 1.6; }
+.line-165 { line-height: 1.65; }
+
+.no-wrap { white-space: nowrap; }
+.pre-wrap { white-space: pre-wrap; }
+
+.text-overflow-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------
+   Borders
+   ------------------------------------------------------------------ */
+.radius-4 { border-radius: 4px; }
+.radius-6 { border-radius: 6px; }
+.radius-8 { border-radius: 8px; }
+.radius-12 { border-radius: 12px; }
+.radius-16 { border-radius: 16px; }
+
+.border-none { border: none; }
+
+.border-333 { border: 1px solid #333; }
+.border-444 { border: 1px solid #444; }
+.border-555 { border: 1px solid #555; }
+
+.border-dashed-555 { border: 1px dashed #555; }
+
+.border-bottom-333 { border-bottom: 1px solid #333; }
+.border-bottom-444 { border-bottom: 1px solid #444; }
+.border-top-333 { border-top: 1px solid #333; }
+
+.border-left-accent { border-left: 3px solid var(--accent); }
+
+/* ------------------------------------------------------------------
+   Backgrounds
+   ------------------------------------------------------------------ */
+.bg-primary { background: var(--bg-primary); }
+.bg-secondary { background: var(--bg-secondary); }
+.bg-tertiary { background: var(--bg-tertiary); }
+.bg-accent { background: var(--accent); }
+.bg-transparent { background: transparent; }
+.bg-overlay { background: rgba(0, 0, 0, 0.6); }
+.bg-dark-error { background: #3d1f1f; }
+
+/* ------------------------------------------------------------------
+   Cursors
+   ------------------------------------------------------------------ */
+.cursor-pointer { cursor: pointer; }
+.cursor-default { cursor: default; }
+.block { display: block; }
+.cursor-not-allowed { cursor: not-allowed; }
+.cursor-progress { cursor: progress; }
+
+/* ==================================================================
+   Component: SessionSidebar
+   ================================================================== */
+.sidebar {
+  width: 260px;
+  background: var(--bg-secondary);
+  border-right: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid #333;
+}
+
+.sidebar-title {
+  font-size: 18px;
+  margin: 0 0 12px 0;
+}
+
+.sidebar-btn-new {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px dashed #555;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.sidebar-btn-settings {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #555;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.sidebar-empty {
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 8px;
+  text-align: center;
+}
+
+.sidebar-footer {
+  padding: 12px 16px;
+  border-top: 1px solid #333;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.opacity-50 { opacity: 0.5; }
+
+/* sidebar-footer-item uses the same div, no extra styles needed */
+
+/* ==================================================================
+   Component: ChatMessageBubble
+   ================================================================== */
+.bubble-user-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.bubble-user {
+  max-width: 70%;
+  padding: 10px 16px;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--accent);
+  color: white;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bubble-tool-wrap {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 4px;
+}
+
+.bubble-tool {
+  max-width: 90%;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid #333;
+  overflow: hidden;
+}
+
+.bubble-tool-content {
+  padding: 8px 12px;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 200px;
+}
+
+.bubble-system-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.bubble-system {
+  max-width: 80%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid #444;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  text-align: center;
+}
+
+.bubble-subagent-wrap {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 4px;
+}
+
+.bubble-subagent {
+  max-width: 90%;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid #444;
+  overflow: hidden;
+}
+
+.bubble-subagent-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+}
+
+.bubble-subagent-toggle-open {
+  border-bottom: 1px solid #444;
+}
+
+.bubble-subagent-log {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+.bubble-ai-wrap {
+  margin-bottom: 12px;
+}
+
+.bubble-thinking-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.bubble-thinking-box {
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-left: 3px solid var(--accent);
+  margin-top: 4px;
+}
+
+.bubble-ai-msg {
+  max-width: 80%;
+  padding: 10px 16px;
+  border-radius: 16px 16px 16px 4px;
+  background: var(--bg-secondary);
+  border: 1px solid #333;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: normal;
+}
+
+/* ==================================================================
+   Component: ChatInput
+   ================================================================== */
+.chat-input-wrap {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input-field-wrap {
+  flex: 1;
+  position: relative;
+}
+
+.chat-input-suggestions {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid #444;
+  border-radius: 8px;
+  z-index: 10;
+  overflow: hidden;
+}
+
+.chat-input-suggestion-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chat-input-suggestion-active {
+  background: var(--bg-tertiary);
+}
+
+.chat-input-suggestion-cmd {
+  font-family: monospace;
+}
+
+.chat-input-suggestion-desc {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.chat-input-textarea {
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #444;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 14px;
+  resize: none;
+  overflow-y: hidden;
+  max-height: 200px;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.chat-input-send {
+  padding: 12px 24px;
+  border-radius: 8px;
+  border: none;
+  color: white;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.chat-input-send-active {
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.chat-input-send-disabled {
+  background: #555;
+  cursor: not-allowed;
+}
+
+/* ==================================================================
+   Component: StatusBar
+   ================================================================== */
+.statusbar {
+  padding: 6px 16px;
+  border-top: 1px solid #333;
+  background: var(--bg-secondary);
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.statusbar-streaming {
+  color: var(--accent);
+}
+
+.statusbar-token-green {
+  color: #4ade80;
+}
+
+.statusbar-token-yellow {
+  color: #facc15;
+}
+
+.statusbar-token-red {
+  color: #f87171;
+}
+
+/* ==================================================================
+   Component: ApprovalModal
+   ================================================================== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 500px;
+  width: 90%;
+  border: 1px solid #444;
+}
+
+.modal-title {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+}
+
+.modal-command-box {
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.modal-command-text {
+  padding: 12px;
+  font-family: monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.modal-btn-reject {
+  padding: 8px 20px;
+  border-radius: 8px;
+  border: 1px solid #555;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.modal-btn-approve {
+  padding: 8px 20px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+/* ==================================================================
+   Component: SettingsModal
+   ================================================================== */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-panel {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  width: 480px;
+  max-width: 90%;
+  max-height: 90vh;
+  border: 1px solid #444;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-scroll {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.settings-heading {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+}
+
+.settings-error {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #e94560;
+  background: #3d1f1f;
+  color: #ffb3c1;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-row {
+  margin-bottom: 16px;
+}
+
+.settings-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.settings-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.settings-check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-check-label {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.settings-btn-cancel {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid #555;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.settings-btn-save {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  color: white;
+  font-weight: bold;
+}
+
+.settings-btn-save-active {
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.settings-btn-save-disabled {
+  background: #7a4a56;
+  cursor: progress;
+}
+
+/* ==================================================================
+   Component: App Layout (page.tsx)
+   ================================================================== */
+.app-root {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.main-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.messages-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-direction: column;
+  gap: 8px;
+}
+
+.input-area {
+  padding: 16px;
+  border-top: 1px solid #333;
+  background: var(--bg-secondary);
+}
+
+.streaming-indicator {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+.error-banner {
+  padding: 12px;
+  margin-top: 8px;
+  background: #3d1f1f;
+  border: 1px solid #e94560;
+  border-radius: 8px;
+  color: #ff6b81;
+  font-size: 13px;
+}
+
+.error-dismiss-btn {
+  margin-left: 12px;
+  background: none;
+  border: none;
+  color: #ff6b81;
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: 13px;
+}
+
+/* ==================================================================
+   Component: Stop Button
+   ================================================================== */
+.stop-btn {
+  padding: 8px 20px;
+  border-radius: 8px;
+  border: 1px solid #e94560;
+  background: transparent;
+  color: #e94560;
+  cursor: pointer;
+  font-size: 13px;
+}

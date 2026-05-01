@@ -29,52 +29,28 @@ export default function SessionSidebar({ onNewSession, onSelectSession, onDelete
   };
   
   return (
-    <div style={{
-      width: '260px',
-      background: 'var(--bg-secondary)',
-      borderRight: '1px solid #333',
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-    }}>
-      <div style={{ padding: '16px', borderBottom: '1px solid #333' }}>
-        <h2 style={{ fontSize: '18px', margin: '0 0 12px 0' }}>Locopilot</h2>
-        <div style={{ display: 'flex', gap: '8px' }}>
+    <div className="sidebar">
+      <div className="sidebar-header">
+        <h2 className="sidebar-title">Locopilot</h2>
+        <div className="flex gap-8">
           <button
             onClick={onNewSession}
-            style={{
-              flex: 1,
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: '1px dashed #555',
-              background: 'transparent',
-              color: 'var(--text-secondary)',
-              cursor: 'pointer',
-              fontSize: '13px',
-            }}
+            className="sidebar-btn-new"
           >
             + New chat
           </button>
           <button
             onClick={onSettings}
             title="Settings"
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: '1px solid #555',
-              background: 'transparent',
-              color: 'var(--text-secondary)',
-              cursor: 'pointer',
-              fontSize: '13px',
-            }}
+            className="sidebar-btn-settings"
           >
             ⚙
           </button>
         </div>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+      <div className="flex-1 overflow-y-auto p-8">
         {state.sessions.length === 0 ? (
-          <p style={{ color: 'var(--text-secondary)', fontSize: '13px', padding: '8px', textAlign: 'center' }}>
+          <p className="sidebar-empty">
             No sessions yet
           </p>
         ) : (
@@ -94,23 +70,9 @@ export default function SessionSidebar({ onNewSession, onSelectSession, onDelete
                   onKeyDown={(event) => handleActionKeyDown(event, () => onSelectSession(session.id))}
                   onPointerUp={clearPointerFocus}
                   title={session.name || `Session ${session.id}`}
-                  className="session-row__action"
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    padding: '10px 12px',
-                    color: 'var(--text-primary)',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    textAlign: 'left',
-                  }}
+                  className="session-row__action flex-1 min-w-0 px-12 py-10 text-primary cursor-pointer font-13 text-left"
                 >
-                  <span style={{
-                    display: 'block',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}>
+                  <span className="block text-overflow-ellipsis">
                     {session.name || `Session ${session.id}`}
                   </span>
                 </div>
@@ -121,15 +83,7 @@ export default function SessionSidebar({ onNewSession, onSelectSession, onDelete
                   onKeyDown={(event) => handleActionKeyDown(event, () => onDeleteSession(session.id))}
                   onPointerUp={clearPointerFocus}
                   title="Delete session"
-                  className="session-row__action"
-                  style={{
-                    color: 'var(--text-secondary)',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    padding: '10px 12px 10px 4px',
-                    opacity: 0.5,
-                    flexShrink: 0,
-                  }}
+                  className="session-row__action text-secondary cursor-pointer font-14 py-10 px-12 flex-shrink-0 opacity-50"
                 >
                   ×
                 </div>
@@ -140,13 +94,7 @@ export default function SessionSidebar({ onNewSession, onSelectSession, onDelete
       </div>
       <div
         onClick={onSettings}
-        style={{
-          padding: '12px 16px',
-          borderTop: '1px solid #333',
-          fontSize: '12px',
-          color: 'var(--text-secondary)',
-          cursor: 'pointer',
-        }}
+        className="sidebar-footer"
         title="Click to open settings"
       >
         {state.model && <div>Model: {state.model}</div>}

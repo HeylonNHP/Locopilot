@@ -20,29 +20,20 @@ export default function StatusBar() {
 
   const pct = tokenLimit > 0 ? Math.round((totalTokens / tokenLimit) * 100) : 0;
 
-  let color = '#4ade80'; // green
-  if (pct >= 90) color = '#f87171'; // red
-  else if (pct >= 75) color = '#facc15'; // yellow
+  let tokenColorClass = 'statusbar-token-green';
+  if (pct >= 90) tokenColorClass = 'statusbar-token-red';
+  else if (pct >= 75) tokenColorClass = 'statusbar-token-yellow';
 
   // Mark whether we're showing an estimate or authoritative count
   const isEstimated = tokenStats === null;
   const sourceLabel = isEstimated ? '(est)' : '';
 
   return (
-    <div style={{
-      padding: '6px 16px',
-      borderTop: '1px solid #333',
-      background: 'var(--bg-secondary)',
-      fontSize: '12px',
-      color: 'var(--text-secondary)',
-      display: 'flex',
-      gap: '16px',
-      alignItems: 'center',
-    }}>
+    <div className="statusbar">
       {isStreaming && (
-        <span style={{ color: 'var(--accent)' }}>● Streaming</span>
+        <span className="statusbar-streaming">● Streaming</span>
       )}
-      <span style={{ color }}>
+      <span className={tokenColorClass}>
         {totalTokens}/{tokenLimit} tokens ({pct}%) {sourceLabel}
       </span>
       {model && <span>Model: {model}</span>}

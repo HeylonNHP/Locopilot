@@ -128,42 +128,22 @@ export default function ChatInput({ onSend, disabled }: Props) {
   };
 
   return (
-    <div style={{ display: 'flex', gap: '8px' }}>
-      <div style={{ flex: 1, position: 'relative' }}>
+    <div className="chat-input-wrap">
+      <div className="chat-input-field-wrap">
         {showSuggestions && (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: 'calc(100% + 8px)',
-              left: 0,
-              right: 0,
-              background: 'var(--bg-secondary)',
-              border: '1px solid #444',
-              borderRadius: '8px',
-              zIndex: 10,
-              overflow: 'hidden',
-            }}
-          >
+          <div className="chat-input-suggestions">
             {filtered.map((s, i) => (
               <div
                 key={s.command}
                 onClick={() => applySuggestion(s.command)}
                 onMouseEnter={() => setSelectedIndex(i)}
-                style={{
-                  padding: '8px 12px',
-                  cursor: 'pointer',
-                  background: i === selectedIndex ? 'var(--bg-tertiary)' : 'transparent',
-                  color: 'var(--text-primary)',
-                  fontSize: '14px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
+                className={
+                  'chat-input-suggestion-item' +
+                  (i === selectedIndex ? ' chat-input-suggestion-active' : '')
+                }
               >
-                <span style={{ fontFamily: 'monospace' }}>{s.command}</span>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
-                  {s.description}
-                </span>
+                <span className="chat-input-suggestion-cmd">{s.command}</span>
+                <span className="chat-input-suggestion-desc">{s.description}</span>
               </div>
             ))}
           </div>
@@ -176,36 +156,16 @@ export default function ChatInput({ onSend, disabled }: Props) {
           placeholder={disabled ? 'Waiting for response...' : 'Type a message...'}
           rows={1}
           disabled={disabled}
-          style={{
-            width: '100%',
-            padding: '12px',
-            borderRadius: '8px',
-            border: '1px solid #444',
-            background: 'var(--bg-tertiary)',
-            color: 'var(--text-primary)',
-            fontSize: '14px',
-            resize: 'none',
-            overflowY: 'hidden',
-            maxHeight: `${MAX_TEXTAREA_HEIGHT}px`,
-            fontFamily: 'inherit',
-            outline: 'none',
-            boxSizing: 'border-box',
-          }}
+          className="chat-input-textarea"
         />
       </div>
       <button
         onClick={handleSubmit}
         disabled={disabled || !input.trim()}
-        style={{
-          padding: '12px 24px',
-          borderRadius: '8px',
-          border: 'none',
-          background: disabled || !input.trim() ? '#555' : 'var(--accent)',
-          color: 'white',
-          cursor: disabled || !input.trim() ? 'not-allowed' : 'pointer',
-          fontSize: '14px',
-          fontWeight: 'bold',
-        }}
+        className={
+          'chat-input-send' +
+          (disabled || !input.trim() ? ' chat-input-send-disabled' : ' chat-input-send-active')
+        }
       >
         Send
       </button>
