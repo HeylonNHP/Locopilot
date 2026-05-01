@@ -260,6 +260,17 @@ export function useSlashCommands({
             if (!Array.isArray(data?.messages)) throw new Error('Compaction returned an invalid message list.');
 
             dispatch({ type: 'SET_MESSAGES', messages: data.messages as ChatMessage[] });
+            if (typeof data?.stats?.newTokenCount === 'number') {
+              dispatch({
+                type: 'SET_TOKEN_STATS',
+                stats: {
+                  promptEvalCount: data.stats.newTokenCount,
+                  evalCount: 0,
+                  totalTokens: data.stats.newTokenCount,
+                  tokenLimit: refs.numCtxRef.current,
+                },
+              });
+            }
             addSystem(`⚡ Conversation compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`);
 
             if (typeof data?.stats?.newTokenCount === 'number' && data.stats.newTokenCount > refs.numCtxRef.current) {

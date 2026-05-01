@@ -135,7 +135,17 @@ export function useChatStream(
           if (Array.isArray(data.messages)) {
             dispatch({ type: 'SET_MESSAGES', messages: data.messages });
           }
-          dispatch({ type: 'CLEAR_TOKEN_STATS' });
+          if (typeof data.stats?.newTokenCount === 'number') {
+            dispatch({
+              type: 'SET_TOKEN_STATS',
+              stats: {
+                promptEvalCount: data.stats.newTokenCount,
+                evalCount: 0,
+                totalTokens: data.stats.newTokenCount,
+                tokenLimit: data.tokenLimit ?? refs.numCtxRef.current ?? state.numCtx,
+              },
+            });
+          }
           dispatch({
             type: 'ADD_MESSAGE',
             message: {

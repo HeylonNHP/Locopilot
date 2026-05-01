@@ -93,6 +93,31 @@ async function autoCompactSubAgentIfNeeded(
         return false;
     }
 
+    // ── Guard: don't compact until there is enough history ───────────────────
+    // When a sub-agent has only system + orchestrator prompt + a single
+    // assistant response (or fewer), splitHistoryForCompaction can produce an
+    // empty messagesToSummarise array because the sliding-window preservation
+    // logic consumes everything after the latest user message (which sits at
+    // index 0 of historyMessages).  The anchor-rescue fallback then has nothing
+    // to put into messagesToSummarise, so countMessagesTokens([], model) returns
+    // exactly 2 — the tokenizer's +2 overhead — yielding the cryptic error:
+    //   "The conversation history is too short to compact (~2 tokens)."
+    //
+    // MIN_SUMMARISE_TOKENS is 200, so a short sub-agent history (which is
+    // structurally different from the main chat because it starts with a single
+    // user prompt and builds assistant/tool turns from there) will always trip
+    // the guard and abort.  Rather than letting it reach compactHistory and
+    // crash, we bail early here.  A sub-agent needs at least system + user +
+    // assistant + one tool result (4 messages total) before compaction is
+    // meaningful and the split logic has enough material to work with.
+    //
+    // See also the matching guard in app/api/chat/route.ts and the fallback
+    // in services/compact.ts (anchorIndex === 0 branch).
+    // ──────────────────────────────────────────────────────────────────────────
+    if (messages.length < 4) {
+        return false;
+    }
+
     const tokensUsed = countMessagesTokens(messages, config.model);
     const pct = (tokensUsed / config.numCtx) * 100;
     if (pct < AUTO_COMPACT_THRESHOLD_PCT) {

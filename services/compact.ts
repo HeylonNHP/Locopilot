@@ -373,6 +373,37 @@ export async function compactHistory(
         throw new Error('Cannot compact an empty message history.');
     }
     const historyMessages = messages.slice(1);
+    // ── Guard against degenerate "~2 tokens" crash ────────────────────────────
+    // Subagents (and any short-history code path) can reach this point with
+    // messages === [system] — i.e. zero history beyond the system prompt.
+    // splitHistoryForCompaction would then return an empty messagesToSummarise,
+    // and countMessagesTokens([], model) returns exactly 2 (the +2 overhead in
+    // the tokenizer).  That produces the cryptic error:
+    //   "The conversation history is too short to compact (~2 tokens)."
+    // which is impossible to debug because 2 tokens is nowhere near the
+    // MIN_SUMMARISE_TOKENS threshold of 200.
+    //
+    // The deeper root: when the latest user message is the FIRST history entry
+    // (index 0), the anchor-rescue logic in splitHistoryForCompaction tries to
+    // preserve it verbatim.  If the preservation loop consumed everything after
+    // it, there is nothing left to summarise — prePromptMessages is empty and
+    // postPromptPreWindowMessages is also empty — so the fallback returns an
+    // empty messagesToSummarise array.
+    //
+    // The fix has two layers:
+    // 1. Callers (autoCompactSubAgentIfNeeded, the web chat route) now refuse
+    //    to compact when fewer than 4 messages exist (system + at least one
+    //    user/assistant/tool exchange), which is the practical guard.
+    // 2. Below, if historyMessages is empty despite that guard, we fail fast
+    //    with a meaningful error instead of letting the empty-array propagate.
+    //
+    // For the edge case where anchorIndex === 0 and the split IS empty, the
+    // expansion block further down falls back to summarising the whole
+    // historyMessages array rather than silently doing nothing and crashing.
+    // ──────────────────────────────────────────────────────────────────────────
+    if (historyMessages.length === 0) {
+        throw new Error('Cannot compact: conversation has no content beyond the system prompt.');
+    }
     let historySplit = splitHistoryForCompaction(historyMessages, model, numCtx, aggressiveFactor);
 
     // If the split leaves too little content to summarize, expand the summarised
@@ -396,9 +427,20 @@ export async function compactHistory(
                 preservedRecentTokens: 0,
             };
         } else {
-            // Latest user message is the first history entry. Keep the anchored
-            // split intact so the later too-short guard can fail closed instead
-            // of compacting away the prompt.
+            // anchorIndex === 0: the first history message is the latest user prompt.
+            // There is no pre-anchor history, but if the split left nothing to
+            // summarise (which can happen when the preservation loop consumed
+            // everything), fall back to summarising the whole history so we don't
+            // abort with a confusing "~2 tokens" error.
+            if (historySplit.messagesToSummarise.length === 0) {
+                historySplit = {
+                    messagesToSummarise: historyMessages,
+                    preservedRecentMessages: [],
+                    preservedRecentTokens: 0,
+                };
+            }
+            // Otherwise keep the anchored split intact and let the too-short guard
+            // decide whether to abort.
         }
     }
 

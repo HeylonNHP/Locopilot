@@ -67,7 +67,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             ? sessionId
             : null;
         if (parsedSessionId) {
-            updateSessionMessages(parsedSessionId, result.newMessages);
+            updateSessionMessages(parsedSessionId, result.newMessages, {
+                promptEvalCount: result.stats.newTokenCount,
+                evalCount: 0,
+            });
         }
 
         return NextResponse.json({
