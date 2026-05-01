@@ -117,6 +117,20 @@ export function useChatStream(
           });
           break;
 
+        case 'status':
+          if (data.tokensUsed !== undefined && data.tokensUsed !== null) {
+            dispatch({
+              type: 'SET_TOKEN_STATS',
+              stats: {
+                totalTokens: data.tokensUsed,
+                tokenLimit: data.tokenLimit,
+                promptEvalCount: 0,
+                evalCount: data.tokensUsed,
+              },
+            });
+          }
+          break;
+
         case 'compact':
           if (Array.isArray(data.messages)) {
             dispatch({ type: 'SET_MESSAGES', messages: data.messages });
@@ -137,6 +151,7 @@ export function useChatStream(
             bufferOwnerSessionIdRef.current = data.sessionId;
             dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });
           }
+          if (data.tokenStats) dispatch({ type: 'SET_TOKEN_STATS', stats: data.tokenStats });
           break;
 
         case 'error':

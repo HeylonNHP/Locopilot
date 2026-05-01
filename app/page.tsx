@@ -111,6 +111,7 @@ export default function Home() {
     // Abort any in-flight stream so its events don't land in the new session.
     abortRef.current?.abort();
     dispatch({ type: 'CLEAR_MESSAGES' });
+    dispatch({ type: 'CLEAR_TOKEN_STATS' });
     dispatch({ type: 'SET_CURRENT_SESSION', id: null });
     await loadSessions();
   }, [dispatch, loadSessions, abortRef]);

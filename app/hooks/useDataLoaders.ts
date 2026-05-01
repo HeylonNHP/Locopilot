@@ -38,6 +38,19 @@ export function useDataLoaders(refs: StableRefs) {
       const data = await res.json();
       if (sessionLoadRequestIdRef.current !== requestId) return;
       if (data.messages) dispatch({ type: 'SET_MESSAGES', messages: data.messages });
+      if (data.session?.last_total_tokens && data.session?.last_prompt_eval_count !== undefined && data.session?.last_eval_count !== undefined) {
+        dispatch({
+          type: 'SET_TOKEN_STATS',
+          stats: {
+            promptEvalCount: data.session.last_prompt_eval_count ?? 0,
+            evalCount: data.session.last_eval_count ?? 0,
+            totalTokens: data.session.last_total_tokens ?? 0,
+            tokenLimit: state.numCtx,
+          },
+        });
+      } else {
+        dispatch({ type: 'CLEAR_TOKEN_STATS' });
+      }
     } catch {
       // Silently ignore
     }

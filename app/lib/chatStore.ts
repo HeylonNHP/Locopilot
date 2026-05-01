@@ -64,6 +64,12 @@ interface ChatState {
   compactionModel: string;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
+  tokenStats: {
+    promptEvalCount: number;
+    evalCount: number;
+    totalTokens: number;
+    tokenLimit: number;
+  } | null;
 }
 
 type ChatAction =
@@ -82,7 +88,9 @@ type ChatAction =
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
   | { type: 'SHOW_APPROVAL'; command: { name: string; args: any } | null; requestId?: string }
-  | { type: 'CLEAR_MESSAGES' };
+  | { type: 'CLEAR_MESSAGES' }
+  | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats'] }
+  | { type: 'CLEAR_TOKEN_STATS' };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -232,6 +240,10 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     case 'CLEAR_MESSAGES':
       return { ...state, messages: [] };
+    case 'SET_TOKEN_STATS':
+      return { ...state, tokenStats: action.stats };
+    case 'CLEAR_TOKEN_STATS':
+      return { ...state, tokenStats: null };
     default:
       return state;
   }
@@ -259,6 +271,7 @@ const initialState: ChatState = {
     resultsPerQuery: 3,
     perPageCharLimit: 5000,
   },
+  tokenStats: null,
 };
 
 const ChatContext = createContext<{
