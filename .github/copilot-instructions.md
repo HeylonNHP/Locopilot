@@ -478,3 +478,18 @@ Feature summary:
   - Files: `tools/impl/runCommandTool.ts`, `app/api/chat/route.ts`, `.github/copilot-instructions.md`
   - Summary: Replaced the module-level singleton `processRegistry` Map and `nextProcessId` counter with an `AsyncLocalStorage`-scoped per-request state. Each HTTP request now gets its own isolated `Map<number, ProcessEntry>` and ID counter, preventing cross-request data leakage if one tab's LLM discovers another tab's process ID. The CLI path falls back to a global registry for compatibility. Added `enterRequestScope()` which the web SSE route calls at the start of every streaming response.
   - Intent: Prevent concurrent browser tabs from reading each other's running-command stdout/stderr via `check_process_output`.
+
+- 2026-05-02: Shared session write queue for /api/compact route
+  - Files: `app/lib/sessionWriteQueue.ts` (new), `app/api/chat/route.ts`, `app/api/compact/route.ts`, `.github/copilot-instructions.md`
+  - Summary: Extracted the per-session write queue logic from `chat/route.ts` into a shared `app/lib/sessionWriteQueue.ts` module. Both the chat SSE route and the `/api/compact` route now import `enqueueSessionWrite()` from the same shared queue, ensuring concurrent compaction and chat-turn saves for the same session ID are serialised.
+  - Intent: Prevent a manual `/compact` from a second browser tab clobbering an auto-compaction or chat-turn save from the first tab.
+
+- 2026-05-02: Scoped content compactor debug data to append-only log
+  - Files: `tools/impl/contentCompactor.ts`, `.github/copilot-instructions.md`
+  - Summary: Replaced the module-level `let lastWebCompactionDebug: string[]` with an append-only `webCompactionDebugLog: WebCompactionDebugEntry[]` (max 10 entries). Concurrent compaction operations each push their own entry with a unique ID and timestamp instead of overwriting a single variable. `getLastWebCompactionDebug()` returns the most recently completed entry's lines.
+  - Intent: Prevent stale or cross-request debug data in conversation dumps when multiple browser tabs trigger web content compaction simultaneously.
+
+- 2026-05-02: Documented activeAdapter concurrency limitation
+  - Files: `services/llm.ts`, `.github/copilot-instructions.md`
+  - Summary: Added JSDoc comments to `activeAdapter` and `setLlmAdapter()` documenting that the adapter is a module-level singleton and should only be swapped when no HTTP requests are in-flight, as in-flight requests would see the new adapter mid-stream.
+  - Intent: Make the concurrency contract explicit for future developers who might add runtime adapter switching.

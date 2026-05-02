@@ -12,12 +12,26 @@ import type {
     ToolDefinition,
 } from './adapters/llmAdapter';
 
+/**
+ * The active adapter is a module-level singleton. Changing it at runtime
+ * (via setLlmAdapter) while concurrent HTTP requests are in-flight could
+ * cause those requests to unexpectedly switch to a different LLM backend
+ * mid-stream. Currently the adapter is set once at startup and never
+ * changed, so this is only a latent risk for multi-WebUI concurrency.
+ */
 let activeAdapter: LlmAdapter = ollamaAdapter;
 
 export function getLlmAdapter(): LlmAdapter {
     return activeAdapter;
 }
 
+/**
+ * Swap the active LLM adapter at runtime.
+ *
+ * NOTE: This is not thread-safe — do not call while HTTP requests are
+ * in-flight, as they would see the new adapter mid-stream. Currently
+ * only called once at startup.
+ */
 export function setLlmAdapter(adapter: LlmAdapter): void {
     activeAdapter = adapter;
 }

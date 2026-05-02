@@ -25,8 +25,9 @@ import { TOOLS, handleToolCall, sanitize, type RequestContext, type ToolOutputSi
 import { waitForApproval, resolveApproval } from '../../lib/approvalRegistry';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
-import { createSession, renameSession, updateSessionMessages } from '../../../history';
+import { createSession, renameSession } from '../../../history';
 import { compactHistory } from '../../../services/compact';
+import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 import { countMessagesTokens } from '../../../services/tokenizer';
 import { AUTO_COMPACT_THRESHOLD_PCT } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
@@ -38,27 +39,6 @@ export const dynamic = 'force-dynamic';
 
 const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 3;
 const CHANNEL_LABEL_ONLY_PATTERN = /^\s*(?:thought|analysis|final|commentary)\s*$/i;
-
-/**
- * Per-session write queue — serializes updateSessionMessages calls for the
- * same session so concurrent HTTP requests targeting the same session ID
- * don't overwrite each other's changes.
- */
-const sessionWriteQueues = new Map<number, Promise<void>>();
-
-async function enqueueSessionWrite(sessionId: number, writeFn: () => void): Promise<void> {
-    const prev = sessionWriteQueues.get(sessionId) ?? Promise.resolve();
-    const next = prev.then(
-        () => { writeFn(); },
-        () => { writeFn(); }, // Also run if the previous write failed.
-    );
-    sessionWriteQueues.set(sessionId, next);
-    return next.finally(() => {
-        if (sessionWriteQueues.get(sessionId) === next) {
-            sessionWriteQueues.delete(sessionId);
-        }
-    });
-}
 
 function sanitizeAssistantTextFragment(text: string): string {
     const cleaned = stripSpecialTokens(text ?? '');
@@ -544,12 +524,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                         renameSession(currentSessionId, content.trim().slice(0, 60) || 'Chat');
                     }
 
-                    await enqueueSessionWrite(currentSessionId, () => {
-                        updateSessionMessages(currentSessionId, currentMessages, {
-                            promptEvalCount,
-                            evalCount,
-                        });
-                    });
+                    await enqueueSessionWrite(
+                        currentSessionId,
+                        currentMessages,
+                        { promptEvalCount, evalCount },
+                    );
 
                     const totalTokens = promptEvalCount + evalCount;
 

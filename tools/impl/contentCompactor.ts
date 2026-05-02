@@ -62,10 +62,20 @@ const MIN_RETRY_OUTPUT_SCALE = 0.8;
 const MIN_CHARS_PER_TOKEN = 2;
 const MAX_CHARS_PER_TOKEN = 6;
 
-let lastWebCompactionDebug: string[] = [];
+interface WebCompactionDebugEntry {
+    id: number;
+    lines: string[];
+    timestamp: number;
+}
+
+const webCompactionDebugLog: WebCompactionDebugEntry[] = [];
+let nextDebugId = 1;
+
+const MAX_DEBUG_ENTRIES = 10;
 
 export function getLastWebCompactionDebug(): string[] {
-    return [...lastWebCompactionDebug];
+    const last = webCompactionDebugLog[webCompactionDebugLog.length - 1];
+    return last ? [...last.lines] : [];
 }
 
 function buildCompactionPrompt(content: string, charLimit: number, attempt: number): string {
@@ -175,7 +185,14 @@ export class ContentCompactor {
             this.logCompactionComplete(content.length, finalResult.length);
             return finalResult;
         } finally {
-            lastWebCompactionDebug = [...this.debugLines];
+            webCompactionDebugLog.push({
+                id: nextDebugId++,
+                lines: [...this.debugLines],
+                timestamp: Date.now(),
+            });
+            if (webCompactionDebugLog.length > MAX_DEBUG_ENTRIES) {
+                webCompactionDebugLog.shift();
+            }
         }
     }
 

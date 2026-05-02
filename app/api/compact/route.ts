@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { DEFAULT_NUM_CTX } from '../../../constants';
-import { updateSessionMessages } from '../../../history';
+import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 import { compactHistory } from '../../../services/compact';
 import { loadConfig } from '../../../services/configManager';
 import { getLlmApiErrorMessage, type ChatMessage } from '../../../services/llm';
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             ? sessionId
             : null;
         if (parsedSessionId) {
-            updateSessionMessages(parsedSessionId, result.newMessages, {
+            await enqueueSessionWrite(parsedSessionId, result.newMessages, {
                 promptEvalCount: result.stats.newTokenCount,
                 evalCount: 0,
             });
