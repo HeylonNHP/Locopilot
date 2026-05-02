@@ -3,7 +3,6 @@ import { select } from '@inquirer/prompts';
 import chalk from 'chalk';
 
 import { listSessions, createSession, loadSessionMessages, renameSession, updateSessionMessages } from '../history';
-import { setYoloMode } from '../tools/tools';
 import type { Session, SessionTokenStats } from '../history';
 import type { ChatMessage } from '../services/llm';
 import type { Config } from '../slashCommands';
@@ -25,7 +24,6 @@ export async function selectExecutionMode(config: Config): Promise<boolean> {
         yoloActive = config.yolo;
     }
 
-    setYoloMode(yoloActive);
     if (yoloActive) {
         console.log(chalk.red.bold('\n⚠️  YOLO MODE ACTIVATED: Commands will execute automatically without confirmation. ⚠️\n'));
     }

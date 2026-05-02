@@ -5,7 +5,6 @@ import chalk from 'chalk';
 import { input, select } from '@inquirer/prompts';
 
 import { validateLlmConnection, getLlmApiErrorMessage } from './llm';
-import { setYoloMode, setWebSearchConfig } from '../tools/tools';
 import { resolveCompactionModel } from './modelManager';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_MAX_QUERIES, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT, DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY, OLLAMA_CONNECT_TIMEOUT_MS } from '../constants';
 import type { Config } from '../slashCommands';
@@ -130,15 +129,5 @@ export async function configureModelAndContext(config: Config, models: string[])
         resultsPerQuery: selectedWebSearchResultsPerQuery,
         perPageCharLimit: selectedWebSearchPerPageCharLimit,
     };
-    await saveConfig(config);
-
-    setWebSearchConfig({
-        maxQueries: config.webSearch.maxQueries,
-        resultsPerQuery: config.webSearch.resultsPerQuery,
-        perPageCharLimit: config.webSearch.perPageCharLimit,
-        baseUrl: config.baseUrl,
-        compactionModel: resolveCompactionModel(config.compactionModel, selectedModel as string),
-    });
-
     return { model: selectedModel as string, numCtx: selectedNumCtx };
 }

@@ -5,6 +5,10 @@
  * argument validation and execution logic. The handleToolCall dispatcher in
  * tools.ts resolves the appropriate command from this registry rather than
  * using a monolithic switch statement.
+ *
+ * All per-request configuration (yolo mode, web search settings, sub-agent
+ * config) is carried through a RequestContext object rather than global
+ * mutable state, so multiple HTTP requests can be served concurrently.
  */
 
 import chalk from 'chalk';
@@ -20,44 +24,24 @@ import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from 
 import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput';
 import type { ToolDefinition } from '../services/llm';
 
-// --- Shared mutable state ---
+// --- Per-request context type ---
 
-let isYoloMode = false;
-
-const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
-    maxQueries: 3,
-    resultsPerQuery: 3,
-    requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-    perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-    baseUrl: '', // Will be set by setWebSearchConfig() from config
-    compactionModel: '',
-};
-
-let webSearchSettings: WebSearchSettings = { ...DEFAULT_WEB_SEARCH_SETTINGS };
-
-const DEFAULT_SUB_AGENT_CONFIG: SubAgentConfig = {
-    baseUrl: '',
-    model: '',
-    numCtx: 0,
-    compactionModel: '',
-    tools: [],
-};
-
-let subAgentConfig: SubAgentConfig = { ...DEFAULT_SUB_AGENT_CONFIG };
-
-export function isYolo(): boolean {
-    return isYoloMode;
-}
-
-export function setYoloMode(enabled: boolean): void {
-    isYoloMode = enabled;
+/**
+ * Carries all per-request/per-turn configuration that was previously stored
+ * in module-level globals.  Thread this through handleToolCall() so that
+ * concurrent HTTP requests see their own settings without cross-talk.
+ */
+export interface RequestContext {
+    yoloMode: boolean;
+    webSearch: WebSearchSettings;
+    subAgent: SubAgentConfig;
 }
 
 export interface ToolWebSearchConfig {
     maxQueries: number;
     resultsPerQuery: number;
     perPageCharLimit: number;
-    baseUrl: string; // REQUIRED - must come from config
+    baseUrl: string;
     compactionModel: string;
 }
 
@@ -67,36 +51,6 @@ export interface SubAgentConfig {
     numCtx: number;
     compactionModel: string;
     tools: ToolDefinition[];
-}
-
-export function setWebSearchConfig(config: ToolWebSearchConfig): void {
-    webSearchSettings = {
-        ...webSearchSettings,
-        maxQueries: Math.max(1, Math.floor(config.maxQueries)),
-        resultsPerQuery: Math.max(1, Math.floor(config.resultsPerQuery)),
-        perPageCharLimit: Number.isFinite(config.perPageCharLimit)
-            ? Math.max(0, Math.floor(config.perPageCharLimit))
-            : DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-        baseUrl: config.baseUrl, // ALWAYS use the config's base URL
-        compactionModel: config.compactionModel.trim(),
-    };
-}
-
-export function setSubAgentConfig(config: SubAgentConfig): void {
-    subAgentConfig = {
-        baseUrl: config.baseUrl,
-        model: config.model,
-        numCtx: Math.max(0, Math.floor(config.numCtx)),
-        compactionModel: config.compactionModel.trim(),
-        tools: [...config.tools],
-    };
-}
-
-export function getSubAgentConfig(): SubAgentConfig {
-    return {
-        ...subAgentConfig,
-        tools: [...subAgentConfig.tools],
-    };
 }
 
 // --- Shared tool argument and result types ---
@@ -141,6 +95,7 @@ export interface IToolCommand {
         args: ToolCallArguments,
         onProgress?: (message: string) => void,
         output?: ToolOutputSink,
+        context?: RequestContext,
     ): Promise<ToolCallResult>;
 }
 
@@ -148,12 +103,13 @@ export interface IToolCommand {
 
 async function runWebSearch(
     args: WebSearchToolArgs,
+    settings: WebSearchSettings,
     onProgress?: (message: string) => void,
     output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<string> {
     const tool = new WebSearchTool({
         settings: {
-            ...webSearchSettings,
+            ...settings,
             output,
         },
         onProgress: (message: string) => {
@@ -166,12 +122,13 @@ async function runWebSearch(
 
 async function runFetchUrl(
     args: FetchUrlToolArgs,
+    settings: WebSearchSettings,
     onProgress?: (message: string) => void,
     output: ToolOutputSink = terminalToolOutputSink,
 ): Promise<string> {
     const tool = new FetchUrlTool({
         settings: {
-            ...webSearchSettings,
+            ...settings,
             output,
         },
         onProgress: (message: string) => {
@@ -226,7 +183,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'run_command',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink) {
+            async execute(args, onProgress, output = terminalToolOutputSink, context) {
                 if (!args.command) return { content: '[Error: missing required argument "command"]' };
                 let timeoutMs = DEFAULT_TIMEOUT_MS;
                 if (args.timeout_seconds !== undefined) {
@@ -240,7 +197,12 @@ export const toolRegistry = new Map<string, IToolCommand>([
                 if (args.cwd !== undefined && cwd === undefined) {
                     return { content: '[Error: invalid argument "cwd" (expected a non-empty string)]' };
                 }
-                return { content: await runCommand(args.command, args.shell, timeoutMs, onProgress, cwd, output) };
+                return {
+                    content: await runCommand(
+                        args.command, args.shell, timeoutMs, onProgress, cwd, output,
+                        context?.yoloMode ?? false,
+                    ),
+                };
             },
         },
     ],
@@ -267,7 +229,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'web_search',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink) {
+            async execute(args, onProgress, output = terminalToolOutputSink, context) {
                 const parsedQueries = parseQueriesInput(args.queries);
                 const webArgs: WebSearchToolArgs = {};
 
@@ -292,21 +254,49 @@ export const toolRegistry = new Map<string, IToolCommand>([
                     return { content: '[Error: web_search requires either "prompt" or "queries"]' };
                 }
 
-                return { content: await runWebSearch(webArgs, onProgress, output) };
+                return {
+                    content: await runWebSearch(
+                        webArgs,
+                        context?.webSearch ?? {
+                            maxQueries: 3,
+                            resultsPerQuery: 3,
+                            requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+                            perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+                            baseUrl: '',
+                            compactionModel: '',
+                        },
+                        onProgress,
+                        output,
+                    ),
+                };
             },
         },
     ],
     [
         'fetch_url',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink) {
+            async execute(args, onProgress, output = terminalToolOutputSink, context) {
                 if (typeof args.url !== 'string' || args.url.trim().length === 0) {
                     return { content: '[Error: missing required argument "url"]' };
                 }
-                return { content: await runFetchUrl({ 
-                    url: args.url,
-                    use_playwright: args.use_playwright === true,
-                }, onProgress, output) };
+                return {
+                    content: await runFetchUrl(
+                        {
+                            url: args.url,
+                            use_playwright: args.use_playwright === true,
+                        },
+                        context?.webSearch ?? {
+                            maxQueries: 3,
+                            resultsPerQuery: 3,
+                            requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+                            perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+                            baseUrl: '',
+                            compactionModel: '',
+                        },
+                        onProgress,
+                        output,
+                    ),
+                };
             },
         },
     ],
@@ -382,10 +372,10 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'run_subagents',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink) {
+            async execute(args, onProgress, output = terminalToolOutputSink, context) {
                 const { SubAgentTool } = await import('./impl/subAgentTool');
                 const tool = new SubAgentTool();
-                return tool.execute(args, onProgress, output);
+                return tool.execute(args, onProgress, output, context);
             },
         },
     ],

@@ -18,8 +18,6 @@ import {
     installKeyInterruptListener,
     isInterruptRequested,
     removeKeyInterruptListener,
-    setSubAgentConfig,
-    setWebSearchConfig,
     type ToolCallResult,
 } from '../tools/tools';
 import { fetchLlmModelInfo, getLlmModelContextLimit, type ChatMessage, type LlmModelInfo } from './llm';
@@ -52,16 +50,6 @@ import {
 } from '../constants';
 import { saveConfig as persistConfig } from './configManager';
 import type { Config, ChatContext } from '../slashCommands';
-
-function syncSubAgentConfig(state: ChatSessionState, config: Config): void {
-    setSubAgentConfig({
-        baseUrl: config.baseUrl,
-        model: state.currentModel,
-        numCtx: state.numCtx,
-        compactionModel: resolveCompactionModel(config.compactionModel, state.currentModel),
-        tools: TOOLS.filter((tool: (typeof TOOLS)[number]) => tool.function.name !== 'run_subagents'),
-    });
-}
 
 export interface ChatSessionState {
     currentModel: string;
@@ -103,7 +91,7 @@ export interface ChatSessionOptions {
 /**
  * Creates the system prompt for the chat session
  */
-export function createSystemPrompt(visionSupported?: boolean): string {
+export function createSystemPrompt(visionSupported?: boolean, yoloMode: boolean = false): string {
     const now = new Date();
     const dateTimeStr = now.toLocaleString("en-US", {
         weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -113,7 +101,7 @@ export function createSystemPrompt(visionSupported?: boolean): string {
     return (
         `You are Locopilot, a helpful AI assistant running inside a terminal application.\n` +
         `Current date and time: ${dateTimeStr}\n\n` +
-        getToolSystemPrompt(visionSupported)
+        getToolSystemPrompt(yoloMode, visionSupported)
     );
 }
 
@@ -143,7 +131,7 @@ export function createChatSessionState(
     context: ChatContext;
     systemPrompt: string;
 } {
-    const systemPrompt = createSystemPrompt();
+    const systemPrompt = createSystemPrompt(undefined, config.yolo ?? false);
 
 
     const state: ChatSessionState = {
@@ -189,12 +177,10 @@ function createChatContext(state: ChatSessionState, config: Config, systemPrompt
             Object.assign(config, newConfig);
             state.baseUrl = config.baseUrl;
             await persistConfig(config);
-            syncSubAgentConfig(state, config);
         },
         updateNumCtx: (newNumCtx: number) => {
             state.requestedNumCtx = newNumCtx;
             applyEffectiveNumCtx(state);
-            syncSubAgentConfig(state, config);
         },
         saveSession: (tokenStats?: SessionTokenStats | null) =>
             updateSessionMessages(state.currentSessionId, state.messages, tokenStats),
@@ -208,13 +194,6 @@ function createChatContext(state: ChatSessionState, config: Config, systemPrompt
             state.currentModel = model;
             config.lastModel = state.currentModel;
             updateSessionModel(state.currentSessionId, state.currentModel);
-            setWebSearchConfig({
-                maxQueries: config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
-                resultsPerQuery: config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
-                perPageCharLimit: config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-                baseUrl: config.baseUrl,
-                compactionModel: resolveCompactionModel(config.compactionModel, state.currentModel),
-            });
             await loadModelMetadata(state, config);
 
             if (state.visionSupported === false &&
@@ -298,8 +277,6 @@ export async function loadModelMetadata(
         state.modelContextLimit = null;
         applyEffectiveNumCtx(state);
     }
-
-    syncSubAgentConfig(state, config);
 }
 
 /**

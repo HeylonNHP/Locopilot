@@ -21,7 +21,7 @@ import { randomUUID } from 'crypto';
 import { NextRequest } from 'next/server';
 import { sendLlmChatStream, getLlmApiErrorMessage } from '../../../services/llm';
 import type { ChatMessage, StreamChatParams } from '../../../services/llm';
-import { TOOLS, handleToolCall, sanitize, setSubAgentConfig, setWebSearchConfig, setYoloMode, type ToolOutputSink } from '../../../tools/tools';
+import { TOOLS, handleToolCall, sanitize, type RequestContext, type ToolOutputSink } from '../../../tools/tools';
 import { waitForApproval, resolveApproval } from '../../lib/approvalRegistry';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
@@ -37,6 +37,27 @@ export const dynamic = 'force-dynamic';
 
 const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 3;
 const CHANNEL_LABEL_ONLY_PATTERN = /^\s*(?:thought|analysis|final|commentary)\s*$/i;
+
+/**
+ * Per-session write queue — serializes updateSessionMessages calls for the
+ * same session so concurrent HTTP requests targeting the same session ID
+ * don't overwrite each other's changes.
+ */
+const sessionWriteQueues = new Map<number, Promise<void>>();
+
+async function enqueueSessionWrite(sessionId: number, writeFn: () => void): Promise<void> {
+    const prev = sessionWriteQueues.get(sessionId) ?? Promise.resolve();
+    const next = prev.then(
+        () => { writeFn(); },
+        () => { writeFn(); }, // Also run if the previous write failed.
+    );
+    sessionWriteQueues.set(sessionId, next);
+    return next.finally(() => {
+        if (sessionWriteQueues.get(sessionId) === next) {
+            sessionWriteQueues.delete(sessionId);
+        }
+    });
+}
 
 function sanitizeAssistantTextFragment(text: string): string {
     const cleaned = stripSpecialTokens(text ?? '');
@@ -123,11 +144,6 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Strip any system messages from the client and inject a fresh system prompt
             // so the model always sees the current date, tool definitions, and policy.
             const conversationMessages: ChatMessage[] = JSON.parse(JSON.stringify(messages));
-            const systemMessage: ChatMessage = {
-                role: 'system',
-                content: createSystemPrompt(),
-            };
-            const currentMessages: ChatMessage[] = [systemMessage, ...conversationMessages.filter((m) => m.role !== 'system')];
 
             let finalContent = '';
             let finalThinking = '';
@@ -140,6 +156,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             // run_command skips the approval gate and executes unconditionally.
             let effectiveYolo = false;
             let emptyResponseRecoveryAttempts = 0;
+
+            const systemMessage: ChatMessage = {
+                role: 'system',
+                content: createSystemPrompt(undefined, effectiveYolo),
+            };
+            const currentMessages: ChatMessage[] = [systemMessage, ...conversationMessages.filter((m) => m.role !== 'system')];
 
             // ── Eagerly create the session so it appears in the sidebar immediately ──
             // If the client already has a session ID (resuming), use it as-is.
@@ -154,54 +176,56 @@ export async function POST(req: NextRequest): Promise<Response> {
             try {
                 // Load runtime tool configuration from disk so that web search
                 // and YOLO settings reflect the latest user preferences.
+                // Build per-request context from config (no global state setters).
+                let requestContext: RequestContext;
                 try {
                     const config = await loadConfig();
                     if (config) {
-                        if (config.webSearch) {
-                            setWebSearchConfig({
-                                maxQueries: config.webSearch.maxQueries,
-                                resultsPerQuery: config.webSearch.resultsPerQuery,
-                                perPageCharLimit: config.webSearch.perPageCharLimit,
-                                baseUrl: config.baseUrl || effectiveBaseUrl,
-                                compactionModel: resolveCompactionModel(config.compactionModel, model as string),
-                            });
-                        }
                         if (typeof config.yolo === 'boolean') {
-                            setYoloMode(config.yolo);
                             effectiveYolo = config.yolo;
                         }
 
                         effectiveCompactionModel = resolveCompactionModel(config.compactionModel, model as string);
+                    }
 
-                        // Configure the sub-agent tool with the current session parameters
-                        // so that run_subagents can spawn isolated workers with the right model/context.
-                        setSubAgentConfig({
-                            baseUrl: config.baseUrl || effectiveBaseUrl,
+                    requestContext = {
+                        yoloMode: config?.yolo ?? false,
+                        webSearch: {
+                            maxQueries: config?.webSearch?.maxQueries ?? 3,
+                            resultsPerQuery: config?.webSearch?.resultsPerQuery ?? 3,
+                            requestTimeoutMs: 720000,
+                            perPageCharLimit: config?.webSearch?.perPageCharLimit ?? 5000,
+                            baseUrl: config?.baseUrl || effectiveBaseUrl,
+                            compactionModel: resolveCompactionModel(config?.compactionModel ?? '', model as string),
+                        },
+                        subAgent: {
+                            baseUrl: config?.baseUrl || effectiveBaseUrl,
                             model: model as string,
                             numCtx: effectiveNumCtx,
-                            compactionModel: resolveCompactionModel(config.compactionModel, model as string),
+                            compactionModel: resolveCompactionModel(config?.compactionModel ?? '', model as string),
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
-                        });
-                    } else {
-                        // No config file — set sub-agent config with request defaults.
-                        setSubAgentConfig({
+                        },
+                    };
+                } catch {
+                    // Config load is best-effort; defaults already apply.
+                    requestContext = {
+                        yoloMode: false,
+                        webSearch: {
+                            maxQueries: 3,
+                            resultsPerQuery: 3,
+                            requestTimeoutMs: 720000,
+                            perPageCharLimit: 5000,
+                            baseUrl: effectiveBaseUrl,
+                            compactionModel: model as string,
+                        },
+                        subAgent: {
                             baseUrl: effectiveBaseUrl,
                             model: model as string,
                             numCtx: effectiveNumCtx,
                             compactionModel: model as string,
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
-                        });
-                    }
-                } catch {
-                    // Config load is best-effort; defaults already apply.
-                    // Ensure sub-agent config is set even when config load fails.
-                    setSubAgentConfig({
-                        baseUrl: effectiveBaseUrl,
-                        model: model as string,
-                        numCtx: effectiveNumCtx,
-                        compactionModel: model as string,
-                        tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
-                    });
+                        },
+                    };
                 }
 
                 // ── Main tool-calling loop ──────────────────────────────────
@@ -464,10 +488,10 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                             // Execute the tool via the registry.
                             const result = shouldSurfaceToolProgress
-                                ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput)
+                                ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput, requestContext)
                                 : toolName === 'run_subagents'
-                                    ? await handleToolCall(toolName, toolArgs, undefined, subagentOutputSink)
-                                    : await handleToolCall(toolName, toolArgs);
+                                    ? await handleToolCall(toolName, toolArgs, undefined, subagentOutputSink, requestContext)
+                                    : await handleToolCall(toolName, toolArgs, undefined, undefined, requestContext);
 
                             const duration = Date.now() - startTime;
 
@@ -508,9 +532,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                         renameSession(currentSessionId, content.trim().slice(0, 60) || 'Chat');
                     }
 
-                    updateSessionMessages(currentSessionId, currentMessages, {
-                        promptEvalCount,
-                        evalCount,
+                    await enqueueSessionWrite(currentSessionId, () => {
+                        updateSessionMessages(currentSessionId, currentMessages, {
+                            promptEvalCount,
+                            evalCount,
+                        });
                     });
 
                     const totalTokens = promptEvalCount + evalCount;

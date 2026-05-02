@@ -3,8 +3,6 @@ import { select, input } from '@inquirer/prompts';
 import * as readline from 'readline';
 import {
     getToolUseNudge,
-    setYoloMode,
-    setWebSearchConfig,
 } from './tools/tools';
 import { parseNonNegativeInteger } from './tools/commandHelpers';
 import {
@@ -426,7 +424,7 @@ const DELETE_HANDLER: SlashHandler = async (ctx) => {
 };
 
 const NUDGE_HANDLER: SlashHandler = async (ctx) => {
-    ctx.messages.push({ role: 'user', content: getToolUseNudge() });
+    ctx.messages.push({ role: 'user', content: getToolUseNudge(ctx.config.yolo ?? false) });
     console.log(chalk.dim('\n[Manual nudge sent to AI...]\n'));
     return false; // Continue with AI generation loop
 };
@@ -484,7 +482,6 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
         if (mode !== null) {
             const isYolo = mode === 'yolo';
             await ctx.saveConfig({ ...ctx.config, yolo: isYolo });
-            setYoloMode(isYolo);
             console.log(chalk.green(`\nExecution mode set to ${isYolo ? chalk.red.bold('YOLO') : 'Standard'}\n`));
         }
     } else if (action === 'thinking') {
@@ -573,13 +570,6 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
         }
 
         await ctx.saveConfig({ ...ctx.config, compactionModel: selectedCompactionModel });
-        setWebSearchConfig({
-            maxQueries: ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
-            resultsPerQuery: ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
-            perPageCharLimit: ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-            baseUrl: ctx.config.baseUrl,
-            compactionModel: selectedCompactionModel,
-        });
         console.log(chalk.green(`\nCompaction model updated to ${selectedCompactionModel}\n`));
     } else if (action === 'web_max_queries') {
         const inputVal = await withExitGuard(async () => {
@@ -603,7 +593,6 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 baseUrl: ctx.config.baseUrl,
             };
             await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
-            setWebSearchConfig({ ...newWebSearch, compactionModel: effectiveCompactionModel });
             console.log(chalk.green(`\nMax queries updated to ${parsed}\n`));
         }
     } else if (action === 'web_results_per_query') {
@@ -628,7 +617,6 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                 baseUrl: ctx.config.baseUrl,
             };
             await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
-            setWebSearchConfig({ ...newWebSearch, compactionModel: effectiveCompactionModel });
             console.log(chalk.green(`\nResults per query updated to ${parsed}\n`));
         }
     } else if (action === 'web_per_page_char_limit') {
@@ -654,7 +642,6 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
                     baseUrl: ctx.config.baseUrl,
                 };
                 await ctx.saveConfig({ ...ctx.config, webSearch: newWebSearch });
-                setWebSearchConfig({ ...newWebSearch, compactionModel: effectiveCompactionModel });
                 console.log(chalk.green(`\nPage character limit updated to ${parsed === 0 ? 'unlimited' : parsed}\n`));
             }
         }
@@ -704,13 +691,6 @@ const SETTINGS_HANDLER: SlashHandler = async (ctx) => {
         }
 
         await ctx.saveConfig({ ...ctx.config, baseUrl: newBaseUrl });
-        setWebSearchConfig({
-            maxQueries: ctx.config.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
-            resultsPerQuery: ctx.config.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
-            perPageCharLimit: ctx.config.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-            baseUrl: newBaseUrl,
-            compactionModel: effectiveCompactionModel,
-        });
         console.log(chalk.green(`\nConnection updated to ${newBaseUrl}\n`));
     }
 

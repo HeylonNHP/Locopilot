@@ -17,13 +17,12 @@ import { getToolPrompt as getPatchFilePrompt } from './impl/patchFileTool';
 import { getToolPrompt as getWriteFilePrompt } from './impl/writeFileTool';
 import { getToolPrompt as getSubAgentPrompt } from './impl/subAgentTool';
 import { getToolPrompt as getRunCommandPrompt, defaultShell } from './impl/runCommandTool';
-import { isYolo, toolRegistry, setSubAgentConfig, setYoloMode, setWebSearchConfig } from './toolRegistry';
+import { toolRegistry } from './toolRegistry';
 import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput';
 import { buildToolUseNudge } from '../services/toolUseNudge';
-import type { SubAgentConfig, ToolCallArguments, ToolCallResult, ToolWebSearchConfig } from './toolRegistry';
+import type { RequestContext, ToolCallArguments, ToolCallResult } from './toolRegistry';
 export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager';
-export { isYolo, setSubAgentConfig, setYoloMode, setWebSearchConfig };
-export type { SubAgentConfig, ToolCallArguments, ToolCallResult, ToolWebSearchConfig };
+export type { RequestContext, ToolCallArguments, ToolCallResult };
 export type { ToolOutputSink } from './toolOutput';
 export { terminalToolOutputSink } from './toolOutput';
 
@@ -389,10 +388,10 @@ export const TOOLS: OllamaTool[] = [
  * available tools and how the model should use them. Kept here so that the
  * prompt stays in sync with the tool implementations automatically.
  */
-export function getToolSystemPrompt(visionSupported?: boolean): string {
+export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean): string {
     return (
         'You have access to the following tools that let you interact with the host machine:\n\n' +
-        getRunCommandPrompt(isYolo()) +
+        getRunCommandPrompt(yoloMode) +
         getWebSearchPrompt() +
         getFetchUrlPrompt() +
         (visionSupported !== false ? getFetchImagePrompt() : '') +
@@ -404,7 +403,7 @@ export function getToolSystemPrompt(visionSupported?: boolean): string {
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n' +
         '- Do NOT ask the user for permission yourself; ' +
-        (isYolo()
+        (yoloMode
             ? 'the user has already provided implicit consent via YOLO mode.'
             : 'the application already prompts for approval.') + '\n' +
         '- Do NOT only print a shell snippet/code block when the task requires execution.\n' +
@@ -424,8 +423,8 @@ export function getToolSystemPrompt(visionSupported?: boolean): string {
 // The manual nudge is implemented in `index.ts` and the user-facing
 // reminder text is provided by `getToolUseNudge()` below.
 
-export function getToolUseNudge(): string {
-    return buildToolUseNudge(isYolo());
+export function getToolUseNudge(yoloMode: boolean): string {
+    return buildToolUseNudge(yoloMode);
 }
 
 export async function handleToolCall(
@@ -433,8 +432,9 @@ export async function handleToolCall(
     args: ToolCallArguments,
     onProgress?: (message: string) => void,
     output: ToolOutputSink = terminalToolOutputSink,
+    context?: RequestContext,
 ): Promise<ToolCallResult> {
     const command = toolRegistry.get(name);
     if (!command) return { content: `[Unknown tool: ${name}]` };
-    return command.execute(args, onProgress, output);
+    return command.execute(args, onProgress, output, context);
 }

@@ -7,9 +7,10 @@ import { sanitizeChatMessage } from '../../services/textUtils';
 import { countMessagesTokens } from '../../services/tokenizer';
 import { isInterruptRequested } from '../interruptManager';
 import {
-    getSubAgentConfig,
     toolRegistry,
     type IToolCommand,
+    type RequestContext,
+    type SubAgentConfig,
     type ToolCallArguments,
     type ToolCallResult,
 } from '../toolRegistry';
@@ -84,7 +85,7 @@ function makeLabeledSink(baseSink: ToolOutputSink, id: string): ToolOutputSink {
 
 async function autoCompactSubAgentIfNeeded(
     messages: ChatMessage[],
-    config: ReturnType<typeof getSubAgentConfig>,
+    config: SubAgentConfig,
     output: ToolOutputSink,
     agentId: string,
     orchestratorPrompt: ChatMessage,
@@ -223,6 +224,7 @@ async function executeNestedToolCall(
     toolCall: ToolCall,
     output: ToolOutputSink,
     onProgress?: (message: string) => void,
+    context?: RequestContext,
 ): Promise<ToolCallResult> {
     const toolName = toolCall.function.name;
     const nestedProgress = onProgress
@@ -244,30 +246,32 @@ async function executeNestedToolCall(
             toolCall.function.arguments,
             nestedProgress,
             output,
+            context,
         );
     }
 
-    return command.execute(toolCall.function.arguments, nestedProgress, output);
+    return command.execute(toolCall.function.arguments, nestedProgress, output, context);
 }
 
 async function runSingleAgent(
     agent: Required<SubAgentSpec>,
+    config: SubAgentConfig,
     tools: ToolDefinition[],
     output: ToolOutputSink,
     onProgress?: (message: string) => void,
+    context?: RequestContext,
 ): Promise<string> {
-    const config = getSubAgentConfig();
-    const orchestratorPrompt: ChatMessage = { role: 'user', content: agent.prompt };
+    const orcPrompt: ChatMessage = { role: 'user', content: agent.prompt };
     const labeledOutput = makeLabeledSink(output, agent.id);
     const messages: ChatMessage[] = [
         { role: 'system', content: buildSubAgentSystemPrompt() },
-        orchestratorPrompt,
+        orcPrompt,
     ];
 
     let finalContent = '';
 
     while (!isInterruptRequested()) {
-        await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orchestratorPrompt);
+        await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orcPrompt);
         if (isInterruptRequested()) {
             break;
         }
@@ -315,7 +319,7 @@ async function runSingleAgent(
 
             onProgress?.(`Sub-agent ${agent.id}: ${toolCall.function.name}`);
 
-            const toolResult = await executeNestedToolCall(agent.id, toolCall, labeledOutput, onProgress);
+            const toolResult = await executeNestedToolCall(agent.id, toolCall, labeledOutput, onProgress, context);
             messages.push(sanitizeChatMessage({
                 role: 'tool',
                 content: toolResult.content,
@@ -332,6 +336,7 @@ export class SubAgentTool implements IToolCommand {
         args: ToolCallArguments,
         onProgress?: (message: string) => void,
         output: ToolOutputSink = terminalToolOutputSink,
+        context?: RequestContext,
     ): Promise<ToolCallResult> {
         const subAgentArgs = args as SubAgentToolArgs;
         const validationError = validateAgentSpecs(subAgentArgs.agents);
@@ -339,12 +344,12 @@ export class SubAgentTool implements IToolCommand {
             return { content: validationError };
         }
 
-        const config = getSubAgentConfig();
-        if (!config.baseUrl || !config.model || config.numCtx <= 0 || config.tools.length === 0) {
+        const config = context?.subAgent;
+        if (!config || !config.baseUrl || !config.model || config.numCtx <= 0 || config.tools.length === 0) {
             return {
                 content:
                     '[run_subagents error: sub-agent runtime is not configured. ' +
-                    'Ensure setSubAgentConfig() has been called before using this tool.]',
+                    'Ensure a valid RequestContext with subAgent config is provided.]',
             };
         }
 
@@ -356,7 +361,7 @@ export class SubAgentTool implements IToolCommand {
             }
 
             try {
-                const content = await runSingleAgent(agent, config.tools, output, onProgress);
+                const content = await runSingleAgent(agent, config, config.tools, output, onProgress, context);
                 results.push({ id: agent.id, content });
             } catch (error) {
                 results.push({

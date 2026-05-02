@@ -6,7 +6,6 @@ import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { getAgentWorkingDirectory, resolveAgentPath, setAgentWorkingDirectory } from '../workingDirectory';
 import {
     sanitize,
-    isYolo,
     getInterruptHint,
     registerInterruptHandler,
     unregisterInterruptHandler,
@@ -178,10 +177,10 @@ export async function runCommand(
     onProgress?: (message: string) => void,
     cwd?: string,
     output: ToolOutputSink = terminalToolOutputSink,
+    yoloMode: boolean = false,
 ): Promise<string> {
-    const currentYolo = isYolo();
     const effectiveShell = getEffectiveShell(shell, output);
-    const approvedYolo = currentYolo;
+    const approvedYolo = yoloMode;
     const agentOutput = output ?? terminalToolOutputSink;
     const trimmedCwd = cwd?.trim();
     const workingDirectory = trimmedCwd
