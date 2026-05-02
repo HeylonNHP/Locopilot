@@ -132,6 +132,12 @@ export function useChatStream(
           }
           break;
 
+        case 'compact_progress':
+          if (typeof data.message === 'string') {
+            dispatch({ type: 'COMPACT_PROGRESS', message: data.message });
+          }
+          break;
+
         case 'compact':
           if (Array.isArray(data.messages)) {
             dispatch({ type: 'SET_MESSAGES', messages: data.messages });

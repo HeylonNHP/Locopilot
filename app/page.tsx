@@ -72,10 +72,11 @@ export default function Home() {
     async (message: string) => {
       const trimmed = message.trim();
       if (!trimmed) return;
+      dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
       if (trimmed.startsWith('/')) await handleSlashCommand(trimmed);
       else await sendChatMessage(message);
     },
-    [handleSlashCommand, sendChatMessage],
+    [dispatch, handleSlashCommand, sendChatMessage],
   );
 
   // ── Stop streaming ────────────────────────────────────────────────
@@ -198,7 +199,9 @@ export default function Home() {
           {state.isStreaming ? (
             <div className="streaming-indicator">
               <span className="text-accent font-14">
-                ● Streaming...
+                ● {state.compactingPhases.length > 0
+                  ? state.compactingPhases[state.compactingPhases.length - 1]
+                  : 'Streaming...'}
               </span>
               <button
                 onClick={handleStop}
@@ -210,7 +213,9 @@ export default function Home() {
           ) : isCompacting ? (
             <div className="streaming-indicator">
               <span className="text-accent font-14">
-                ● Compacting conversation...
+                ● {state.compactingPhases.length > 0
+                  ? state.compactingPhases[state.compactingPhases.length - 1]
+                  : 'Compacting conversation...'}
               </span>
             </div>
           ) : isGeneratingTitle ? (

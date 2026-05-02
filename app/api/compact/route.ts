@@ -59,11 +59,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Strip system messages before compacting — system prompt is injected on-the-fly
         const conversationMessages = (messages as ChatMessage[]).filter((m) => m.role !== 'system');
 
+        const compactPhases: string[] = [];
         const result = await compactHistory(
             effectiveBaseUrl,
             effectiveCompactionModel,
             conversationMessages,
             effectiveNumCtx,
+            (message: string) => {
+                compactPhases.push(message);
+            },
         );
 
         const parsedSessionId = typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
@@ -80,6 +84,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             messages: result.newMessages,
             stats: result.stats,
             compactionModel: effectiveCompactionModel,
+            phases: compactPhases,
         });
     } catch (error) {
         const fallbackMessage = error instanceof Error ? error.message : 'Unknown error';

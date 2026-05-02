@@ -271,13 +271,17 @@ export function useSlashCommands({
                 },
               });
             }
-            addSystem(`⚡ Conversation compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`);
-
-            if (typeof data?.stats?.newTokenCount === 'number' && data.stats.newTokenCount > refs.numCtxRef.current) {
-              addSystem(
-                `⚠️ Compaction reduced the history but it is still over the current context limit ` +
-                `(${data.stats.newTokenCount}/${refs.numCtxRef.current} tokens). The next turn may fail.`,
-              );
+            const oldTokens = data.stats?.oldTokenCount;
+            const newTokens = data.stats?.newTokenCount;
+            if (typeof oldTokens === 'number' && typeof newTokens === 'number') {
+              const saved = oldTokens - newTokens;
+              const pct = oldTokens > 0 ? ((saved / oldTokens) * 100).toFixed(1) : '0.0';
+              addSystem(`⚡ **Conversation compacted:** ${oldTokens.toLocaleString()} → ${newTokens.toLocaleString()} tokens (−${saved.toLocaleString()}, ${pct}% reduction)`);
+              if (newTokens > refs.numCtxRef.current) {
+                addSystem(`⚠️ Compaction reduced the history but it is still over the current context limit (${newTokens.toLocaleString()}/${refs.numCtxRef.current.toLocaleString()} tokens). The next turn may fail.`);
+              }
+            } else {
+              addSystem(`⚡ Conversation compacted (${oldTokens ?? '?'} → ${newTokens ?? '?'} tokens)`);
             }
             await loadSessions();
           } catch (error) {

@@ -72,6 +72,7 @@ interface ChatState {
     totalTokens: number;
     tokenLimit: number;
   } | null;
+  compactingPhases: string[];
 }
 
 type ChatAction =
@@ -93,7 +94,9 @@ type ChatAction =
   | { type: 'SHOW_APPROVAL'; command: { name: string; args: any } | null; requestId?: string }
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats'] }
-  | { type: 'CLEAR_TOKEN_STATS' };
+  | { type: 'CLEAR_TOKEN_STATS' }
+  | { type: 'COMPACT_PROGRESS'; message: string }
+  | { type: 'CLEAR_COMPACT_PROGRESS' };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -234,7 +237,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'SET_MODEL':
       return { ...state, model: action.model };
     case 'SET_STREAMING':
-      return { ...state, isStreaming: action.isStreaming };
+      return { ...state, isStreaming: action.isStreaming, ...(action.isStreaming ? {} : { compactingPhases: [] }) };
     case 'SET_ERROR':
       return { ...state, error: action.error };
     case 'SET_CONFIG': {
@@ -265,6 +268,10 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, tokenStats: action.stats };
     case 'CLEAR_TOKEN_STATS':
       return { ...state, tokenStats: null };
+    case 'COMPACT_PROGRESS':
+      return { ...state, compactingPhases: [...state.compactingPhases, action.message] };
+    case 'CLEAR_COMPACT_PROGRESS':
+      return { ...state, compactingPhases: [] };
     default:
       return state;
   }
@@ -295,6 +302,7 @@ const initialState: ChatState = {
     perPageCharLimit: 5000,
   },
   tokenStats: null,
+  compactingPhases: [],
 };
 
 const ChatContext = createContext<{

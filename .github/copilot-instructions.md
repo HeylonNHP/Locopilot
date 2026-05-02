@@ -493,3 +493,8 @@ Feature summary:
   - Files: `services/llm.ts`, `.github/copilot-instructions.md`
   - Summary: Added JSDoc comments to `activeAdapter` and `setLlmAdapter()` documenting that the adapter is a module-level singleton and should only be swapped when no HTTP requests are in-flight, as in-flight requests would see the new adapter mid-stream.
   - Intent: Make the concurrency contract explicit for future developers who might add runtime adapter switching.
+
+- 2026-05-02: Live compaction progress streaming to web UI
+  - Files: `app/api/chat/route.ts`, `app/api/compact/route.ts`, `app/lib/chatStore.ts`, `app/hooks/useChatStream.ts`, `app/hooks/useSlashCommands.ts`, `app/page.tsx`, `.github/copilot-instructions.md`
+  - Summary: Wired compaction progress through to the web UI. The chat SSE route now passes an `onProgress` callback to `compactHistory()` that emits `compact_progress` SSE events with real-time phase updates ("Measuring conversation tokens...", "Preparing compaction: summarizing N messages...", "Distilling tool output...", "AI is summarizing...", retry notifications). The `/compact` JSON endpoint collects phases and includes them in its response. On the client side, `chatStore.ts` gained `compactingPhases` state with `COMPACT_PROGRESS`/`CLEAR_COMPACT_PROGRESS` actions; `useChatStream.ts` handles `compact_progress` events; `useSlashCommands.ts` shows rich stats with locale-formatted token counts and reduction percentages; and `page.tsx` displays the current phase live in the input-area indicator for both auto-compaction (during streaming) and manual `/compact`.
+  - Intent: Give users real-time visibility into compaction progress rather than staring at a static "Compacting..." message while it runs.

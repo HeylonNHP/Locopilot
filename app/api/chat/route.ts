@@ -241,6 +241,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     effectiveCompactionModel,
                                     currentMessages,
                                     effectiveNumCtx,
+                                    (message: string) => {
+                                        sendEvent('compact_progress', { message });
+                                    },
                                 );
                                 // Send the compacted message list to the client BEFORE
                                 // appending the LLM-only continuation nudge, so the
