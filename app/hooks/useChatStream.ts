@@ -250,31 +250,48 @@ export function useChatStream(
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => 'Unknown error');
-          // Try to extract a message from SSE-formatted error responses
-          // (e.g., "event: error\ndata: {\"message\":\"...\"}\n\n")
-          const dataMatch = errorText.match(/data:\s*({.+?})\s*$/m);
-          if (dataMatch) {
-            try {
-              const parsed = JSON.parse(dataMatch[1] ?? '{}');
-              if (typeof parsed.message === 'string' && parsed.message.length > 0) {
-                throw new Error(`HTTP ${response.status}: ${parsed.message}`);
+
+          // Try to extract a message from JSON error responses.
+          // The backend sends errors either as plain JSON or as SSE-formatted
+          // responses (e.g. "event: error\ndata: {\"message\":\"...\"}\n\n").
+          let parsedError: Record<string, unknown> | null = null;
+
+          // Attempt 1: parse the full body as JSON (handles plain JSON errors)
+          try {
+            parsedError = JSON.parse(errorText) as Record<string, unknown>;
+          } catch {
+            // Not plain JSON — try SSE format
+          }
+
+          // Attempt 2: extract from SSE data: lines
+          if (!parsedError) {
+            const dataLines: string[] = [];
+            for (const line of errorText.split('\n')) {
+              if (line.startsWith('data:')) {
+                dataLines.push(line.slice(5).trim());
               }
-            } catch {
-              // Fall through to default error format
+            }
+            if (dataLines.length > 0) {
+              try {
+                const sseData = dataLines.join('\n');
+                parsedError = JSON.parse(sseData) as Record<string, unknown>;
+              } catch {
+                // Invalid JSON in SSE data — fall through
+              }
             }
           }
-          // Also try to extract message from plain JSON error
-          try {
-            const parsed = JSON.parse(errorText);
-            const msg = parsed.message || parsed.error;
+
+          // Extract the error message from whichever parse succeeded
+          if (parsedError) {
+            const msg = (parsedError.message ?? parsedError.error) as unknown;
             if (typeof msg === 'string' && msg.length > 0) {
               throw new Error(`HTTP ${response.status}: ${msg}`);
             }
-          } catch {
-            // Not JSON, use raw text (but truncate if too long)
-            const truncated = errorText.length > 200 ? errorText.slice(0, 200) + '...' : errorText;
-            throw new Error(`HTTP ${response.status}: ${truncated}`);
           }
+
+          // Fallback: use raw text (truncated)
+          const truncated = errorText.length > 200 ? errorText.slice(0, 200) + '...' : errorText;
+          throw new Error(`HTTP ${response.status}: ${truncated}`);
         }
 
         if (!response.body) throw new Error('No response body stream');
