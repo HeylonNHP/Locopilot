@@ -55,6 +55,10 @@ export function useDataLoaders(refs: StableRefs) {
       if (data.messages) dispatch({ type: 'SET_MESSAGES', messages: data.messages });
       if (data.session?.model) {
         await loadModelContextLimit(data.session.model);
+        // Re-check after the await — the user may have switched sessions
+        // while the model info fetch was in flight. If so, bail out so we
+        // don't dispatch token stats for a now-stale session.
+        if (sessionLoadRequestIdRef.current !== requestId) return;
       }
       if (data.session?.last_total_tokens && data.session?.last_prompt_eval_count !== undefined && data.session?.last_eval_count !== undefined) {
         dispatch({
