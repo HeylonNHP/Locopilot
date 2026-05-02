@@ -389,13 +389,13 @@ export const TOOLS: OllamaTool[] = [
  * available tools and how the model should use them. Kept here so that the
  * prompt stays in sync with the tool implementations automatically.
  */
-export function getToolSystemPrompt(): string {
+export function getToolSystemPrompt(visionSupported?: boolean): string {
     return (
         'You have access to the following tools that let you interact with the host machine:\n\n' +
         getRunCommandPrompt(isYolo()) +
         getWebSearchPrompt() +
         getFetchUrlPrompt() +
-        getFetchImagePrompt() +
+        (visionSupported !== false ? getFetchImagePrompt() : '') +
         getReadFilePrompt() +
         getPatchFilePrompt() +
         getWriteFilePrompt() +

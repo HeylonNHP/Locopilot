@@ -74,10 +74,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             model.trim(),
         );
 
+        // Strip system messages — system prompt is not needed for title generation
+        const conversationMessages = (messages as ChatMessage[]).filter((m) => m.role !== 'system');
+
         const title = await generateSessionTitle(
             effectiveBaseUrl,
             effectiveCompactionModel,
-            messages as ChatMessage[],
+            conversationMessages,
             effectiveNumCtx,
         );
 

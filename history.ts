@@ -173,9 +173,13 @@ export function updateSessionMessages(
     messages: ChatMessage[],
     tokenStats?: SessionTokenStats | null,
 ): void {
+    // Strip system messages before persisting — the system prompt is always
+    // injected on-the-fly and should never be stored in the database.
+    const persistableMessages = messages.filter((m) => m.role !== 'system');
+
     const run = db.transaction(() => {
         stmtDeleteMessages.run(sessionId);
-        for (const msg of messages) {
+        for (const msg of persistableMessages) {
             const sanitizedMessage = sanitizeChatMessage(msg);
             stmtInsertMessage.run(
                 sessionId,

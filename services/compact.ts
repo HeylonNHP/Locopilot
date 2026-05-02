@@ -366,13 +366,12 @@ export async function compactHistory(
 ): Promise<CompactResult> {
     const oldTokenCount = await measureConversationTokens(baseUrl, model, messages, numCtx, onProgress);
 
-    // Separate the system prompt from the rest of the history so we can
-    // preserve it verbatim in the compacted result.
-    const systemMessage = messages[0];
-    if (!systemMessage) {
-        throw new Error('Cannot compact an empty message history.');
+    // Filter out system messages — the system prompt is injected on-the-fly
+    // by the caller and should not be preserved through compaction.
+    const historyMessages = messages.filter((m) => m.role !== 'system');
+    if (historyMessages.length === 0) {
+        throw new Error('Cannot compact: conversation has no content beyond the system prompt.');
     }
-    const historyMessages = messages.slice(1);
     // ── Guard against degenerate "~2 tokens" crash ────────────────────────────
     // Subagents (and any short-history code path) can reach this point with
     // messages === [system] — i.e. zero history beyond the system prompt.
@@ -400,10 +399,7 @@ export async function compactHistory(
     // For the edge case where anchorIndex === 0 and the split IS empty, the
     // expansion block further down falls back to summarising the whole
     // historyMessages array rather than silently doing nothing and crashing.
-    // ──────────────────────────────────────────────────────────────────────────
-    if (historyMessages.length === 0) {
-        throw new Error('Cannot compact: conversation has no content beyond the system prompt.');
-    }
+
     let historySplit = splitHistoryForCompaction(historyMessages, model, numCtx, aggressiveFactor);
 
     // If the split leaves too little content to summarize, expand the summarised
@@ -585,7 +581,6 @@ export async function compactHistory(
     // Rebuild the message history: original system prompt + a single assistant
     // message that holds the preamble + summary.
     const newMessages: ChatMessage[] = [
-        systemMessage,
         {
             role: 'assistant',
             content: `${SUMMARY_PREAMBLE}\n\n${summary}`,

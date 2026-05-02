@@ -56,10 +56,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             model.trim(),
         );
 
+        // Strip system messages before compacting — system prompt is injected on-the-fly
+        const conversationMessages = (messages as ChatMessage[]).filter((m) => m.role !== 'system');
+
         const result = await compactHistory(
             effectiveBaseUrl,
             effectiveCompactionModel,
-            messages as ChatMessage[],
+            conversationMessages,
             effectiveNumCtx,
         );
 

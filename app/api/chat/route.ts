@@ -30,6 +30,7 @@ import { compactHistory } from '../../../services/compact';
 import { countMessagesTokens } from '../../../services/tokenizer';
 import { AUTO_COMPACT_THRESHOLD_PCT } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
+import { createSystemPrompt } from '../../../services/chatSession';
 
 // Prevent static generation – this route must always run on the server.
 export const dynamic = 'force-dynamic';
@@ -119,8 +120,14 @@ export async function POST(req: NextRequest): Promise<Response> {
                 );
             }
 
-            // Deep-clone the incoming messages so we never mutate the request body.
-            const currentMessages: ChatMessage[] = JSON.parse(JSON.stringify(messages));
+            // Strip any system messages from the client and inject a fresh system prompt
+            // so the model always sees the current date, tool definitions, and policy.
+            const conversationMessages: ChatMessage[] = JSON.parse(JSON.stringify(messages));
+            const systemMessage: ChatMessage = {
+                role: 'system',
+                content: createSystemPrompt(),
+            };
+            const currentMessages: ChatMessage[] = [systemMessage, ...conversationMessages.filter((m) => m.role !== 'system')];
 
             let finalContent = '';
             let finalThinking = '';

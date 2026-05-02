@@ -98,7 +98,12 @@ type ChatAction =
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SET_MESSAGES':
-      return { ...state, messages: action.messages.map(withId) };
+      return { 
+        ...state, 
+        messages: action.messages
+            .filter((m: ChatMessage) => m.role !== 'system')
+            .map(withId) 
+      };
     case 'ADD_MESSAGE':
       return { ...state, messages: [...state.messages, withId(action.message)] };
     case 'UPDATE_LAST_MESSAGE': {

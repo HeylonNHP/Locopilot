@@ -234,7 +234,7 @@ export function useChatStream(
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            messages: [...currentMessages, userMessage],
+            messages: [...currentMessages, userMessage].filter((m) => m.role !== 'system'),
             model: refs.modelRef.current,
             numCtx: refs.numCtxRef.current,
             baseUrl: refs.baseUrlRef.current,

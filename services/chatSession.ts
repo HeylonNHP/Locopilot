@@ -103,7 +103,7 @@ export interface ChatSessionOptions {
 /**
  * Creates the system prompt for the chat session
  */
-export function createSystemPrompt(): string {
+export function createSystemPrompt(visionSupported?: boolean): string {
     const now = new Date();
     const dateTimeStr = now.toLocaleString("en-US", {
         weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -113,7 +113,7 @@ export function createSystemPrompt(): string {
     return (
         `You are Locopilot, a helpful AI assistant running inside a terminal application.\n` +
         `Current date and time: ${dateTimeStr}\n\n` +
-        getToolSystemPrompt()
+        getToolSystemPrompt(visionSupported)
     );
 }
 
@@ -151,7 +151,7 @@ export function createChatSessionState(
         baseUrl: config.baseUrl,
         currentSessionId: sessionId,
         messages: preloadedMessages && preloadedMessages.length > 0
-            ? [...preloadedMessages]
+            ? [{ role: 'system', content: systemPrompt }, ...preloadedMessages.filter((m) => m.role !== 'system')]
             : [{ role: 'system', content: systemPrompt }],
         sessionNamed: preloadedMessages !== undefined && preloadedMessages.length > 0,
         numCtx: initialNumCtx,
