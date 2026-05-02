@@ -463,3 +463,18 @@ Feature summary:
   - Files: `tools/toolRegistry.ts`, `tools/tools.ts`, `tools/impl/runCommandTool.ts`, `tools/impl/subAgentTool.ts`, `app/api/chat/route.ts`, `services/chatSession.ts`, `services/configManager.ts`, `services/sessionManager.ts`, `slashCommands.ts`, `.github/copilot-instructions.md`
   - Summary: Replaced three module-level `let` globals (`isYoloMode`, `webSearchSettings`, `subAgentConfig`) with a per-request `RequestContext` interface that is threaded through `handleToolCall()` → `IToolCommand.execute()` → tool implementations. Removed all setter/getter functions (`setYoloMode`, `setWebSearchConfig`, `setSubAgentConfig`, `isYolo`, `getSubAgentConfig`). The web SSE route creates a fresh `RequestContext` per HTTP request and passes it to every tool call, eliminating cross-talk between concurrent requests. The CLI path supplies context from the live config/session state. Also added a per-session write queue in `route.ts` that serializes synchronous `updateSessionMessages()` calls so concurrent requests to the same session do not overwrite each other.
   - Intent: Enable multiple WebUI browser tabs to talk to Locopilot simultaneously without config corruption, YOLO-mode cross-talk, or session data loss.
+
+- 2026-05-02: Atomic config saves with write queue for concurrent settings
+  - Files: `services/configManager.ts`, `app/api/config/route.ts`, `.github/copilot-instructions.md`
+  - Summary: Replaced direct `writeFile` in `saveConfig()` with an atomic write pattern (write to `config.json.tmp` then `rename`) wrapped in a promise-chain queue so concurrent saves from multiple browser tabs are serialised. Removed the duplicate inline `saveConfig`/`loadConfig` from the API route; it now imports the shared atomic version from `configManager`. Prevents silent data loss when two tabs open Settings simultaneously and save different fields.
+  - Intent: Eliminate read-modify-write race on `config.json` when concurrent PUT /api/config requests arrive.
+
+- 2026-05-02: Null output sink for web-triggered tool calls
+  - Files: `app/api/chat/route.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a `nullOutputSink` (silently discards all write/inline/clear calls) and passes it instead of `undefined` to the fallback `handleToolCall` branch. Previously the web route passed `undefined` for `run_command`, `read_file`, `patch_file`, and `write_file` tools, causing `handleToolCall` to default to `terminalToolOutputSink` which wrote ANSI-coloured output to the server's `stdout`. The web SSE streams remain unaffected since they receive dedicated per-request sinks.
+  - Intent: Prevent interleaved terminal output in server logs when multiple browser tabs trigger command/file tools simultaneously.
+
+- 2026-05-02: Per-request process registry isolation via AsyncLocalStorage
+  - Files: `tools/impl/runCommandTool.ts`, `app/api/chat/route.ts`, `.github/copilot-instructions.md`
+  - Summary: Replaced the module-level singleton `processRegistry` Map and `nextProcessId` counter with an `AsyncLocalStorage`-scoped per-request state. Each HTTP request now gets its own isolated `Map<number, ProcessEntry>` and ID counter, preventing cross-request data leakage if one tab's LLM discovers another tab's process ID. The CLI path falls back to a global registry for compatibility. Added `enterRequestScope()` which the web SSE route calls at the start of every streaming response.
+  - Intent: Prevent concurrent browser tabs from reading each other's running-command stdout/stderr via `check_process_output`.

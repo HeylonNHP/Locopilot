@@ -1,25 +1,8 @@
 // GET /api/config - read current config
 // PUT /api/config - update config
 import { NextRequest, NextResponse } from 'next/server';
-import { access, readFile, writeFile } from 'fs/promises';
-import path from 'path';
+import { loadConfig, saveConfig } from '../../../services/configManager';
 import type { Config } from '../../../slashCommands';
-
-const CONFIG_PATH = path.join(process.cwd(), 'config.json');
-
-async function loadConfig(): Promise<Config | null> {
-    try {
-        await access(CONFIG_PATH);
-        const data = await readFile(CONFIG_PATH, 'utf8');
-        return JSON.parse(data) as Config;
-    } catch {
-        return null;
-    }
-}
-
-async function saveConfig(config: Config): Promise<void> {
-    await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
-}
 
 export async function GET(): Promise<NextResponse> {
     try {

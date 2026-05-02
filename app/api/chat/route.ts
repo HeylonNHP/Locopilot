@@ -31,6 +31,7 @@ import { countMessagesTokens } from '../../../services/tokenizer';
 import { AUTO_COMPACT_THRESHOLD_PCT } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
 import { createSystemPrompt } from '../../../services/chatSession';
+import { enterRequestScope } from '../../../tools/impl/runCommandTool';
 
 // Prevent static generation – this route must always run on the server.
 export const dynamic = 'force-dynamic';
@@ -135,6 +136,10 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     const stream = new ReadableStream({
         async start(controller): Promise<void> {
+            // Create a per-request process registry so concurrent requests
+            // cannot see each other's running commands.
+            enterRequestScope();
+
             function sendEvent(event: string, data: unknown): void {
                 controller.enqueue(
                     encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
@@ -486,12 +491,19 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 },
                             };
 
+                            // Null sink for tools that don't need web output
+                            const nullOutputSink: ToolOutputSink = {
+                                writeLine(): void {},
+                                writeInline(): void {},
+                                clearInline(): void {},
+                            };
+
                             // Execute the tool via the registry.
                             const result = shouldSurfaceToolProgress
                                 ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput, requestContext)
                                 : toolName === 'run_subagents'
                                     ? await handleToolCall(toolName, toolArgs, undefined, subagentOutputSink, requestContext)
-                                    : await handleToolCall(toolName, toolArgs, undefined, undefined, requestContext);
+                                    : await handleToolCall(toolName, toolArgs, undefined, nullOutputSink, requestContext);
 
                             const duration = Date.now() - startTime;
 

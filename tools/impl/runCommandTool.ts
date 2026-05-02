@@ -10,6 +10,18 @@ import {
     registerInterruptHandler,
     unregisterInterruptHandler,
 } from '../tools';
+import { AsyncLocalStorage } from 'async_hooks';
+
+interface RequestProcessState {
+    registry: Map<number, ProcessEntry>;
+    nextId: number;
+}
+
+const requestProcessState = new AsyncLocalStorage<RequestProcessState>();
+
+// Global fallback registry for non-request (CLI/tests) usage
+const globalFallbackRegistry = new Map<number, ProcessEntry>();
+let globalFallbackNextId = 1;
 
 // Swappable command confirmation function (default: Inquirer confirm prompt)
 let confirmCommand: (msg: string) => Promise<boolean> = async (msg) => confirm({ message: msg, default: false });
@@ -29,9 +41,15 @@ interface ProcessEntry {
     exitCode: number | null;
 }
 
-const processRegistry = new Map<number, ProcessEntry>();
-let nextProcessId = 1;
+
 const WORKDIR_MARKER = '__LOCOPILOT_WORKDIR__:';
+
+/**
+ * Call at the start of each HTTP request to create an isolated process registry.
+ */
+export function enterRequestScope(): void {
+    requestProcessState.enterWith({ registry: new Map(), nextId: 1 });
+}
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -210,7 +228,8 @@ export async function runCommand(
         return '[Command was rejected by the user.]';
     }
 
-    const processId = nextProcessId++;
+    const store = requestProcessState.getStore();
+    const processId = store ? store.nextId++ : globalFallbackNextId++;
     output.writeLine(chalk.dim(`  Running (id=${processId})... (${getInterruptHint()})\n`));
 
     const entry: ProcessEntry = {
@@ -223,7 +242,8 @@ export async function runCommand(
         done: false,
         exitCode: null,
     };
-    processRegistry.set(processId, entry);
+    const procRegistry = store?.registry ?? globalFallbackRegistry;
+    procRegistry.set(processId, entry);
 
     const config = getShellConfig(effectiveShell);
     const child = spawn(config.bin, config.args, {
@@ -256,7 +276,8 @@ export async function runCommand(
             entry.done = true;
             entry.exitCode = code;
             if (!returnedPartial) {
-                processRegistry.delete(processId);
+                const procRegistry = requestProcessState.getStore()?.registry ?? globalFallbackRegistry;
+                procRegistry.delete(processId);
             }
             resolve(result || buildOutput(entry, true, null));
         };
@@ -385,7 +406,8 @@ export async function checkProcessOutput(
     waitMs: number = 0,
     onProgress?: (message: string) => void,
 ): Promise<string> {
-    const entry = processRegistry.get(processId);
+    const procRegistry = requestProcessState.getStore()?.registry ?? globalFallbackRegistry;
+    const entry = procRegistry.get(processId);
     if (!entry) {
         return `[No process found with process_id=${processId}]`;
     }
@@ -397,7 +419,8 @@ export async function checkProcessOutput(
 
     if (entry.done) {
         const output = buildOutput(entry, true, null);
-        processRegistry.delete(processId);
+        const procRegistry = requestProcessState.getStore()?.registry ?? globalFallbackRegistry;
+        procRegistry.delete(processId);
         return output;
     }
 

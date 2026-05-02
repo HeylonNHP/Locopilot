@@ -1,4 +1,4 @@
-import { access, readFile, writeFile } from 'fs/promises';
+import { access, readFile, writeFile, rename } from 'fs/promises';
 import path from 'path';
 
 import chalk from 'chalk';
@@ -10,6 +10,8 @@ import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_MAX
 import type { Config } from '../slashCommands';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
+const CONFIG_TMP_PATH = CONFIG_PATH + '.tmp';
+let configWriteQueue: Promise<void> = Promise.resolve();
 
 /**
  * Loads configuration from config.json if it exists.
@@ -29,11 +31,17 @@ export async function loadConfig(): Promise<Config | null> {
 }
 
 /**
- * Saves configuration to config.json.
- * @param config - The configuration object to save
+ * Saves configuration to config.json using an atomic write (tmp + rename)
+ * with a promise-chain queue so concurrent saves are serialised.
  */
 export async function saveConfig(config: Config): Promise<void> {
-    await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
+    const task = async () => {
+        await writeFile(CONFIG_TMP_PATH, JSON.stringify(config, null, 2));
+        await rename(CONFIG_TMP_PATH, CONFIG_PATH);
+    };
+    // Chain onto the previous save so concurrent calls are serialised
+    configWriteQueue = configWriteQueue.then(task, task);
+    return configWriteQueue;
 }
 
 /**
