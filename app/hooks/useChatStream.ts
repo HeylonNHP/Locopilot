@@ -287,9 +287,24 @@ export function useChatStream(
 
           // Extract the error message from whichever parse succeeded
           if (parsedError) {
-            const msg = (parsedError.message ?? parsedError.error) as unknown;
+            // Try multiple common error message fields that different API
+            // patterns use (message, error, status, detail, title).
+            const msg = (
+              parsedError.message ??
+              parsedError.error ??
+              parsedError.status ??
+              parsedError.detail ??
+              parsedError.title
+            ) as unknown;
             if (typeof msg === 'string' && msg.length > 0) {
               throw new Error(`HTTP ${response.status}: ${msg}`);
+            }
+            // Parsed JSON but none of the expected fields had a string value.
+            // Build a readable string from whatever values are present rather
+            // than falling through to the raw-JSON fallback.
+            const values = Object.values(parsedError).filter((v): v is string => typeof v === 'string');
+            if (values.length > 0) {
+              throw new Error(`HTTP ${response.status}: ${values[0]}`);
             }
           }
 
