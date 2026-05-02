@@ -146,6 +146,10 @@ export function useChatStream(
                 tokenLimit: data.tokenLimit ?? refs.numCtxRef.current ?? state.numCtx,
               },
             });
+          } else {
+            // No valid compact stats — clear stale pre-compaction token counts
+            // so the status bar doesn't show misleading numbers.
+            dispatch({ type: 'CLEAR_TOKEN_STATS' });
           }
           dispatch({
             type: 'ADD_MESSAGE',
