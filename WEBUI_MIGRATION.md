@@ -325,3 +325,61 @@ The `config.json` format (auto-generated):
 ## Last Updated
 
 2026-05-01
+
+
+---
+
+## Known Regressions & Bugs (Last 10 Commits)
+
+Identified 2026-05-02 via automated audit of commits `3257eda..7a495d2`.
+
+### Critical (🔴 — functional bug, incorrect behavior)
+
+| # | Commit | File | Issue |
+|---|---|---|---|
+| B1 | `0597a40` | `app/hooks/useChatStream.ts` | **Non-ok HTTP response with valid JSON lacking `message`/`error` falls through to success-path code.** If the server returns HTTP 500 with body `{"status":"error_code_42"}`, the try/catch blocks all exit without throwing. Execution continues past the `!response.ok` guard, and the body stream is already consumed — producing a misleading `"No response body stream"` error instead of the actual HTTP error. |
+| B2 | `7262c46` | `app/hooks/useChatStream.ts` | **Stale token stats when compact SSE lacks `stats.newTokenCount`.** If the server sends a `compact` event without `stats.newTokenCount`, token stats are neither updated nor cleared — pre-compaction values remain displayed. |
+| B3 | `7680831` | `app/hooks/useDataLoaders.ts` | **Stale model context limit applied after session-switch race.** `loadModelContextLimit` fetches model info asynchronously after the stale-response guard. Rapid session switching can dispatch the wrong model's context limit. |
+
+### Medium (🟡 — incorrect behavior in specific scenarios)
+
+| # | Commit | File | Issue |
+|---|---|---|---|
+| M1 | `0597a40` | `app/hooks/useChatStream.ts` | **SSE regex with lazy `.+?` breaks on nested JSON error payloads.** `data:\s*({.+?})\s*$` matches only up to the first `}` — nested objects like `{"error":{"message":"...","code":123}}` produce truncated JSON, losing structured error detail. |
+| M2 | `1ff8f21` | `services/compact.ts` | **Tool messages excluded from title-generation prompt.** New code filters to only `user`/`assistant` messages (old code included all roles). Tool-heavy conversations may get vaguer titles. |
+
+### Low (🔸 — defensive gap, dead code, or minor inconsistency)
+
+| # | Commit | File | Issue |
+|---|---|---|---|
+| L1 | `7a495d2` | `services/chatSession.ts`, `app/api/chat/route.ts` | **`visionSupported` param never passed to `createSystemPrompt()`.** The plumbing is dead code — `fetch_image` is always included regardless of model capabilities. |
+| L2 | `7a495d2` | `app/api/title/route.ts` | **Guard inconsistency after system-message stripping.** Route checks message count on raw array (with system message), then inner function re-checks on stripped array. A client sending `[sys, user]` passes the outer guard but fails the inner. |
+| L3 | `7262c46` | `app/hooks/useSlashCommands.ts` | **No fallback for `refs.numCtxRef.current` in `tokenLimit`.** Other paths use `data.tokenLimit ?? refs.numCtxRef.current ?? state.numCtx`; this path has zero fallbacks. |
+| L4 | `7262c46` | `app/api/compact/route.ts` | **Semantic type mismatch** — `CompactStats.newTokenCount` mapped to `SessionTokenStats.promptEvalCount`. Works numerically but semantically incorrect for future readers. |
+| L5 | `7680831` | `app/lib/chatStore.ts` | **`...restConfig` can overwrite computed `requestedNumCtx`** if a future caller passes `requestedNumCtx` in the config action payload. |
+| L6 | `8d2718b` | `components/ApprovalModal.tsx` | **Redundant `import '@/app/styles.css'`** — `layout.tsx` already imports it globally. Harmless but inconsistent with other components. |
+| L7 | `8d2718b` | `components/ChatMessageBubble.tsx` | **Missing `cursor: default` fallback** on `bubble-ai-msg` when condition is false. No visual impact but a semantic deviation from the original inline style. |
+| L8 | `59d9d1d` | `app/api/chat/route.ts` | **Missing `.catch()` fallback** on `getLlmApiErrorMessage()` that other routes (`compact`, `title`) include. Could produce unhandled rejection with a future adapter. |
+
+### No issues found in these commits
+
+| Commit | Description |
+|---|---|
+| `e9558cc` | eventsource-parser integration |
+| `7921176` | Clear token stats on new messages |
+| `3257eda` | Remove console logs, use `state.numCtx` in StatusBar |
+
+### Priority fixes
+
+| Priority | Bug | Fix |
+|---|---|---|
+| **P1** | **B1** | Add `throw new Error(...)` after the JSON try/catch in the `!response.ok` guard as a fallback |
+| **P2** | **B2** | Add `if (typeof data.stats?.newTokenCount !== 'number') dispatch({ type: 'CLEAR_TOKEN_STATS' })` |
+| **P3** | **B3** | Guard `loadModelContextLimit` behind the stale-response check |
+| **P4** | **M1** | Use balanced-braces regex or full-body JSON parse before the regex approach |
+
+---
+
+## Last Updated
+
+2026-05-02
