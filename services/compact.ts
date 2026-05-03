@@ -773,7 +773,7 @@ export async function generateSessionTitle(
             }
 
             // Success — return the first valid title
-            return title;
+            return `💬 ${title}`;
         } catch (err) {
             lastError = err instanceof Error ? err.message : 'Unknown error';
             continue;
@@ -789,7 +789,7 @@ export async function generateSessionTitle(
             .trim();
         if (fallback.length > 0) {
             onProgress?.('Using first message as fallback title.');
-            return fallback;
+            return `💬 ${fallback}`;
         }
     }
 
