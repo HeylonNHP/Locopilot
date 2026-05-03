@@ -500,9 +500,12 @@ export async function compactHistory(
         maxSummaryTokens,
     );
     const minSummaryTokens = Math.max(50, Math.floor(targetSummaryTokens * 0.65));
-    const summaryNumPredict = Math.max(
-        Math.floor(targetSummaryTokens * SUMMARY_NUM_PREDICT_BUFFER_RATIO),
-        minSummaryTokens,
+    const summaryNumPredict = Math.min(
+        numCtx,
+        Math.max(
+            Math.floor(targetSummaryTokens * SUMMARY_NUM_PREDICT_BUFFER_RATIO),
+            minSummaryTokens,
+        ),
     );
 
     // Build a single user turn that presents the history to the summariser.
@@ -529,7 +532,7 @@ export async function compactHistory(
         },
     ];
 
-    const streamSummary = async (msgs: ChatMessage[], numPredict: number): Promise<string> => {
+    const streamSummary = async (msgs: ChatMessage[], numPredict?: number): Promise<string> => {
         let text = '';
         for await (const chunk of sendLlmChatStream(baseUrl, {
             model,
@@ -538,7 +541,7 @@ export async function compactHistory(
             numCtx,
             options: {
                 temperature: 0,
-                num_predict: numPredict,
+                ...(numPredict !== undefined ? { num_predict: numPredict } : {}),
             },
         })) {
             const content = chunk.message?.content ?? '';
@@ -568,7 +571,7 @@ export async function compactHistory(
                 content: 'Summarise this conversation:\n\n' + historyText,
             },
         ];
-        summary = await streamSummary(retryMessages, summarisedSourceTokenEstimate * 2);
+        summary = await streamSummary(retryMessages);
     }
 
     if (!summary) {
