@@ -323,6 +323,7 @@ async function runSingleAgent(
             messages.push(sanitizeChatMessage({
                 role: 'tool',
                 content: toolResult.content,
+                tool_call_id: toolCall.id,
                 ...(toolResult.images ? { images: toolResult.images } : {}),
             }));
         }

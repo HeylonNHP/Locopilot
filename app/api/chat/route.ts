@@ -427,7 +427,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         result: rejectedResult,
                                         duration: 0,
                                     });
-                                    currentMessages.push({ role: 'tool', content: rejectedResult });
+                                    currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
                                     continue;
                                 }
                             }
@@ -499,6 +499,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             const toolMessage: ChatMessage = {
                                 role: 'tool',
                                 content: result.content,
+                                tool_call_id: tc.id,
                             };
                             if (result.images && result.images.length > 0) {
                                 toolMessage.images = result.images;

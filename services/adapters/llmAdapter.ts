@@ -1,6 +1,7 @@
 import type { ToolCallArguments } from '../../tools/tools';
 
 export interface ToolCall {
+    id: string;
     function: {
         name: string;
         arguments: ToolCallArguments;
@@ -25,6 +26,8 @@ export interface ChatMessage {
     content: string;
     thinking?: string;
     tool_calls?: [ToolCall, ...ToolCall[]];
+    /** OpenAI-compatible: identifies which tool call this result answers. */
+    tool_call_id?: string;
     /** Base64-encoded images for multimodal/vision models. */
     images?: string[];
 }

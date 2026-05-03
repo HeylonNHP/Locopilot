@@ -487,6 +487,7 @@ export async function processAITurn(
             state.messages.push(sanitizeChatMessage({
                 role: 'tool',
                 content: tokenResult.content,
+                tool_call_id: tc.id,
                 ...(tokenResult.images ? { images: tokenResult.images } : {}),
             }));
             refreshTokenStatus(state, `Token result: ${tc.function.name}`);
