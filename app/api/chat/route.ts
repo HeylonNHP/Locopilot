@@ -267,7 +267,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 tokenLimit: effectiveNumCtx,
                             });
                             try {
-                                startKeepalive();
                                 const compactResult = await compactHistory(
                                     effectiveBaseUrl,
                                     effectiveCompactionModel,
@@ -277,7 +276,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         sendEvent('compact_progress', { message });
                                     },
                                 );
-                                stopKeepalive();
                                 // Send the compacted message list to the client BEFORE
                                 // appending the LLM-only continuation nudge, so the
                                 // client's state mirrors the clean compacted history.
@@ -303,7 +301,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     });
                                 }
                             } catch (compactErr) {
-                                stopKeepalive();
                                 // Non-fatal — log and continue with existing messages.
                                 sendEvent('status', {
                                     phase: 'compact_failed',
@@ -447,12 +444,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     args: toolArgs,
                                 });
 
-                                startKeepalive();
                                 const approved = await Promise.race([
                                     waitForApproval(requestId),
                                     abortPromise,
                                 ]);
-                                stopKeepalive();
 
                                 // Clean up registry entry when the abort path won the race.
                                 resolveApproval(requestId, false);
@@ -523,7 +518,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                             };
 
                             // Execute the tool via the registry.
-                            startKeepalive();
                             const result = shouldSurfaceToolProgress
                                 ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput, requestContext)
                                 : toolName === 'run_subagents'
@@ -531,7 +525,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     : toolName === 'run_command'
                                         ? await handleToolCall(toolName, toolArgs, runCommandProgress, nullOutputSink, requestContext)
                                         : await handleToolCall(toolName, toolArgs, undefined, nullOutputSink, requestContext);
-                            stopKeepalive();
 
                             const duration = Date.now() - startTime;
 
