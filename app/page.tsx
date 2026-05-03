@@ -18,6 +18,7 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
+  const [showErrorDetails, setShowErrorDetails] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -35,7 +36,7 @@ export default function Home() {
   const { loadSessions, loadSessionMessages, loadModels, loadConfig, loadModelContextLimit } = useDataLoaders(refs);
 
   // SSE streaming
-  const { sendChatMessage, replayBufferedEvents } = useChatStream(refs, abortRef, loadSessions);
+  const { sendChatMessage, retry, replayBufferedEvents } = useChatStream(refs, abortRef, loadSessions);
 
   // Settings opener — defined before useSlashCommands so it can be passed in
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
@@ -180,13 +181,29 @@ export default function Home() {
           {/* Error banner */}
           {state.error && (
             <div className="error-banner">
-              {state.error}
-              <button
-                onClick={() => dispatch({ type: 'SET_ERROR', error: null })}
-                className="error-dismiss-btn"
-              >
-                Dismiss
-              </button>
+              <div className="error-header">
+                <span className="error-message">Something went wrong.</span>
+                <button
+                  className="error-details-toggle"
+                  onClick={() => setShowErrorDetails(!showErrorDetails)}
+                >
+                  {showErrorDetails ? 'Hide details ▲' : 'Details ▼'}
+                </button>
+              </div>
+              {showErrorDetails && (
+                <pre className="error-details">{state.error}</pre>
+              )}
+              <div className="error-actions">
+                <button onClick={retry} className="error-retry-btn" disabled={state.isStreaming}>
+                  Retry
+                </button>
+                <button
+                  onClick={() => dispatch({ type: 'SET_ERROR', error: null })}
+                  className="error-dismiss-btn"
+                >
+                  Dismiss
+                </button>
+              </div>
             </div>
           )}
 

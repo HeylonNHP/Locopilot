@@ -137,6 +137,25 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
 
+            function isRetryableError(err: unknown): boolean {
+                const e = err as Record<string, any> | null | undefined;
+                if (!e) return false;
+                // axios-style HTTP errors
+                if (e.response && typeof e.response.status === 'number') {
+                    const status = e.response.status;
+                    if (status === 429 || status === 502 || status === 503 || status === 504) return true;
+                }
+                // axios network-level codes
+                if (typeof e.code === 'string') {
+                    if (e.code === 'ECONNRESET' || e.code === 'ETIMEDOUT' || e.code === 'EPIPE') return true;
+                }
+                // generic fetch/network failures
+                if (typeof e.message === 'string') {
+                    if (e.message.includes('fetch failed') || e.message.includes('network timeout')) return true;
+                }
+                return false;
+            }
+
             function startKeepalive(): void {
                 if (keepaliveInterval) return;
                 keepaliveInterval = setInterval(() => {
@@ -337,38 +356,74 @@ export async function POST(req: NextRequest): Promise<Response> {
                     let promptEvalCount = 0;
                     let evalCount = 0;
 
-                    const llmStream = sendLlmChatStream(effectiveBaseUrl, params);
+                    // ── Retry transient LLM errors (503, 502, 504, 429, network) ──
+                    const MAX_LLM_RETRIES = 3;
+                    const RETRY_BASE_DELAY_MS = 1000;
+                    let retryAttempt = 0;
 
-                    for await (const chunk of llmStream) {
-                        const msg = chunk.message;
+                    while (true) {
+                        try {
+                            const llmStream = sendLlmChatStream(effectiveBaseUrl, params);
 
-                        // Stream thinking token chunks (e.g. for deep-thinking models).
-                        if (msg?.thinking) {
-                            const thinkingChunk = sanitizeAssistantTextFragment(msg.thinking);
-                            if (thinkingChunk) {
-                                thinking += thinkingChunk;
-                                sendEvent('thinking', thinkingChunk);
+                            for await (const chunk of llmStream) {
+                                const msg = chunk.message;
+
+                                // Stream thinking token chunks (e.g. for deep-thinking models).
+                                if (msg?.thinking) {
+                                    const thinkingChunk = sanitizeAssistantTextFragment(msg.thinking);
+                                    if (thinkingChunk) {
+                                        thinking += thinkingChunk;
+                                        sendEvent('thinking', thinkingChunk);
+                                    }
+                                }
+
+                                // Stream regular content chunks.
+                                if (msg?.content) {
+                                    const contentChunk = sanitizeAssistantTextFragment(msg.content);
+                                    if (contentChunk) {
+                                        content += contentChunk;
+                                        sendEvent('chunk', contentChunk);
+                                    }
+                                }
+
+                                // Capture tool calls from the final (or any) chunk.
+                                if (msg?.tool_calls && msg.tool_calls.length > 0) {
+                                    toolCalls = msg.tool_calls;
+                                }
+
+                                // Capture authoritative token counts from the final chunk.
+                                if (chunk.done) {
+                                    promptEvalCount = chunk.prompt_eval_count ?? 0;
+                                    evalCount = chunk.eval_count ?? 0;
+                                }
                             }
-                        }
 
-                        // Stream regular content chunks.
-                        if (msg?.content) {
-                            const contentChunk = sanitizeAssistantTextFragment(msg.content);
-                            if (contentChunk) {
-                                content += contentChunk;
-                                sendEvent('chunk', contentChunk);
+                            break; // success — exit retry loop
+                        } catch (err) {
+                            if (retryAttempt >= MAX_LLM_RETRIES - 1 || !isRetryableError(err)) {
+                                throw err; // propagate to outer catch
                             }
-                        }
+                            retryAttempt++;
 
-                        // Capture tool calls from the final (or any) chunk.
-                        if (msg?.tool_calls && msg.tool_calls.length > 0) {
-                            toolCalls = msg.tool_calls;
-                        }
+                            sendEvent('status', { phase: 'retrying', attempt: retryAttempt, maxRetries: MAX_LLM_RETRIES });
+                            sendEvent('clear_assistant', {});
 
-                        // Capture authoritative token counts from the final chunk.
-                        if (chunk.done) {
-                            promptEvalCount = chunk.prompt_eval_count ?? 0;
-                            evalCount = chunk.eval_count ?? 0;
+                            // Reset accumulators for the fresh attempt
+                            content = '';
+                            thinking = '';
+                            toolCalls = undefined;
+                            promptEvalCount = 0;
+                            evalCount = 0;
+
+                            // Exponential backoff with abort-signal awareness
+                            const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1);
+                            if (req.signal?.aborted) throw new Error('Aborted');
+                            await new Promise<void>((resolve) => {
+                                const timer = setTimeout(resolve, delayMs);
+                                const onAbort = () => { clearTimeout(timer); resolve(); };
+                                req.signal?.addEventListener('abort', onAbort, { once: true });
+                            });
+                            if (req.signal?.aborted) throw new Error('Aborted');
                         }
                     }
 

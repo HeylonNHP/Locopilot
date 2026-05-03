@@ -27,6 +27,8 @@ export function useChatStream(
   const bufferedEventsRef = useRef<Array<{ event: string; data: any }>>([]);
   const streamActiveRef = useRef(false);
   const subagentBufferRef = useRef<Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>>(new Map());
+  const retryPayloadRef = useRef<{ body: string } | null>(null);
+  const requestFailedRef = useRef(false);
   // --------------------------------------------------------------------------
 
   const handleEvent = useCallback(
@@ -192,14 +194,127 @@ export function useChatStream(
           break;
 
         case 'error':
+          requestFailedRef.current = true;
           dispatch({ type: 'SET_ERROR', error: data.message ?? 'Unknown error' });
+          break;
+
+        case 'clear_assistant':
+          dispatch({ type: 'REMOVE_LAST_ASSISTANT' });
           break;
 
         default:
           break;
       }
     },
-    [dispatch],
+    [dispatch, loadSessions],
+  );
+
+  /**
+   * Retry a failed chat turn using the originally-stored request payload.
+   */
+  const retry = useCallback(
+    async () => {
+      if (!retryPayloadRef.current || state.isStreaming) return;
+
+      const { body } = retryPayloadRef.current;
+      dispatch({ type: 'SET_ERROR', error: null });
+      dispatch({ type: 'SET_STREAMING', isStreaming: true });
+
+      const abortController = new AbortController();
+      abortRef.current = abortController;
+
+      streamingSessionIdRef.current = refs.sessionIdRef.current;
+      bufferOwnerSessionIdRef.current = refs.sessionIdRef.current;
+      streamActiveRef.current = true;
+      bufferedEventsRef.current = [];
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => 'Unknown error');
+          let parsedError: Record<string, unknown> | null = null;
+          try {
+            parsedError = JSON.parse(errorText) as Record<string, unknown>;
+          } catch {
+            const dataLines: string[] = [];
+            for (const line of errorText.split('\n')) {
+              if (line.startsWith('data:')) {
+                dataLines.push(line.slice(5).trim());
+              }
+            }
+            if (dataLines.length > 0) {
+              try {
+                parsedError = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
+              } catch {}
+            }
+          }
+          if (parsedError) {
+            const msg = (parsedError.message ?? parsedError.error) as unknown;
+            if (typeof msg === 'string' && msg.length > 0) {
+              throw new Error(`HTTP ${response.status}: ${msg}`);
+            }
+          }
+          throw new Error(`HTTP ${response.status}: ${errorText.length > 200 ? errorText.slice(0, 200) + '...' : errorText}`);
+        }
+
+        if (!response.body) throw new Error('No response body stream');
+
+        const eventStream = response.body
+          .pipeThrough(new TextDecoderStream())
+          .pipeThrough(new EventSourceParserStream());
+
+        const reader = eventStream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          try {
+            const parsed = JSON.parse(value.data);
+            handleEvent(value.event || 'message', parsed);
+          } catch {
+            handleEvent(value.event || 'message', value.data);
+          }
+        }
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          // User clicked Stop — silently ignore
+        } else if (
+          err.message?.includes('input stream') ||
+          err.message?.includes('network') ||
+          err.message?.includes('fetch') ||
+          err.name === 'TypeError'
+        ) {
+          requestFailedRef.current = true;
+          dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
+        } else {
+          requestFailedRef.current = true;
+          dispatch({ type: 'SET_ERROR', error: err.message });
+        }
+      } finally {
+        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
+          if (entry.timer) clearTimeout(entry.timer);
+          dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
+        }
+        subagentBufferRef.current.clear();
+
+        streamActiveRef.current = false;
+        bufferedEventsRef.current = [];
+        streamingSessionIdRef.current = undefined;
+        bufferOwnerSessionIdRef.current = undefined;
+        dispatch({ type: 'SET_STREAMING', isStreaming: false });
+        abortRef.current = null;
+        loadSessions();
+        if (!requestFailedRef.current) {
+          retryPayloadRef.current = null;
+        }
+      }
+    },
+    [state.isStreaming, dispatch, handleEvent, refs, abortRef, loadSessions],
   );
 
   /**
@@ -254,22 +369,26 @@ export function useChatStream(
       streamActiveRef.current = true;
       bufferedEventsRef.current = [];
 
+      const bodyObj = {
+        messages: [...currentMessages, userMessage].filter((m) => m.role !== 'system'),
+        model: refs.modelRef.current,
+        numCtx: refs.numCtxRef.current,
+        baseUrl: refs.baseUrlRef.current,
+        sessionId: refs.sessionIdRef.current,
+        yolo: refs.yoloRef.current,
+        think: refs.thinkingEnabledRef.current,
+        compactionModel: refs.compactionModelRef.current,
+        chatTimeoutMs: refs.chatTimeoutMsRef.current,
+        webSearch: refs.webSearchRef.current,
+      };
+      retryPayloadRef.current = { body: JSON.stringify(bodyObj) };
+      requestFailedRef.current = false;
+
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: [...currentMessages, userMessage].filter((m) => m.role !== 'system'),
-            model: refs.modelRef.current,
-            numCtx: refs.numCtxRef.current,
-            baseUrl: refs.baseUrlRef.current,
-            sessionId: refs.sessionIdRef.current,
-            yolo: refs.yoloRef.current,
-            think: refs.thinkingEnabledRef.current,
-            compactionModel: refs.compactionModelRef.current,
-            chatTimeoutMs: refs.chatTimeoutMsRef.current,
-            webSearch: refs.webSearchRef.current,
-          }),
+          body: retryPayloadRef.current!.body,
           signal: abortController.signal,
         });
 
@@ -363,8 +482,10 @@ export function useChatStream(
         ) {
           // Connection was dropped by a proxy/browser idle timeout.
           // Don't show a scary raw error — show a friendly message or suppress.
+          requestFailedRef.current = true;
           dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
         } else {
+          requestFailedRef.current = true;
           dispatch({ type: 'SET_ERROR', error: err.message });
         }
       } finally {
@@ -385,10 +506,13 @@ export function useChatStream(
         dispatch({ type: 'SET_STREAMING', isStreaming: false });
         abortRef.current = null;
         loadSessions();
+        if (!requestFailedRef.current) {
+          retryPayloadRef.current = null;
+        }
       }
     },
     [state.isStreaming, dispatch, handleEvent, refs, abortRef, loadSessions],
   );
 
-  return { sendChatMessage, handleEvent, replayBufferedEvents };
+  return { sendChatMessage, retry, handleEvent, replayBufferedEvents };
 }

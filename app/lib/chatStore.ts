@@ -93,6 +93,7 @@ type ChatAction =
   | { type: 'SET_MODEL_CONTEXT_LIMIT'; limit: number | null }
   | { type: 'SHOW_APPROVAL'; command: { name: string; args: any } | null; requestId?: string }
   | { type: 'CLEAR_MESSAGES' }
+  | { type: 'REMOVE_LAST_ASSISTANT' }
   | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats'] }
   | { type: 'CLEAR_TOKEN_STATS' }
   | { type: 'COMPACT_PROGRESS'; message: string }
@@ -264,6 +265,15 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
     case 'CLEAR_MESSAGES':
       return { ...state, messages: [] };
+    case 'REMOVE_LAST_ASSISTANT':
+      const msgs = state.messages;
+      if (msgs.length > 0) {
+        const last = msgs[msgs.length - 1];
+        if (last && last.role === 'assistant') {
+          return { ...state, messages: msgs.slice(0, -1) };
+        }
+      }
+      return state;
     case 'SET_TOKEN_STATS':
       return { ...state, tokenStats: action.stats };
     case 'CLEAR_TOKEN_STATS':
