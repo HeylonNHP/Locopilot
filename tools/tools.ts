@@ -346,11 +346,11 @@ export const TOOLS: OllamaTool[] = [
         function: {
             name: 'run_subagents',
             description:
-                'Delegate one or more bounded, independent tasks to isolated sub-agents so you can tackle complex work in parallel logical streams without polluting the parent conversation context. ' +
-                'Ideal for: research across multiple topics, independent file edits, multi-step investigations, comparisons, or any work that can be cleanly decomposed into separate units. ' +
-                'Each sub-agent runs its own full tool-calling loop with access to all normal tools, so it can read files, run commands, search the web, and iterate autonomously until its task is complete. ' +
-                'Only the final response from each sub-agent is returned to you, keeping the parent history concise. ' +
-                'Sub-agents are sequential and each receives only the prompt you write for it — include all required context inline.',
+                'Your primary tool for scaling beyond simple tasks. Sub-agents execute work in isolation and return only their final answer — saving thousands of context tokens. ' +
+                'Use proactively for ANY multi-step work: research, file edits, code changes, comparisons, audits. ' +
+                'Each sub-agent gets all normal tools, runs its own autonomous loop, and returns only its conclusion. ' +
+                'You do NOT need the user to ask for sub-agents — they are a default tool, not a special case. ' +
+                'Sub-agents are sequential; include ALL context inline; they cannot spawn further sub-agents.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -393,14 +393,15 @@ export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean
         'You have access to the following tools that let you interact with the host machine:\n\n' +
         getRunCommandPrompt(yoloMode) +
         getWebSearchPrompt() +
+        getSubAgentPrompt() +
         getFetchUrlPrompt() +
         (visionSupported !== false ? getFetchImagePrompt() : '') +
         getReadFilePrompt() +
         getPatchFilePrompt() +
         getWriteFilePrompt() +
-        getSubAgentPrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
+        '- Use sub-agents aggressively for any information-heavy or multi-step work — they absorb intermediate results into isolated contexts, preserving your own context window for high-level reasoning. You do NOT need the user to request them.\n' +
         '- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n' +
         '- Do NOT ask the user for permission yourself; ' +
         (yoloMode

@@ -380,17 +380,19 @@ export class SubAgentTool implements IToolCommand {
 
 export function getToolPrompt(): string {
     return (
-        '8. run_subagents(agents)\n' +
-        '   Delegate independent subtasks to isolated workers that each run their own full tool-calling loop.\n' +
-        '   USE THIS TOOL when a task can be broken into separate, bounded units of work — for example:\n' +
-        '     • Researching multiple topics independently\n' +
-        '     • Editing several unrelated files without cross-contaminating context\n' +
-        '     • Running multi-step investigations in parallel logical streams\n' +
-        '     • Performing comparisons, audits, or summaries across independent sources\n' +
-        '   Each sub-agent has access to all normal tools (run_command, web_search, read_file, patch_file, etc.)\n' +
-        '   and iterates autonomously until its task is complete — you get only the final answer back.\n' +
-        '   This keeps the parent conversation concise and focused while sub-agents do the heavy lifting.\n' +
-        '   Constraints: sub-agents are sequential; each sees only its own prompt (include all context inline);\n' +
-        '   sub-agents cannot spawn further sub-agents.\n\n'
+        '3. run_subagents(agents)\n' +
+        '   YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window.\n' +
+        '   Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost:\n' +
+        '   they do the heavy work in isolation and return only the final answer — often saving thousands of tokens.\n' +
+        '   USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for:\n' +
+        '     • ANY task involving multiple tool calls (search → read → compare → decide)\n' +
+        '     • Researching topics, comparing approaches, or auditing code\n' +
+        '     • File edits and code changes (isolated from your thinking context)\n' +
+        '     • Any information-dense work where intermediate results would clutter your reasoning\n' +
+        '     • Breaking large requests into parallel research streams\n' +
+        '   Each sub-agent runs its own full tool-calling loop and returns only its final summary.\n' +
+        '   This keeps your context free for high-level reasoning while sub-agents handle the details.\n' +
+        '   Constraints: sequential; each sees only its own prompt (include ALL context inline);\n' +
+        '   sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context.\n\n'
     );
 }
