@@ -124,7 +124,6 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Create a per-request process registry so concurrent requests
             // cannot see each other's running commands.
             enterRequestScope();
-            startKeepalive();
 
             function sendEvent(event: string, data: unknown): void {
                 try {
@@ -155,6 +154,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                     keepaliveInterval = null;
                 }
             }
+
+            startKeepalive();
 
             // Strip any system messages from the client and inject a fresh system prompt
             // so the model always sees the current date, tool definitions, and policy.
