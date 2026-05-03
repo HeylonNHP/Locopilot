@@ -401,9 +401,16 @@ export async function POST(req: NextRequest): Promise<Response> {
                             break; // success — exit retry loop
                         } catch (err) {
                             if (retryAttempt >= MAX_LLM_RETRIES - 1 || !isRetryableError(err)) {
+                                console.error(
+                                    `[Ollama] Request failed permanently (attempt ${retryAttempt + 1}/${MAX_LLM_RETRIES}): ${err instanceof Error ? err.message : String(err)}`,
+                                );
                                 throw err; // propagate to outer catch
                             }
                             retryAttempt++;
+
+                            console.warn(
+                                `[Ollama] Request failed, retrying (attempt ${retryAttempt}/${MAX_LLM_RETRIES}): ${err instanceof Error ? err.message : String(err)}`,
+                            );
 
                             sendEvent('status', { phase: 'retrying', attempt: retryAttempt, maxRetries: MAX_LLM_RETRIES });
                             sendEvent('clear_assistant', {});
@@ -654,6 +661,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 }
 
                 const message = await getLlmApiErrorMessage(err);
+                console.error(`[Ollama] ${message}`);
 
                 try {
                     sendEvent('error', { message });
