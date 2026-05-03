@@ -75,6 +75,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     const sessionId: unknown = body.sessionId;
     const baseUrl: unknown = body.baseUrl;
     const think: unknown = body.think;
+    const chatTimeoutMs: unknown = body.chatTimeoutMs;
 
     // -- Validation ------------------------------------------------
     if (typeof model !== 'string' || !model.trim()) {
@@ -105,6 +106,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         ? Math.floor(numCtx)
         : 4096;
 
+    const effectiveChatTimeoutMs = typeof chatTimeoutMs === 'number' && Number.isFinite(chatTimeoutMs) && chatTimeoutMs > 0
+        ? Math.floor(chatTimeoutMs)
+        : 720_000; // 12 minutes default from constants.ts
+
     const parsedSessionId = typeof sessionId === 'number'
         ? sessionId
         : undefined;
@@ -119,11 +124,36 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Create a per-request process registry so concurrent requests
             // cannot see each other's running commands.
             enterRequestScope();
+            startKeepalive();
 
             function sendEvent(event: string, data: unknown): void {
-                controller.enqueue(
-                    encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-                );
+                try {
+                    controller.enqueue(
+                        encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+                    );
+                } catch {
+                    // Client disconnected — safe to ignore
+                }
+            }
+
+            let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
+
+            function startKeepalive(): void {
+                if (keepaliveInterval) return;
+                keepaliveInterval = setInterval(() => {
+                    try {
+                        controller.enqueue(encoder.encode(': \n\n'));
+                    } catch {
+                        // Client disconnected – ignore.
+                    }
+                }, 5000);
+            }
+
+            function stopKeepalive(): void {
+                if (keepaliveInterval) {
+                    clearInterval(keepaliveInterval);
+                    keepaliveInterval = null;
+                }
             }
 
             // Strip any system messages from the client and inject a fresh system prompt
@@ -236,6 +266,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 tokenLimit: effectiveNumCtx,
                             });
                             try {
+                                startKeepalive();
                                 const compactResult = await compactHistory(
                                     effectiveBaseUrl,
                                     effectiveCompactionModel,
@@ -245,6 +276,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         sendEvent('compact_progress', { message });
                                     },
                                 );
+                                stopKeepalive();
                                 // Send the compacted message list to the client BEFORE
                                 // appending the LLM-only continuation nudge, so the
                                 // client's state mirrors the clean compacted history.
@@ -270,6 +302,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     });
                                 }
                             } catch (compactErr) {
+                                stopKeepalive();
                                 // Non-fatal — log and continue with existing messages.
                                 sendEvent('status', {
                                     phase: 'compact_failed',
@@ -294,6 +327,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         tools: TOOLS,
                         numCtx: effectiveNumCtx,
                         signal: req.signal,
+                        timeoutMs: effectiveChatTimeoutMs,
                     };
                     if (thinkEnabled !== undefined) {
                         params.think = thinkEnabled;
@@ -412,10 +446,12 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     args: toolArgs,
                                 });
 
+                                startKeepalive();
                                 const approved = await Promise.race([
                                     waitForApproval(requestId),
                                     abortPromise,
                                 ]);
+                                stopKeepalive();
 
                                 // Clean up registry entry when the abort path won the race.
                                 resolveApproval(requestId, false);
@@ -434,6 +470,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                             // ────────────────────────────────────────────────────────────
 
                             const startTime = Date.now();
+
+                            const runCommandProgress = (message: string) => {
+                                sendEvent('tool_progress', { name: toolName, message: sanitize(message) });
+                            };
 
                             const shouldSurfaceToolProgress = toolName === 'web_search' || toolName === 'fetch_url';
                             const webToolOutput: ToolOutputSink = {
@@ -482,11 +522,15 @@ export async function POST(req: NextRequest): Promise<Response> {
                             };
 
                             // Execute the tool via the registry.
+                            startKeepalive();
                             const result = shouldSurfaceToolProgress
                                 ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput, requestContext)
                                 : toolName === 'run_subagents'
                                     ? await handleToolCall(toolName, toolArgs, undefined, subagentOutputSink, requestContext)
-                                    : await handleToolCall(toolName, toolArgs, undefined, nullOutputSink, requestContext);
+                                    : toolName === 'run_command'
+                                        ? await handleToolCall(toolName, toolArgs, runCommandProgress, nullOutputSink, requestContext)
+                                        : await handleToolCall(toolName, toolArgs, undefined, nullOutputSink, requestContext);
+                            stopKeepalive();
 
                             const duration = Date.now() - startTime;
 
@@ -568,6 +612,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // Controller may already be closed – ignore.
                 }
             } finally {
+                stopKeepalive();
                 try {
                     controller.close();
                 } catch {

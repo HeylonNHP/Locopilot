@@ -26,6 +26,7 @@ export function useChatStream(
   const bufferOwnerSessionIdRef = useRef<number | null | undefined>(undefined);
   const bufferedEventsRef = useRef<Array<{ event: string; data: any }>>([]);
   const streamActiveRef = useRef(false);
+  const subagentBufferRef = useRef<Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>>(new Map());
   // --------------------------------------------------------------------------
 
   const handleEvent = useCallback(
@@ -110,13 +111,27 @@ export function useChatStream(
           });
           break;
 
-        case 'subagent_chunk':
-          dispatch({
-            type: 'SUBAGENT_CHUNK',
-            agentId: typeof data.agentId === 'string' ? data.agentId : '__subagent__',
-            text: typeof data.text === 'string' ? data.text : String(data.text ?? ''),
-          });
+        case 'subagent_chunk': {
+          const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
+          const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
+          const buffer = subagentBufferRef.current.get(agentId);
+          if (buffer) {
+            buffer.text += text;
+            if (buffer.timer) clearTimeout(buffer.timer);
+          } else {
+            subagentBufferRef.current.set(agentId, { text, timer: null });
+          }
+          const entry = subagentBufferRef.current.get(agentId)!;
+          entry.timer = setTimeout(() => {
+            dispatch({
+              type: 'SUBAGENT_CHUNK',
+              agentId,
+              text: entry.text,
+            });
+            subagentBufferRef.current.delete(agentId);
+          }, 50);
           break;
+        }
 
         case 'status':
           if (data.tokensUsed !== undefined && data.tokensUsed !== null) {
@@ -338,10 +353,28 @@ export function useChatStream(
           }
         }
       } catch (err: any) {
-        if (err.name !== 'AbortError') {
+        if (err.name === 'AbortError') {
+          // User clicked Stop — silently ignore
+        } else if (
+          err.message?.includes('input stream') ||
+          err.message?.includes('network') ||
+          err.message?.includes('fetch') ||
+          err.name === 'TypeError'
+        ) {
+          // Connection was dropped by a proxy/browser idle timeout.
+          // Don't show a scary raw error — show a friendly message or suppress.
+          dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
+        } else {
           dispatch({ type: 'SET_ERROR', error: err.message });
         }
       } finally {
+        // Flush any pending subagent chunk debounces
+        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
+          if (entry.timer) clearTimeout(entry.timer);
+          dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
+        }
+        subagentBufferRef.current.clear();
+
         // Mark stream inactive and clear the buffer.  If the stream ended while
         // the user was on another session, loadSessionMessages will load the
         // completed turn from DB — the buffer is no longer needed.
