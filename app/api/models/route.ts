@@ -29,6 +29,7 @@ export async function GET(): Promise<NextResponse> {
         }
 
         const models = await fetchLlmModels(config.baseUrl);
+        models.sort((a, b) => a.name.localeCompare(b.name));
         return NextResponse.json({ models });
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
