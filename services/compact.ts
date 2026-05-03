@@ -693,20 +693,21 @@ export async function generateSessionTitle(
         {
             system:
                 'You are a concise session title generator. Given a conversation between a user and an AI assistant, ' +
-                'generate a short descriptive title (2-8 words).\n' +
+                'generate a short descriptive title (2-8 words) and pick a single relevant emoji that captures the topic.\n' +
                 '\n' +
                 'Examples:\n' +
                 '[USER] How do I fix a 503 error on Nginx?\n' +
                 '[ASSISTANT] Check upstream server configs and restart.\n' +
-                'Title: Nginx 503 Error Troubleshooting\n' +
+                'Title: 🌐 Nginx 503 Error Troubleshooting\n' +
                 '\n' +
                 '[USER] Explain how Python async/await works\n' +
                 '[ASSISTANT] Async/await is syntactic sugar over coroutines...\n' +
-                'Title: Python Async/Await Explained\n' +
+                'Title: 🐍 Python Async/Await Explained\n' +
                 '\n' +
                 'Rules:\n' +
-                '- Return ONLY the title — no quotes, no prefixes, no explanation\n' +
-                '- 2 to 8 words, under 80 characters\n' +
+                '- Return ONLY the emoji + title — no quotes, no prefixes, no explanation\n' +
+                '- 2 to 8 words, under 80 characters (emoji does not count toward the word limit)\n' +
+                '- Pick one relevant emoji that represents the main topic\n' +
                 '- Capture the main topic or task\n' +
                 '- Use descriptive, active language\n' +
                 '- Do NOT include refusals, apologies, or limitation language in the title',
@@ -716,14 +717,14 @@ export async function generateSessionTitle(
         // Strategy 2: Direct instruction, no examples (different prompt shape)
         {
             system:
-                'You generate short titles for chat conversations. Output exactly one line of plain text. ' +
-                'No quotes, no formatting, no prefixes like "Title:". Just the title.',
+                'You generate short titles for chat conversations. Pick one relevant emoji and output exactly one line: <emoji> <title>. ' +
+                'No quotes, no formatting, no prefixes like "Title:". Just the emoji and title.',
             user:
                 'Conversation:\n' + conversationText.slice(0, 2000) + '\n\nShort title (2-8 words):',
         },
         // Strategy 3: Minimalist prompt (some models work better with less noise)
         {
-            system: 'Generate a brief title for this chat. Output only the title text.',
+            system: 'Generate a brief title for this chat. Pick one relevant emoji and output only the emoji + title text.',
             user:
                 conversationText.slice(0, 1500) + '\n\nTitle:',
         },
@@ -772,8 +773,13 @@ export async function generateSessionTitle(
                 continue;
             }
 
+            // If the model omitted an emoji, prepend a generic one
+            const finalTitle = /^\p{Extended_Pictographic}/u.test(title)
+                ? title
+                : `💬 ${title}`;
+
             // Success — return the first valid title
-            return `💬 ${title}`;
+            return finalTitle;
         } catch (err) {
             lastError = err instanceof Error ? err.message : 'Unknown error';
             continue;
