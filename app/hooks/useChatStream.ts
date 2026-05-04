@@ -32,6 +32,32 @@ export function useChatStream(
 
   const handleEvent = useCallback(
     (event: string, data: any) => {
+      // ── session_created must ALWAYS be processed first ──────────────────
+      // It syncs bufferOwnerSessionIdRef and refs.sessionIdRef to the real
+      // session ID.  If the buffer guard below intercepted it, the guard
+      // would see null !== -1, buffer session_created, and the sync would
+      // never happen — causing ALL subsequent chunks to be buffered and
+      // ultimately discarded by the finally block.
+      if (event === 'session_created' && typeof data.sessionId === 'number') {
+        const realId: number = data.sessionId;
+        if (abortControllersRef.current.has(-1)) {
+          const ctrl = abortControllersRef.current.get(-1)!;
+          abortControllersRef.current.delete(-1);
+          abortControllersRef.current.set(realId, ctrl);
+          setStreamingSessions(prev => {
+            const next = new Set(prev);
+            next.delete(-1);
+            next.add(realId);
+            return next;
+          });
+        }
+        bufferOwnerSessionIdRef.current = realId;
+        refs.sessionIdRef.current = realId;
+        dispatch({ type: 'SET_CURRENT_SESSION', id: realId });
+        loadSessions();
+        return;
+      }
+
       // If a stream is active and the user has navigated to a different session,
       // buffer this event so it doesn't land in the wrong message list.
       if (
@@ -43,36 +69,6 @@ export function useChatStream(
       }
 
       switch (event) {
-        case 'session_created': {
-          // The server created a new session before the agent loop started.
-          // If the stream started on a not-yet-created session (keyed as -1),
-          // move the abort controller to the real session ID.
-          if (typeof data.sessionId === 'number') {
-            const realId: number = data.sessionId;
-            if (abortControllersRef.current.has(-1)) {
-              const ctrl = abortControllersRef.current.get(-1)!;
-              abortControllersRef.current.delete(-1);
-              abortControllersRef.current.set(realId, ctrl);
-              setStreamingSessions(prev => {
-                const next = new Set(prev);
-                next.delete(-1);
-                next.add(realId);
-                return next;
-              });
-            }
-            // Update both the buffer owner and the stable ref synchronously.
-            // refs.sessionIdRef is normally updated via useEffect, which lags
-            // behind SSE events. Without this sync update, the buffer guard
-            // (refs.sessionIdRef !== bufferOwnerSessionIdRef) would buffer all
-            // chunks that arrive before the useEffect fires, causing the
-            // response to appear empty until a session reload.
-            bufferOwnerSessionIdRef.current = realId;
-            refs.sessionIdRef.current = realId;
-            dispatch({ type: 'SET_CURRENT_SESSION', id: realId });
-          }
-          loadSessions();
-          break;
-        }
 
         case 'thinking':
           dispatch({ type: 'APPLY_ASSISTANT_DELTA', thinking: data.content ?? data });
