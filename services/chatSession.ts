@@ -17,7 +17,6 @@ import {
     handleToolCall,
     installKeyInterruptListener,
     isInterruptRequested,
-    removeKeyInterruptListener,
     type ToolCallResult,
 } from '../tools/tools';
 import { fetchLlmModelInfo, getLlmModelContextLimit, type ChatMessage, type LlmModelInfo } from './llm';
@@ -26,7 +25,6 @@ import { sanitizeChatMessage } from './textUtils';
 import {
     printAIResponse,
     renderTurn,
-    type StreamAIResponseParams,
 } from '../aiResponseRenderer';
 import {
     renameSession,

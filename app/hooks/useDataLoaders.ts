@@ -131,5 +131,5 @@ export function useDataLoaders(refs: StableRefs) {
     }
   };
 
-  return { loadSessions, loadSessionMessages, loadModels, loadConfig, loadModelContextLimit };
+  return { loadSessions, loadSessionMessages, loadModels, loadConfig };
 }

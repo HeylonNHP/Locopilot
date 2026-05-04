@@ -4,8 +4,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { input, select } from '@inquirer/prompts';
 
-import { validateLlmConnection, getLlmApiErrorMessage } from './llm';
-import { resolveCompactionModel } from './modelManager';
+import { validateLlmConnection } from './llm';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_MAX_QUERIES, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT, DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY, OLLAMA_CONNECT_TIMEOUT_MS } from '../constants';
 import type { Config } from '../slashCommands';
 
