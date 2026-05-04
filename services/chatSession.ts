@@ -525,30 +525,6 @@ export async function processAITurn(
 }
 
 /**
- * Handles empty response recovery
- */
-export function handleEmptyResponseRecovery(
-    state: ChatSessionState,
-    assistantMessage: ChatMessage,
-    recoveryAttempts: number,
-): boolean {
-    const assistantContent = assistantMessage.content?.trim() ?? '';
-    
-    if (assistantContent.length === 0 && recoveryAttempts < 3) {
-        state.messages.push(sanitizeChatMessage({
-            role: 'user',
-            content:
-                'Your last response was empty. Provide a direct answer now. ' +
-                'If commands are needed, call run_command. If commands already ran, summarize their output and errors.'
-        }));
-        state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
-        return true;
-    }
-    
-    return false;
-}
-
-/**
  * Names the session from the first user message
  */
 export function nameSessionFromPrompt(state: ChatSessionState, prompt: string): void {
