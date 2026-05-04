@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import type { ToolSchema } from '../../tools/tools';
 
 import { AUTO_COMPACT_THRESHOLD_PCT } from '../../constants';
 import { compactHistory } from '../../services/compact';
@@ -15,6 +16,29 @@ import {
     type ToolCallResult,
 } from '../toolRegistry';
 import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+
+export const subAgentToolSchema: ToolSchema = {
+    name: 'run_subagents',
+    description: 'YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window. Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost: they do the heavy work in isolation and return only the final answer — often saving thousands of tokens. USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for: • ANY task involving multiple tool calls (search → read → compare → decide) • Researching topics, comparing approaches, or auditing code • File edits and code changes (isolated from your thinking context) • Any information-dense work where intermediate results would clutter your reasoning • Breaking large requests into parallel research streams. Each sub-agent runs its own full tool-calling loop and returns only the final summary. Constraints: sequential; each sees only its own prompt (include ALL context inline); sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context.',
+    parameters: {
+        type: 'object',
+        properties: {
+            agents: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        id:       { type: 'string', description: 'A short identifier for this sub-agent, used to label its output in logs and results (e.g. "research", "edit-auth", "summarise-logs").' },
+                        prompt:   { type: 'string', description: 'A fully self-contained task prompt for this sub-agent. Include all file paths, background context, goals, and constraints — the sub-agent cannot see the parent conversation history.' },
+                    },
+                    required: ['id', 'prompt'],
+                },
+                description: 'One or more sub-agents to run sequentially. Each one needs a short id and a fully self-contained prompt.',
+            },
+        },
+        required: ['agents'],
+    },
+};
 
 interface SubAgentSpec {
     id?: string;
@@ -379,20 +403,14 @@ export class SubAgentTool implements IToolCommand {
 }
 
 export function getToolPrompt(): string {
+    const schema = subAgentToolSchema;
+    const agentItems = schema.parameters.properties.agents?.items;
+    const agentProps = agentItems?.properties ?? {};
+    const params = `agents: Array<{ id: string, prompt: string }>`;
     return (
-        '3. run_subagents(agents)\n' +
-        '   YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window.\n' +
-        '   Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost:\n' +
-        '   they do the heavy work in isolation and return only the final answer — often saving thousands of tokens.\n' +
-        '   USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for:\n' +
-        '     • ANY task involving multiple tool calls (search → read → compare → decide)\n' +
-        '     • Researching topics, comparing approaches, or auditing code\n' +
-        '     • File edits and code changes (isolated from your thinking context)\n' +
-        '     • Any information-dense work where intermediate results would clutter your reasoning\n' +
-        '     • Breaking large requests into parallel research streams\n' +
-        '   Each sub-agent runs its own full tool-calling loop and returns only its final summary.\n' +
-        '   This keeps your context free for high-level reasoning while sub-agents handle the details.\n' +
-        '   Constraints: sequential; each sees only its own prompt (include ALL context inline);\n' +
-        '   sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context.\n\n'
+        `3. ${schema.name}(${params})\n` +
+        `   ${schema.description}\n\n` +
+        `   - agents[].id: ${agentProps.id?.description ?? ''}\n` +
+        `   - agents[].prompt: ${agentProps.prompt?.description ?? ''}\n`
     );
 }

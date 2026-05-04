@@ -16,7 +16,13 @@ import { getToolPrompt as getReadFilePrompt } from './impl/readFileTool';
 import { getToolPrompt as getPatchFilePrompt } from './impl/patchFileTool';
 import { getToolPrompt as getWriteFilePrompt } from './impl/writeFileTool';
 import { getToolPrompt as getSubAgentPrompt } from './impl/subAgentTool';
-import { getToolPrompt as getRunCommandPrompt, defaultShell } from './impl/runCommandTool';
+import { getToolPrompt as getRunCommandPrompt } from './impl/runCommandTool';
+import { runCommandToolSchema } from './impl/runCommandTool';
+import { checkProcessOutputToolSchema } from './impl/runCommandTool';
+import { subAgentToolSchema } from './impl/subAgentTool';
+
+// Keep defaultShell export (used in runCommandToolSchema via defaultShell() call)
+export { defaultShell } from './impl/runCommandTool';
 import { toolRegistry } from './toolRegistry';
 import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput';
 import { buildToolUseNudge } from '../services/toolUseNudge';
@@ -46,6 +52,25 @@ export function sanitize(text: string): string {
 // --- Internal process registry ---
 
 // --- Tool schemas ---
+
+export interface ToolSchema {
+    name: string;
+    description: string;
+    parameters: {
+        type: 'object';
+        properties: Record<string, {
+            type: string;
+            description: string;
+            items?: {
+                type: 'object';
+                properties?: Record<string, { type: string; description: string }>;
+                required?: string[];
+                description?: string;
+            };
+        }>;
+        required: string[];
+    };
+}
 
 export interface OllamaToolParameter {
     type: string;
@@ -84,73 +109,13 @@ export interface OllamaTool {
 
 export const TOOLS: OllamaTool[] = [
     {
-        type: 'function',
-        function: {
-            name: 'run_command',
-            description:
-                'Executes a terminal command in the specified shell on the host machine. ' +
-                'The user will be asked to approve the command before it runs. ' +
-                'Returns the full stdout/stderr when the command finishes within the timeout, ' +
-                    'or partial output plus a process_id when it is still running. ' +
-                    'Use check_process_output to poll a long-running command for progress, ' +
-                    'and pass a larger poll_interval_seconds when you want fewer status checks.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    command: {
-                        type: 'string',
-                        description: 'The shell command to execute.',
-                    },
-                    shell: {
-                        type: 'string',
-                        description:
-                            `Shell to use. Defaults to '${defaultShell()}'. ` +
-                            'Supported values: bash, sh, zsh, powershell, cmd.',
-                    },
-                    timeout_seconds: {
-                        type: 'number',
-                        description:
-                            'How many seconds to wait before returning partial output. ' +
-                            'Defaults to 30. Use a higher value for commands known to be slow.',
-                    },
-                    cwd: {
-                        type: 'string',
-                        description:
-                            'Optional working directory for the command. If omitted, Locopilot defaults to the current agent working directory, which starts at the user home directory (Linux HOME or Windows USERPROFILE).',
-                    },
-                },
-                required: ['command'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'check_process_output',
-            description:
-                'Returns the current accumulated stdout/stderr of a command that was ' +
-                'previously started with run_command and is still running (or has since ' +
-                    'completed). Also reports whether the process has finished and its exit code. ' +
-                    'Use poll_interval_seconds to intentionally wait longer between snapshots ' +
-                    'when the command is expected to take a long time.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    process_id: {
-                        type: 'number',
-                        description: 'The process_id returned by run_command.',
-                    },
-                        poll_interval_seconds: {
-                            type: 'number',
-                            description:
-                                'Optional seconds to wait before sampling stdout/stderr again. ' +
-                                'Use this to reduce polling frequency for long-running commands.',
-                        },
-                },
-                required: ['process_id'],
-            },
-        },
-    },
+    type: 'function',
+    function: runCommandToolSchema,
+},
+{
+    type: 'function',
+    function: checkProcessOutputToolSchema,
+},
     {
         type: 'function',
         function: {

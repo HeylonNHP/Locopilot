@@ -11,6 +11,35 @@ import {
     unregisterInterruptHandler,
 } from '../tools';
 import { AsyncLocalStorage } from 'async_hooks';
+import type { ToolSchema } from '../../tools/tools';
+
+export const runCommandToolSchema: ToolSchema = {
+    name: 'run_command',
+    description: 'Executes a terminal command in the specified shell on the host machine. The user will be asked to approve the command before it runs. Returns the full stdout/stderr when the command finishes within the timeout, or partial output plus a process_id when it is still running. Use check_process_output to poll a long-running command for progress.',
+    parameters: {
+        type: 'object',
+        properties: {
+            command:         { type: 'string', description: 'The shell command to execute.' },
+            shell:           { type: 'string', description: `Shell to use. Defaults to '${defaultShell()}'. Supported values: bash, sh, zsh, powershell, cmd.` },
+            timeout_seconds: { type: 'number', description: 'How many seconds to wait before returning partial output. Defaults to 30.' },
+            cwd:             { type: 'string', description: 'Optional working directory for the command. If omitted, Locopilot defaults to the current agent working directory, which starts at the user home directory (Linux HOME or Windows USERPROFILE).' },
+        },
+        required: ['command'],
+    },
+};
+
+export const checkProcessOutputToolSchema: ToolSchema = {
+    name: 'check_process_output',
+    description: 'Returns the current accumulated stdout/stderr of a command that was previously started with run_command and is still running (or has since completed). Also reports whether the process has finished and its exit code.',
+    parameters: {
+        type: 'object',
+        properties: {
+            process_id:            { type: 'number', description: 'The process_id returned by run_command.' },
+            poll_interval_seconds: { type: 'number', description: 'Optional seconds to wait before sampling stdout/stderr again. Use a higher value when the command is expected to run for a long time.' },
+        },
+        required: ['process_id'],
+    },
+};
 
 interface RequestProcessState {
     registry: Map<number, ProcessEntry>;
@@ -432,18 +461,18 @@ export async function checkProcessOutput(
  * Returns the run_command and check_process_output tool section for the system prompt.
  */
 export function getToolPrompt(isYolo: boolean): string {
+    const cmdLine = `1. ${runCommandToolSchema.name}(command, shell?, timeout_seconds?, cwd?)`;
+    const cmdDesc = runCommandToolSchema.description
+        .replace('The user will be asked to approve the command before it runs.',
+            isYolo ? 'The command will run automatically with user consent.' : 'The user will be asked to approve it before it runs.');
+    const checkLine = `2. ${checkProcessOutputToolSchema.name}(process_id, poll_interval_seconds?)`;
+    const checkDesc = checkProcessOutputToolSchema.description;
+
+    const paramRows = (props: Record<string, { description: string }>) =>
+        Object.entries(props).map(([k, v]) => `      - ${k}: ${v.description}`).join('\n');
+
     return (
-        '1. run_command(command, shell?, timeout_seconds?, cwd?)\n' +
-        '   Execute a shell command on the host machine. Each call is stateless with respect to shell state, but if the command changes directories with cd and completes successfully, that directory will be preserved for later tool calls by the same agent. ' +
-        (isYolo
-            ? 'The command will run automatically with user consent.'
-            : 'The user will be asked to approve it before it runs.') + '\n' +
-        '   If cwd is omitted, the tool uses the current agent working directory, which starts at the user home directory (Linux HOME or Windows USERPROFILE).\n' +
-        '   Returns stdout/stderr when the command finishes, or partial\n' +
-        `   output plus a process_id if still running after the timeout (default ${DEFAULT_TIMEOUT_MS / 1000}s).\n\n` +
-        '2. check_process_output(process_id, poll_interval_seconds?)\n' +
-        '   Poll a long-running command for its current stdout/stderr and whether it has\n' +
-        '   finished. Use poll_interval_seconds to wait longer before the next snapshot\n' +
-        '   when the command is expected to run for a long time.\n\n'
+        `${cmdLine}\n   ${cmdDesc}\n${paramRows(runCommandToolSchema.parameters.properties)}\n\n` +
+        `${checkLine}\n   ${checkDesc}\n${paramRows(checkProcessOutputToolSchema.parameters.properties)}\n`
     );
 }
