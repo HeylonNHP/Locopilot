@@ -56,8 +56,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             model.trim(),
         );
 
-        // Strip system messages before compacting — system prompt is injected on-the-fly
-        const conversationMessages = (messages as ChatMessage[]).filter((m) => m.role !== 'system');
+        // Strip system and subagent_log messages before compacting — system prompt
+        // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.
+        const conversationMessages: ChatMessage[] = (messages as unknown[]).filter(
+            (m): m is ChatMessage =>
+                typeof m === 'object' && m !== null &&
+                'role' in m && m.role !== 'system' && m.role !== 'subagent_log',
+        );
 
         const compactPhases: string[] = [];
         const result = await compactHistory(

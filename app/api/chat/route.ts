@@ -196,7 +196,14 @@ export async function POST(req: NextRequest): Promise<Response> {
                 role: 'system',
                 content: createSystemPrompt(undefined, effectiveYolo),
             };
-            const currentMessages: ChatMessage[] = [systemMessage, ...conversationMessages.filter((m) => m.role !== 'system')];
+            const currentMessages: ChatMessage[] = [
+                systemMessage,
+                ...(conversationMessages as unknown[]).filter(
+                    (m): m is ChatMessage =>
+                        typeof m === 'object' && m !== null &&
+                        'role' in m && m.role !== 'system' && m.role !== 'subagent_log',
+                ),
+            ];
 
             // ── Eagerly create the session so it appears in the sidebar immediately ──
             // If the client already has a session ID (resuming), use it as-is.

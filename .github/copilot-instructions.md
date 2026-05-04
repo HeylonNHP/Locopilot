@@ -143,6 +143,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-05-04: Fixed "invalid role: subagent_log" 400 error during compaction
+  - Files: `app/api/chat/route.ts`, `app/api/compact/route.ts`, `.github/copilot-instructions.md`
+  - Summary: `subagent_log` is a client-only UI role used in `chatStore.ts` to render sub-agent output bubbles. Ollama does not recognise this role and returns a 400 when it appears in a `/compact` message list. Both `chat/route.ts` and `compact/route.ts` now filter out `subagent_log` messages alongside `system` messages when building the server-side history for LLM calls and compaction.
+  - Intent: Prevent compact calls from failing with an opaque 400 error when a sub-agent has run in the current session.
+
 - 2026-05-01: Enabled web UI `/dump` markdown downloads
   - Files: `app/api/dump/route.ts` (new), `app/hooks/useSlashCommands.ts`, `services/historyDump.ts`, `WEBUI_MIGRATION.md`
   - Summary: Added a dedicated dump endpoint that rebuilds the existing conversation export markdown on the web server, returns it as a markdown attachment, and wired the slash command to fetch the response and trigger a browser download of the generated `.md` file.
