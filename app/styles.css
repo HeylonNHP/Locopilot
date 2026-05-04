@@ -481,14 +481,14 @@
   bottom: calc(100% + 8px);
   left: 0;
   right: 0;
-  background: rgba(255, 255, 255, 0.25);
-  border: 1px solid var(--glass-border);
+  background: rgba(248, 252, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 16px;
   z-index: 10;
   overflow: hidden;
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
-  box-shadow: var(--shadow-lift);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: 0 16px 40px rgba(0, 60, 100, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 .chat-input-suggestion-item {
