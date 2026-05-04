@@ -2,7 +2,16 @@ import type { ToolSchema } from '../../tools/tools';
 
 export const webSearchToolSchema: ToolSchema = {
     name: 'web_search',
-    description: 'Searches the web using DuckDuckGo and returns extracted page text from top results. When using these results in your final answer, you MUST cite the full result URL(s) inline immediately after the relevant sentence(s). Do NOT use result_N placeholders.',
+    description:
+        'USE WEB SEARCH PROACTIVELY — it is your best friend for any task that needs more information, updated facts, or real documentation. ' +
+        'Use it whenever you could benefit from more context, not just when explicitly asked. ' +
+        'Good reasons to search: you are stuck and need ideas, documentation might be outdated, ' +
+        'you need to verify something that has likely changed, you want up-to-date information, ' +
+        'or you are about to make a decision with imperfect knowledge. ' +
+        "Do not rely solely on your training knowledge — DuckDuckGo gives you the live web. " +
+        'When using search results, ALWAYS cite the full URL inline immediately after the relevant sentence(s). ' +
+        'Do NOT use generic "result_N" placeholders. ' +
+        'Use use_playwright=true for JavaScript-heavy pages (SPAs, sites requiring client-side rendering) where standard fetching misses content.',
     parameters: {
         type: 'object',
         properties: {
@@ -324,12 +333,8 @@ export function getToolPrompt(): string {
         `   - prompt: ${p.prompt!.description}\n` +
         `   - queries: ${p.queries!.description}\n` +
         `   - max_queries: ${p.max_queries!.description}\n` +
-        `   - use_playwright: ${p.use_playwright!.description}\n\n` +
-        `   CITATION RULES:\n` +
-        `   When referencing a search result, always include the full result URL inline immediately\n` +
-        `   after the relevant sentence(s). Avoid generic "result_N" placeholders or special\n` +
-        `   tags. Format examples:\n` +
-        `   - Guzman y Gomez has multiple locations in Townsville. (https://guzmanygomez.com.au/locations)\n` +
-        `   - Zambrero was founded in 2005. (https://www.productreview.com.au/listings/zambrero)\n`
+        `   - use_playwright: ${p.use_playwright!.description}\n` +
+        `   - CITATION: always cite the full URL inline after each referenced fact. ` +
+        `     Do NOT use "result_N" placeholders. Example: "Guzman y Gomez has locations in Townsville (https://guzmanygomez.com.au/locations)"`
     );
 }
