@@ -29,7 +29,7 @@ import { createSession, renameSession } from '../../../history';
 import { compactHistory } from '../../../services/compact';
 import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 import { countMessagesTokens } from '../../../services/tokenizer';
-import { AUTO_COMPACT_THRESHOLD_PCT } from '../../../constants';
+import { AUTO_COMPACT_THRESHOLD_PCT, CHAT_TIMEOUT_MS } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
 import { createSystemPrompt } from '../../../services/chatSession';
 import { enterRequestScope } from '../../../tools/impl/runCommandTool';
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     const effectiveChatTimeoutMs = typeof chatTimeoutMs === 'number' && Number.isFinite(chatTimeoutMs) && chatTimeoutMs > 0
         ? Math.floor(chatTimeoutMs)
-        : 720_000; // 12 minutes default from constants.ts
+        : CHAT_TIMEOUT_MS;
 
     const parsedSessionId = typeof sessionId === 'number'
         ? sessionId
@@ -235,7 +235,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         webSearch: {
                             maxQueries: config?.webSearch?.maxQueries ?? 3,
                             resultsPerQuery: config?.webSearch?.resultsPerQuery ?? 3,
-                            requestTimeoutMs: 720000,
+                            requestTimeoutMs: CHAT_TIMEOUT_MS,
                             perPageCharLimit: config?.webSearch?.perPageCharLimit ?? 5000,
                             baseUrl: config?.baseUrl || effectiveBaseUrl,
                             compactionModel: resolveCompactionModel(config?.compactionModel ?? '', model as string),
@@ -255,7 +255,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         webSearch: {
                             maxQueries: 3,
                             resultsPerQuery: 3,
-                            requestTimeoutMs: 720000,
+                            requestTimeoutMs: CHAT_TIMEOUT_MS,
                             perPageCharLimit: 5000,
                             baseUrl: effectiveBaseUrl,
                             compactionModel: model as string,
