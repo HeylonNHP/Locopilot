@@ -988,24 +988,62 @@
 }
 
 /* ==================================================================
-   Scrollbar styling (webkit)
+   Scrollbar styling — Frutiger Aero glass bubble
    ================================================================== */
+
+/* WebKit (Chrome, Edge, Safari) */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 80, 140, 0.15);
-  border-radius: 4px;
+  background: linear-gradient(180deg,
+    rgba(0, 200, 255, 0.35) 0%,
+    rgba(0, 168, 232, 0.4) 50%,
+    rgba(0, 130, 200, 0.35) 100%
+  );
+  border-radius: 50px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
+    0 2px 6px rgba(0, 100, 160, 0.1);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 80, 140, 0.25);
+  background: linear-gradient(180deg,
+    rgba(0, 220, 255, 0.5) 0%,
+    rgba(0, 190, 255, 0.55) 50%,
+    rgba(0, 150, 220, 0.5) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
+    0 4px 12px rgba(0, 168, 232, 0.25);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg,
+    rgba(0, 240, 255, 0.6) 0%,
+    rgba(0, 210, 255, 0.65) 50%,
+    rgba(0, 170, 240, 0.6) 100%
+  );
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 168, 232, 0.4) transparent;
 }
 
 /* ==================================================================
