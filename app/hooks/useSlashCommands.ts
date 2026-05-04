@@ -8,7 +8,7 @@ import type { StableRefs } from './useStableRefs';
 
 interface SlashCommandDeps {
   refs: StableRefs;
-  abortRef: MutableRefObject<AbortController | null>;
+  isCurrentSessionStreaming: boolean;
   isCompactingRef: MutableRefObject<boolean>;
   isGeneratingTitleRef: MutableRefObject<boolean>;
   setIsCompacting: Dispatch<SetStateAction<boolean>>;
@@ -23,7 +23,7 @@ interface SlashCommandDeps {
  */
 export function useSlashCommands({
   refs,
-  abortRef,
+  isCurrentSessionStreaming,
   isCompactingRef,
   isGeneratingTitleRef,
   setIsCompacting,
@@ -222,7 +222,7 @@ export function useSlashCommands({
 
         case 'compact': {
           const currentMessages = refs.messagesRef.current;
-          if (abortRef.current) {
+          if (isCurrentSessionStreaming) {
             addSystem('Stop the current response before running /compact.');
             return;
           }
@@ -295,7 +295,7 @@ export function useSlashCommands({
 
         case 'title': {
           const currentMessages = refs.messagesRef.current;
-          if (abortRef.current) {
+          if (isCurrentSessionStreaming) {
             addSystem('Stop the current response before running /title.');
             return;
           }
@@ -355,7 +355,7 @@ export function useSlashCommands({
 
         case 'dump': {
           const currentMessages = refs.messagesRef.current;
-          if (abortRef.current) {
+          if (isCurrentSessionStreaming) {
             addSystem('Stop the current response before running /dump.');
             return;
           }
@@ -432,7 +432,7 @@ export function useSlashCommands({
     [
       dispatch,
       refs,
-      abortRef,
+      isCurrentSessionStreaming,
       isCompactingRef,
       isGeneratingTitleRef,
       setIsCompacting,

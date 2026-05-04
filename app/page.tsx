@@ -22,7 +22,7 @@ function HomeInner() {
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
 
-  const abortRef = useRef<AbortController | null>(null);
+  const abortControllersRef = useRef<Map<number, AbortController>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
@@ -36,9 +36,9 @@ function HomeInner() {
   // ── URL param: restore session from ?session=<id> on mount; keep URL in sync ──
   useSessionUrlParam({ onLoadSessionMessages: loadSessionMessages });
 
-  const { sendChatMessage, retry, replayBufferedEvents } = useChatStream(
+  const { sendChatMessage, retry, replayBufferedEvents, isCurrentSessionStreaming } = useChatStream(
     refs,
-    abortRef,
+    abortControllersRef,
     loadSessions,
   );
 
@@ -47,7 +47,7 @@ function HomeInner() {
 
   const { handleSlashCommand } = useSlashCommands({
     refs,
-    abortRef,
+    isCurrentSessionStreaming,
     isCompactingRef,
     isGeneratingTitleRef,
     setIsCompacting,
@@ -79,7 +79,10 @@ function HomeInner() {
     [dispatch, handleSlashCommand, sendChatMessage],
   );
 
-  const handleStop = useCallback(() => { abortRef.current?.abort(); }, []);
+  const handleStop = useCallback(() => {
+    const controller = abortControllersRef.current.get(state.currentSessionId ?? -1);
+    controller?.abort();
+  }, [state.currentSessionId]);
 
   const handleApprove = useCallback(async () => {
     const requestId = state.pendingApprovalId;
@@ -106,19 +109,21 @@ function HomeInner() {
   }, [dispatch, state.pendingApprovalId]);
 
   const handleNewSession = useCallback(async () => {
-    abortRef.current?.abort();
     dispatch({ type: 'CLEAR_MESSAGES' });
     dispatch({ type: 'CLEAR_TOKEN_STATS' });
     dispatch({ type: 'SET_CURRENT_SESSION', id: null });
     await loadSessions();
-  }, [dispatch, loadSessions, abortRef]);
+  }, [dispatch, loadSessions]);
 
   const handleSelectSession = useCallback(
     async (sessionId: number) => {
+      dispatch({ type: 'SET_ERROR', error: null });
+      dispatch({ type: 'CLEAR_TOKEN_STATS' });
+      dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
       await loadSessionMessages(sessionId);
       replayBufferedEvents(sessionId);
     },
-    [loadSessionMessages, replayBufferedEvents],
+    [loadSessionMessages, replayBufferedEvents, dispatch],
   );
 
   const handleDeleteSession = useCallback(
@@ -179,7 +184,7 @@ function HomeInner() {
                 <pre className="error-details">{state.error}</pre>
               )}
               <div className="error-actions">
-                <button onClick={retry} className="error-retry-btn" disabled={state.isStreaming}>
+                <button onClick={retry} className="error-retry-btn" disabled={isCurrentSessionStreaming}>
                   Retry
                 </button>
                 <button
@@ -196,7 +201,7 @@ function HomeInner() {
         </div>
 
         <div className="input-area">
-          {state.isStreaming ? (
+          {isCurrentSessionStreaming ? (
             <div className="streaming-indicator">
               <span className="text-accent font-14">
                 ● {state.compactingPhases.length > 0

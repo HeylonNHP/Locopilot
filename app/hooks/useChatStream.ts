@@ -12,7 +12,7 @@ import { EventSourceParserStream } from 'eventsource-parser/stream';
  */
 export function useChatStream(
   refs: StableRefs,
-  abortRef: MutableRefObject<AbortController | null>,
+  abortControllersRef: MutableRefObject<Map<number, AbortController>>,
   loadSessions: () => Promise<void>,
 ) {
   const { state, dispatch } = useChat();
@@ -77,8 +77,6 @@ export function useChatStream(
           break;
 
         case 'approval_request':
-          // The backend is paused waiting for the user to approve or reject
-          // the run_command request.  Show the ApprovalModal.
           dispatch({
             type: 'SHOW_APPROVAL',
             command: { name: data.toolName ?? data.name, args: data.args },
@@ -170,8 +168,6 @@ export function useChatStream(
               },
             });
           } else {
-            // No valid compact stats — clear stale pre-compaction token counts
-            // so the status bar doesn't show misleading numbers.
             dispatch({ type: 'CLEAR_TOKEN_STATS' });
           }
           dispatch({
@@ -185,7 +181,6 @@ export function useChatStream(
 
         case 'done':
           if (data.sessionId) {
-            // Sync refs so switch-back replay uses the server-assigned session ID.
             streamingSessionIdRef.current = data.sessionId;
             bufferOwnerSessionIdRef.current = data.sessionId;
             dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });
@@ -214,17 +209,20 @@ export function useChatStream(
    */
   const retry = useCallback(
     async () => {
-      if (!retryPayloadRef.current || state.isStreaming) return;
+      const sessionId = refs.sessionIdRef.current ?? -1;
+      const isCurrentSessionStreaming =
+        streamActiveRef.current && streamingSessionIdRef.current === sessionId;
+      if (!retryPayloadRef.current || isCurrentSessionStreaming) return;
 
       const { body } = retryPayloadRef.current;
       dispatch({ type: 'SET_ERROR', error: null });
       dispatch({ type: 'SET_STREAMING', isStreaming: true });
 
       const abortController = new AbortController();
-      abortRef.current = abortController;
+      abortControllersRef.current.set(sessionId, abortController);
 
-      streamingSessionIdRef.current = refs.sessionIdRef.current;
-      bufferOwnerSessionIdRef.current = refs.sessionIdRef.current;
+      streamingSessionIdRef.current = sessionId;
+      bufferOwnerSessionIdRef.current = sessionId;
       streamActiveRef.current = true;
       bufferedEventsRef.current = [];
 
@@ -307,14 +305,14 @@ export function useChatStream(
         streamingSessionIdRef.current = undefined;
         bufferOwnerSessionIdRef.current = undefined;
         dispatch({ type: 'SET_STREAMING', isStreaming: false });
-        abortRef.current = null;
+        abortControllersRef.current.delete(sessionId);
         loadSessions();
         if (!requestFailedRef.current) {
           retryPayloadRef.current = null;
         }
       }
     },
-    [state.isStreaming, dispatch, handleEvent, refs, abortRef, loadSessions],
+    [dispatch, handleEvent, refs, abortControllersRef, loadSessions],
   );
 
   /**
@@ -325,8 +323,6 @@ export function useChatStream(
   const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
       if (!streamActiveRef.current) {
-        // Stream already finished; DB copy loaded by loadSessionMessages is
-        // authoritative — clear any stale buffer and return.
         bufferedEventsRef.current = [];
         return;
       }
@@ -335,7 +331,6 @@ export function useChatStream(
       }
       const events = [...bufferedEventsRef.current];
       bufferedEventsRef.current = [];
-      // We are now on the owning session so handleEvent will dispatch normally.
       for (const { event, data } of events) {
         handleEvent(event, data);
       }
@@ -345,7 +340,10 @@ export function useChatStream(
 
   const sendChatMessage = useCallback(
     async (message: string) => {
-      if (state.isStreaming) return;
+      const sessionId = refs.sessionIdRef.current ?? -1;
+      const isCurrentSessionStreaming =
+        streamActiveRef.current && streamingSessionIdRef.current === sessionId;
+      if (isCurrentSessionStreaming) return;
 
       if (!refs.modelRef.current.trim()) {
         dispatch({ type: 'SET_ERROR', error: 'Please select a model first' });
@@ -360,12 +358,12 @@ export function useChatStream(
       dispatch({ type: 'SET_ERROR', error: null });
 
       const abortController = new AbortController();
-      abortRef.current = abortController;
+      abortControllersRef.current.set(sessionId, abortController);
 
       // Record which session owns this stream so events can be buffered when
       // the user navigates away and replayed when they switch back.
-      streamingSessionIdRef.current = refs.sessionIdRef.current;
-      bufferOwnerSessionIdRef.current = refs.sessionIdRef.current;
+      streamingSessionIdRef.current = sessionId;
+      bufferOwnerSessionIdRef.current = sessionId;
       streamActiveRef.current = true;
       bufferedEventsRef.current = [];
 
@@ -395,19 +393,13 @@ export function useChatStream(
         if (!response.ok) {
           const errorText = await response.text().catch(() => 'Unknown error');
 
-          // Try to extract a message from JSON error responses.
-          // The backend sends errors either as plain JSON or as SSE-formatted
-          // responses (e.g. "event: error\ndata: {\"message\":\"...\"}\n\n").
           let parsedError: Record<string, unknown> | null = null;
-
-          // Attempt 1: parse the full body as JSON (handles plain JSON errors)
           try {
             parsedError = JSON.parse(errorText) as Record<string, unknown>;
           } catch {
             // Not plain JSON — try SSE format
           }
 
-          // Attempt 2: extract from SSE data: lines
           if (!parsedError) {
             const dataLines: string[] = [];
             for (const line of errorText.split('\n')) {
@@ -425,10 +417,7 @@ export function useChatStream(
             }
           }
 
-          // Extract the error message from whichever parse succeeded
           if (parsedError) {
-            // Try multiple common error message fields that different API
-            // patterns use (message, error, status, detail, title).
             const msg = (
               parsedError.message ??
               parsedError.error ??
@@ -439,16 +428,12 @@ export function useChatStream(
             if (typeof msg === 'string' && msg.length > 0) {
               throw new Error(`HTTP ${response.status}: ${msg}`);
             }
-            // Parsed JSON but none of the expected fields had a string value.
-            // Build a readable string from whatever values are present rather
-            // than falling through to the raw-JSON fallback.
             const values = Object.values(parsedError).filter((v): v is string => typeof v === 'string');
             if (values.length > 0) {
               throw new Error(`HTTP ${response.status}: ${values[0]}`);
             }
           }
 
-          // Fallback: use raw text (truncated)
           const truncated = errorText.length > 200 ? errorText.slice(0, 200) + '...' : errorText;
           throw new Error(`HTTP ${response.status}: ${truncated}`);
         }
@@ -480,8 +465,6 @@ export function useChatStream(
           err.message?.includes('fetch') ||
           err.name === 'TypeError'
         ) {
-          // Connection was dropped by a proxy/browser idle timeout.
-          // Don't show a scary raw error — show a friendly message or suppress.
           requestFailedRef.current = true;
           dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
         } else {
@@ -489,30 +472,28 @@ export function useChatStream(
           dispatch({ type: 'SET_ERROR', error: err.message });
         }
       } finally {
-        // Flush any pending subagent chunk debounces
         for (const [agentId, entry] of subagentBufferRef.current.entries()) {
           if (entry.timer) clearTimeout(entry.timer);
           dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
         }
         subagentBufferRef.current.clear();
 
-        // Mark stream inactive and clear the buffer.  If the stream ended while
-        // the user was on another session, loadSessionMessages will load the
-        // completed turn from DB — the buffer is no longer needed.
         streamActiveRef.current = false;
         bufferedEventsRef.current = [];
         streamingSessionIdRef.current = undefined;
         bufferOwnerSessionIdRef.current = undefined;
         dispatch({ type: 'SET_STREAMING', isStreaming: false });
-        abortRef.current = null;
+        abortControllersRef.current.delete(sessionId);
         loadSessions();
         if (!requestFailedRef.current) {
           retryPayloadRef.current = null;
         }
       }
     },
-    [state.isStreaming, dispatch, handleEvent, refs, abortRef, loadSessions],
+    [dispatch, handleEvent, refs, abortControllersRef, loadSessions],
   );
 
-  return { sendChatMessage, retry, handleEvent, replayBufferedEvents };
+  const isCurrentSessionStreaming =
+    streamActiveRef.current && streamingSessionIdRef.current === refs.sessionIdRef.current;
+  return { sendChatMessage, retry, handleEvent, replayBufferedEvents, isCurrentSessionStreaming };
 }
