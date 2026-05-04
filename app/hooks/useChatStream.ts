@@ -305,12 +305,17 @@ export function useChatStream(
         }
         subagentBufferRef.current.clear();
 
-        abortControllersRef.current.delete(sessionId);
-        setStreamingSessions(prev => {
-          const next = new Set(prev);
-          next.delete(sessionId);
-          return next;
-        });
+        // Use bufferOwnerSessionIdRef (updated by session_created) instead of
+        // the captured sessionId, which may still be -1 for new sessions.
+        const ownerId = bufferOwnerSessionIdRef.current;
+        if (ownerId !== undefined) {
+          abortControllersRef.current.delete(ownerId);
+          setStreamingSessions(prev => {
+            const next = new Set(prev);
+            next.delete(ownerId);
+            return next;
+          });
+        }
         bufferedEventsRef.current = [];
         bufferOwnerSessionIdRef.current = undefined;
         loadSessions();
@@ -481,12 +486,17 @@ export function useChatStream(
         }
         subagentBufferRef.current.clear();
 
-        abortControllersRef.current.delete(sessionId);
-        setStreamingSessions(prev => {
-          const next = new Set(prev);
-          next.delete(sessionId);
-          return next;
-        });
+        // Use bufferOwnerSessionIdRef (updated by session_created) instead of
+        // the captured sessionId, which may still be -1 for new sessions.
+        const ownerId = bufferOwnerSessionIdRef.current;
+        if (ownerId !== undefined) {
+          abortControllersRef.current.delete(ownerId);
+          setStreamingSessions(prev => {
+            const next = new Set(prev);
+            next.delete(ownerId);
+            return next;
+          });
+        }
         bufferedEventsRef.current = [];
         bufferOwnerSessionIdRef.current = undefined;
         loadSessions();
