@@ -11,6 +11,9 @@ import {
     unregisterInterruptHandler,
 } from '../tools';
 import { AsyncLocalStorage } from 'async_hooks';
+
+const isWindows = os.platform() === 'win32';
+
 import type { ToolSchema } from '../../tools/tools';
 
 export const runCommandToolSchema: ToolSchema = {
@@ -81,8 +84,6 @@ export function enterRequestScope(): void {
 }
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
-
-const isWindows = os.platform() === 'win32';
 
 export function defaultShell(): string {
     // Always use powershell on Windows regardless of which shell launched Node,
