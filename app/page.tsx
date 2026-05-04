@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useChat } from './lib/chatStore';
 import { useStableRefs } from './hooks/useStableRefs';
 import { useDataLoaders } from './hooks/useDataLoaders';
 import { useChatStream } from './hooks/useChatStream';
 import { useSlashCommands } from './hooks/useSlashCommands';
+import { useSessionUrlParam } from './hooks/useSessionUrlParam';
 import ChatMessageBubble from '@/components/ChatMessageBubble';
 import ChatInput from '@/components/ChatInput';
 import SessionSidebar from '@/components/SessionSidebar';
@@ -13,7 +14,8 @@ import ApprovalModal from '@/components/ApprovalModal';
 import StatusBar from '@/components/StatusBar';
 import SettingsModal from '@/components/SettingsModal';
 
-export default function Home() {
+/** Inner component — uses useSearchParams so must live inside Suspense. */
+function HomeInner() {
   const { state, dispatch } = useChat();
   const [showSettings, setShowSettings] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
@@ -25,24 +27,24 @@ export default function Home() {
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
 
-  // Keep isCompacting/isGeneratingTitle accessible as refs for async guards
   useEffect(() => { isCompactingRef.current = isCompacting; }, [isCompacting]);
   useEffect(() => { isGeneratingTitleRef.current = isGeneratingTitle; }, [isGeneratingTitle]);
 
-  // Stable refs that mirror the latest state values (avoids stale closures)
   const refs = useStableRefs(state);
-
-  // Data loading helpers
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
 
-  // SSE streaming
-  const { sendChatMessage, retry, replayBufferedEvents } = useChatStream(refs, abortRef, loadSessions);
+  // ── URL param: restore session from ?session=<id> on mount; keep URL in sync ──
+  useSessionUrlParam({ onLoadSessionMessages: loadSessionMessages });
 
-  // Settings opener — defined before useSlashCommands so it can be passed in
+  const { sendChatMessage, retry, replayBufferedEvents } = useChatStream(
+    refs,
+    abortRef,
+    loadSessions,
+  );
+
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
 
-  // Slash command handling
   const { handleSlashCommand } = useSlashCommands({
     refs,
     abortRef,
@@ -55,20 +57,17 @@ export default function Home() {
     sendChatMessage,
   });
 
-  // ── Load initial data on mount ──────────────────────────────────
   useEffect(() => {
     loadSessions();
     loadModels();
     loadConfig();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Auto-scroll when messages change ────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [state.messages]);
 
-  // ── Send handler (routes slash commands or regular chat) ─────────
   const handleSend = useCallback(
     async (message: string) => {
       const trimmed = message.trim();
@@ -80,10 +79,8 @@ export default function Home() {
     [dispatch, handleSlashCommand, sendChatMessage],
   );
 
-  // ── Stop streaming ────────────────────────────────────────────────
   const handleStop = useCallback(() => { abortRef.current?.abort(); }, []);
 
-  // ── Approval modal ────────────────────────────────────────────────
   const handleApprove = useCallback(async () => {
     const requestId = state.pendingApprovalId;
     dispatch({ type: 'SHOW_APPROVAL', command: null });
@@ -92,7 +89,7 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId, approved: true }),
-      }).catch(() => { /* ignore – backend timeout already handles this */ });
+      }).catch(() => { /* ignore */ });
     }
   }, [dispatch, state.pendingApprovalId]);
 
@@ -104,13 +101,11 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId, approved: false }),
-      }).catch(() => { /* ignore – backend timeout already handles this */ });
+      }).catch(() => { /* ignore */ });
     }
   }, [dispatch, state.pendingApprovalId]);
 
-  // ── Session management ────────────────────────────────────────────
   const handleNewSession = useCallback(async () => {
-    // Abort any in-flight stream so its events don't land in the new session.
     abortRef.current?.abort();
     dispatch({ type: 'CLEAR_MESSAGES' });
     dispatch({ type: 'CLEAR_TOKEN_STATS' });
@@ -118,9 +113,6 @@ export default function Home() {
     await loadSessions();
   }, [dispatch, loadSessions, abortRef]);
 
-  // Keep the stream alive when switching to another session: the hook buffers
-  // events while away and replays them when the user switches back, so live
-  // subagent (and other) output resumes without bleed into the wrong session.
   const handleSelectSession = useCallback(
     async (sessionId: number) => {
       await loadSessionMessages(sessionId);
@@ -145,10 +137,8 @@ export default function Home() {
     [state.currentSessionId, dispatch, loadSessions],
   );
 
-  // ── Render ──────────────────────────────────────────────────────
   return (
     <div className="app-root">
-      {/* Sidebar */}
       <SessionSidebar
         onNewSession={handleNewSession}
         onSelectSession={handleSelectSession}
@@ -156,15 +146,11 @@ export default function Home() {
         onSettings={handleOpenSettings}
       />
 
-      {/* Main chat area */}
       <div className="main-area">
-        {/* Messages area */}
         <div className="messages-area">
           {state.messages.length === 0 ? (
             <div className="empty-state">
-              <h1 className="font-24 font-normal m-0">
-                Locopilot
-              </h1>
+              <h1 className="font-24 font-normal m-0">Locopilot</h1>
               <p className="m-0">Local, Private, Safe AI Assistant</p>
               {state.models.length > 0 && (
                 <p className="font-13 m-0">
@@ -178,7 +164,6 @@ export default function Home() {
             ))
           )}
 
-          {/* Error banner */}
           {state.error && (
             <div className="error-banner">
               <div className="error-header">
@@ -207,11 +192,9 @@ export default function Home() {
             </div>
           )}
 
-          {/* Scroll anchor */}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input area */}
         <div className="input-area">
           {state.isStreaming ? (
             <div className="streaming-indicator">
@@ -220,12 +203,7 @@ export default function Home() {
                   ? state.compactingPhases[state.compactingPhases.length - 1]
                   : 'Streaming...'}
               </span>
-              <button
-                onClick={handleStop}
-                className="stop-btn"
-              >
-                Stop
-              </button>
+              <button onClick={handleStop} className="stop-btn">Stop</button>
             </div>
           ) : isCompacting ? (
             <div className="streaming-indicator">
@@ -237,20 +215,16 @@ export default function Home() {
             </div>
           ) : isGeneratingTitle ? (
             <div className="streaming-indicator">
-              <span className="text-accent font-14">
-                ● Generating session title...
-              </span>
+              <span className="text-accent font-14">● Generating session title...</span>
             </div>
           ) : (
             <ChatInput onSend={handleSend} disabled={false} />
           )}
         </div>
 
-        {/* Status bar */}
         <StatusBar />
       </div>
 
-      {/* Approval modal */}
       {state.showApproval && state.pendingCommand && (
         <ApprovalModal
           command={state.pendingCommand}
@@ -259,8 +233,15 @@ export default function Home() {
         />
       )}
 
-      {/* Settings modal */}
       {showSettings && <SettingsModal onClose={handleCloseSettings} />}
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={null}>
+      <HomeInner />
+    </Suspense>
   );
 }
