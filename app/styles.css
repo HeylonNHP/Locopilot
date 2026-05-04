@@ -1055,6 +1055,136 @@
 }
 
 /* ==================================================================
+   Unstyled page.tsx buttons (error banner + streaming stop)
+   ================================================================== */
+
+.stop-btn {
+  padding: 4px 14px;
+  border-radius: 50px;
+  border: 1px solid rgba(255, 100, 100, 0.35);
+  background: linear-gradient(180deg, #ff8a8a 0%, #ff5252 60%, #e53935 100%);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow:
+    0 2px 8px rgba(220, 60, 60, 0.25),
+    inset 0 1px 0 rgba(255,255,255,0.4),
+    inset 0 -1px 0 rgba(0,0,0,0.08);
+  text-shadow: 0 1px 1px rgba(0,0,0,0.15);
+}
+
+.stop-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.5) 0%,
+    rgba(255,255,255,0.2) 40%,
+    transparent 40%
+  );
+  pointer-events: none;
+}
+
+.stop-btn:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 12px rgba(220, 60, 60, 0.35),
+    inset 0 1px 0 rgba(255,255,255,0.5),
+    inset 0 -1px 0 rgba(0,0,0,0.08);
+}
+
+.stop-btn:active {
+  transform: translateY(1px);
+}
+
+.error-details-toggle {
+  padding: 3px 10px;
+  border-radius: 50px;
+  border: 1px solid var(--glass-border-soft);
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.error-details-toggle:hover {
+  background: rgba(255, 255, 255, 0.35);
+  color: var(--text-primary);
+  border-color: var(--glass-border);
+}
+
+.error-retry-btn {
+  padding: 4px 12px;
+  border-radius: 50px;
+  border: 1px solid rgba(100, 200, 100, 0.35);
+  background: linear-gradient(180deg, #81c784 0%, #4caf50 60%, #388e3c 100%);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow:
+    0 2px 8px rgba(60, 160, 60, 0.2),
+    inset 0 1px 0 rgba(255,255,255,0.4),
+    inset 0 -1px 0 rgba(0,0,0,0.08);
+  text-shadow: 0 1px 1px rgba(0,0,0,0.15);
+}
+
+.error-retry-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.5) 0%,
+    rgba(255,255,255,0.2) 40%,
+    transparent 40%
+  );
+  pointer-events: none;
+}
+
+.error-retry-btn:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 12px rgba(60, 160, 60, 0.3),
+    inset 0 1px 0 rgba(255,255,255,0.5),
+    inset 0 -1px 0 rgba(0,0,0,0.08);
+}
+
+.error-retry-btn:active {
+  transform: translateY(1px);
+}
+
+.error-dismiss-btn {
+  padding: 4px 12px;
+  border-radius: 50px;
+  border: 1px solid var(--glass-border-soft);
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.error-dismiss-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  color: var(--text-primary);
+  border-color: var(--glass-border);
+}
+
+/* ==================================================================
    Misc utilities
    ================================================================== */
 .whitespace-pre-wrap { white-space: pre-wrap; }
