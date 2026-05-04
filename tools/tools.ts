@@ -64,39 +64,21 @@ export interface ToolSchema {
     description: string;
     parameters: {
         type: 'object';
-        properties: Record<string, {
-            type: string;
-            description: string;
-            items?: unknown;
-            enum?: string[];
-        }>;
+        properties: Record<string, ToolSchemaParameter>;
         required: string[];
     };
 }
 
-// OllamaToolParameter is kept for compatibility with existing code that uses the richer type.
-// ToolSchema uses a simpler property structure (items?: unknown) to support all schema shapes.
-export interface OllamaToolParameter {
+export interface ToolSchemaParameter {
     type: string;
     description?: string;
+    items?: ToolSchemaParameter;
     enum?: string[];
-    items?: {
-        type: string;
-        description?: string;
-        enum?: string[];
-        items?: {
-            type: string;
-            description?: string;
-            enum?: string[];
-            properties?: Record<string, OllamaToolParameter>;
-            required?: string[];
-        };
-        properties?: Record<string, OllamaToolParameter>;
-        required?: string[];
-    };
-    properties?: Record<string, OllamaToolParameter>;
+    properties?: Record<string, ToolSchemaParameter>;
     required?: string[];
 }
+
+export type OllamaToolParameter = ToolSchemaParameter;
 
 export interface OllamaTool {
     type: 'function';
@@ -114,39 +96,39 @@ export interface OllamaTool {
 export const TOOLS: OllamaTool[] = [
     {
         type: 'function',
-        function: runCommandToolSchema as unknown as OllamaTool['function'],
+        function: runCommandToolSchema,
     },
     {
         type: 'function',
-        function: checkProcessOutputToolSchema as unknown as OllamaTool['function'],
+        function: checkProcessOutputToolSchema,
     },
     {
         type: 'function',
-        function: webSearchToolSchema as unknown as OllamaTool['function'],
+        function: webSearchToolSchema,
     },
     {
         type: 'function',
-        function: fetchUrlToolSchema as unknown as OllamaTool['function'],
+        function: fetchUrlToolSchema,
     },
     {
         type: 'function',
-        function: fetchImageToolSchema as unknown as OllamaTool['function'],
+        function: fetchImageToolSchema,
     },
     {
         type: 'function',
-        function: readFileToolSchema as unknown as OllamaTool['function'],
+        function: readFileToolSchema,
     },
     {
         type: 'function',
-        function: patchFileToolSchema as unknown as OllamaTool['function'],
+        function: patchFileToolSchema,
     },
     {
         type: 'function',
-        function: writeFileToolSchema as unknown as OllamaTool['function'],
+        function: writeFileToolSchema,
     },
     {
         type: 'function',
-        function: subAgentToolSchema as unknown as OllamaTool['function'],
+        function: subAgentToolSchema,
     },
 ];
 

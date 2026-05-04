@@ -329,7 +329,7 @@ export function getToolPrompt(): string {
     const p = s.parameters.properties;
     return (
         `3. ${s.name}(prompt?, queries?, max_queries?, use_playwright?)\n` +
-        `   ${s.description}\n\n` +
+        `   Web search via DuckDuckGo with full page extraction. Returns page text, titles, snippets, and extracted links. When using results, ALWAYS cite the full URL inline immediately after the relevant sentence(s). Do NOT use generic "result_N" placeholders. Use use_playwright=true for JavaScript-heavy pages (SPAs, sites requiring client-side rendering) where standard fetching misses content.\n\n` +
         `   - prompt: ${p.prompt!.description}\n` +
         `   - queries: ${p.queries!.description}\n` +
         `   - max_queries: ${p.max_queries!.description}\n` +

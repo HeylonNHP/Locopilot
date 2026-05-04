@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useReducer, type ReactNode } from 'react';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
 export interface ChatMessage {
   /** Stable client-only identity used as React list key. Never sent to the server. */
@@ -305,7 +306,7 @@ const initialState: ChatState = {
   yolo: false,
   thinkingEnabled: true,
   compactionModel: '',
-  chatTimeoutMs: 720_000,
+  chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   webSearch: {
     maxQueries: 3,
     resultsPerQuery: 3,

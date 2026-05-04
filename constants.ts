@@ -1,6 +1,5 @@
 // Shared global constants used across Locopilot modules.
 export const DEFAULT_OLLAMA_CHAT_TIMEOUT_MS = 720_000; // 12 minutes
-export const CHAT_TIMEOUT_MS = 720_000; // 12 minutes default
 export const OLLAMA_CONNECT_TIMEOUT_MS = 5000; // connection check timeout
 export const DEFAULT_NUM_CTX = 131072;
 export const DEFAULT_WEB_SEARCH_MAX_QUERIES = 3;

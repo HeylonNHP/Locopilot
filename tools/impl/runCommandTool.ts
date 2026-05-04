@@ -16,9 +16,11 @@ const isWindows = os.platform() === 'win32';
 
 import type { ToolSchema } from '../../tools/tools';
 
+const APPROVAL_SENTENCE = 'The user will be asked to approve the command before it runs.';
+
 export const runCommandToolSchema: ToolSchema = {
     name: 'run_command',
-    description: 'Executes a terminal command in the specified shell on the host machine. The user will be asked to approve the command before it runs. Returns the full stdout/stderr when the command finishes within the timeout, or partial output plus a process_id when it is still running. Use check_process_output to poll a long-running command for progress.',
+    description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns the full stdout/stderr when the command finishes within the timeout, or partial output plus a process_id when it is still running. Use check_process_output to poll a long-running command for progress.`,
     parameters: {
         type: 'object',
         properties: {
@@ -464,13 +466,13 @@ export async function checkProcessOutput(
 export function getToolPrompt(isYolo: boolean): string {
     const cmdLine = `1. ${runCommandToolSchema.name}(command, shell?, timeout_seconds?, cwd?)`;
     const cmdDesc = runCommandToolSchema.description
-        .replace('The user will be asked to approve the command before it runs.',
+        .replace(APPROVAL_SENTENCE,
             isYolo ? 'The command will run automatically with user consent.' : 'The user will be asked to approve it before it runs.');
     const checkLine = `2. ${checkProcessOutputToolSchema.name}(process_id, poll_interval_seconds?)`;
     const checkDesc = checkProcessOutputToolSchema.description;
 
-    const paramRows = (props: Record<string, { description: string }>) =>
-        Object.entries(props).map(([k, v]) => `      - ${k}: ${v.description}`).join('\n');
+    const paramRows = (props: Record<string, { description?: string }>) =>
+        Object.entries(props).map(([k, v]) => `      - ${k}: ${v.description ?? ''}`).join('\n');
 
     return (
         `${cmdLine}\n   ${cmdDesc}\n${paramRows(runCommandToolSchema.parameters.properties)}\n\n` +

@@ -83,6 +83,7 @@ addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_total_tokens INTEGER');
 addColumnIfMissing('ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT \'\'');
 addColumnIfMissing('ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT \'[]\'');
+addColumnIfMissing('ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT \'\'');
 
 // ---------------------------------------------------------------------------
 // Prepared statements (created once, reused on every call)
@@ -120,12 +121,12 @@ const stmtDeleteMessages = db.prepare<[number]>(
     'DELETE FROM messages WHERE session_id = ?',
 );
 
-const stmtInsertMessage = db.prepare<[number, string, string, string, string, string]>(
-    'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images) VALUES (?, ?, ?, ?, ?, ?)',
+const stmtInsertMessage = db.prepare<[number, string, string, string, string, string, string]>(
+    'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
 );
 
 const stmtLoadMessages = db.prepare<[number]>(
-    'SELECT role, content, thinking, tool_calls, images FROM messages WHERE session_id = ? ORDER BY id ASC',
+    'SELECT role, content, thinking, tool_calls, images, subagent_id FROM messages WHERE session_id = ? ORDER BY id ASC',
 );
 
 // ---------------------------------------------------------------------------
@@ -188,6 +189,7 @@ export function updateSessionMessages(
                 sanitizedMessage.thinking ?? '',
                 JSON.stringify(sanitizedMessage.tool_calls ?? []),
                 JSON.stringify(sanitizedMessage.images ?? []),
+                (msg as any).subagentId ?? '',
             );
         }
         if (tokenStats) {
@@ -222,6 +224,7 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
         thinking: string;
         tool_calls: string;
         images: string;
+        subagent_id: string;
     }[];
 
     return rows.map(row => {
@@ -244,6 +247,9 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
             role: row.role as ChatMessage['role'],
             content: row.content,
         };
+        if (row.subagent_id) {
+            (msg as any).subagentId = row.subagent_id;
+        }
         if (row.thinking) {
             msg.thinking = row.thinking;
         }

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useChat } from '@/app/lib/chatStore';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
 interface Props {
   onClose: () => void;
@@ -26,7 +27,7 @@ export default function SettingsModal({ onClose }: Props) {
     setSaveError(null);
 
     const parsedNumCtx = parseInt(numCtx) || 131072;
-    const parsedChatTimeoutMs = parseInt(chatTimeoutMs) || 720_000;
+    const parsedChatTimeoutMs = parseInt(chatTimeoutMs) || DEFAULT_OLLAMA_CHAT_TIMEOUT_MS;
     const parsedWebMaxQueries = parseInt(webMaxQueries) || 3;
     const parsedWebResultsPerQuery = parseInt(webResultsPerQuery) || 3;
     const parsedWebPerPageCharLimit = parseInt(webPerPageCharLimit) || 5000;

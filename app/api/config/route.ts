@@ -2,6 +2,7 @@
 // PUT /api/config - update config
 import { NextRequest, NextResponse } from 'next/server';
 import { loadConfig, saveConfig } from '../../../services/configManager';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
 import type { Config } from '../../../slashCommands';
 
 export async function GET(): Promise<NextResponse> {
@@ -29,7 +30,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
             lastModel: '',
             compactionModel: '',
             numCtx: 131072,
-            chatTimeoutMs: 720_000,
+            chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
             yolo: false,
             thinkingEnabled: true,
             webSearch: {

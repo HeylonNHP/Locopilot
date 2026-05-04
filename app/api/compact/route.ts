@@ -58,6 +58,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         // Strip system and subagent_log messages before compacting — system prompt
         // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.
+        const subagentLogMessages = (messages as any[]).filter(
+            (m: any) => m && typeof m === 'object' && m.role === 'subagent_log'
+        );
+
         const conversationMessages: ChatMessage[] = (messages as unknown[]).filter(
             (m): m is ChatMessage =>
                 typeof m === 'object' && m !== null &&
@@ -79,7 +83,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             ? sessionId
             : null;
         if (parsedSessionId) {
-            await enqueueSessionWrite(parsedSessionId, result.newMessages, {
+            const messagesToPersist = [...result.newMessages, ...subagentLogMessages];
+            await enqueueSessionWrite(parsedSessionId, messagesToPersist as any, {
                 promptEvalCount: result.stats.newTokenCount,
                 evalCount: 0,
             });
