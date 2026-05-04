@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useChat } from '@/app/lib/chatStore';
 
@@ -9,47 +9,77 @@ interface UseSessionUrlParamOptions {
 }
 
 /**
- * Reads the ?session=<id> URL parameter on mount and loads that session if present.
- * Also keeps the URL in sync whenever the current session changes.
+ * Bi‑directional sync between ?session=<id> URL parameter and app state.
  *
- * Must be used inside a Next.js Client Component (uses useRouter/useSearchParams).
+ * On mount (and on browser back/forward navigation) the URL param is read
+ * and the session is loaded.  When the user selects a different session
+ * inside the app, the URL is updated to match.
  */
 export function useSessionUrlParam({ onLoadSessionMessages }: UseSessionUrlParamOptions) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { state, dispatch } = useChat();
 
-  // ── On mount: restore session from URL param ────────────────────────────────
+  // ── Guards ────────────────────────────────────────────────────────────────
+  // Set before we write to the URL, cleared when the URL→state effect sees it.
+  // Prevents treating our own router.replace calls as browser navigation.
+  const isPushingRef = useRef(false);
+
+  // Mirrors state.currentSessionId so the URL→state effect only depends on
+  // searchParams (not on state.currentSessionId), avoiding re‑run loops.
+  const currentSessionIdRef = useRef(state.currentSessionId);
+  currentSessionIdRef.current = state.currentSessionId;
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // URL → state  (mount, back/forward, manual address‑bar edit)
+  // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
-    const sessionIdParam = searchParams.get('session');
-    if (sessionIdParam) {
-      const sessionId = parseInt(sessionIdParam, 10);
-      if (!isNaN(sessionId) && sessionId > 0) {
-        dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
-        onLoadSessionMessages(sessionId);
+    // Ignore URL changes that *we* initiated (state → URL below).
+    if (isPushingRef.current) {
+      isPushingRef.current = false;
+      return;
+    }
+
+    const urlParam = searchParams.get('session');
+    const current = currentSessionIdRef.current;
+
+    if (urlParam) {
+      const id = parseInt(urlParam, 10);
+      if (id > 0 && id !== current) {
+        dispatch({ type: 'SET_CURRENT_SESSION', id });
+        onLoadSessionMessages(id);
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount
+    // If urlParam is absent and we have a current session, we leave it alone —
+    // clearing the URL param is only done intentionally from within the app
+    // (New Session, etc.), never by external navigation.
+    //
+    // Strict‑Mode double‑fire is harmless here: on the second pass
+    // currentSessionIdRef.current already equals id, so the branch is skipped.
+  }, [searchParams, dispatch, onLoadSessionMessages]);
 
-  // ── Keep URL in sync with currentSessionId ──────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // state → URL  (session selection inside the app)
+  // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
     const current = state.currentSessionId;
     const urlParam = searchParams.get('session');
 
     if (current === null) {
-      // New / no session — remove ?session param if it exists
+      // No session selected — clear the URL param if present.
       if (urlParam !== null) {
+        isPushingRef.current = true;
         const url = new URL(window.location.href);
         url.searchParams.delete('session');
         router.replace(url.pathname + url.search);
       }
     } else if (String(current) !== urlParam) {
-      // Session changed — push new ?session=<id>
+      // Session changed — write ?session=<id> to the URL.
+      isPushingRef.current = true;
       const url = new URL(window.location.href);
       url.searchParams.set('session', String(current));
       router.replace(url.pathname + url.search);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.currentSessionId]);
 }
