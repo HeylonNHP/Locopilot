@@ -60,7 +60,14 @@ export function useChatStream(
                 return next;
               });
             }
+            // Update both the buffer owner and the stable ref synchronously.
+            // refs.sessionIdRef is normally updated via useEffect, which lags
+            // behind SSE events. Without this sync update, the buffer guard
+            // (refs.sessionIdRef !== bufferOwnerSessionIdRef) would buffer all
+            // chunks that arrive before the useEffect fires, causing the
+            // response to appear empty until a session reload.
             bufferOwnerSessionIdRef.current = realId;
+            refs.sessionIdRef.current = realId;
             dispatch({ type: 'SET_CURRENT_SESSION', id: realId });
           }
           loadSessions();
