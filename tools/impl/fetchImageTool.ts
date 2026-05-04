@@ -1,11 +1,26 @@
+import type { ToolSchema } from '../../tools/tools';
+
+export const fetchImageToolSchema: ToolSchema = {
+    name: 'fetch_image',
+    description: 'Fetches an image from a URL or local file path and attaches it to the conversation. Only use with vision-capable models. Supported formats: JPEG, PNG, GIF, WebP, BMP. Maximum size: 10 MB.',
+    parameters: {
+        type: 'object',
+        properties: {
+            source: { type: 'string', description: 'A full http/https URL (e.g. https://example.com/photo.jpg) or an absolute local file path (e.g. /home/user/photo.png or C:\\Users\\user\\photo.png).' },
+        },
+        required: ['source'],
+    },
+};
+
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
+const DEFAULT_TIMEOUT_MS = 15_000;
+
 import axios from 'axios';
 import { readFile } from 'fs/promises';
 import imageType from 'image-type';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_USER_AGENT } from '../web/htmlExtractor';
-
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
-const DEFAULT_TIMEOUT_MS = 15_000;
 
 /**
  * Detects the actual image format from the file's magic bytes using the `image-type` library.
@@ -151,15 +166,9 @@ export class FetchImageTool {
 }
 
 export function getToolPrompt(): string {
+    const s = fetchImageToolSchema;
     return (
-        '5. fetch_image(source)\n' +
-        '   Fetch an image from a URL or local file path and attach it to the conversation.\n' +
-        '   Use this when you need to see or analyse an image. The image will be visible to you\n' +
-        '   after the tool call completes. Only works with vision-capable models (e.g. llava, llama3.2-vision, gemma3).\n' +
-        '   - For web images: provide a full http or https URL.\n' +
-        '   - For local files: provide an absolute file path or file URI (e.g. /home/user/photo.jpg, C:\\Users\\user\\photo.jpg, or file:///C:/Users/user/photo.jpg).\n' +
-        '   - Supported formats: JPEG, PNG, GIF, WebP, BMP. Maximum size: 10 MB.\n' +
-        '   - The tool verifies the actual image content by inspecting the file\'s magic bytes,\n' +
-        '     so it will reject HTML error pages even if they have an image URL or extension.\n\n'
+        `5. ${s.name}(source)\n` +
+        `   ${s.description}\n`
     );
 }

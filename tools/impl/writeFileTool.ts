@@ -3,6 +3,22 @@ import { dirname } from 'node:path';
 import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { resolveAgentPath } from '../workingDirectory';
 
+import type { ToolSchema } from '../../tools/tools';
+
+export const writeFileToolSchema: ToolSchema = {
+    name: 'write_file',
+    description: 'Writes text to a file on the host filesystem. Supports overwrite, append, and create-only semantics. If a target file already exists and overwrite is requested, the tool will replace it immediately. Use mode to control behavior: overwrite (create or replace), append (add to existing or create), or create (only if missing).',
+    parameters: {
+        type: 'object',
+        properties: {
+            path:  { type: 'string', description: 'A file path to write to, absolute or relative to the agent working directory.' },
+            content:{ type: 'string', description: 'The text content to write into the file.' },
+            mode:  { type: 'string', description: 'The write mode: overwrite (create or replace), append (add to existing or create), or create (only if the file does not already exist).' },
+        },
+        required: ['path', 'content'],
+    },
+};
+
 export interface WriteFileToolArgs {
     path?: string;
     content?: string;
@@ -185,13 +201,13 @@ export class WriteFileTool {
 }
 
 export function getToolPrompt(): string {
+    const s = writeFileToolSchema;
+    const p = s.parameters.properties;
     return (
-        '7. write_file(path, content, mode)\n' +
-        '   Write text to a local file.\n' +
-        '   Relative paths resolve against the current agent working directory.\n' +
-        '   Use mode="overwrite" to create or replace a file,\n' +
-        '   mode="append" to add to an existing file or create it if missing,\n' +
-        '   and mode="create" to create a new file only if it does not already exist.\n' +
-        '   For small edits to an existing file, prefer patch_file instead of rewriting the whole file.\n\n'
+        `8. ${s.name}(path, content, mode?)\n` +
+        `   ${s.description}\n\n` +
+        `   - path: ${p.path!.description}\n` +
+        `   - content: ${p.content!.description}\n` +
+        `   - mode: ${p.mode!.description}\n`
     );
 }

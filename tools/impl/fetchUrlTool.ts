@@ -1,3 +1,18 @@
+import type { ToolSchema } from '../../tools/tools';
+
+export const fetchUrlToolSchema: ToolSchema = {
+    name: 'fetch_url',
+    description: 'Fetches content from a specific URL and returns extracted page text. Use this for known URLs, not for searching. Useful for retrieving article content, documentation, or specific web pages.',
+    parameters: {
+        type: 'object',
+        properties: {
+            url:         { type: 'string', description: 'A full http or https URL to fetch, for example: https://example.com/article' },
+            use_playwright:{ type: 'boolean', description: 'When true, uses a real browser (Playwright) to render the page before extracting text. Useful for JavaScript-heavy pages. May be slower but provides more complete content extraction.' },
+        },
+        required: ['url'],
+    },
+};
+
 import { fetchAndExtract } from '../web/htmlExtractor';
 import type { WebSearchSettings } from './webSearchTool';
 
@@ -78,15 +93,12 @@ export class FetchUrlTool {
 }
 
 export function getToolPrompt(): string {
+    const s = fetchUrlToolSchema;
+    const p = s.parameters.properties;
     return (
-        '4. fetch_url(url, use_playwright?)\n' +
-        '   Fetch a specific URL and return extracted page text.\n' +
-        '   Use this to follow links from web_search, revisit a known page directly,\n' +
-        '   or when you need more control over the extraction process.\n\n' +
-        '   - url: A full http or https URL to fetch, for example: https://example.com/article\n' +
-        '   - use_playwright (optional): When true, uses a real browser (Playwright) to render\n' +
-        '     the page before extracting text. This is useful for JavaScript-heavy pages,\n' +
-        '     SPAs, or sites that require client-side rendering. May be slower than standard\n' +
-        '     fetching but provides more complete content extraction.\n\n'
+        `4. ${s.name}(url, use_playwright?)\n` +
+        `   ${s.description}\n\n` +
+        `   - url: ${p.url!.description}\n` +
+        `   - use_playwright: ${p.use_playwright!.description}\n`
     );
 }

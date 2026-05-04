@@ -1,22 +1,6 @@
 import chalk from 'chalk';
 import type { ToolSchema } from '../../tools/tools';
 
-import { AUTO_COMPACT_THRESHOLD_PCT } from '../../constants';
-import { compactHistory } from '../../services/compact';
-import { sendLlmChat, type ChatMessage, type ToolCall, type ToolDefinition } from '../../services/llm';
-import { sanitizeChatMessage } from '../../services/textUtils';
-import { countMessagesTokens } from '../../services/tokenizer';
-import { isInterruptRequested } from '../interruptManager';
-import {
-    toolRegistry,
-    type IToolCommand,
-    type RequestContext,
-    type SubAgentConfig,
-    type ToolCallArguments,
-    type ToolCallResult,
-} from '../toolRegistry';
-import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
-
 export const subAgentToolSchema: ToolSchema = {
     name: 'run_subagents',
     description: 'YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window. Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost: they do the heavy work in isolation and return only the final answer — often saving thousands of tokens. USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for: • ANY task involving multiple tool calls (search → read → compare → decide) • Researching topics, comparing approaches, or auditing code • File edits and code changes (isolated from your thinking context) • Any information-dense work where intermediate results would clutter your reasoning • Breaking large requests into parallel research streams. Each sub-agent runs its own full tool-calling loop and returns only the final summary. Constraints: sequential; each sees only its own prompt (include ALL context inline); sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context.',
@@ -39,6 +23,23 @@ export const subAgentToolSchema: ToolSchema = {
         required: ['agents'],
     },
 };
+
+
+import { AUTO_COMPACT_THRESHOLD_PCT } from '../../constants';
+import { compactHistory } from '../../services/compact';
+import { sendLlmChat, type ChatMessage, type ToolCall, type ToolDefinition } from '../../services/llm';
+import { sanitizeChatMessage } from '../../services/textUtils';
+import { countMessagesTokens } from '../../services/tokenizer';
+import { isInterruptRequested } from '../interruptManager';
+import {
+    toolRegistry,
+    type IToolCommand,
+    type RequestContext,
+    type SubAgentConfig,
+    type ToolCallArguments,
+    type ToolCallResult,
+} from '../toolRegistry';
+import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 
 interface SubAgentSpec {
     id?: string;
@@ -404,7 +405,7 @@ export class SubAgentTool implements IToolCommand {
 
 export function getToolPrompt(): string {
     const schema = subAgentToolSchema;
-    const agentItems = schema.parameters.properties.agents?.items;
+    const agentItems = schema.parameters.properties.agents?.items as { properties?: Record<string, { description?: string }> } | undefined;
     const agentProps = agentItems?.properties ?? {};
     const params = `agents: Array<{ id: string, prompt: string }>`;
     return (

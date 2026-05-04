@@ -2,6 +2,24 @@ import { readFile, stat } from 'node:fs/promises';
 import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { resolveAgentPath } from '../workingDirectory';
 
+import type { ToolSchema } from '../../tools/tools';
+
+export const readFileToolSchema: ToolSchema = {
+    name: 'read_file',
+    description: 'Reads a file from the host filesystem. Use head_chars to read the first N characters, tail_chars to read the last N characters, or start/length to read a specific character range. Supports absolute paths, relative paths (resolved against the agent working directory), and ~/ paths.',
+    parameters: {
+        type: 'object',
+        properties: {
+            path:        { type: 'string', description: 'A file path to read from, absolute or relative to the agent working directory.' },
+            head_chars:  { type: 'number', description: 'Read only the first N characters of the file.' },
+            tail_chars:  { type: 'number', description: 'Read only the last N characters of the file.' },
+            start:       { type: 'number', description: 'Zero-based character index at which to begin reading.' },
+            length:      { type: 'number', description: 'Number of characters to read starting at start.' },
+        },
+        required: ['path'],
+    },
+};
+
 export interface ReadFileToolArgs {
     path?: string;
     head_chars?: number | undefined;
@@ -152,11 +170,15 @@ export class ReadFileTool {
 }
 
 export function getToolPrompt(): string {
+    const s = readFileToolSchema;
+    const p = s.parameters.properties;
     return (
-        '5. read_file(path, head_chars, tail_chars, start, length)\n' +
-        '   Read a local file from the host machine.\n' +
-        '   Relative paths resolve against the current agent working directory.\n' +
-        '   Use head_chars to read only the first N characters, tail_chars to read only the last N characters,\n' +
-        '   or start/length to read a specific character range.\n\n'
+        `6. ${s.name}(path, head_chars?, tail_chars?, start?, length?)\n` +
+        `   ${s.description}\n\n` +
+        `   - path: ${p.path!.description}\n` +
+        `   - head_chars: ${p.head_chars!.description}\n` +
+        `   - tail_chars: ${p.tail_chars!.description}\n` +
+        `   - start: ${p.start!.description}\n` +
+        `   - length: ${p.length!.description}\n`
     );
 }

@@ -20,6 +20,12 @@ import { getToolPrompt as getRunCommandPrompt } from './impl/runCommandTool';
 import { runCommandToolSchema } from './impl/runCommandTool';
 import { checkProcessOutputToolSchema } from './impl/runCommandTool';
 import { subAgentToolSchema } from './impl/subAgentTool';
+import { webSearchToolSchema } from './impl/webSearchTool';
+import { fetchUrlToolSchema } from './impl/fetchUrlTool';
+import { fetchImageToolSchema } from './impl/fetchImageTool';
+import { readFileToolSchema } from './impl/readFileTool';
+import { patchFileToolSchema } from './impl/patchFileTool';
+import { writeFileToolSchema } from './impl/writeFileTool';
 
 // Keep defaultShell export (used in runCommandToolSchema via defaultShell() call)
 export { defaultShell } from './impl/runCommandTool';
@@ -61,17 +67,15 @@ export interface ToolSchema {
         properties: Record<string, {
             type: string;
             description: string;
-            items?: {
-                type: 'object';
-                properties?: Record<string, { type: string; description: string }>;
-                required?: string[];
-                description?: string;
-            };
+            items?: unknown;
+            enum?: string[];
         }>;
         required: string[];
     };
 }
 
+// OllamaToolParameter is kept for compatibility with existing code that uses the richer type.
+// ToolSchema uses a simpler property structure (items?: unknown) to support all schema shapes.
 export interface OllamaToolParameter {
     type: string;
     description?: string;
@@ -109,242 +113,40 @@ export interface OllamaTool {
 
 export const TOOLS: OllamaTool[] = [
     {
-    type: 'function',
-    function: runCommandToolSchema,
-},
-{
-    type: 'function',
-    function: checkProcessOutputToolSchema,
-},
-    {
         type: 'function',
-        function: {
-            name: 'web_search',
-            description:
-                'Searches the web using DuckDuckGo and returns extracted page text from top results. ' +
-                'When using these results in your final answer, you MUST cite the full result URL(s) ' +
-                'inline immediately after the relevant sentence(s). Do NOT use result_N placeholders.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    prompt: {
-                        type: 'string',
-                        description:
-                            'User request text for deriving search queries if explicit queries are not supplied.',
-                    },
-                    queries: {
-                        type: 'array',
-                        items: { type: 'string' },
-                        description:
-                            'Optional list of explicit search queries to run, for example: ["Cairns Lagoon opening hours", "Cairns Lagoon facts", "Cairns Lagoon entry fee"]. ' +
-                            'Provide multiple distinct queries to improve search coverage and obtain diverse information while respecting the configured max_queries setting.',
-                    },
-                    max_queries: {
-                        type: 'number',
-                        description:
-                            'Maximum number of queries to run for this call. Uses the configured max_queries setting when omitted.',
-                    },
-                    use_playwright: {
-                        type: 'boolean',
-                        description:
-                            'When true, uses a real browser (Playwright) to render each result page before extracting text. ' +
-                            'Useful for JavaScript-heavy pages, SPAs, or sites that require client-side rendering. ' +
-                            'May be slower but provides more complete content extraction.',
-                    },
-                },
-                required: [],
-            },
-        },
+        function: runCommandToolSchema as unknown as OllamaTool['function'],
     },
     {
         type: 'function',
-        function: {
-            name: 'fetch_url',
-            description:
-                'Fetches content from one specific URL and returns extracted page text. ' +
-                'Use this to follow links discovered during web_search or to revisit a known page directly.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    url: {
-                        type: 'string',
-                        description: 'A full http or https URL to fetch, for example: https://example.com/article',
-                    },
-                    use_playwright: {
-                        type: 'boolean',
-                        description:
-                            'When true, uses a real browser (Playwright) to render the page before extracting text. ' +
-                            'Useful for JavaScript-heavy pages, SPAs, or sites that require client-side rendering. ' +
-                            'May be slower but provides more complete content extraction.',
-                    },
-                },
-                required: ['url'],
-            },
-        },
+        function: checkProcessOutputToolSchema as unknown as OllamaTool['function'],
     },
     {
         type: 'function',
-        function: {
-            name: 'fetch_image',
-            description:
-                'Fetches an image from a URL or local file path and attaches it to the conversation. ' +
-                'Only use this with vision-capable models. After the tool call, the image will be visible to you. ' +
-                'Supported formats: JPEG, PNG, GIF, WebP, BMP. Maximum size: 10 MB.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    source: {
-                        type: 'string',
-                        description:
-                            'A full http/https URL (e.g. https://example.com/photo.jpg) or an absolute ' +
-                            'local file path (e.g. /home/user/photo.png or C:\\Users\\user\\photo.png).',
-                    },
-                },
-                required: ['source'],
-            },
-        },
+        function: webSearchToolSchema as unknown as OllamaTool['function'],
     },
     {
         type: 'function',
-        function: {
-            name: 'read_file',
-            description:
-                'Reads a file from the host filesystem. Use head_chars to read the first N characters, ' +
-                'tail_chars to read the last N characters, or start/length to read a specific range.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: {
-                        type: 'string',
-                        description: 'A file path to read from, absolute or relative to the current agent working directory.',
-                    },
-                    head_chars: {
-                        type: 'number',
-                        description: 'Read only the first N characters of the file.',
-                    },
-                    tail_chars: {
-                        type: 'number',
-                        description: 'Read only the last N characters of the file.',
-                    },
-                    start: {
-                        type: 'number',
-                        description: 'Zero-based character index at which to begin reading.',
-                    },
-                    length: {
-                        type: 'number',
-                        description: 'Number of characters to read starting at start.',
-                    },
-                },
-                required: ['path'],
-            },
-        },
+        function: fetchUrlToolSchema as unknown as OllamaTool['function'],
     },
     {
         type: 'function',
-        function: {
-            name: 'patch_file',
-            description:
-                'Applies targeted replacements to an existing file. ' +
-                'Each patch provides an exact old string and a new string. ' +
-                'Prefer this for small edits instead of rewriting the whole file.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: {
-                        type: 'string',
-                        description: 'A file path to patch, absolute or relative to the current agent working directory.',
-                    },
-                    patches: {
-                        type: 'array',
-                        description: 'An array of targeted replacements to apply atomically.',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                old: {
-                                    type: 'string',
-                                    description: 'The exact text to replace. Include enough surrounding context to make the match unique.',
-                                },
-                                new: {
-                                    type: 'string',
-                                    description: 'The replacement text.',
-                                },
-                            },
-                            required: ['old', 'new'],
-                        },
-                    },
-                },
-                required: ['path', 'patches'],
-            },
-        },
+        function: fetchImageToolSchema as unknown as OllamaTool['function'],
     },
     {
         type: 'function',
-        function: {
-            name: 'write_file',
-            description:
-                'Writes text to a file on the host filesystem. Supports overwrite, append, and create-only semantics. ' +
-                'If a target file already exists and overwrite is requested, the tool will replace it immediately. ' +
-                'Use mode="create" to ensure a file is only created when missing.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: {
-                        type: 'string',
-                        description: 'A file path to write to, absolute or relative to the current agent working directory.',
-                    },
-                    content: {
-                        type: 'string',
-                        description: 'The text content to write into the file.',
-                    },
-                    mode: {
-                        type: 'string',
-                        description: 'The write mode: overwrite, append, or create.',
-                        enum: ['overwrite', 'append', 'create'],
-                    },
-                },
-                required: ['path', 'content'],
-            },
-        },
+        function: readFileToolSchema as unknown as OllamaTool['function'],
     },
     {
         type: 'function',
-        function: {
-            name: 'run_subagents',
-            description:
-                'Your primary tool for scaling beyond simple tasks. Sub-agents execute work in isolation and return only their final answer — saving thousands of context tokens. ' +
-                'Use proactively for ANY multi-step work: research, file edits, code changes, comparisons, audits. ' +
-                'Each sub-agent gets all normal tools, runs its own autonomous loop, and returns only its conclusion. ' +
-                'You do NOT need the user to ask for sub-agents — they are a default tool, not a special case. ' +
-                'Sub-agents are sequential; include ALL context inline; they cannot spawn further sub-agents.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    agents: {
-                        type: 'array',
-                        description:
-                            'One or more sub-agents to run sequentially. Each one needs a short id and a fully self-contained prompt. ' +
-                            'Write each prompt as if the sub-agent has no prior context — include file paths, goals, constraints, and any relevant background.',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                id: {
-                                    type: 'string',
-                                    description: 'A short identifier for this sub-agent, used to label its output in logs and results (e.g. "research", "edit-auth", "summarise-logs").',
-                                },
-                                prompt: {
-                                    type: 'string',
-                                    description:
-                                        'A fully self-contained task prompt for this sub-agent. ' +
-                                        'Include all file paths, background context, goals, and constraints — the sub-agent cannot see the parent conversation history.',
-                                },
-                            },
-                            required: ['id', 'prompt'],
-                        },
-                    },
-                },
-                required: ['agents'],
-            },
-        },
+        function: patchFileToolSchema as unknown as OllamaTool['function'],
+    },
+    {
+        type: 'function',
+        function: writeFileToolSchema as unknown as OllamaTool['function'],
+    },
+    {
+        type: 'function',
+        function: subAgentToolSchema as unknown as OllamaTool['function'],
     },
 ];
 

@@ -2,6 +2,21 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { resolveAgentPath } from '../workingDirectory';
 
+import type { ToolSchema } from '../../tools/tools';
+
+export const patchFileToolSchema: ToolSchema = {
+    name: 'patch_file',
+    description: 'Applies targeted replacements to an existing file. Each patch must provide an exact "old" string and a new string. The tool first tries an exact match, then tolerates line-ending and trailing-whitespace differences. Prefer this for small edits to an existing file; use write_file when creating a file or replacing the full contents.',
+    parameters: {
+        type: 'object',
+        properties: {
+            path:    { type: 'string', description: 'A file path to patch, absolute or relative to the agent working directory.' },
+            patches: { type: 'array', items: { type: 'object', properties: { old: { type: 'string', description: 'The exact text to replace. Include enough surrounding context to make the match unique.' }, new: { type: 'string', description: 'The replacement text.' } }, required: ['old', 'new'] }, description: 'An array of targeted replacements to apply atomically.' },
+        },
+        required: ['path', 'patches'],
+    },
+};
+
 export interface PatchFilePatch {
     old: string;
     new: string;
@@ -430,13 +445,12 @@ export class PatchFileTool {
 }
 
 export function getToolPrompt(): string {
+    const s = patchFileToolSchema;
+    const p = s.parameters.properties;
     return (
-        '6. patch_file(path, patches)\n' +
-        '   Applies one or more targeted text replacements to an existing file.\n' +
-        '   Relative paths resolve against the current agent working directory.\n' +
-        '   Each patch must provide an exact "old" string and a "new" string.\n' +
-        '   The tool first tries an exact match, then tolerates line-ending and trailing-whitespace differences.\n' +
-        '   If any patch is missing, ambiguous, or overlaps another patch, the entire request is rejected without writing.\n' +
-        '   Prefer patch_file for small edits to an existing file; use write_file when creating a file or replacing the full contents.\n\n'
+        `7. ${s.name}(path, patches)\n` +
+        `   ${s.description}\n\n` +
+        `   - path: ${p.path!.description}\n` +
+        `   - patches: ${p.patches!.description}\n`
     );
 }

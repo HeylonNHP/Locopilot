@@ -1,3 +1,20 @@
+import type { ToolSchema } from '../../tools/tools';
+
+export const webSearchToolSchema: ToolSchema = {
+    name: 'web_search',
+    description: 'Searches the web using DuckDuckGo and returns extracted page text from top results. When using these results in your final answer, you MUST cite the full result URL(s) inline immediately after the relevant sentence(s). Do NOT use result_N placeholders.',
+    parameters: {
+        type: 'object',
+        properties: {
+            prompt:        { type: 'string', description: 'User request text for deriving search queries if explicit queries are not supplied.' },
+            queries:       { type: 'array', items: { type: 'string' }, description: 'Optional list of explicit search queries to run.' },
+            max_queries:   { type: 'number', description: 'Maximum number of queries to run for this call.' },
+            use_playwright:{ type: 'boolean', description: 'When true, uses a real browser (Playwright) to render each result page before extracting text. This is useful for JavaScript-heavy pages, SPAs, or sites that require client-side rendering. May be slower but provides more complete content extraction.' },
+        },
+        required: [],
+    },
+};
+
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { cleanText, fetchAndExtract, DEFAULT_USER_AGENT, type ExtractedLink } from '../web/htmlExtractor';
@@ -299,29 +316,20 @@ export class WebSearchTool {
  * Returns the web_search tool section for the system prompt.
  */
 export function getToolPrompt(): string {
+    const s = webSearchToolSchema;
+    const p = s.parameters.properties;
     return (
-        '3. web_search(prompt?, queries?, max_queries?, use_playwright?)\n' +
-        '   Search DuckDuckGo and return extracted page text from top result pages.\n' +
-        '   Use this when external web context is needed. Provide explicit queries as\n' +
-        '   an array when possible; for complex requests, aim to use the configured\n' +
-        '   max_queries setting, while simpler prompts may use fewer queries. Each query\n' +
-        '   will return up to the configured resultsPerQuery top pages (from settings), so choose enough\n' +
-        '   distinct queries to cover the user’s information need. The tool will respect\n' +
-        '   the configured max_queries limit.\n\n' +
-        '   - prompt: User request text for deriving search queries if explicit queries are not supplied.\n' +
-        '   - queries: Optional list of explicit search queries to run.\n' +
-        '   - max_queries: Maximum number of queries to run for this call.\n' +
-        '   - use_playwright (optional): When true, uses a real browser (Playwright) to render\n' +
-        '     each result page before extracting text. This is useful for JavaScript-heavy pages,\n' +
-        '     SPAs, or sites that require client-side rendering. May be slower than standard\n' +
-        '     fetching but provides more complete content extraction.\n\n' +
-        '   CITATION RULES:\n' +
-        '   When referencing a search result, always include the full result URL inline immediately\n' +
-        '   after the referenced sentence. Avoid generic "result_N" placeholders or special\n' +
-        '   tags. Format examples:\n' +
-        '   - Guzman y Gomez has multiple locations in Townsville. (https://guzmanygomez.com.au/locations)\n' +
-        '   - Zambrero was founded in 2005. (https://www.productreview.com.au/listings/zambrero)\n\n'
+        `3. ${s.name}(prompt?, queries?, max_queries?, use_playwright?)\n` +
+        `   ${s.description}\n\n` +
+        `   - prompt: ${p.prompt!.description}\n` +
+        `   - queries: ${p.queries!.description}\n` +
+        `   - max_queries: ${p.max_queries!.description}\n` +
+        `   - use_playwright: ${p.use_playwright!.description}\n\n` +
+        `   CITATION RULES:\n` +
+        `   When referencing a search result, always include the full result URL inline immediately\n` +
+        `   after the relevant sentence(s). Avoid generic "result_N" placeholders or special\n` +
+        `   tags. Format examples:\n` +
+        `   - Guzman y Gomez has multiple locations in Townsville. (https://guzmanygomez.com.au/locations)\n` +
+        `   - Zambrero was founded in 2005. (https://www.productreview.com.au/listings/zambrero)\n`
     );
 }
-
-
