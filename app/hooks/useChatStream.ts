@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { useChat, type ChatMessage } from '@/app/lib/chatStore';
 import type { StableRefs } from './useStableRefs';
@@ -22,10 +22,9 @@ export function useChatStream(
   // events are buffered instead of dispatched so they don't bleed into the
   // wrong session's message list.  Switching back replays the buffer on top
   // of the freshly-loaded DB messages so live output resumes seamlessly.
-  const streamingSessionIdRef = useRef<number | null | undefined>(undefined);
+  const [streamingSessions, setStreamingSessions] = useState<Set<number>>(new Set());
   const bufferOwnerSessionIdRef = useRef<number | null | undefined>(undefined);
   const bufferedEventsRef = useRef<Array<{ event: string; data: any }>>([]);
-  const streamActiveRef = useRef(false);
   const subagentBufferRef = useRef<Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>>(new Map());
   const retryPayloadRef = useRef<{ body: string } | null>(null);
   const requestFailedRef = useRef(false);
@@ -36,26 +35,37 @@ export function useChatStream(
       // If a stream is active and the user has navigated to a different session,
       // buffer this event so it doesn't land in the wrong message list.
       if (
-        streamActiveRef.current &&
-        streamingSessionIdRef.current !== undefined &&
-        refs.sessionIdRef.current !== streamingSessionIdRef.current
+        bufferOwnerSessionIdRef.current !== undefined &&
+        refs.sessionIdRef.current !== bufferOwnerSessionIdRef.current
       ) {
         bufferedEventsRef.current.push({ event, data });
         return;
       }
 
       switch (event) {
-        case 'session_created':
+        case 'session_created': {
           // The server created a new session before the agent loop started.
-          // Update the buffer-owner ref so events are routed to the right session
-          // if the user navigates away before the turn completes.
+          // If the stream started on a not-yet-created session (keyed as -1),
+          // move the abort controller to the real session ID.
           if (typeof data.sessionId === 'number') {
-            streamingSessionIdRef.current = data.sessionId;
-            bufferOwnerSessionIdRef.current = data.sessionId;
-            dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });
+            const realId: number = data.sessionId;
+            if (abortControllersRef.current.has(-1)) {
+              const ctrl = abortControllersRef.current.get(-1)!;
+              abortControllersRef.current.delete(-1);
+              abortControllersRef.current.set(realId, ctrl);
+              setStreamingSessions(prev => {
+                const next = new Set(prev);
+                next.delete(-1);
+                next.add(realId);
+                return next;
+              });
+            }
+            bufferOwnerSessionIdRef.current = realId;
+            dispatch({ type: 'SET_CURRENT_SESSION', id: realId });
           }
           loadSessions();
           break;
+        }
 
         case 'thinking':
           dispatch({ type: 'APPLY_ASSISTANT_DELTA', thinking: data.content ?? data });
@@ -181,7 +191,6 @@ export function useChatStream(
 
         case 'done':
           if (data.sessionId) {
-            streamingSessionIdRef.current = data.sessionId;
             bufferOwnerSessionIdRef.current = data.sessionId;
             dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });
           }
@@ -210,20 +219,16 @@ export function useChatStream(
   const retry = useCallback(
     async () => {
       const sessionId = refs.sessionIdRef.current ?? -1;
-      const isCurrentSessionStreaming =
-        streamActiveRef.current && streamingSessionIdRef.current === sessionId;
-      if (!retryPayloadRef.current || isCurrentSessionStreaming) return;
+      if (!retryPayloadRef.current || streamingSessions.has(sessionId)) return;
 
       const { body } = retryPayloadRef.current;
       dispatch({ type: 'SET_ERROR', error: null });
-      dispatch({ type: 'SET_STREAMING', isStreaming: true });
 
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
+      setStreamingSessions(prev => new Set(prev).add(sessionId));
 
-      streamingSessionIdRef.current = sessionId;
       bufferOwnerSessionIdRef.current = sessionId;
-      streamActiveRef.current = true;
       bufferedEventsRef.current = [];
 
       try {
@@ -300,19 +305,21 @@ export function useChatStream(
         }
         subagentBufferRef.current.clear();
 
-        streamActiveRef.current = false;
-        bufferedEventsRef.current = [];
-        streamingSessionIdRef.current = undefined;
-        bufferOwnerSessionIdRef.current = undefined;
-        dispatch({ type: 'SET_STREAMING', isStreaming: false });
         abortControllersRef.current.delete(sessionId);
+        setStreamingSessions(prev => {
+          const next = new Set(prev);
+          next.delete(sessionId);
+          return next;
+        });
+        bufferedEventsRef.current = [];
+        bufferOwnerSessionIdRef.current = undefined;
         loadSessions();
         if (!requestFailedRef.current) {
           retryPayloadRef.current = null;
         }
       }
     },
-    [dispatch, handleEvent, refs, abortControllersRef, loadSessions],
+    [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions],
   );
 
   /**
@@ -322,7 +329,7 @@ export function useChatStream(
    */
   const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
-      if (!streamActiveRef.current) {
+      if (streamingSessions.size === 0) {
         bufferedEventsRef.current = [];
         return;
       }
@@ -335,15 +342,13 @@ export function useChatStream(
         handleEvent(event, data);
       }
     },
-    [handleEvent],
+    [handleEvent, streamingSessions],
   );
 
   const sendChatMessage = useCallback(
     async (message: string) => {
       const sessionId = refs.sessionIdRef.current ?? -1;
-      const isCurrentSessionStreaming =
-        streamActiveRef.current && streamingSessionIdRef.current === sessionId;
-      if (isCurrentSessionStreaming) return;
+      if (streamingSessions.has(sessionId)) return;
 
       if (!refs.modelRef.current.trim()) {
         dispatch({ type: 'SET_ERROR', error: 'Please select a model first' });
@@ -354,17 +359,15 @@ export function useChatStream(
       const userMessage: ChatMessage = { role: 'user', content: message };
 
       dispatch({ type: 'ADD_MESSAGE', message: userMessage });
-      dispatch({ type: 'SET_STREAMING', isStreaming: true });
       dispatch({ type: 'SET_ERROR', error: null });
 
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
+      setStreamingSessions(prev => new Set(prev).add(sessionId));
 
       // Record which session owns this stream so events can be buffered when
       // the user navigates away and replayed when they switch back.
-      streamingSessionIdRef.current = sessionId;
       bufferOwnerSessionIdRef.current = sessionId;
-      streamActiveRef.current = true;
       bufferedEventsRef.current = [];
 
       const bodyObj = {
@@ -478,22 +481,23 @@ export function useChatStream(
         }
         subagentBufferRef.current.clear();
 
-        streamActiveRef.current = false;
-        bufferedEventsRef.current = [];
-        streamingSessionIdRef.current = undefined;
-        bufferOwnerSessionIdRef.current = undefined;
-        dispatch({ type: 'SET_STREAMING', isStreaming: false });
         abortControllersRef.current.delete(sessionId);
+        setStreamingSessions(prev => {
+          const next = new Set(prev);
+          next.delete(sessionId);
+          return next;
+        });
+        bufferedEventsRef.current = [];
+        bufferOwnerSessionIdRef.current = undefined;
         loadSessions();
         if (!requestFailedRef.current) {
           retryPayloadRef.current = null;
         }
       }
     },
-    [dispatch, handleEvent, refs, abortControllersRef, loadSessions],
+    [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions],
   );
 
-  const isCurrentSessionStreaming =
-    streamActiveRef.current && streamingSessionIdRef.current === refs.sessionIdRef.current;
+  const isCurrentSessionStreaming = streamingSessions.has(refs.sessionIdRef.current ?? -1);
   return { sendChatMessage, retry, handleEvent, replayBufferedEvents, isCurrentSessionStreaming };
 }
