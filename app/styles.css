@@ -1058,6 +1058,12 @@
    Unstyled page.tsx buttons (error banner + streaming stop)
    ================================================================== */
 
+.streaming-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .stop-btn {
   padding: 4px 14px;
   border-radius: 50px;
