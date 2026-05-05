@@ -65,7 +65,15 @@ function HomeInner() {
   }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Immediate scroll handles streaming tokens well, but when a whole
+    // conversation is loaded at once (session switch) the DOM keeps growing
+    // as markdown/images settle. Fire a second deferred scroll to land at
+    // the true bottom after layout stabilises.
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    const timer = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, 120);
+    return () => clearTimeout(timer);
   }, [state.messages]);
 
   const handleSend = useCallback(
@@ -120,6 +128,7 @@ function HomeInner() {
       dispatch({ type: 'SET_ERROR', error: null });
       dispatch({ type: 'CLEAR_TOKEN_STATS' });
       dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
+      dispatch({ type: 'CLEAR_MESSAGES' });
       await loadSessionMessages(sessionId);
       replayBufferedEvents(sessionId);
     },
