@@ -1,12 +1,25 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
 import { useChat } from '@/app/lib/chatStore';
 import { estimateMessagesTokens } from '@/app/lib/tokenEstimator';
+import ModelSelector from './ModelSelector';
 
 export default function StatusBar() {
   const { state } = useChat();
   const { tokenStats, isStreaming, model, messages } = state;
+  const [showSelector, setShowSelector] = useState(false);
+  const modelRef = useRef<HTMLSpanElement>(null);
+
+  const handleOpenSelector = useCallback(() => {
+    if (state.models.length > 0) {
+      setShowSelector(true);
+    }
+  }, [state.models.length]);
+
+  const handleCloseSelector = useCallback(() => {
+    setShowSelector(false);
+  }, []);
 
   // Compute a client-side estimate so we ALWAYS show something.
   // When authoritative SSE stats arrive they override this.
@@ -42,8 +55,30 @@ export default function StatusBar() {
         {totalTokens}/{tokenLimit} tokens ({pct}%) {sourceLabel}
       </span>
       {tpsLabel && <span>{tpsLabel}</span>}
-      {model && <span>Model: {model}</span>}
+      {model && (
+        <span
+          ref={modelRef}
+          className="statusbar-model"
+          onClick={handleOpenSelector}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleOpenSelector();
+            }
+          }}
+        >
+          Model: {model}
+        </span>
+      )}
       <span>{messages.length} messages</span>
+
+      <ModelSelector
+        anchorRef={modelRef}
+        isOpen={showSelector}
+        onClose={handleCloseSelector}
+      />
     </div>
   );
 }

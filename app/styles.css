@@ -654,6 +654,129 @@
   font-weight: 600;
 }
 
+.statusbar-model {
+  cursor: pointer;
+  transition: color 0.2s ease;
+  user-select: none;
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+}
+
+.statusbar-model:hover {
+  color: var(--accent);
+  background: rgba(0, 168, 232, 0.1);
+}
+
+/* ==================================================================
+   Component: ModelSelector
+   ================================================================== */
+.model-selector {
+  width: 320px;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(240, 250, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 16px;
+  z-index: 1000;
+  overflow: hidden;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: 0 16px 40px rgba(0, 60, 100, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.model-selector-header {
+  padding: 12px 12px 8px;
+  border-bottom: 1px solid var(--glass-border-soft);
+}
+
+.model-selector-search {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border-soft);
+  background: rgba(255, 255, 255, 0.45);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition: all 0.2s ease;
+}
+
+.model-selector-search::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.7;
+}
+
+.model-selector-search:focus {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 168, 232, 0.5);
+  box-shadow: 0 0 0 3px rgba(0, 168, 232, 0.15);
+}
+
+.model-selector-list {
+  overflow-y: auto;
+  max-height: 340px;
+  padding: 4px;
+}
+
+.model-selector-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.model-selector-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+  outline: none;
+}
+
+.model-selector-item:hover {
+  background: rgba(0, 168, 232, 0.1);
+}
+
+.model-selector-item-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.model-selector-item-active:hover {
+  background: rgba(0, 168, 232, 0.15);
+}
+
+.model-selector-check {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent-green);
+}
+
+.model-selector-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ==================================================================
    Component: ApprovalModal
    ================================================================== */
