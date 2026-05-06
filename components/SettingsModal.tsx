@@ -16,7 +16,10 @@ export default function SettingsModal({ onClose }: Props) {
   const [yolo, setYolo] = useState(state.yolo);
   const [thinkingEnabled, setThinkingEnabled] = useState(state.thinkingEnabled);
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
-  const [chatTimeoutMs, setChatTimeoutMs] = useState(String(state.chatTimeoutMs));
+  const totalSeconds = Math.floor(state.chatTimeoutMs / 1000);
+  const [chatTimeoutHours, setChatTimeoutHours] = useState(String(Math.floor(totalSeconds / 3600)));
+  const [chatTimeoutMinutes, setChatTimeoutMinutes] = useState(String(Math.floor((totalSeconds % 3600) / 60)));
+  const [chatTimeoutSeconds, setChatTimeoutSeconds] = useState(String(totalSeconds % 60));
   const [webMaxQueries, setWebMaxQueries] = useState(String(state.webSearch.maxQueries));
   const [webResultsPerQuery, setWebResultsPerQuery] = useState(String(state.webSearch.resultsPerQuery));
   const [webPerPageCharLimit, setWebPerPageCharLimit] = useState(String(state.webSearch.perPageCharLimit));
@@ -27,7 +30,11 @@ export default function SettingsModal({ onClose }: Props) {
     setSaveError(null);
 
     const parsedNumCtx = parseInt(numCtx) || 131072;
-    const parsedChatTimeoutMs = parseInt(chatTimeoutMs) || DEFAULT_OLLAMA_CHAT_TIMEOUT_MS;
+    const parsedHours = parseInt(chatTimeoutHours) || 0;
+    const parsedMinutes = parseInt(chatTimeoutMinutes) || 0;
+    const parsedSeconds = parseInt(chatTimeoutSeconds) || 0;
+    const totalTimeoutSeconds = (parsedHours * 3600) + (parsedMinutes * 60) + parsedSeconds;
+    const parsedChatTimeoutMs = totalTimeoutSeconds * 1000;
     const parsedWebMaxQueries = parseInt(webMaxQueries) || 3;
     const parsedWebResultsPerQuery = parseInt(webResultsPerQuery) || 3;
     const parsedWebPerPageCharLimit = parseInt(webPerPageCharLimit) || 5000;
@@ -185,13 +192,38 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
 
           <div className="settings-row">
-            <label className="settings-label">Chat Timeout (ms)</label>
-            <input
-              type="number"
-              value={chatTimeoutMs}
-              onChange={(e) => setChatTimeoutMs(e.target.value)}
-              className="settings-input"
-            />
+            <label className="settings-label">Chat Timeout</label>
+            <div className="flex items-center gap-12">
+              <input
+                type="number"
+                min="0"
+                value={chatTimeoutHours}
+                onChange={(e) => setChatTimeoutHours(e.target.value)}
+                className="settings-input"
+                style={{ width: '80px' }}
+              />
+              <span className="font-14 text-primary">hours</span>
+              <input
+                type="number"
+                min="0"
+                max="59"
+                value={chatTimeoutMinutes}
+                onChange={(e) => setChatTimeoutMinutes(e.target.value)}
+                className="settings-input"
+                style={{ width: '80px' }}
+              />
+              <span className="font-14 text-primary">minutes</span>
+              <input
+                type="number"
+                min="0"
+                max="59"
+                value={chatTimeoutSeconds}
+                onChange={(e) => setChatTimeoutSeconds(e.target.value)}
+                className="settings-input"
+                style={{ width: '80px' }}
+              />
+              <span className="font-14 text-primary">seconds</span>
+            </div>
           </div>
 
           <div className="settings-row">
