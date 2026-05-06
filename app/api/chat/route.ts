@@ -197,17 +197,19 @@ export async function POST(req: NextRequest): Promise<Response> {
                 content: createSystemPrompt(undefined, effectiveYolo),
             };
 
-            const subagentLogMessages = (conversationMessages as any[]).filter(
-                (m: any) => m && typeof m === 'object' && m.role === 'subagent_log'
+            // Snapshot the client's original non-system messages in their original order.
+            // These include subagent_log messages which are NOT sent to the LLM but MUST
+            // be preserved in the correct chronological position in the DB.
+            const originalClientMessages: ChatMessage[] = (conversationMessages as unknown[]).filter(
+                (m): m is ChatMessage =>
+                    typeof m === 'object' && m !== null &&
+                    'role' in m && m.role !== 'system',
             );
 
+            // Build the LLM working array: system prompt + client messages excluding subagent_log.
             const currentMessages: ChatMessage[] = [
                 systemMessage,
-                ...(conversationMessages as unknown[]).filter(
-                    (m): m is ChatMessage =>
-                        typeof m === 'object' && m !== null &&
-                        'role' in m && m.role !== 'system' && m.role !== 'subagent_log',
-                ),
+                ...originalClientMessages.filter(m => (m as any).role !== 'subagent_log'),
             ];
 
             // ── Eagerly create the session so it appears in the sidebar immediately ──
@@ -677,7 +679,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                         renameSession(currentSessionId, content.trim().slice(0, 60) || 'Chat');
                     }
 
-                    const messagesToPersist = [...currentMessages.filter(m => m.role !== 'system'), ...subagentLogMessages];
+                    // Persist messages in chronological order.
+                    // originalClientMessages preserves subagent_log positions.
+                    // serverMessages are everything the LLM loop appended this turn.
+                    const serverMessages = currentMessages
+                        .filter(m => m.role !== 'system')
+                        .slice(originalClientMessages.filter(m => (m as any).role !== 'subagent_log').length);
+                    const messagesToPersist = [...originalClientMessages, ...serverMessages];
 
                     await enqueueSessionWrite(
                         currentSessionId,
