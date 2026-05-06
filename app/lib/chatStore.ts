@@ -75,6 +75,7 @@ interface ChatState {
     promptTps?: number;
     evalTps?: number;
   } | null;
+  currentTps: number | null;
   compactingPhases: string[];
 }
 
@@ -98,6 +99,7 @@ type ChatAction =
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'REMOVE_LAST_ASSISTANT' }
   | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats'] }
+  | { type: 'SET_CURRENT_TPS'; tps: number | null }
   | { type: 'CLEAR_TOKEN_STATS' }
   | { type: 'COMPACT_PROGRESS'; message: string }
   | { type: 'CLEAR_COMPACT_PROGRESS' };
@@ -279,6 +281,8 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return state;
     case 'SET_TOKEN_STATS':
       return { ...state, tokenStats: action.stats };
+    case 'SET_CURRENT_TPS':
+      return { ...state, currentTps: action.tps };
     case 'CLEAR_TOKEN_STATS':
       return { ...state, tokenStats: null };
     case 'COMPACT_PROGRESS':
@@ -315,6 +319,7 @@ const initialState: ChatState = {
     perPageCharLimit: 5000,
   },
   tokenStats: null,
+  currentTps: null,
   compactingPhases: [],
 };
 

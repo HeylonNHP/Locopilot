@@ -369,6 +369,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                     let evalCount = 0;
                     let promptEvalDuration = 0;
                     let evalDuration = 0;
+                    let wallClockTps: number | null = null;
+                    let streamStartMs = 0;
+                    let roughTokens = 0;
+                    let lastTpsStatusMs = 0;
 
                     // ── Retry transient LLM errors (503, 502, 504, 429, network) ──
                     const MAX_LLM_RETRIES = 3;
@@ -377,6 +381,10 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                     while (true) {
                         try {
+                            streamStartMs = Date.now();
+                            roughTokens = 0;
+                            lastTpsStatusMs = 0;
+
                             const llmStream = sendLlmChatStream(effectiveBaseUrl, params);
 
                             for await (const chunk of llmStream) {
@@ -397,6 +405,19 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     if (contentChunk) {
                                         content += contentChunk;
                                         sendEvent('chunk', contentChunk);
+                                        // Rough live token estimate for t/s display (≈4 chars/token).
+                                        roughTokens += Math.max(1, Math.ceil(contentChunk.length / 4));
+                                        const now = Date.now();
+                                        if (now - lastTpsStatusMs > 800) {
+                                            const elapsedSec = (now - streamStartMs) / 1000;
+                                            if (elapsedSec > 0) {
+                                                sendEvent('status', {
+                                                    phase: 'responding',
+                                                    tps: +(roughTokens / elapsedSec).toFixed(2),
+                                                });
+                                            }
+                                            lastTpsStatusMs = now;
+                                        }
                                     }
                                 }
 
@@ -413,6 +434,12 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     evalDuration = (chunk as any).eval_duration ?? 0;
                                 }
                             }
+
+                            // Wall-clock fallback in case Ollama durations are missing.
+                            const wallClockElapsedMs = Date.now() - streamStartMs;
+                            wallClockTps = (evalCount > 0 && wallClockElapsedMs > 0)
+                                ? +(evalCount / (wallClockElapsedMs / 1000)).toFixed(2)
+                                : null;
 
                             break; // success — exit retry loop
                         } catch (err) {
@@ -439,6 +466,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                             evalCount = 0;
                             promptEvalDuration = 0;
                             evalDuration = 0;
+                            wallClockTps = null;
+                            streamStartMs = 0;
+                            roughTokens = 0;
+                            lastTpsStatusMs = 0;
 
                             // Exponential backoff with abort-signal awareness
                             const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1);
@@ -664,6 +695,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     const evalTps = evalDuration > 0
                         ? +(evalCount / (evalDuration / 1_000_000_000)).toFixed(2)
                         : null;
+                    const effectiveEvalTps = evalTps ?? wallClockTps;
 
                     sendEvent('done', {
                         content: finalContent,
@@ -675,7 +707,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             totalTokens,
                             tokenLimit: effectiveNumCtx,
                             promptTps,
-                            evalTps,
+                            evalTps: effectiveEvalTps,
                         },
                     });
 

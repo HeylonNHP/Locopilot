@@ -28,12 +28,10 @@ export default function StatusBar() {
   const isEstimated = tokenStats === null;
   const sourceLabel = isEstimated ? '(est)' : '';
 
-  // Tokens-per-second from the last turn (evalTps = generation speed)
-  const tpsLabel = tokenStats?.evalTps != null
-    ? `${tokenStats.evalTps} t/s`
-    : tokenStats?.promptTps != null
-      ? `${tokenStats.promptTps} t/s`
-      : null;
+  // Tokens-per-second display: live rough estimate during streaming,
+  // accurate Ollama-calculated value after the turn finishes.
+  const tpsValue = state.currentTps ?? tokenStats?.evalTps ?? tokenStats?.promptTps;
+  const tpsLabel = tpsValue != null ? `${tpsValue} t/s` : null;
 
   return (
     <div className="statusbar">

@@ -158,6 +158,9 @@ export function useChatStream(
               },
             });
           }
+          if (typeof data.tps === 'number') {
+            dispatch({ type: 'SET_CURRENT_TPS', tps: data.tps });
+          }
           break;
 
         case 'compact_progress':
@@ -198,11 +201,13 @@ export function useChatStream(
             dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });
           }
           if (data.tokenStats) dispatch({ type: 'SET_TOKEN_STATS', stats: data.tokenStats });
+          dispatch({ type: 'SET_CURRENT_TPS', tps: null });
           break;
 
         case 'error':
           requestFailedRef.current = true;
           dispatch({ type: 'SET_ERROR', error: data.message ?? 'Unknown error' });
+          dispatch({ type: 'SET_CURRENT_TPS', tps: null });
           break;
 
         case 'clear_assistant':
@@ -368,6 +373,7 @@ export function useChatStream(
 
       dispatch({ type: 'ADD_MESSAGE', message: userMessage });
       dispatch({ type: 'SET_ERROR', error: null });
+      dispatch({ type: 'SET_CURRENT_TPS', tps: null });
 
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
