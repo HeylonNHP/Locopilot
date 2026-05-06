@@ -72,6 +72,8 @@ interface ChatState {
     evalCount: number;
     totalTokens: number;
     tokenLimit: number;
+    promptTps?: number;
+    evalTps?: number;
   } | null;
   compactingPhases: string[];
 }

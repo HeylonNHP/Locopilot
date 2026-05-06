@@ -28,6 +28,13 @@ export default function StatusBar() {
   const isEstimated = tokenStats === null;
   const sourceLabel = isEstimated ? '(est)' : '';
 
+  // Tokens-per-second from the last turn (evalTps = generation speed)
+  const tpsLabel = tokenStats?.evalTps != null
+    ? `${tokenStats.evalTps} t/s`
+    : tokenStats?.promptTps != null
+      ? `${tokenStats.promptTps} t/s`
+      : null;
+
   return (
     <div className="statusbar">
       {isStreaming && (
@@ -36,6 +43,7 @@ export default function StatusBar() {
       <span className={tokenColorClass}>
         {totalTokens}/{tokenLimit} tokens ({pct}%) {sourceLabel}
       </span>
+      {tpsLabel && <span>{tpsLabel}</span>}
       {model && <span>Model: {model}</span>}
       <span>{messages.length} messages</span>
     </div>

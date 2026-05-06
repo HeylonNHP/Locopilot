@@ -367,6 +367,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                     let toolCalls: ChatMessage['tool_calls'] | undefined;
                     let promptEvalCount = 0;
                     let evalCount = 0;
+                    let promptEvalDuration = 0;
+                    let evalDuration = 0;
 
                     // ── Retry transient LLM errors (503, 502, 504, 429, network) ──
                     const MAX_LLM_RETRIES = 3;
@@ -403,10 +405,12 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     toolCalls = msg.tool_calls;
                                 }
 
-                                // Capture authoritative token counts from the final chunk.
+                                // Capture authoritative token counts and durations from the final chunk.
                                 if (chunk.done) {
                                     promptEvalCount = chunk.prompt_eval_count ?? 0;
                                     evalCount = chunk.eval_count ?? 0;
+                                    promptEvalDuration = (chunk as any).prompt_eval_duration ?? 0;
+                                    evalDuration = (chunk as any).eval_duration ?? 0;
                                 }
                             }
 
@@ -433,6 +437,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                             toolCalls = undefined;
                             promptEvalCount = 0;
                             evalCount = 0;
+                            promptEvalDuration = 0;
+                            evalDuration = 0;
 
                             // Exponential backoff with abort-signal awareness
                             const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1);
@@ -650,6 +656,15 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                     const totalTokens = promptEvalCount + evalCount;
 
+                    // Compute tokens-per-second from Ollama's nanosecond durations.
+                    // evalDuration is the generation phase; promptEvalDuration is the prompt-processing phase.
+                    const promptTps = promptEvalDuration > 0
+                        ? +(promptEvalCount / (promptEvalDuration / 1_000_000_000)).toFixed(2)
+                        : null;
+                    const evalTps = evalDuration > 0
+                        ? +(evalCount / (evalDuration / 1_000_000_000)).toFixed(2)
+                        : null;
+
                     sendEvent('done', {
                         content: finalContent,
                         thinking: finalThinking,
@@ -659,6 +674,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                             evalCount,
                             totalTokens,
                             tokenLimit: effectiveNumCtx,
+                            promptTps,
+                            evalTps,
                         },
                     });
 
