@@ -19,15 +19,18 @@ export default function ModelSelector({ anchorRef, isOpen, onClose }: ModelSelec
     m.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  // Position the dropdown above the anchor when opened
+  // Position the dropdown above the anchor when opened, centred horizontally
   useEffect(() => {
     if (isOpen && anchorRef.current) {
       const rect = anchorRef.current.getBoundingClientRect();
       const dropdownWidth = 320;
-      let left = rect.left;
+      // Centre the popup over the anchor button
+      let left = rect.left + rect.width / 2 - dropdownWidth / 2;
       // Keep dropdown within viewport
-      if (left + dropdownWidth > window.innerWidth - 16) {
-        left = Math.max(16, window.innerWidth - dropdownWidth - 16);
+      if (left < 16) {
+        left = 16;
+      } else if (left + dropdownWidth > window.innerWidth - 16) {
+        left = window.innerWidth - dropdownWidth - 16;
       }
       setPosition({
         left,
