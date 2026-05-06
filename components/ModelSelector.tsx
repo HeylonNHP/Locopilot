@@ -70,9 +70,12 @@ export default function ModelSelector({ anchorRef, isOpen, onClose }: ModelSelec
       dispatch({ type: 'SET_CONFIG', config: { model: modelName } });
 
       try {
+        // Only persist the model change; do NOT send numCtx so the user's
+        // configured maximum context size is preserved in config.json.
+        // The effective (clamped) limit is applied in-memory via
+        // SET_MODEL_CONTEXT_LIMIT after fetching the model's info.
         const config = {
           baseUrl: state.baseUrl,
-          numCtx: state.numCtx,
           model: modelName,
           yolo: state.yolo,
           thinkingEnabled: state.thinkingEnabled,
