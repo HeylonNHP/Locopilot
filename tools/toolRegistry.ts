@@ -74,6 +74,9 @@ export interface ToolCallArguments {
     tail_chars?: number;
     start?: number;
     length?: number;
+    start_line?: number;
+    end_line?: number;
+    line_count?: number;
     content?: string;
     mode?: 'overwrite' | 'append' | 'create';
     agents?: Array<{
@@ -142,8 +145,10 @@ async function runFetchUrl(
 async function runReadFile(
     args: ReadFileToolArgs,
     output: ToolOutputSink = terminalToolOutputSink,
+    model?: string,
+    numCtx?: number,
 ): Promise<string> {
-    const tool = new ReadFileTool({ output });
+    const tool = new ReadFileTool({ output, model, numCtx });
     return tool.run(args);
 }
 
@@ -314,7 +319,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'read_file',
         {
-            async execute(args, _onProgress, output = terminalToolOutputSink) {
+            async execute(args, _onProgress, output = terminalToolOutputSink, context) {
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -325,7 +330,10 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         tail_chars: args.tail_chars,
                         start: args.start,
                         length: args.length,
-                    }, output),
+                        start_line: args.start_line,
+                        end_line: args.end_line,
+                        line_count: args.line_count,
+                    }, output, context?.subAgent?.model, context?.subAgent?.numCtx),
                 };
             },
         },

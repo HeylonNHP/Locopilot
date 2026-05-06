@@ -6,7 +6,7 @@ import type { ToolSchema } from '../../tools/tools';
 
 export const patchFileToolSchema: ToolSchema = {
     name: 'patch_file',
-    description: 'Applies targeted replacements to an existing file. Each patch must provide an exact "old" string and a new string. The tool first tries an exact match, then tolerates line-ending and trailing-whitespace differences. Prefer this for small edits to an existing file; use write_file when creating a file or replacing the full contents.',
+    description: 'Applies targeted replacements to an existing file. Each patch must provide an exact "old" string and a new string. The tool first tries an exact match, then tolerates line-ending, trailing-whitespace, and leading-whitespace (indentation) differences. Prefer this for small edits to an existing file; use write_file when creating a file or replacing the full contents.',
     parameters: {
         type: 'object',
         properties: {
@@ -68,7 +68,7 @@ function normalizeForMatching(content: string): NormalizedText {
             index += 1;
         }
 
-        const trimmedLine = content.slice(lineStart, index).trimEnd();
+        const trimmedLine = content.slice(lineStart, index).trim();
         for (let offset = 0; offset < trimmedLine.length; offset += 1) {
             text += trimmedLine[offset];
             map.push(lineStart + offset);
@@ -209,7 +209,7 @@ function formatPatchError(
         lines.push(formatCurrentExcerpt(content, patch));
     }
 
-    lines.push('The patch text did not match the current file exactly, even after normalizing line endings and trimming trailing whitespace.');
+    lines.push('The patch text did not match the current file exactly, even after normalizing line endings and trimming whitespace.');
     lines.push('Use read_file to refresh the surrounding lines and try again.');
     return lines.join('\n');
 }

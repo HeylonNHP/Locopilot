@@ -236,7 +236,13 @@ export async function runCommand(
     const workingDirectory = trimmedCwd
         ? resolveAgentPath(agentOutput, trimmedCwd)
         : getAgentWorkingDirectory(agentOutput);
-    const commandToExecute = appendWorkingDirectoryProbe(command, effectiveShell);
+
+    // On Windows, force the console to UTF-8 (code page 65001) so that
+    // non-ASCII output is not silently mangled by the system code page.
+    let commandToExecute = appendWorkingDirectoryProbe(command, effectiveShell);
+    if (isWindows) {
+        commandToExecute = `chcp 65001 >NUL && ${commandToExecute}`;
+    }
 
     // Show the user what the AI wants to run
     output.writeLine(chalk.cyan(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`));
