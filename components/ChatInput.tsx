@@ -102,7 +102,6 @@ export default function ChatInput({ onSend, disabled }: Props) {
     const textarea = textareaRef.current;
     if (!textarea) return;
 
-    textarea.style.height = '0px';
     const nextHeight = Math.min(
       Math.max(textarea.scrollHeight, MIN_TEXTAREA_HEIGHT),
       MAX_TEXTAREA_HEIGHT,
