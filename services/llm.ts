@@ -52,6 +52,14 @@ export function getLlmModelContextLimit(modelInfo: LlmModelInfo): number | null 
     return activeAdapter.getModelContextLimit(modelInfo);
 }
 
+export function getLlmModelVisionSupport(info: LlmModelInfo): boolean {
+    if (Array.isArray(info.capabilities)) {
+        const capabilities = info.capabilities.map(String);
+        return capabilities.includes('vision') || capabilities.includes('multimodal') || capabilities.includes('image');
+    }
+    return false;
+}
+
 export function sendLlmChat(
     baseUrl: string,
     params: ChatParams,

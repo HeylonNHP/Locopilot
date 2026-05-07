@@ -19,7 +19,7 @@
 
 import { randomUUID } from 'crypto';
 import { NextRequest } from 'next/server';
-import { sendLlmChatStream, getLlmApiErrorMessage } from '../../../services/llm';
+import { sendLlmChatStream, getLlmApiErrorMessage, fetchLlmModelInfo, getLlmModelVisionSupport } from '../../../services/llm';
 import type { ChatMessage, StreamChatParams } from '../../../services/llm';
 import { TOOLS, handleToolCall, sanitize, type RequestContext, type ToolOutputSink } from '../../../tools/tools';
 import { waitForApproval, resolveApproval } from '../../lib/approvalRegistry';
@@ -277,6 +277,23 @@ export async function POST(req: NextRequest): Promise<Response> {
                     };
                 }
 
+                // Determine vision support for the selected model so we can strip
+                // image attachments when the model does not support them.
+                let visionSupported: boolean | undefined = undefined;
+                try {
+                    const modelInfo = await fetchLlmModelInfo(effectiveBaseUrl, model as string);
+                    visionSupported = getLlmModelVisionSupport(modelInfo);
+                } catch {
+                    // Best-effort: if model info is unavailable, preserve current
+                    // behaviour (images sent, fetch_image tool included).
+                }
+
+                // Refresh the system prompt now that yolo and vision support are known.
+                currentMessages[0] = {
+                    role: 'system',
+                    content: createSystemPrompt(visionSupported, effectiveYolo),
+                };
+
                 // ── Main tool-calling loop ──────────────────────────────────
                 while (true) {
 
@@ -362,6 +379,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                     };
                     if (thinkEnabled !== undefined) {
                         params.think = thinkEnabled;
+                    }
+                    if (visionSupported !== undefined) {
+                        params.visionSupported = visionSupported;
                     }
 
                     let content = '';
