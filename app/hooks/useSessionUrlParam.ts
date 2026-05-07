@@ -29,6 +29,11 @@ export function useSessionUrlParam({ onLoadSessionMessages }: UseSessionUrlParam
   // searchParams (not on state.currentSessionId), avoiding re‑run loops.
   const currentSessionIdRef = useRef(state.currentSessionId);
   currentSessionIdRef.current = state.currentSessionId;
+
+  // Tracks whether the state→URL effect has run at least once.  Used to
+  // prevent the initial render from clearing a session param that the
+  // URL→state effect is about to restore.
+  const isInitialMountRef = useRef(true);
   // ──────────────────────────────────────────────────────────────────────────
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -68,7 +73,10 @@ export function useSessionUrlParam({ onLoadSessionMessages }: UseSessionUrlParam
 
     if (current === null) {
       // No session selected — clear the URL param if present.
-      if (urlParam !== null) {
+      // Skip on the very first run so we don't delete a ?session=<id>
+      // that the URL→state effect (running first in the same commit)
+      // is about to restore.
+      if (urlParam !== null && !isInitialMountRef.current) {
         isPushingRef.current = true;
         const url = new URL(window.location.href);
         url.searchParams.delete('session');
@@ -81,5 +89,7 @@ export function useSessionUrlParam({ onLoadSessionMessages }: UseSessionUrlParam
       url.searchParams.set('session', String(current));
       router.replace(url.pathname + url.search);
     }
+
+    isInitialMountRef.current = false;
   }, [state.currentSessionId]);
 }
