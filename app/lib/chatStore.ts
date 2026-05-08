@@ -37,6 +37,7 @@ export interface LLmModel {
   name: string;
   modified_at?: string;
   size?: number;
+  capabilities?: string[];
 }
 
 export interface WebSearchConfig {
