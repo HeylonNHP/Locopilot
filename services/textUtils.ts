@@ -62,6 +62,10 @@ export function sanitizeChatMessage(message: ChatMessage): ChatMessage {
         sanitizedMessage.images = [...message.images];
     }
 
+    if (message.tool_call_id !== undefined) {
+        sanitizedMessage.tool_call_id = message.tool_call_id;
+    }
+
     if (message.tool_calls && message.tool_calls.length > 0) {
         sanitizedMessage.tool_calls = message.tool_calls.map((toolCall) => ({
             function: {

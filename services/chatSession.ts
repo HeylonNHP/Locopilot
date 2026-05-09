@@ -420,7 +420,10 @@ export async function autoCompactIfNeeded(
             ));
         }
 
-        state.messages = result.newMessages;
+        state.messages = [
+            { role: 'system', content: createSystemPrompt(state.visionSupported, config.yolo ?? false) },
+            ...result.newMessages,
+        ];
         state.messages.push({
             role: 'user',
             content:

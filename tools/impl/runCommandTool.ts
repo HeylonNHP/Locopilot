@@ -76,8 +76,6 @@ interface ProcessEntry {
 }
 
 
-const WORKDIR_MARKER = '__LOCOPILOT_WORKDIR__:';
-
 /**
  * Call at the start of each HTTP request to create an isolated process registry.
  */
@@ -131,16 +129,16 @@ function getShellConfig(shell: string): { bin: string; args: string[] } {
     return { bin: shell, args: [] };
 }
 
-function appendWorkingDirectoryProbe(command: string, shell: string): string {
+function appendWorkingDirectoryProbe(command: string, shell: string, workdirMarker: string): string {
     if (shell === 'cmd' || shell === 'cmd.exe') {
-        return `${command} & echo ${WORKDIR_MARKER}%CD%`;
+        return `${command} & echo ${workdirMarker}%CD%`;
     }
 
     if (shell === 'powershell') {
-        return `${command}; Write-Output ${WORKDIR_MARKER}$PWD`;
+        return `${command}; Write-Output ${workdirMarker}$PWD`;
     }
 
-    return `${command}; printf '%s\n' "${WORKDIR_MARKER}$PWD"`;
+    return `${command}; printf '%s\n' "${workdirMarker}$PWD"`;
 }
 
 function buildOutput(
@@ -237,7 +235,10 @@ export async function runCommand(
         ? resolveAgentPath(agentOutput, trimmedCwd)
         : getAgentWorkingDirectory(agentOutput);
 
-    let commandToExecute = appendWorkingDirectoryProbe(command, effectiveShell);
+    const workdirNonce = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+    const workdirMarker = `__LOCOPILOT_WORKDIR_${workdirNonce}__:`;
+
+    let commandToExecute = appendWorkingDirectoryProbe(command, effectiveShell, workdirMarker);
 
     // Show the user what the AI wants to run
     output.writeLine(chalk.cyan(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`));
@@ -343,11 +344,11 @@ export async function runCommand(
 
             for (let index = 0; index < stdoutLines.length; index += 1) {
                 const line = stdoutLines[index] ?? '';
-                if (!line.startsWith(WORKDIR_MARKER)) {
+                if (!line.startsWith(workdirMarker)) {
                     continue;
                 }
 
-                const candidate = line.slice(WORKDIR_MARKER.length).trim();
+                const candidate = line.slice(workdirMarker.length).trim();
                 if (candidate.length > 0) {
                     detectedWorkingDirectory = candidate;
                     markerLineIndex = index;

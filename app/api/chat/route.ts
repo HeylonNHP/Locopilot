@@ -191,6 +191,10 @@ export async function POST(req: NextRequest): Promise<Response> {
             // run_command skips the approval gate and executes unconditionally.
             let effectiveYolo = false;
             let emptyResponseRecoveryAttempts = 0;
+            // Accumulate every server-generated message so the DB persistence
+            // delta stays correct even after in-place compaction replaces
+            // currentMessages (Bug 2 fix).
+            const serverMessagesAccumulator: ChatMessage[] = [];
 
             const systemMessage: ChatMessage = {
                 role: 'system',
@@ -217,12 +221,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Otherwise create a placeholder session now and rename it once we have
             // the actual AI response content.
             let activeSessionId: number | undefined = parsedSessionId;
-            if (!activeSessionId) {
-                activeSessionId = createSession('New chat', model as string);
-                sendEvent('session_created', { sessionId: activeSessionId });
-            }
 
             try {
+                if (!activeSessionId) {
+                    activeSessionId = createSession('New chat', model as string);
+                    sendEvent('session_created', { sessionId: activeSessionId });
+                }
                 // Load runtime tool configuration from disk so that web search
                 // and YOLO settings reflect the latest user preferences.
                 // Build per-request context from config (no global state setters).
@@ -337,6 +341,12 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 currentMessages.splice(0, currentMessages.length, ...compactResult.newMessages);
                                 // LLM-only nudge – not sent to the client.
                                 currentMessages.push({
+                                    role: 'user',
+                                    content:
+                                        'The conversation history was automatically compacted due to context length. ' +
+                                        'Please continue working on the original task without asking for confirmation.',
+                                });
+                                serverMessagesAccumulator.push({
                                     role: 'user',
                                     content:
                                         'The conversation history was automatically compacted due to context length. ' +
@@ -522,11 +532,18 @@ export async function POST(req: NextRequest): Promise<Response> {
                     }
 
                     currentMessages.push(assistantMessage);
+                    serverMessagesAccumulator.push(assistantMessage);
 
                     if ((!toolCalls || toolCalls.length === 0) && !hasMeaningfulAssistantContent(assistantMessage)) {
                         if (emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
                             emptyResponseRecoveryAttempts += 1;
                             currentMessages.push({
+                                role: 'user',
+                                content:
+                                    'Your last response was empty. Provide a direct answer now. ' +
+                                    'If commands are needed, call run_command. If commands already ran, summarize their output and errors.',
+                            });
+                            serverMessagesAccumulator.push({
                                 role: 'user',
                                 content:
                                     'Your last response was empty. Provide a direct answer now. ' +
@@ -593,6 +610,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         duration: 0,
                                     });
                                     currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                    serverMessagesAccumulator.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
                                     continue;
                                 }
                             }
@@ -676,6 +694,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 toolMessage.images = result.images;
                             }
                             currentMessages.push(toolMessage);
+                            serverMessagesAccumulator.push(toolMessage);
                         }
 
                         // Signal we are switching back to the LLM with tool results.
@@ -700,11 +719,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                     }
 
                     // Persist messages in chronological order.
-                    // originalClientMessages preserves subagent_log positions.
-                    // serverMessages are everything the LLM loop appended this turn.
-                    const serverMessages = currentMessages
-                        .filter(m => m.role !== 'system')
-                        .slice(originalClientMessages.filter(m => (m as any).role !== 'subagent_log').length);
+                    // serverMessagesAccumulator collects every server-generated
+                    // message incrementally so the delta stays correct even after
+                    // in-place compaction replaces currentMessages (Bug 2 fix).
+                    const serverMessages = serverMessagesAccumulator;
 
                     // Use a reducer so the queue reads the current DB state
                     // inside the critical section and we only append our new
