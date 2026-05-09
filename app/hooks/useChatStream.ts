@@ -23,7 +23,8 @@ export function useChatStream(
   // wrong session's message list.  Switching back replays the buffer on top
   // of the freshly-loaded DB messages so live output resumes seamlessly.
   const [streamingSessions, setStreamingSessions] = useState<Set<number>>(new Set());
-  const bufferOwnerSessionIdRef = useRef<number | null | undefined>(undefined);
+  const nextRequestIdRef = useRef(0);
+  const bufferOwnerMapRef = useRef<Map<number, number>>(new Map());
   const bufferedEventsRef = useRef<Array<{ event: string; data: any }>>([]);
   const subagentBufferRef = useRef<Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>>(new Map());
   const retryPayloadRef = useRef<{ body: string } | null>(null);
@@ -33,11 +34,11 @@ export function useChatStream(
   const handleEvent = useCallback(
     (event: string, data: any) => {
       // ── session_created must ALWAYS be processed first ──────────────────
-      // It syncs bufferOwnerSessionIdRef and refs.sessionIdRef to the real
+      // It syncs bufferOwnerMapRef and refs.sessionIdRef to the real
       // session ID.  If the buffer guard below intercepted it, the guard
-      // would see null !== -1, buffer session_created, and the sync would
-      // never happen — causing ALL subsequent chunks to be buffered and
-      // ultimately discarded by the finally block.
+      // would see size 0 (no active streams), buffer session_created, and
+      // the sync would never happen — causing ALL subsequent chunks to be
+      // buffered and ultimately discarded by the finally block.
       if (event === 'session_created' && typeof data.sessionId === 'number') {
         const realId: number = data.sessionId;
         if (abortControllersRef.current.has(-1)) {
@@ -51,7 +52,12 @@ export function useChatStream(
             return next;
           });
         }
-        bufferOwnerSessionIdRef.current = realId;
+        // Update ALL map entries set with -1 (placeholder for new sessions) to the real ID
+        for (const [reqId, sessId] of bufferOwnerMapRef.current.entries()) {
+          if (sessId === -1) {
+            bufferOwnerMapRef.current.set(reqId, realId);
+          }
+        }
         refs.sessionIdRef.current = realId;
         dispatch({ type: 'SET_CURRENT_SESSION', id: realId });
         loadSessions();
@@ -61,8 +67,8 @@ export function useChatStream(
       // If a stream is active and the user has navigated to a different session,
       // buffer this event so it doesn't land in the wrong message list.
       if (
-        bufferOwnerSessionIdRef.current !== undefined &&
-        refs.sessionIdRef.current !== bufferOwnerSessionIdRef.current
+        bufferOwnerMapRef.current.size > 0 &&
+        !new Set(bufferOwnerMapRef.current.values()).has(refs.sessionIdRef.current ?? -1)
       ) {
         bufferedEventsRef.current.push({ event, data });
         return;
@@ -197,7 +203,6 @@ export function useChatStream(
 
         case 'done':
           if (data.sessionId) {
-            bufferOwnerSessionIdRef.current = data.sessionId;
             dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });
           }
           if (data.tokenStats) dispatch({ type: 'SET_TOKEN_STATS', stats: data.tokenStats });
@@ -236,7 +241,8 @@ export function useChatStream(
       abortControllersRef.current.set(sessionId, abortController);
       setStreamingSessions(prev => new Set(prev).add(sessionId));
 
-      bufferOwnerSessionIdRef.current = sessionId;
+      const requestId = nextRequestIdRef.current++;
+      bufferOwnerMapRef.current.set(requestId, sessionId);
       bufferedEventsRef.current = [];
 
       try {
@@ -313,9 +319,9 @@ export function useChatStream(
         }
         subagentBufferRef.current.clear();
 
-        // Use bufferOwnerSessionIdRef (updated by session_created) instead of
+        // Use bufferOwnerMapRef (updated by session_created) instead of
         // the captured sessionId, which may still be -1 for new sessions.
-        const ownerId = bufferOwnerSessionIdRef.current;
+        const ownerId = bufferOwnerMapRef.current.get(requestId);
         if (ownerId !== undefined) {
           abortControllersRef.current.delete(ownerId);
           setStreamingSessions(prev => {
@@ -323,9 +329,9 @@ export function useChatStream(
             next.delete(ownerId);
             return next;
           });
+          bufferOwnerMapRef.current.delete(requestId);
         }
         bufferedEventsRef.current = [];
-        bufferOwnerSessionIdRef.current = undefined;
         loadSessions();
         if (!requestFailedRef.current) {
           retryPayloadRef.current = null;
@@ -346,7 +352,8 @@ export function useChatStream(
         bufferedEventsRef.current = [];
         return;
       }
-      if (bufferOwnerSessionIdRef.current !== targetSessionId) {
+      const checkId = targetSessionId ?? -1;
+      if (!new Set(bufferOwnerMapRef.current.values()).has(checkId)) {
         return;
       }
       const events = [...bufferedEventsRef.current];
@@ -381,7 +388,8 @@ export function useChatStream(
 
       // Record which session owns this stream so events can be buffered when
       // the user navigates away and replayed when they switch back.
-      bufferOwnerSessionIdRef.current = sessionId;
+      const requestId = nextRequestIdRef.current++;
+      bufferOwnerMapRef.current.set(requestId, sessionId);
       bufferedEventsRef.current = [];
 
       const bodyObj = {
@@ -495,9 +503,9 @@ export function useChatStream(
         }
         subagentBufferRef.current.clear();
 
-        // Use bufferOwnerSessionIdRef (updated by session_created) instead of
+        // Use bufferOwnerMapRef (updated by session_created) instead of
         // the captured sessionId, which may still be -1 for new sessions.
-        const ownerId = bufferOwnerSessionIdRef.current;
+        const ownerId = bufferOwnerMapRef.current.get(requestId);
         if (ownerId !== undefined) {
           abortControllersRef.current.delete(ownerId);
           setStreamingSessions(prev => {
@@ -505,9 +513,9 @@ export function useChatStream(
             next.delete(ownerId);
             return next;
           });
+          bufferOwnerMapRef.current.delete(requestId);
         }
         bufferedEventsRef.current = [];
-        bufferOwnerSessionIdRef.current = undefined;
         loadSessions();
         if (!requestFailedRef.current) {
           retryPayloadRef.current = null;
