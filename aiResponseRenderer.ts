@@ -247,16 +247,6 @@ export async function streamAIResponse(
     let firstContentTime: number | null = null;
     let thinkingSummaryPrinted = false;
 
-    function printThinkingSummary(durationMs: number, thinkingChars: number): void {
-        const durationSec = durationMs / 1000;
-        const durationStr = durationSec > 60
-            ? `${Math.floor(durationSec / 60)}m ${Math.floor(durationSec % 60)}s`
-            : `${durationSec.toFixed(1)}s`;
-
-        clearLiveStatus();
-        console.log(chalk.dim(`(Thought for ${durationStr} · ${thinkingChars} chars)`));
-    }
-
     try {
         const stream = sendLlmChatStream(baseUrl, {
             model: params.model,
@@ -288,6 +278,7 @@ export async function streamAIResponse(
                     firstContentTime = Date.now();
                     if (thinking.length > 0) {
                         renderThinkingSummary(firstContentTime - startTime, thinking.length);
+                        thinkingSummaryPrinted = true;
                     }
                 }
                 content += chunkContent;
@@ -299,6 +290,7 @@ export async function streamAIResponse(
                 // summary now — same timing as for the first content chunk above.
                 if (thinking.length > 0 && !thinkingSummaryPrinted) {
                     renderThinkingSummary(Date.now() - startTime, thinking.length);
+                    thinkingSummaryPrinted = true;
                 }
                 // Track the latest complete tool-call snapshot for the final
                 // result. Ollama emits tool_calls as a full array in the chunk
@@ -306,9 +298,12 @@ export async function streamAIResponse(
                 // the same snapshot is repeated.
                 toolCalls.length = 0;
                 toolCalls.push(...chunk.message.tool_calls);
-                
-                // Track RAW tool call text (accumulated arguments) to show progress while OLLAMA is still generating them.
-                // Ollama tool calls usually arrive in chunks where each chunk adds to the current argument set.
+
+                // Reset the raw-args accumulator so the character count reflects
+                // only the latest snapshot. Ollama sends complete tool-call
+                // snapshots each chunk (see ollama/ollama#11633), not incremental
+                // partials, so accumulating across chunks would inflate the count.
+                toolCallRawArgs = '';
                 for (const tc of chunk.message.tool_calls) {
                     if (tc.function?.arguments) {
                         try {
@@ -337,6 +332,7 @@ export async function streamAIResponse(
     // Print a final thought summary so the thinking duration/chars are visible.
     if (!interrupted && thinking.length > 0 && !thinkingSummaryPrinted) {
         renderThinkingSummary(Date.now() - startTime, thinking.length);
+        thinkingSummaryPrinted = true;
     }
 
     const cleanedContent = stripSpecialTokens(content);
