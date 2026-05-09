@@ -46,6 +46,21 @@ export interface WebSearchConfig {
   perPageCharLimit: number;
 }
 
+export interface SessionState {
+    messages: ChatMessage[];
+    error: string | null;
+    tokenStats: {
+        promptEvalCount: number;
+        evalCount: number;
+        totalTokens: number;
+        tokenLimit: number;
+        promptTps?: number;
+        evalTps?: number;
+    } | null;
+    currentTps: number | null;
+    compactingPhases: string[];
+}
+
 interface ChatState {
   messages: ChatMessage[];
   sessions: Session[];
@@ -78,6 +93,8 @@ interface ChatState {
   } | null;
   currentTps: number | null;
   compactingPhases: string[];
+  sessionStates: Map<number, SessionState>;
+  newSessionState: SessionState;
 }
 
 type ChatAction =
@@ -103,6 +120,10 @@ type ChatAction =
   | { type: 'SET_CURRENT_TPS'; tps: number | null }
   | { type: 'CLEAR_TOKEN_STATS' }
   | { type: 'COMPACT_PROGRESS'; message: string }
+  | { type: 'INIT_SESSION'; sessionId: number }
+  | { type: 'SAVE_ACTIVE_SESSION' }
+  | { type: 'RESTORE_SESSION'; sessionId: number | null }
+  | { type: 'DISCARD_SESSION'; sessionId: number }
   | { type: 'CLEAR_COMPACT_PROGRESS' };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
@@ -237,8 +258,61 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
     case 'SET_SESSIONS':
       return { ...state, sessions: action.sessions };
-    case 'SET_CURRENT_SESSION':
-      return { ...state, currentSessionId: action.id };
+    case 'SET_CURRENT_SESSION': {
+      // 1. Save current active session into its slot
+      const snapshot: SessionState = {
+        messages: state.messages,
+        error: state.error,
+        tokenStats: state.tokenStats,
+        currentTps: state.currentTps,
+        compactingPhases: state.compactingPhases,
+      };
+
+      let nextState = { ...state };
+
+      if (state.currentSessionId !== null) {
+        const newMap = new Map(state.sessionStates);
+        newMap.set(state.currentSessionId, snapshot);
+        nextState = { ...nextState, sessionStates: newMap };
+      } else {
+        nextState = { ...nextState, newSessionState: snapshot };
+      }
+
+      // 2. Switch to the new session
+      nextState = { ...nextState, currentSessionId: action.id };
+
+      // 3. Restore the new session's state into active fields
+      if (action.id !== null) {
+        const session = nextState.sessionStates.get(action.id);
+        if (session) {
+          return {
+            ...nextState,
+            messages: session.messages,
+            error: session.error,
+            tokenStats: session.tokenStats,
+            currentTps: session.currentTps,
+            compactingPhases: session.compactingPhases,
+          };
+        }
+        // Session not yet initialised — start fresh (don't auto-create slot)
+        return {
+          ...nextState,
+          messages: [],
+          error: null,
+          tokenStats: null,
+          currentTps: null,
+          compactingPhases: [],
+        };
+      }
+      return {
+        ...nextState,
+        messages: nextState.newSessionState.messages,
+        error: nextState.newSessionState.error,
+        tokenStats: nextState.newSessionState.tokenStats,
+        currentTps: nextState.newSessionState.currentTps,
+        compactingPhases: nextState.newSessionState.compactingPhases,
+      };
+    }
     case 'SET_MODELS':
       return { ...state, models: action.models };
     case 'SET_MODEL':
@@ -288,6 +362,69 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, tokenStats: null };
     case 'COMPACT_PROGRESS':
       return { ...state, compactingPhases: [...state.compactingPhases, action.message] };
+    case 'INIT_SESSION': {
+      if (state.sessionStates.has(action.sessionId)) return state;
+      const newMap = new Map(state.sessionStates);
+      newMap.set(action.sessionId, {
+        messages: [],
+        error: null,
+        tokenStats: null,
+        currentTps: null,
+        compactingPhases: [],
+      });
+      return { ...state, sessionStates: newMap };
+    }
+    case 'SAVE_ACTIVE_SESSION': {
+      const snapshot: SessionState = {
+        messages: state.messages,
+        error: state.error,
+        tokenStats: state.tokenStats,
+        currentTps: state.currentTps,
+        compactingPhases: state.compactingPhases,
+      };
+      if (state.currentSessionId !== null) {
+        const newMap = new Map(state.sessionStates);
+        newMap.set(state.currentSessionId, snapshot);
+        return { ...state, sessionStates: newMap };
+      }
+      return { ...state, newSessionState: snapshot };
+    }
+    case 'RESTORE_SESSION': {
+      if (action.sessionId !== null) {
+        const session = state.sessionStates.get(action.sessionId);
+        if (session) {
+          return {
+            ...state,
+            messages: session.messages,
+            error: session.error,
+            tokenStats: session.tokenStats,
+            currentTps: session.currentTps,
+            compactingPhases: session.compactingPhases,
+          };
+        }
+        return {
+          ...state,
+          messages: [],
+          error: null,
+          tokenStats: null,
+          currentTps: null,
+          compactingPhases: [],
+        };
+      }
+      return {
+        ...state,
+        messages: state.newSessionState.messages,
+        error: state.newSessionState.error,
+        tokenStats: state.newSessionState.tokenStats,
+        currentTps: state.newSessionState.currentTps,
+        compactingPhases: state.newSessionState.compactingPhases,
+      };
+    }
+    case 'DISCARD_SESSION': {
+      const newMap = new Map(state.sessionStates);
+      newMap.delete(action.sessionId);
+      return { ...state, sessionStates: newMap };
+    }
     case 'CLEAR_COMPACT_PROGRESS':
       return { ...state, compactingPhases: [] };
     default:
@@ -322,6 +459,8 @@ const initialState: ChatState = {
   tokenStats: null,
   currentTps: null,
   compactingPhases: [],
+  sessionStates: new Map<number, SessionState>(),
+  newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [] },
 };
 
 const ChatContext = createContext<{
@@ -336,4 +475,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 export function useChat() {
   return useContext(ChatContext);
+}
+
+export function getActiveSessionState(state: ChatState): SessionState {
+    if (state.currentSessionId !== null) {
+        return state.sessionStates.get(state.currentSessionId) ?? { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [] };
+    }
+    return state.newSessionState;
 }

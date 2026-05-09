@@ -25,7 +25,7 @@ export function useChatStream(
   const [streamingSessions, setStreamingSessions] = useState<Set<number>>(new Set());
   const nextRequestIdRef = useRef(0);
   const bufferOwnerMapRef = useRef<Map<number, number>>(new Map());
-  const bufferedEventsRef = useRef<Array<{ event: string; data: any }>>([]);
+  const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: any }>>>(new Map());
   const subagentBufferRef = useRef<Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>>(new Map());
   const retryPayloadRef = useRef<{ body: string } | null>(null);
   const requestFailedRef = useRef(false);
@@ -70,7 +70,13 @@ export function useChatStream(
         bufferOwnerMapRef.current.size > 0 &&
         !new Set(bufferOwnerMapRef.current.values()).has(refs.sessionIdRef.current ?? -1)
       ) {
-        bufferedEventsRef.current.push({ event, data });
+        // Find which session owns this stream and buffer there
+        for (const [reqId, sessId] of bufferOwnerMapRef.current) {
+          if (!bufferedEventsRef.current.has(sessId)) {
+            bufferedEventsRef.current.set(sessId, []);
+          }
+          bufferedEventsRef.current.get(sessId)!.push({ event, data });
+        }
         return;
       }
 
@@ -243,7 +249,7 @@ export function useChatStream(
 
       const requestId = nextRequestIdRef.current++;
       bufferOwnerMapRef.current.set(requestId, sessionId);
-      bufferedEventsRef.current = [];
+      bufferedEventsRef.current.delete(sessionId);
 
       try {
         const response = await fetch('/api/chat', {
@@ -330,8 +336,8 @@ export function useChatStream(
             return next;
           });
           bufferOwnerMapRef.current.delete(requestId);
+          bufferedEventsRef.current.delete(ownerId);
         }
-        bufferedEventsRef.current = [];
         loadSessions();
         if (!requestFailedRef.current) {
           retryPayloadRef.current = null;
@@ -349,15 +355,15 @@ export function useChatStream(
   const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
       if (streamingSessions.size === 0) {
-        bufferedEventsRef.current = [];
+        bufferedEventsRef.current = new Map();
         return;
       }
-      const checkId = targetSessionId ?? -1;
-      if (!new Set(bufferOwnerMapRef.current.values()).has(checkId)) {
+      const sessionKey = targetSessionId ?? -1;
+      if (!new Set(bufferOwnerMapRef.current.values()).has(sessionKey)) {
         return;
       }
-      const events = [...bufferedEventsRef.current];
-      bufferedEventsRef.current = [];
+      const events = bufferedEventsRef.current.get(sessionKey) ?? [];
+      bufferedEventsRef.current.delete(sessionKey);
       for (const { event, data } of events) {
         handleEvent(event, data);
       }
@@ -390,7 +396,7 @@ export function useChatStream(
       // the user navigates away and replayed when they switch back.
       const requestId = nextRequestIdRef.current++;
       bufferOwnerMapRef.current.set(requestId, sessionId);
-      bufferedEventsRef.current = [];
+      bufferedEventsRef.current.delete(sessionId);
 
       const bodyObj = {
         messages: [...currentMessages, userMessage].filter((m) => m.role !== 'system'),
@@ -514,8 +520,8 @@ export function useChatStream(
             return next;
           });
           bufferOwnerMapRef.current.delete(requestId);
+          bufferedEventsRef.current.delete(ownerId);
         }
-        bufferedEventsRef.current = [];
         loadSessions();
         if (!requestFailedRef.current) {
           retryPayloadRef.current = null;

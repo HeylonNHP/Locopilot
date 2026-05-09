@@ -128,8 +128,7 @@ function HomeInner() {
   }, [dispatch, state.pendingApprovalId]);
 
   const handleNewSession = useCallback(async () => {
-    dispatch({ type: 'CLEAR_MESSAGES' });
-    dispatch({ type: 'CLEAR_TOKEN_STATS' });
+    // SET_CURRENT_SESSION with null auto-saves old state and restores new-session defaults
     dispatch({ type: 'SET_CURRENT_SESSION', id: null });
     await loadSessions();
   }, [dispatch, loadSessions]);
@@ -137,15 +136,13 @@ function HomeInner() {
   const handleSelectSession = useCallback(
     async (sessionId: number) => {
       sessionSwitchIdRef.current = sessionId;
-      dispatch({ type: 'SET_ERROR', error: null });
-      dispatch({ type: 'CLEAR_TOKEN_STATS' });
-      dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
-      dispatch({ type: 'CLEAR_MESSAGES' });
+      // SET_CURRENT_SESSION auto-saves old state and restores target state
+      dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
       await loadSessionMessages(sessionId);
       if (sessionSwitchIdRef.current !== sessionId) return;
       replayBufferedEvents(sessionId);
     },
-    [loadSessionMessages, replayBufferedEvents, dispatch],
+    [dispatch, loadSessionMessages, replayBufferedEvents],
   );
 
   const handleDeleteSession = useCallback(
