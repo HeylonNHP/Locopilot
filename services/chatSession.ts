@@ -434,7 +434,7 @@ export async function autoCompactIfNeeded(
         
         updateSessionMessages(state.currentSessionId, state.messages, {
             promptEvalCount: result.stats.oldTokenCount,
-            evalCount: result.stats.newTokenCount - result.stats.oldTokenCount
+            evalCount: 0
         });
 
         state.lastAuthoritativeTokens = 0;

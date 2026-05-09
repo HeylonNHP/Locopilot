@@ -202,6 +202,7 @@ async function sendOllamaChat(
     if (onChunk) {
         // Use streaming internally to provide progress but return full response
         const streamParams: StreamChatParams = { ...params };
+        if (timeoutMs !== undefined) streamParams.timeoutMs = timeoutMs;
         let fullMessage: ChatMessage = { role: 'assistant', content: '' };
         let lastChunk: ChatApiResponse | null = null;
 

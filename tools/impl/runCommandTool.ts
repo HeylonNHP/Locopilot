@@ -73,6 +73,7 @@ interface ProcessEntry {
     startedAt: Date;
     done: boolean;
     exitCode: number | null;
+    ttlTimer?: ReturnType<typeof setTimeout>;
 }
 
 
@@ -307,6 +308,7 @@ export async function runCommand(
 
             unregisterInterruptHandler(interruptHandlerId);
             clearTimeout(timer);
+            if (entry.ttlTimer) clearTimeout(entry.ttlTimer);
             entry.done = true;
             entry.exitCode = code;
             if (!returnedPartial) {
@@ -328,7 +330,14 @@ export async function runCommand(
             // Still running after timeout – return partial output so the LLM can check back
             onProgress?.('run_command: still running, returning partial output...');
             returnedPartial = true;
-            
+
+            // TTL cleanup: if the LLM never polls the process again, forcibly kill
+            // it and remove the registry entry after 5 minutes to prevent leaks.
+            entry.ttlTimer = setTimeout(() => {
+                killProcessTree(child);
+                procRegistry.delete(processId);
+            }, 300_000);
+
             // We don't unregister interrupt handler here because the process 
             // is still running and the user might still want to interrupt it 
             // while we are waiting for the next LLM turn.
@@ -454,6 +463,7 @@ export async function checkProcessOutput(
     if (entry.done) {
         const output = buildOutput(entry, true, null);
         const procRegistry = requestProcessState.getStore()?.registry ?? globalFallbackRegistry;
+        if (entry.ttlTimer) clearTimeout(entry.ttlTimer);
         procRegistry.delete(processId);
         return output;
     }

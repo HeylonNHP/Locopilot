@@ -11,6 +11,7 @@ import { type WebExtractionSettings } from '../web/htmlExtractor';
 import { sendLlmChatStream, type ChatMessage, type StreamChatParams } from '../../services/llm';
 import { countMessagesTokens, countTextTokens } from '../../services/tokenizer';
 import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { AsyncLocalStorage } from 'async_hooks';
 
 /**
  * Prompt template for content compaction.
@@ -68,14 +69,20 @@ interface WebCompactionDebugEntry {
     timestamp: number;
 }
 
-const webCompactionDebugLog: WebCompactionDebugEntry[] = [];
-let nextDebugId = 1;
-
 const MAX_DEBUG_ENTRIES = 10;
 
+// Per-request scoped storage for the latest web-compaction debug output.
+// This lets callers like /dump and /slash-commands access debug data
+// without holding the compactor instance, while keeping data isolated
+// across concurrent requests.
+const compactionDebugStore = new AsyncLocalStorage<string[]>();
+
+/**
+ * Returns the most recent web-compaction debug lines from the current
+ * request scope.  Falls back to an empty array if no compaction has run.
+ */
 export function getLastWebCompactionDebug(): string[] {
-    const last = webCompactionDebugLog[webCompactionDebugLog.length - 1];
-    return last ? [...last.lines] : [];
+    return compactionDebugStore.getStore() ?? [];
 }
 
 function buildCompactionPrompt(content: string, charLimit: number, attempt: number): string {
@@ -136,6 +143,8 @@ export class ContentCompactor {
     private readonly settings: WebExtractionSettings;
     private readonly baseUrl: string;
     private debugLines: string[] = [];
+    private debugLog: WebCompactionDebugEntry[] = [];
+    private nextDebugId = 1;
 
     constructor(options: ContentCompactorOptions) {
         this.settings = options.settings;
@@ -185,14 +194,17 @@ export class ContentCompactor {
             this.logCompactionComplete(content.length, finalResult.length);
             return finalResult;
         } finally {
-            webCompactionDebugLog.push({
-                id: nextDebugId++,
+            this.debugLog.push({
+                id: this.nextDebugId++,
                 lines: [...this.debugLines],
                 timestamp: Date.now(),
             });
-            if (webCompactionDebugLog.length > MAX_DEBUG_ENTRIES) {
-                webCompactionDebugLog.shift();
+            if (this.debugLog.length > MAX_DEBUG_ENTRIES) {
+                this.debugLog.shift();
             }
+            // Publish the latest debug lines into the request-scoped store
+            // so callers like /dump can read them without holding the instance.
+            compactionDebugStore.enterWith([...this.debugLines]);
         }
     }
 
@@ -307,6 +319,11 @@ export class ContentCompactor {
 
     private logCompactionComplete(originalLength: number, finalLength: number): void {
         this.logCompactionLine(`Web content compaction complete: ${originalLength} -> ${finalLength} chars`);
+    }
+
+    getLastWebCompactionDebug(): string[] {
+        const last = this.debugLog[this.debugLog.length - 1];
+        return last ? [...last.lines] : [];
     }
 
     /**
