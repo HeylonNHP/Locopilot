@@ -317,7 +317,7 @@ export async function fetchAndExtract(
     const finalUrl = response.request?.res?.responseUrl || url;
 
     // ── Suggestion #7: Content-Type check ────────────────────────────
-    const contentType = response.headers['content-type'] || '';
+    const contentType = String(response.headers['content-type'] ?? '');
     if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
         throw new Error(`Unsupported content type: ${contentType}. only HTML pages are supported.`);
     }
