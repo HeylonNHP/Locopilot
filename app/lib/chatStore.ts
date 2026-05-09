@@ -59,6 +59,10 @@ export interface SessionState {
     } | null;
     currentTps: number | null;
     compactingPhases: string[];
+    pendingApproval: {
+        command: { name: string; args: any } | null;
+        requestId: string | null;
+    } | null;
 }
 
 interface ChatState {
@@ -95,6 +99,7 @@ interface ChatState {
   compactingPhases: string[];
   sessionStates: Map<number, SessionState>;
   newSessionState: SessionState;
+  streamingSessions: Set<number>;
 }
 
 type ChatAction =
@@ -124,7 +129,9 @@ type ChatAction =
   | { type: 'SAVE_ACTIVE_SESSION' }
   | { type: 'RESTORE_SESSION'; sessionId: number | null }
   | { type: 'DISCARD_SESSION'; sessionId: number }
-  | { type: 'CLEAR_COMPACT_PROGRESS' };
+  | { type: 'CLEAR_COMPACT_PROGRESS' }
+  | { type: 'START_STREAMING'; sessionId: number }
+  | { type: 'STOP_STREAMING'; sessionId: number };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -266,6 +273,10 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tokenStats: state.tokenStats,
         currentTps: state.currentTps,
         compactingPhases: state.compactingPhases,
+        pendingApproval: state.pendingCommand ? {
+          command: state.pendingCommand,
+          requestId: state.pendingApprovalId,
+        } : null,
       };
 
       let nextState = { ...state };
@@ -285,7 +296,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (action.id !== null) {
         const session = nextState.sessionStates.get(action.id);
         if (session) {
-          return {
+          nextState = {
             ...nextState,
             messages: session.messages,
             error: session.error,
@@ -293,25 +304,48 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             currentTps: session.currentTps,
             compactingPhases: session.compactingPhases,
           };
+        } else {
+          // Session not yet initialised — start fresh (don't auto-create slot)
+          nextState = {
+            ...nextState,
+            messages: [],
+            error: null,
+            tokenStats: null,
+            currentTps: null,
+            compactingPhases: [],
+          };
         }
-        // Session not yet initialised — start fresh (don't auto-create slot)
-        return {
+      } else {
+        nextState = {
           ...nextState,
-          messages: [],
-          error: null,
-          tokenStats: null,
-          currentTps: null,
-          compactingPhases: [],
+          messages: nextState.newSessionState.messages,
+          error: nextState.newSessionState.error,
+          tokenStats: nextState.newSessionState.tokenStats,
+          currentTps: nextState.newSessionState.currentTps,
+          compactingPhases: nextState.newSessionState.compactingPhases,
         };
       }
-      return {
-        ...nextState,
-        messages: nextState.newSessionState.messages,
-        error: nextState.newSessionState.error,
-        tokenStats: nextState.newSessionState.tokenStats,
-        currentTps: nextState.newSessionState.currentTps,
-        compactingPhases: nextState.newSessionState.compactingPhases,
-      };
+
+      // Restore pending approval state
+      const targetSession = action.id !== null ? nextState.sessionStates.get(action.id) : null;
+      const pendingApproval = targetSession?.pendingApproval ?? nextState.newSessionState.pendingApproval;
+      if (pendingApproval) {
+        nextState = {
+          ...nextState,
+          pendingCommand: pendingApproval.command,
+          showApproval: pendingApproval.command !== null,
+          pendingApprovalId: pendingApproval.requestId,
+        };
+      } else {
+        nextState = {
+          ...nextState,
+          pendingCommand: null,
+          showApproval: false,
+          pendingApprovalId: null,
+        };
+      }
+
+      return nextState;
     }
     case 'SET_MODELS':
       return { ...state, models: action.models };
@@ -330,13 +364,39 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const { numCtx: _, ...restConfig } = action.config;
       return { ...state, requestedNumCtx, numCtx: effectiveNumCtx, ...restConfig };
     }
-    case 'SHOW_APPROVAL':
-      return {
+    case 'SHOW_APPROVAL': {
+      const nextState = {
         ...state,
         pendingCommand: action.command,
         showApproval: action.command !== null,
         pendingApprovalId: action.requestId ?? null,
       };
+      // Also persist into the active session's state so it survives switching
+      if (state.currentSessionId !== null) {
+        const session = nextState.sessionStates.get(state.currentSessionId);
+        if (session) {
+          const newMap = new Map(nextState.sessionStates);
+          newMap.set(state.currentSessionId, {
+            ...session,
+            pendingApproval: action.command ? {
+              command: action.command,
+              requestId: action.requestId ?? null,
+            } : null,
+          });
+          return { ...nextState, sessionStates: newMap };
+        }
+      } else {
+        // New session (currentSessionId is null)
+        nextState.newSessionState = {
+          ...nextState.newSessionState,
+          pendingApproval: action.command ? {
+            command: action.command,
+            requestId: action.requestId ?? null,
+          } : null,
+        };
+      }
+      return nextState;
+    }
     case 'SET_MODEL_CONTEXT_LIMIT': {
       const effectiveNumCtx = action.limit && action.limit > 0
         ? Math.min(state.requestedNumCtx, action.limit)
@@ -371,6 +431,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tokenStats: null,
         currentTps: null,
         compactingPhases: [],
+        pendingApproval: null,
       });
       return { ...state, sessionStates: newMap };
     }
@@ -381,6 +442,10 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tokenStats: state.tokenStats,
         currentTps: state.currentTps,
         compactingPhases: state.compactingPhases,
+        pendingApproval: state.pendingCommand ? {
+          command: state.pendingCommand,
+          requestId: state.pendingApprovalId,
+        } : null,
       };
       if (state.currentSessionId !== null) {
         const newMap = new Map(state.sessionStates);
@@ -400,6 +465,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             tokenStats: session.tokenStats,
             currentTps: session.currentTps,
             compactingPhases: session.compactingPhases,
+            pendingCommand: session.pendingApproval?.command ?? null,
+            showApproval: session.pendingApproval ? session.pendingApproval.command !== null : false,
+            pendingApprovalId: session.pendingApproval?.requestId ?? null,
           };
         }
         return {
@@ -409,6 +477,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           tokenStats: null,
           currentTps: null,
           compactingPhases: [],
+          pendingCommand: null,
+          showApproval: false,
+          pendingApprovalId: null,
         };
       }
       return {
@@ -418,12 +489,23 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tokenStats: state.newSessionState.tokenStats,
         currentTps: state.newSessionState.currentTps,
         compactingPhases: state.newSessionState.compactingPhases,
+        pendingCommand: state.newSessionState.pendingApproval?.command ?? null,
+        showApproval: state.newSessionState.pendingApproval ? state.newSessionState.pendingApproval.command !== null : false,
+        pendingApprovalId: state.newSessionState.pendingApproval?.requestId ?? null,
       };
     }
     case 'DISCARD_SESSION': {
       const newMap = new Map(state.sessionStates);
       newMap.delete(action.sessionId);
       return { ...state, sessionStates: newMap };
+    }
+    case 'START_STREAMING': {
+      return { ...state, streamingSessions: new Set(state.streamingSessions).add(action.sessionId) };
+    }
+    case 'STOP_STREAMING': {
+      const nextSet = new Set(state.streamingSessions);
+      nextSet.delete(action.sessionId);
+      return { ...state, streamingSessions: nextSet };
     }
     case 'CLEAR_COMPACT_PROGRESS':
       return { ...state, compactingPhases: [] };
@@ -460,7 +542,8 @@ const initialState: ChatState = {
   currentTps: null,
   compactingPhases: [],
   sessionStates: new Map<number, SessionState>(),
-  newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [] },
+  newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null },
+  streamingSessions: new Set<number>(),
 };
 
 const ChatContext = createContext<{
@@ -479,7 +562,7 @@ export function useChat() {
 
 export function getActiveSessionState(state: ChatState): SessionState {
     if (state.currentSessionId !== null) {
-        return state.sessionStates.get(state.currentSessionId) ?? { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [] };
+        return state.sessionStates.get(state.currentSessionId) ?? { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null };
     }
     return state.newSessionState;
 }

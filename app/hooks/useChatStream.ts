@@ -51,6 +51,8 @@ export function useChatStream(
             next.add(realId);
             return next;
           });
+          dispatch({ type: 'STOP_STREAMING', sessionId: -1 });
+          dispatch({ type: 'START_STREAMING', sessionId: realId });
         }
         // Update ALL map entries set with -1 (placeholder for new sessions) to the real ID
         for (const [reqId, sessId] of bufferOwnerMapRef.current.entries()) {
@@ -246,6 +248,7 @@ export function useChatStream(
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
       setStreamingSessions(prev => new Set(prev).add(sessionId));
+      dispatch({ type: 'START_STREAMING', sessionId });
 
       const requestId = nextRequestIdRef.current++;
       bufferOwnerMapRef.current.set(requestId, sessionId);
@@ -335,6 +338,7 @@ export function useChatStream(
             next.delete(ownerId);
             return next;
           });
+          dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
           bufferOwnerMapRef.current.delete(requestId);
           bufferedEventsRef.current.delete(ownerId);
         }
@@ -391,6 +395,7 @@ export function useChatStream(
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
       setStreamingSessions(prev => new Set(prev).add(sessionId));
+      dispatch({ type: 'START_STREAMING', sessionId });
 
       // Record which session owns this stream so events can be buffered when
       // the user navigates away and replayed when they switch back.
@@ -519,6 +524,7 @@ export function useChatStream(
             next.delete(ownerId);
             return next;
           });
+          dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
           bufferOwnerMapRef.current.delete(requestId);
           bufferedEventsRef.current.delete(ownerId);
         }
@@ -531,6 +537,5 @@ export function useChatStream(
     [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions],
   );
 
-  const isCurrentSessionStreaming = streamingSessions.has(refs.sessionIdRef.current ?? -1);
-  return { sendChatMessage, retry, handleEvent, replayBufferedEvents, isCurrentSessionStreaming };
+  return { sendChatMessage, retry, handleEvent, replayBufferedEvents };
 }

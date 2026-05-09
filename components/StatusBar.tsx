@@ -7,7 +7,7 @@ import ModelSelector from './ModelSelector';
 
 export default function StatusBar() {
   const { state } = useChat();
-  const { tokenStats, isStreaming, model, messages } = state;
+  const { tokenStats, model, messages } = state;
   const [showSelector, setShowSelector] = useState(false);
   const modelRef = useRef<HTMLSpanElement>(null);
 
@@ -48,7 +48,7 @@ export default function StatusBar() {
 
   return (
     <div className="statusbar">
-      {isStreaming && (
+      {state.currentSessionId !== null && state.streamingSessions.has(state.currentSessionId) && (
         <span className="statusbar-streaming">● Streaming</span>
       )}
       <span className={tokenColorClass}>

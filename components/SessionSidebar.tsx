@@ -72,9 +72,14 @@ export default function SessionSidebar({ onNewSession, onSelectSession, onDelete
                   title={session.name || `Session ${session.id}`}
                   className="session-row__action flex-1 min-w-0 px-12 py-10 text-primary cursor-pointer font-13 text-left"
                 >
-                  <span className="block text-overflow-ellipsis">
-                    {session.name || `Session ${session.id}`}
-                  </span>
+                  <div className="flex items-center w-full">
+                    <span className="block text-overflow-ellipsis flex-1 min-w-0">
+                      {session.name || `Session ${session.id}`}
+                    </span>
+                    {state.streamingSessions.has(session.id) && (
+                      <span className="session-streaming-indicator ml-12" aria-label="Streaming">●</span>
+                    )}
+                  </div>
                 </div>
                 <div
                   role="button"

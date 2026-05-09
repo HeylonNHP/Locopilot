@@ -37,11 +37,13 @@ function HomeInner() {
   // ── URL param: restore session from ?session=<id> on mount; keep URL in sync ──
   useSessionUrlParam({ onLoadSessionMessages: loadSessionMessages });
 
-  const { sendChatMessage, retry, replayBufferedEvents, isCurrentSessionStreaming } = useChatStream(
+  const { sendChatMessage, retry, replayBufferedEvents } = useChatStream(
     refs,
     abortControllersRef,
     loadSessions,
   );
+
+  const isCurrentSessionStreaming = state.currentSessionId !== null && state.streamingSessions.has(state.currentSessionId);
 
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
