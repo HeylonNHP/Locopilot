@@ -658,6 +658,7 @@
   border-radius: 6px;
   padding: 2px 6px;
   margin: -2px -6px;
+  white-space: nowrap;
 }
 
 .statusbar-model:hover {
