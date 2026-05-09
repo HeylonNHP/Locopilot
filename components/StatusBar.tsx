@@ -12,10 +12,10 @@ export default function StatusBar() {
   const modelRef = useRef<HTMLSpanElement>(null);
 
   const handleOpenSelector = useCallback(() => {
-    if (state.models.length > 0) {
+    if (state.models.length > 0 && model) {
       setShowSelector(true);
     }
-  }, [state.models.length]);
+  }, [state.models.length, model]);
 
   const handleCloseSelector = useCallback(() => {
     setShowSelector(false);
@@ -55,23 +55,24 @@ export default function StatusBar() {
         {totalTokens}/{tokenLimit} tokens ({pct}%) {sourceLabel}
       </span>
       {tpsLabel && <span>{tpsLabel}</span>}
-      {model && (
-        <span
-          ref={modelRef}
-          className="statusbar-model"
-          onClick={handleOpenSelector}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              handleOpenSelector();
-            }
-          }}
-        >
-          Model: {model}
-        </span>
-      )}
+      <span ref={modelRef}>
+        {model && (
+          <span
+            className="statusbar-model"
+            onClick={handleOpenSelector}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleOpenSelector();
+              }
+            }}
+          >
+            Model: {model}
+          </span>
+        )}
+      </span>
       <span>{messages.length} messages</span>
 
       <ModelSelector

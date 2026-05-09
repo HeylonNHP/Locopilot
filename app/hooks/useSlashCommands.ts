@@ -167,7 +167,7 @@ export function useSlashCommands({
               try {
                 await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
                 loadSessions();
-                if (state.currentSessionId === id) {
+                if (refs.sessionIdRef.current === id) {
                   dispatch({ type: 'CLEAR_MESSAGES' });
                   dispatch({ type: 'SET_CURRENT_SESSION', id: null });
                 }
@@ -441,7 +441,6 @@ export function useSlashCommands({
       loadSessions,
       sendChatMessage,
       state.sessions,
-      state.currentSessionId,
     ],
   );
 

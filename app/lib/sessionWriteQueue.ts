@@ -2,7 +2,7 @@
  * Per-session write queue — serializes updateSessionMessages calls for the
  * same session ID so concurrent HTTP requests don't overwrite each other.
  */
-import { updateSessionMessages } from '../../history';
+import { updateSessionMessages, loadSessionMessages } from '../../history';
 import type { SessionTokenStats } from '../../history';
 import type { ChatMessage } from '../../services/llm';
 
@@ -12,17 +12,36 @@ const sessionWriteQueues = new Map<number, Promise<void>>();
  * Queue a session-messages write for the given session.  All writes to the
  * same session ID execute sequentially (in FIFO order) regardless of which
  * HTTP request initiated them.
+ *
+ * Instead of accepting a static message array (which may be stale by the time
+ * the queued callback executes), callers pass a **reducer function** that
+ * receives the *current* messages freshly read from the database and returns
+ * the desired new message list.  This prevents the last-writer-wins race
+ * where two concurrent requests for the same session could overwrite each
+ * other's messages.
  */
 export async function enqueueSessionWrite(
     sessionId: number,
-    messages: ChatMessage[],
+    buildMessages: (currentMessages: ChatMessage[]) => ChatMessage[] | Promise<ChatMessage[]>,
     tokenStats?: SessionTokenStats | null,
 ): Promise<void> {
     const prev = sessionWriteQueues.get(sessionId) ?? Promise.resolve();
-    const next = prev.then(
-        () => { updateSessionMessages(sessionId, messages, tokenStats); },
-        () => { updateSessionMessages(sessionId, messages, tokenStats); }, // Also run if the previous write failed.
-    );
+
+    // Serialize: wait for the previous write, then read fresh DB state,
+    // let the caller produce the new list, and persist it.
+    const next = prev.then(async () => {
+        const currentMessages = loadSessionMessages(sessionId);
+        const newMessages = await buildMessages(currentMessages);
+        updateSessionMessages(sessionId, newMessages, tokenStats);
+    }).catch((err) => {
+        // Prevent an unhandled rejection from breaking the queue.
+        // A failed write should not block subsequent writes for this session.
+        console.error(
+            `[sessionWriteQueue] Failed to write messages for session ${sessionId}:`,
+            err instanceof Error ? err.message : String(err),
+        );
+    });
+
     sessionWriteQueues.set(sessionId, next);
     return next.finally(() => {
         if (sessionWriteQueues.get(sessionId) === next) {

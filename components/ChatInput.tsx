@@ -106,7 +106,14 @@ export default function ChatInput({ onSend, disabled }: Props) {
       Math.max(textarea.scrollHeight, MIN_TEXTAREA_HEIGHT),
       MAX_TEXTAREA_HEIGHT,
     );
-    textarea.style.height = `${nextHeight}px`;
+    const nextHeightPx = `${nextHeight}px`;
+
+    // Guard: skip DOM mutation if already at target height.
+    // Prevents a feedback loop when the ResizeObserver fires in
+    // response to our own height change.
+    if (textarea.style.height === nextHeightPx) return;
+
+    textarea.style.height = nextHeightPx;
     textarea.style.overflowY = textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden';
   }, []);
 
@@ -116,9 +123,8 @@ export default function ChatInput({ onSend, disabled }: Props) {
 
   useEffect(() => {
     const textarea = textareaRef.current;
-    const container = textarea?.parentElement;
 
-    if (!container || typeof ResizeObserver === 'undefined') {
+    if (!textarea || typeof ResizeObserver === 'undefined') {
       return;
     }
 
@@ -126,7 +132,10 @@ export default function ChatInput({ onSend, disabled }: Props) {
       resizeTextarea();
     });
 
-    observer.observe(container);
+    // Observe the textarea itself rather than its parent so we only react
+    // to changes in the textarea's own bounding box (width changes from
+    // window resize, etc.), avoiding spurious triggers from sibling layout.
+    observer.observe(textarea);
     return () => observer.disconnect();
   }, [resizeTextarea]);
 

@@ -26,6 +26,7 @@ function HomeInner() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
+  const sessionSwitchIdRef = useRef<number | null>(null);
 
   useEffect(() => { isCompactingRef.current = isCompacting; }, [isCompacting]);
   useEffect(() => { isGeneratingTitleRef.current = isGeneratingTitle; }, [isGeneratingTitle]);
@@ -94,26 +95,36 @@ function HomeInner() {
 
   const handleApprove = useCallback(async () => {
     const requestId = state.pendingApprovalId;
-    dispatch({ type: 'SHOW_APPROVAL', command: null });
     if (requestId) {
-      await fetch('/api/approve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId, approved: true }),
-      }).catch(() => { /* ignore */ });
+      try {
+        await fetch('/api/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId, approved: true }),
+        });
+      } catch {
+        // Keep modal open on failure so the user can retry
+        return;
+      }
     }
+    dispatch({ type: 'SHOW_APPROVAL', command: null });
   }, [dispatch, state.pendingApprovalId]);
 
   const handleReject = useCallback(async () => {
     const requestId = state.pendingApprovalId;
-    dispatch({ type: 'SHOW_APPROVAL', command: null });
     if (requestId) {
-      await fetch('/api/approve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId, approved: false }),
-      }).catch(() => { /* ignore */ });
+      try {
+        await fetch('/api/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId, approved: false }),
+        });
+      } catch {
+        // Keep modal open on failure so the user can retry
+        return;
+      }
     }
+    dispatch({ type: 'SHOW_APPROVAL', command: null });
   }, [dispatch, state.pendingApprovalId]);
 
   const handleNewSession = useCallback(async () => {
@@ -125,11 +136,13 @@ function HomeInner() {
 
   const handleSelectSession = useCallback(
     async (sessionId: number) => {
+      sessionSwitchIdRef.current = sessionId;
       dispatch({ type: 'SET_ERROR', error: null });
       dispatch({ type: 'CLEAR_TOKEN_STATS' });
       dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
       dispatch({ type: 'CLEAR_MESSAGES' });
       await loadSessionMessages(sessionId);
+      if (sessionSwitchIdRef.current !== sessionId) return;
       replayBufferedEvents(sessionId);
     },
     [loadSessionMessages, replayBufferedEvents, dispatch],
@@ -140,7 +153,7 @@ function HomeInner() {
       try {
         await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
         loadSessions();
-        if (state.currentSessionId === id) {
+        if (refs.sessionIdRef.current === id) {
           dispatch({ type: 'CLEAR_MESSAGES' });
           dispatch({ type: 'SET_CURRENT_SESSION', id: null });
         }
@@ -148,7 +161,7 @@ function HomeInner() {
         // Silently ignore
       }
     },
-    [state.currentSessionId, dispatch, loadSessions],
+    [refs, dispatch, loadSessions],
   );
 
   return (

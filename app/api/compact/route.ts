@@ -83,11 +83,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             ? sessionId
             : null;
         if (parsedSessionId) {
-            const messagesToPersist = [...result.newMessages, ...subagentLogMessages];
-            await enqueueSessionWrite(parsedSessionId, messagesToPersist as any, {
-                promptEvalCount: result.stats.newTokenCount,
-                evalCount: 0,
-            });
+            // Use a reducer so the queue reads current DB state inside the
+            // critical section.  Compaction replaces the conversation with
+            // the summarised result plus any subagent_log entries.
+            await enqueueSessionWrite(parsedSessionId,
+                (_currentMessages) => [...result.newMessages, ...subagentLogMessages],
+                {
+                    promptEvalCount: result.stats.newTokenCount,
+                    evalCount: 0,
+                },
+            );
         }
 
         return NextResponse.json({

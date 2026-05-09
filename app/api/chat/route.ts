@@ -705,11 +705,14 @@ export async function POST(req: NextRequest): Promise<Response> {
                     const serverMessages = currentMessages
                         .filter(m => m.role !== 'system')
                         .slice(originalClientMessages.filter(m => (m as any).role !== 'subagent_log').length);
-                    const messagesToPersist = [...originalClientMessages, ...serverMessages];
 
+                    // Use a reducer so the queue reads the current DB state
+                    // inside the critical section and we only append our new
+                    // server-generated messages.  This avoids overwriting
+                    // messages from a concurrent request for the same session.
                     await enqueueSessionWrite(
                         currentSessionId,
-                        messagesToPersist as any,
+                        (currentMessages) => [...currentMessages, ...serverMessages],
                         { promptEvalCount, evalCount },
                     );
 
