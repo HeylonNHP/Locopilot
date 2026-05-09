@@ -23,6 +23,7 @@ export default function SettingsModal({ onClose }: Props) {
   const [webMaxQueries, setWebMaxQueries] = useState(String(state.webSearch.maxQueries));
   const [webResultsPerQuery, setWebResultsPerQuery] = useState(String(state.webSearch.resultsPerQuery));
   const [webPerPageCharLimit, setWebPerPageCharLimit] = useState(String(state.webSearch.perPageCharLimit));
+  const [modelContextLimit, setModelContextLimit] = useState(state.modelContextLimit);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -86,6 +87,8 @@ export default function SettingsModal({ onClose }: Props) {
         throw new Error(message);
       }
 
+      dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: modelContextLimit });
+      dispatch({ type: 'SET_CONFIG', config });
       onClose();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save config.';
@@ -124,7 +127,7 @@ export default function SettingsModal({ onClose }: Props) {
                   const res = await fetch(`/api/models/${encodeURIComponent(newModel)}/info`);
                   if (res.ok) {
                     const data = await res.json();
-                    dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.contextLimit ?? null });
+                    setModelContextLimit(data.contextLimit ?? null);
                   }
                 } catch {
                   // Silently ignore
