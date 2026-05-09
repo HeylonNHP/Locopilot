@@ -152,6 +152,7 @@ function HomeInner() {
       try {
         await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
         loadSessions();
+        dispatch({ type: 'DISCARD_SESSION', sessionId: id });
         if (refs.sessionIdRef.current === id) {
           dispatch({ type: 'CLEAR_MESSAGES' });
           dispatch({ type: 'SET_CURRENT_SESSION', id: null });

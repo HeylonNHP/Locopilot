@@ -518,13 +518,13 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                             // Exponential backoff with abort-signal awareness
                             const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1);
-                            if (req.signal?.aborted) throw new Error('Aborted');
+                            if (req.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
                             await new Promise<void>((resolve) => {
                                 const timer = setTimeout(resolve, delayMs);
                                 const onAbort = () => { clearTimeout(timer); resolve(); };
                                 req.signal?.addEventListener('abort', onAbort, { once: true });
                             });
-                            if (req.signal?.aborted) throw new Error('Aborted');
+                            if (req.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
                         }
                     }
 
@@ -780,7 +780,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                             activeSessionId,
                             () => currentMessages,
                             { promptEvalCount, evalCount },
-                        ).catch(() => { /* ignore write errors on abort */ });
+                        ).catch((e) => {
+                            console.error('[chat] Abort flush failed:', e instanceof Error ? e.message : String(e));
+                        });
                     }
                     try { controller.close(); } catch { /* ignore */ }
                     return;

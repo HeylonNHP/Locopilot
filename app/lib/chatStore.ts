@@ -372,36 +372,63 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, requestedNumCtx, numCtx: effectiveNumCtx, ...restConfig };
     }
     case 'SHOW_APPROVAL': {
-      const nextState = {
+      let nextState: ChatState = {
         ...state,
         pendingCommand: action.command,
         showApproval: action.command !== null,
         pendingApprovalId: action.requestId ?? null,
       };
+
+      // Bug 5 fix: when hiding the modal, clear pendingApproval from ALL sessions
+      // so stale approvals don't reappear when switching back to a session.
+      if (action.command === null) {
+        const newMap = new Map(nextState.sessionStates);
+        for (const [id, sess] of newMap) {
+          if (sess.pendingApproval !== null) {
+            newMap.set(id, { ...sess, pendingApproval: null });
+          }
+        }
+        nextState = { ...nextState, sessionStates: newMap };
+        nextState = { ...nextState, newSessionState: { ...nextState.newSessionState, pendingApproval: null } };
+        return nextState;
+      }
+
       // Also persist into the active session's state so it survives switching
       if (state.currentSessionId !== null) {
-        const session = nextState.sessionStates.get(state.currentSessionId);
-        if (session) {
+        let session = nextState.sessionStates.get(state.currentSessionId);
+        // Bug 4 fix: auto-initialize the session slot if it doesn't exist yet
+        if (!session) {
           const newMap = new Map(nextState.sessionStates);
-          newMap.set(state.currentSessionId, {
-            ...session,
-            pendingApproval: action.command ? {
-              command: action.command,
-              requestId: action.requestId ?? null,
-            } : null,
-          });
-          return { ...nextState, sessionStates: newMap };
+          session = {
+            messages: [],
+            error: null,
+            tokenStats: null,
+            currentTps: null,
+            compactingPhases: [],
+            pendingApproval: null,
+          };
+          newMap.set(state.currentSessionId, session);
+          nextState = { ...nextState, sessionStates: newMap };
         }
-      } else {
-        // New session (currentSessionId is null)
-        nextState.newSessionState = {
-          ...nextState.newSessionState,
+        const newMap = new Map(nextState.sessionStates);
+        newMap.set(state.currentSessionId, {
+          ...session,
           pendingApproval: action.command ? {
             command: action.command,
             requestId: action.requestId ?? null,
           } : null,
-        };
+        });
+        return { ...nextState, sessionStates: newMap };
       }
+
+      // New session (currentSessionId is null)
+      nextState = { ...nextState, newSessionState: {
+        ...nextState.newSessionState,
+        pendingApproval: action.command ? {
+          command: action.command,
+          requestId: action.requestId ?? null,
+        } : null,
+      }};
       return nextState;
     }
     case 'SET_MODEL_CONTEXT_LIMIT': {
@@ -508,7 +535,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'DISCARD_SESSION': {
       const newMap = new Map(state.sessionStates);
       newMap.delete(action.sessionId);
-      return { ...state, sessionStates: newMap };
+      const newStreaming = new Set(state.streamingSessions);
+      newStreaming.delete(action.sessionId);
+      return { ...state, sessionStates: newMap, streamingSessions: newStreaming };
     }
     case 'START_STREAMING': {
       return { ...state, streamingSessions: new Set(state.streamingSessions).add(action.sessionId) };
