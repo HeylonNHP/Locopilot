@@ -44,7 +44,7 @@ export class WriteFileTool {
         this.output.writeLine(message);
     }
 
-    async run(args: WriteFileToolArgs): Promise<string> {
+    async run(args: WriteFileToolArgs, signal?: AbortSignal): Promise<string> {
         const rawPath = (args.path ?? '').trim();
         if (!rawPath) {
             const errorMsg = '[write_file error: missing required argument "path".]';

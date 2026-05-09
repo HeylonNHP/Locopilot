@@ -281,7 +281,7 @@ export class PatchFileTool {
         this.output.writeLine(message);
     }
 
-    async run(args: PatchFileToolArgs): Promise<string> {
+    async run(args: PatchFileToolArgs, signal?: AbortSignal): Promise<string> {
         const rawPath = (args.path ?? '').trim();
         if (!rawPath) {
             const errorMsg = '[patch_file error: missing required argument "path".]';

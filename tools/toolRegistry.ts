@@ -99,6 +99,7 @@ export interface IToolCommand {
         onProgress?: (message: string) => void,
         output?: ToolOutputSink,
         context?: RequestContext,
+        signal?: AbortSignal,
     ): Promise<ToolCallResult>;
 }
 
@@ -109,6 +110,7 @@ async function runWebSearch(
     settings: WebSearchSettings,
     onProgress?: (message: string) => void,
     output: ToolOutputSink = terminalToolOutputSink,
+    signal?: AbortSignal,
 ): Promise<string> {
     const tool = new WebSearchTool({
         settings: {
@@ -120,7 +122,7 @@ async function runWebSearch(
             onProgress?.(message);
         },
     });
-    return tool.run(args);
+    return tool.run(args, signal);
 }
 
 async function runFetchUrl(
@@ -128,6 +130,7 @@ async function runFetchUrl(
     settings: WebSearchSettings,
     onProgress?: (message: string) => void,
     output: ToolOutputSink = terminalToolOutputSink,
+    signal?: AbortSignal,
 ): Promise<string> {
     const tool = new FetchUrlTool({
         settings: {
@@ -139,7 +142,7 @@ async function runFetchUrl(
             onProgress?.(message);
         },
     });
-    return tool.run(args);
+    return tool.run(args, signal);
 }
 
 async function runReadFile(
@@ -147,31 +150,35 @@ async function runReadFile(
     output: ToolOutputSink = terminalToolOutputSink,
     model?: string,
     numCtx?: number,
+    signal?: AbortSignal,
 ): Promise<string> {
     const tool = new ReadFileTool({ output, model, numCtx });
-    return tool.run(args);
+    return tool.run(args, signal);
 }
 
 async function runPatchFile(
     args: PatchFileToolArgs,
     output: ToolOutputSink = terminalToolOutputSink,
+    signal?: AbortSignal,
 ): Promise<string> {
     const tool = new PatchFileTool({ output });
-    return tool.run(args);
+    return tool.run(args, signal);
 }
 
 async function runWriteFile(
     args: WriteFileToolArgs,
     output: ToolOutputSink = terminalToolOutputSink,
+    signal?: AbortSignal,
 ): Promise<string> {
     const tool = new WriteFileTool({ output });
-    return tool.run(args);
+    return tool.run(args, signal);
 }
 
 function runFetchImage(
     args: FetchImageToolArgs,
     onProgress?: (message: string) => void,
     output: ToolOutputSink = terminalToolOutputSink,
+    signal?: AbortSignal,
 ): Promise<FetchImageResult> {
     const tool = new FetchImageTool({
         onProgress: (message: string) => {
@@ -179,7 +186,7 @@ function runFetchImage(
             onProgress?.(message);
         },
     });
-    return tool.run(args);
+    return tool.run(args, signal);
 }
 
 // --- Tool command registry ---
@@ -188,7 +195,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'run_command',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink, context) {
+            async execute(args, onProgress, output = terminalToolOutputSink, context, signal) {
                 if (!args.command) return { content: '[Error: missing required argument "command"]' };
                 let timeoutMs = DEFAULT_TIMEOUT_MS;
                 if (args.timeout_seconds !== undefined) {
@@ -206,6 +213,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                     content: await runCommand(
                         args.command, args.shell, timeoutMs, onProgress, cwd, output,
                         context?.yoloMode ?? false,
+                        signal,
                     ),
                 };
             },
@@ -214,7 +222,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'check_process_output',
         {
-            async execute(args, onProgress) {
+            async execute(args, onProgress, _output, _context, signal) {
                 if (args.process_id === undefined) {
                     return { content: '[Error: missing required argument "process_id"]' };
                 }
@@ -227,14 +235,14 @@ export const toolRegistry = new Map<string, IToolCommand>([
                     waitMs = parsedWaitMs;
                 }
 
-                return { content: await checkProcessOutput(args.process_id, waitMs, onProgress) };
+                return { content: await checkProcessOutput(args.process_id, waitMs, onProgress, signal) };
             },
         },
     ],
     [
         'web_search',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink, context) {
+            async execute(args, onProgress, output = terminalToolOutputSink, context, signal) {
                 const parsedQueries = parseQueriesInput(args.queries);
                 const webArgs: WebSearchToolArgs = {};
 
@@ -272,6 +280,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         },
                         onProgress,
                         output,
+                        signal,
                     ),
                 };
             },
@@ -280,7 +289,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'fetch_url',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink, context) {
+            async execute(args, onProgress, output = terminalToolOutputSink, context, signal) {
                 if (typeof args.url !== 'string' || args.url.trim().length === 0) {
                     return { content: '[Error: missing required argument "url"]' };
                 }
@@ -300,6 +309,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         },
                         onProgress,
                         output,
+                        signal,
                     ),
                 };
             },
@@ -308,18 +318,18 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'fetch_image',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink) {
+            async execute(args, onProgress, output = terminalToolOutputSink, _context, signal) {
                 if (typeof args.source !== 'string' || args.source.trim().length === 0) {
                     return { content: '[Error: missing required argument "source"]' };
                 }
-                return runFetchImage({ source: args.source }, onProgress, output);
+                return runFetchImage({ source: args.source }, onProgress, output, signal);
             },
         },
     ],
     [
         'read_file',
         {
-            async execute(args, _onProgress, output = terminalToolOutputSink, context) {
+            async execute(args, _onProgress, output = terminalToolOutputSink, context, signal) {
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -333,7 +343,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         start_line: args.start_line,
                         end_line: args.end_line,
                         line_count: args.line_count,
-                    }, output, context?.subAgent?.model, context?.subAgent?.numCtx),
+                    }, output, context?.subAgent?.model, context?.subAgent?.numCtx, signal),
                 };
             },
         },
@@ -341,7 +351,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'patch_file',
         {
-            async execute(args, _onProgress, output = terminalToolOutputSink) {
+            async execute(args, _onProgress, output = terminalToolOutputSink, _context, signal) {
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -352,7 +362,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                     content: await runPatchFile({
                         path: args.path,
                         patches: args.patches,
-                    }, output),
+                    }, output, signal),
                 };
             },
         },
@@ -360,7 +370,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'write_file',
         {
-            async execute(args, _onProgress, output = terminalToolOutputSink) {
+            async execute(args, _onProgress, output = terminalToolOutputSink, _context, signal) {
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -372,7 +382,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         path: args.path,
                         content: args.content,
                         mode: args.mode,
-                    }, output),
+                    }, output, signal),
                 };
             },
         },
@@ -380,10 +390,10 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'run_subagents',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink, context) {
+            async execute(args, onProgress, output = terminalToolOutputSink, context, signal) {
                 const { SubAgentTool } = await import('./impl/subAgentTool');
                 const tool = new SubAgentTool();
-                return tool.execute(args, onProgress, output, context);
+                return tool.execute(args, onProgress, output, context, signal);
             },
         },
     ],

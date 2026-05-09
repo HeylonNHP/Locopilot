@@ -196,6 +196,17 @@ export async function POST(req: NextRequest): Promise<Response> {
             // currentMessages (Bug 2 fix).
             const serverMessagesAccumulator: ChatMessage[] = [];
 
+            async function flushSessionState(): Promise<void> {
+                if (activeSessionId == null) return;
+                // Replace all DB messages with the full in-memory array.
+                // updateSessionMessages does DELETE+INSERT, so this is safe to call repeatedly.
+                await enqueueSessionWrite(
+                    activeSessionId,
+                    () => currentMessages,
+                    { promptEvalCount, evalCount },
+                );
+            }
+
             const systemMessage: ChatMessage = {
                 role: 'system',
                 content: createSystemPrompt(undefined, effectiveYolo),
@@ -221,6 +232,8 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Otherwise create a placeholder session now and rename it once we have
             // the actual AI response content.
             let activeSessionId: number | undefined = parsedSessionId;
+            let promptEvalCount = 0;
+            let evalCount = 0;
 
             try {
                 if (!activeSessionId) {
@@ -339,6 +352,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 });
                                 // Replace server-side history with the compacted result.
                                 currentMessages.splice(0, currentMessages.length, ...compactResult.newMessages);
+                                // Persist compacted history so the frontend sees the reduced state.
+                                await flushSessionState();
                                 // LLM-only nudge – not sent to the client.
                                 currentMessages.push({
                                     role: 'user',
@@ -397,8 +412,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                     let content = '';
                     let thinking = '';
                     let toolCalls: ChatMessage['tool_calls'] | undefined;
-                    let promptEvalCount = 0;
-                    let evalCount = 0;
                     let promptEvalDuration = 0;
                     let evalDuration = 0;
                     let wallClockTps: number | null = null;
@@ -670,12 +683,12 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                             // Execute the tool via the registry.
                             const result = shouldSurfaceToolProgress
-                                ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput, requestContext)
+                                ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput, requestContext, req.signal)
                                 : toolName === 'run_subagents'
-                                    ? await handleToolCall(toolName, toolArgs, undefined, subagentOutputSink, requestContext)
+                                    ? await handleToolCall(toolName, toolArgs, undefined, subagentOutputSink, requestContext, req.signal)
                                     : toolName === 'run_command'
-                                        ? await handleToolCall(toolName, toolArgs, runCommandProgress, nullOutputSink, requestContext)
-                                        : await handleToolCall(toolName, toolArgs, undefined, nullOutputSink, requestContext);
+                                        ? await handleToolCall(toolName, toolArgs, runCommandProgress, nullOutputSink, requestContext, req.signal)
+                                        : await handleToolCall(toolName, toolArgs, undefined, nullOutputSink, requestContext, req.signal);
 
                             const duration = Date.now() - startTime;
 
@@ -704,6 +717,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                             tokenLimit: effectiveNumCtx,
                         });
 
+                        // Persist tool results so the frontend can load them if user switches away.
+                        await flushSessionState();
+
                         // Continue the loop so the LLM can process the tool results.
                         continue;
                     }
@@ -718,19 +734,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                         renameSession(currentSessionId, content.trim().slice(0, 60) || 'Chat');
                     }
 
-                    // Persist messages in chronological order.
-                    // serverMessagesAccumulator collects every server-generated
-                    // message incrementally so the delta stays correct even after
-                    // in-place compaction replaces currentMessages (Bug 2 fix).
-                    const serverMessages = serverMessagesAccumulator;
-
-                    // Use a reducer so the queue reads the current DB state
-                    // inside the critical section and we only append our new
-                    // server-generated messages.  This avoids overwriting
-                    // messages from a concurrent request for the same session.
+                    // Persist final state.
                     await enqueueSessionWrite(
                         currentSessionId,
-                        (currentMessages) => [...currentMessages, ...serverMessages],
+                        () => currentMessages,
                         { promptEvalCount, evalCount },
                     );
 
@@ -766,8 +773,15 @@ export async function POST(req: NextRequest): Promise<Response> {
 
 
             } catch (err: unknown) {
-                // If the request was aborted (client disconnected), close silently.
                 if (err instanceof DOMException && err.name === 'AbortError') {
+                    // Save whatever we have so far before closing.
+                    if (activeSessionId != null) {
+                        await enqueueSessionWrite(
+                            activeSessionId,
+                            () => currentMessages,
+                            { promptEvalCount, evalCount },
+                        ).catch(() => { /* ignore write errors on abort */ });
+                    }
                     try { controller.close(); } catch { /* ignore */ }
                     return;
                 }

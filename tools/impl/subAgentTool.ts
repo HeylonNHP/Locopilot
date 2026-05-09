@@ -41,6 +41,12 @@ import {
 } from '../toolRegistry';
 import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 
+function isInterruptOrAbort(signal?: AbortSignal): boolean {
+    if (signal?.aborted) return true;
+    // Fallback to global interrupt for CLI path where no signal is passed.
+    return isInterruptRequested();
+}
+
 interface SubAgentSpec {
     id?: string;
     prompt?: string;
@@ -250,6 +256,7 @@ async function executeNestedToolCall(
     output: ToolOutputSink,
     onProgress?: (message: string) => void,
     context?: RequestContext,
+    signal?: AbortSignal,
 ): Promise<ToolCallResult> {
     const toolName = toolCall.function.name;
     const nestedProgress = onProgress
@@ -272,10 +279,11 @@ async function executeNestedToolCall(
             nestedProgress,
             output,
             context,
+            signal,
         );
     }
 
-    return command.execute(toolCall.function.arguments, nestedProgress, output, context);
+    return command.execute(toolCall.function.arguments, nestedProgress, output, context, signal);
 }
 
 async function runSingleAgent(
@@ -285,6 +293,7 @@ async function runSingleAgent(
     output: ToolOutputSink,
     onProgress?: (message: string) => void,
     context?: RequestContext,
+    signal?: AbortSignal,
 ): Promise<string> {
     const orcPrompt: ChatMessage = { role: 'user', content: agent.prompt };
     const labeledOutput = makeLabeledSink(output, agent.id);
@@ -295,9 +304,9 @@ async function runSingleAgent(
 
     let finalContent = '';
 
-    while (!isInterruptRequested()) {
+    while (!isInterruptOrAbort(signal)) {
         await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orcPrompt);
-        if (isInterruptRequested()) {
+        if (isInterruptOrAbort(signal)) {
             break;
         }
 
@@ -338,13 +347,13 @@ async function runSingleAgent(
         }
 
         for (const toolCall of assistantMessage.tool_calls) {
-            if (isInterruptRequested()) {
+            if (isInterruptOrAbort(signal)) {
                 break;
             }
 
             onProgress?.(`Sub-agent ${agent.id}: ${toolCall.function.name}`);
 
-            const toolResult = await executeNestedToolCall(agent.id, toolCall, labeledOutput, onProgress, context);
+            const toolResult = await executeNestedToolCall(agent.id, toolCall, labeledOutput, onProgress, context, signal);
             messages.push(sanitizeChatMessage({
                 role: 'tool',
                 content: toolResult.content,
@@ -363,6 +372,7 @@ export class SubAgentTool implements IToolCommand {
         onProgress?: (message: string) => void,
         output: ToolOutputSink = terminalToolOutputSink,
         context?: RequestContext,
+        signal?: AbortSignal,
     ): Promise<ToolCallResult> {
         const subAgentArgs = args as SubAgentToolArgs;
         const validationError = validateAgentSpecs(subAgentArgs.agents);
@@ -382,12 +392,12 @@ export class SubAgentTool implements IToolCommand {
         const results: CompletedSubAgent[] = [];
 
         for (const agent of subAgentArgs.agents as Required<SubAgentSpec>[]) {
-            if (isInterruptRequested()) {
+            if (isInterruptOrAbort(signal)) {
                 break;
             }
 
             try {
-                const content = await runSingleAgent(agent, config, config.tools, output, onProgress, context);
+                const content = await runSingleAgent(agent, config, config.tools, output, onProgress, context, signal);
                 results.push({ id: agent.id, content });
             } catch (error) {
                 results.push({
@@ -398,7 +408,7 @@ export class SubAgentTool implements IToolCommand {
         }
 
         return {
-            content: formatCombinedResults(results, isInterruptRequested()),
+            content: formatCombinedResults(results, isInterruptOrAbort(signal)),
         };
     }
 }

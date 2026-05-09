@@ -35,7 +35,7 @@ export class FetchUrlTool {
         this.onProgress = options.onProgress;
     }
 
-    async run(args: FetchUrlToolArgs): Promise<string> {
+    async run(args: FetchUrlToolArgs, signal?: AbortSignal): Promise<string> {
         const rawUrl = (args.url ?? '').trim();
         if (!rawUrl) {
             return '[fetch_url error: missing required argument "url".]';

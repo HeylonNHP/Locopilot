@@ -65,7 +65,7 @@ export class ReadFileTool {
         this.output.writeLine(message);
     }
 
-    async run(args: ReadFileToolArgs): Promise<string> {
+    async run(args: ReadFileToolArgs, signal?: AbortSignal): Promise<string> {
         const rawPath = (args.path ?? '').trim();
         if (!rawPath) {
             const errorMsg = '[read_file error: missing required argument "path".]';

@@ -227,6 +227,7 @@ export async function runCommand(
     cwd?: string,
     output: ToolOutputSink = terminalToolOutputSink,
     yoloMode: boolean = false,
+    signal?: AbortSignal,
 ): Promise<string> {
     const effectiveShell = getEffectiveShell(shell, output);
     const approvedYolo = yoloMode;
@@ -288,6 +289,14 @@ export async function runCommand(
     });
     entry.process = child;
 
+    let abortHandler: (() => void) | undefined;
+    if (signal) {
+        abortHandler = () => {
+            try { child.kill('SIGKILL'); } catch { /* ignore */ }
+        };
+        signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
     child.stdout?.on('data', (chunk: Buffer) => { entry.stdout += chunk.toString(); });
     child.stderr?.on('data', (chunk: Buffer) => { entry.stderr += chunk.toString(); });
     child.stdout?.on('data', () => {
@@ -307,6 +316,9 @@ export async function runCommand(
             settled = true;
 
             unregisterInterruptHandler(interruptHandlerId);
+            if (abortHandler && signal) {
+                signal.removeEventListener('abort', abortHandler);
+            }
             clearTimeout(timer);
             if (entry.ttlTimer) clearTimeout(entry.ttlTimer);
             entry.done = true;
@@ -448,6 +460,7 @@ export async function checkProcessOutput(
     processId: number,
     waitMs: number = 0,
     onProgress?: (message: string) => void,
+    signal?: AbortSignal,
 ): Promise<string> {
     const procRegistry = requestProcessState.getStore()?.registry ?? globalFallbackRegistry;
     const entry = procRegistry.get(processId);

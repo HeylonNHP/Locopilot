@@ -94,7 +94,7 @@ export class WebSearchTool {
         this.onProgress = options.onProgress;
     }
 
-    async run(args: WebSearchToolArgs): Promise<string> {
+    async run(args: WebSearchToolArgs, signal?: AbortSignal): Promise<string> {
         const effectiveMaxQueries = clampToPositiveInt(args.max_queries ?? this.settings.maxQueries, this.settings.maxQueries);
         const effectiveResultsPerQuery = this.settings.resultsPerQuery;
 

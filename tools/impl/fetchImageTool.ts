@@ -127,7 +127,7 @@ export class FetchImageTool {
         this.onProgress = options.onProgress;
     }
 
-    async run(args: FetchImageToolArgs): Promise<FetchImageResult> {
+    async run(args: FetchImageToolArgs, signal?: AbortSignal): Promise<FetchImageResult> {
         const source = (args.source ?? '').trim();
 
         if (!source) {

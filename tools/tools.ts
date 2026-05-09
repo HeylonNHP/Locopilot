@@ -183,8 +183,9 @@ export async function handleToolCall(
     onProgress?: (message: string) => void,
     output: ToolOutputSink = terminalToolOutputSink,
     context?: RequestContext,
+    signal?: AbortSignal,
 ): Promise<ToolCallResult> {
     const command = toolRegistry.get(name);
     if (!command) return { content: `[Unknown tool: ${name}]` };
-    return command.execute(args, onProgress, output, context);
+    return command.execute(args, onProgress, output, context, signal);
 }
