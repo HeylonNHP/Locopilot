@@ -103,7 +103,7 @@ interface ChatState {
 }
 
 type ChatAction =
-  | { type: 'SET_MESSAGES'; messages: ChatMessage[] }
+  | { type: 'SET_MESSAGES'; messages: ChatMessage[]; targetSessionId?: number }
   | { type: 'ADD_MESSAGE'; message: ChatMessage }
   | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string }
   | { type: 'APPLY_ASSISTANT_DELTA'; content?: string; thinking?: string }
@@ -121,7 +121,7 @@ type ChatAction =
   | { type: 'SHOW_APPROVAL'; command: { name: string; args: any } | null; requestId?: string }
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'REMOVE_LAST_ASSISTANT' }
-  | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats'] }
+  | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats']; targetSessionId?: number }
   | { type: 'SET_CURRENT_TPS'; tps: number | null }
   | { type: 'CLEAR_TOKEN_STATS' }
   | { type: 'COMPACT_PROGRESS'; message: string }
@@ -135,13 +135,20 @@ type ChatAction =
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
-    case 'SET_MESSAGES':
-      return { 
-        ...state, 
+    case 'SET_MESSAGES': {
+      // Ignore the dispatch if it was meant for a different session.
+      // This prevents stale async responses from loadSessionMessages
+      // from overwriting the currently-viewed session's messages.
+      if (action.targetSessionId !== undefined && action.targetSessionId !== state.currentSessionId) {
+        return state;
+      }
+      return {
+        ...state,
         messages: action.messages
             .filter((m: ChatMessage) => m.role !== 'system')
-            .map(withId) 
+            .map(withId)
       };
+    }
     case 'ADD_MESSAGE':
       return { ...state, messages: [...state.messages, withId(action.message)] };
     case 'UPDATE_LAST_MESSAGE': {
@@ -414,8 +421,12 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         }
       }
       return state;
-    case 'SET_TOKEN_STATS':
+    case 'SET_TOKEN_STATS': {
+      if (action.targetSessionId !== undefined && action.targetSessionId !== state.currentSessionId) {
+        return state;
+      }
       return { ...state, tokenStats: action.stats };
+    }
     case 'SET_CURRENT_TPS':
       return { ...state, currentTps: action.tps };
     case 'CLEAR_TOKEN_STATS':

@@ -54,6 +54,13 @@ export function useChatStream(
           dispatch({ type: 'STOP_STREAMING', sessionId: -1 });
           dispatch({ type: 'START_STREAMING', sessionId: realId });
         }
+        // Migrate any buffered events from placeholder -1 to the real session ID
+        const oldBuffer = bufferedEventsRef.current.get(-1);
+        if (oldBuffer && oldBuffer.length > 0) {
+          const existing = bufferedEventsRef.current.get(realId) ?? [];
+          bufferedEventsRef.current.set(realId, [...existing, ...oldBuffer]);
+          bufferedEventsRef.current.delete(-1);
+        }
         // Update ALL map entries set with -1 (placeholder for new sessions) to the real ID
         for (const [reqId, sessId] of bufferOwnerMapRef.current.entries()) {
           if (sessId === -1) {
@@ -356,23 +363,24 @@ export function useChatStream(
    * were buffered while the user was viewing a different session.  No-op when
    * no stream is active or the target session doesn't own the active stream.
    */
+  const DELTA_EVENTS = new Set(['chunk', 'thinking', 'tool_progress', 'subagent_chunk', 'status', 'compact_progress']);
+
   const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
-      if (streamingSessions.size === 0) {
-        bufferedEventsRef.current = new Map();
-        return;
-      }
       const sessionKey = targetSessionId ?? -1;
-      if (!new Set(bufferOwnerMapRef.current.values()).has(sessionKey)) {
-        return;
-      }
-      const events = bufferedEventsRef.current.get(sessionKey) ?? [];
+      const buffered = bufferedEventsRef.current.get(sessionKey) ?? [];
       bufferedEventsRef.current.delete(sessionKey);
-      for (const { event, data } of events) {
-        handleEvent(event, data);
+      for (const { event, data } of buffered) {
+        // Only replay "delta" events that append to existing messages.
+        // "Creation" events (tool_call, tool_result, subagent_output, compact, done)
+        // are skipped because mid-stream DB flushes (Phase 2) already persisted
+        // those messages to SQLite. Replaying them would create duplicates.
+        if (DELTA_EVENTS.has(event)) {
+          handleEvent(event, data);
+        }
       }
     },
-    [handleEvent, streamingSessions],
+    [handleEvent],
   );
 
   const sendChatMessage = useCallback(
