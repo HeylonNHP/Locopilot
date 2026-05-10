@@ -301,7 +301,21 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
       // 3. Restore the new session's state into active fields
       if (action.id !== null) {
-        const session = nextState.sessionStates.get(action.id);
+        let session = nextState.sessionStates.get(action.id);
+        // If we were on the new-session view and the server just assigned a
+        // real ID, promote the newSessionState into sessionStates so the
+        // locally-added first message (and any streaming chunks) survive.
+        if (!session && state.currentSessionId === null) {
+          const newMap = new Map(nextState.sessionStates);
+          const promoted = nextState.newSessionState;
+          newMap.set(action.id, promoted);
+          nextState = {
+            ...nextState,
+            sessionStates: newMap,
+            newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null },
+          };
+          session = promoted;
+        }
         if (session) {
           nextState = {
             ...nextState,
