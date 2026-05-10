@@ -117,7 +117,7 @@ function buildChatPayload(params: ChatParams, stream: boolean) {
         ? stripImagesFromMessages(params.messages)
         : params.messages;
 
-    return {
+    const payload: Record<string, unknown> = {
         model: params.model,
         messages,
         tools: params.tools,
@@ -128,6 +128,12 @@ function buildChatPayload(params: ChatParams, stream: boolean) {
             ...(params.options ?? {}),
         },
     };
+
+    if (params.format !== undefined) {
+        payload.format = params.format;
+    }
+
+    return payload;
 }
 
 function getOllamaTurnStats(response: ChatApiResponse): LlmTurnStats | null {

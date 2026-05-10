@@ -342,10 +342,16 @@ export function useSlashCommands({
               throw new Error('Title generation returned an invalid title.');
             }
 
+            // Optimistically update the sidebar so the new title appears immediately
+            const sessionId = refs.sessionIdRef.current;
+            const updatedSessions = state.sessions.map((s) =>
+              s.id === sessionId ? { ...s, name: data.title } : s
+            );
+            dispatch({ type: 'SET_SESSIONS', sessions: updatedSessions });
+
             await loadSessions();
-            addSystem(`Session title updated to: ${data.title}`);
           } catch (error) {
-            addSystem(`Title generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            dispatch({ type: 'SET_ERROR', error: `Title generation failed: ${error instanceof Error ? error.message : 'Unknown error'}` });
           } finally {
             isGeneratingTitleRef.current = false;
             setIsGeneratingTitle(false);

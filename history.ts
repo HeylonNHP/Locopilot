@@ -129,6 +129,10 @@ const stmtLoadMessages = db.prepare<[number]>(
     'SELECT role, content, thinking, tool_calls, images, subagent_id FROM messages WHERE session_id = ? ORDER BY id ASC',
 );
 
+const stmtGetSessionName = db.prepare<[number]>(
+    'SELECT name FROM sessions WHERE id = ?',
+);
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -149,6 +153,14 @@ export function createSession(name: string, model: string): number {
  */
 export function renameSession(sessionId: number, name: string): void {
     stmtUpdateSessionName.run(name, sessionId);
+}
+
+/**
+ * Returns the name of a session, or undefined if the session does not exist.
+ */
+export function getSessionName(sessionId: number): string | undefined {
+    const row = stmtGetSessionName.get(sessionId) as { name: string } | undefined;
+    return row?.name;
 }
 
 /**

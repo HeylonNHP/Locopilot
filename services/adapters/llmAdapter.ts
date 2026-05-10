@@ -59,6 +59,7 @@ export interface ChatParams {
     visionSupported?: boolean;
     options?: Record<string, unknown>;
     signal?: AbortSignal;
+    format?: string | Record<string, unknown>;
 }
 
 export interface StreamChatParams extends ChatParams {

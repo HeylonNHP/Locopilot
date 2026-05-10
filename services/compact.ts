@@ -654,6 +654,17 @@ function extractTitleFromResponse(rawTitle: string): string {
     // Strip common prefixes like "Title:", "Title - ", etc.
     title = title.replace(/^(?:title|session|conversation|chat)\s*[:\-–—]\s*/i, '');
 
+    // Strip markdown bold/backticks/italic/strikethrough wrapping
+    title = title
+        .replace(/\*\*/g, '')
+        .replace(/\*/g, '')
+        .replace(/`/g, '')
+        .replace(/_/g, '')
+        .replace(/~/g, '');
+
+    // Strip [emoji] or [System: prefixes
+    title = title.replace(/^\[emoji\]\s*/i, '').replace(/^\[System:[^\]]*\]\s*/i, '');
+
     // Strip trailing punctuation that isn't part of the actual title
     title = title.replace(/[.,;:!?]+$/, '');
 
@@ -661,6 +672,18 @@ function extractTitleFromResponse(rawTitle: string): string {
     title = title.replace(/\s{2,}/g, ' ');
 
     return title.trim().slice(0, 80).trim();
+}
+
+function sanitizeContentForTitle(content: string): string {
+    return content
+        .replace(/<think>[\s\S]*?<\/think>/g, '')
+        .replace(/\x1B\[[0-9;]*m/g, '')
+        .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[image]')
+        .replace(/\*\*/g, '')
+        .replace(/\*/g, '')
+        .replace(/`/g, '')
+        .replace(/_/g, '')
+        .replace(/~/g, '');
 }
 
 export async function generateSessionTitle(
@@ -674,22 +697,47 @@ export async function generateSessionTitle(
         throw new Error('Not enough conversation history to generate a session title.');
     }
 
+    // Cap numCtx for title generation to avoid overwhelming small models
+    const isSmallModel = /(?:^|[-_\s])(?:7b|8b|3b|4b|small|mini)(?:[-_\s]|$)/i.test(model);
+    const cappedNumCtx = Math.min(numCtx, isSmallModel ? 4096 : 8192);
+
     // Prepare conversation text (shared across retries)
     const trimmedHistory: ChatMessage[] = messages.length > 64
         ? [messages[0] as ChatMessage, ...messages.slice(-63)]
         : messages;
 
-    const conversationText = trimmedHistory
+    let conversationText = trimmedHistory
         .filter((message) => message.role === 'user' || message.role === 'assistant')
-        .map((message) => `[${message.role.toUpperCase()}] ${message.content ?? ''}`)
+        .map((message) => `[${message.role.toUpperCase()}] ${sanitizeContentForTitle(message.content ?? '')}`)
         .join('\n\n');
+
+    // Rough character budget before sending to title LLM
+    if (conversationText.length > 4000) {
+        conversationText = conversationText.slice(0, 4000) + '\n[...truncated]';
+    }
 
     // Get first user message for fallback
     const firstUserContent = messages.find((m) => m.role === 'user')?.content?.trim() ?? '';
 
     // Multiple prompt strategies tried in order
-    const promptStrategies: Array<{ system: string; user: string }> = [
-        // Strategy 1: Standard prompt with few-shot examples
+    const promptStrategies: Array<{ system: string; user: string; format?: string | Record<string, unknown> }> = [
+        // Strategy 1: JSON structured output
+        {
+            system:
+                'You are a concise session title generator. Given a conversation between a user and an AI assistant, ' +
+                'generate a short descriptive title (2-8 words) and pick a single relevant emoji that captures the topic.\n' +
+                'Respond with ONLY a JSON object in this exact format: {"title": "<emoji> <title>"}\n' +
+                'Rules:\n' +
+                '- 2 to 8 words, under 80 characters (emoji does not count toward the word limit)\n' +
+                '- Pick one relevant emoji that represents the main topic\n' +
+                '- Capture the main topic or task\n' +
+                '- Use descriptive, active language\n' +
+                '- Do NOT include refusals, apologies, or limitation language in the title',
+            user:
+                'Generate a short session title for this conversation:\n\n' + conversationText + '\n\nRespond with JSON only.',
+            format: 'json',
+        },
+        // Strategy 2: Standard prompt with few-shot examples
         {
             system:
                 'You are a concise session title generator. Given a conversation between a user and an AI assistant, ' +
@@ -714,7 +762,7 @@ export async function generateSessionTitle(
             user:
                 'Generate a short session title for this conversation:\n\n' + conversationText + '\n\nTitle:',
         },
-        // Strategy 2: Direct instruction, no examples (different prompt shape)
+        // Strategy 3: Direct instruction, no examples (different prompt shape)
         {
             system:
                 'You generate short titles for chat conversations. Pick one relevant emoji and output exactly one line: <emoji> <title>. ' +
@@ -722,7 +770,7 @@ export async function generateSessionTitle(
             user:
                 'Conversation:\n' + conversationText.slice(0, 2000) + '\n\nShort title (2-8 words):',
         },
-        // Strategy 3: Minimalist prompt (some models work better with less noise)
+        // Strategy 4: Minimalist prompt (some models work better with less noise)
         {
             system: 'Generate a brief title for this chat. Pick one relevant emoji and output only the emoji + title text.',
             user:
@@ -749,7 +797,8 @@ export async function generateSessionTitle(
                     { role: 'user', content: strategy.user },
                 ],
                 tools: [],
-                numCtx,
+                numCtx: cappedNumCtx,
+                ...(strategy.format ? { format: strategy.format } : {}),
                 options: {
                     temperature: 0.2,
                     num_predict: 128,
@@ -762,7 +811,20 @@ export async function generateSessionTitle(
                 continue;
             }
 
-            const title = extractTitleFromResponse(rawContent);
+            let title = extractTitleFromResponse(rawContent);
+
+            // Try structured JSON parse if the response looks like JSON
+            if (!title && (rawContent.startsWith('{') || rawContent.startsWith('['))) {
+                try {
+                    const parsed = JSON.parse(rawContent);
+                    if (parsed && typeof parsed.title === 'string') {
+                        title = extractTitleFromResponse(parsed.title);
+                    }
+                } catch {
+                    // Ignore JSON parse errors
+                }
+            }
+
             if (!title) {
                 lastError = 'extracted title was empty';
                 continue;

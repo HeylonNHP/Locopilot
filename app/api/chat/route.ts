@@ -25,8 +25,9 @@ import { TOOLS, handleToolCall, sanitize, type RequestContext, type ToolOutputSi
 import { waitForApproval, resolveApproval } from '../../lib/approvalRegistry';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
-import { createSession, renameSession } from '../../../history';
+import { createSession, renameSession, getSessionName } from '../../../history';
 import { compactHistory } from '../../../services/compact';
+import { generateFallbackTitle } from '../../../services/titleUtils';
 import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 import { countMessagesTokens } from '../../../services/tokenizer';
 import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
@@ -728,10 +729,14 @@ export async function POST(req: NextRequest): Promise<Response> {
                     finalContent = content;
                     finalThinking = thinking;
 
-                    // Rename the session from the placeholder to a content-derived title.
+                    // Rename the session from the placeholder to a content-derived title,
+                    // but only if the user hasn't already renamed it (e.g. via /title).
                     const currentSessionId = activeSessionId!;
                     if (!parsedSessionId) {
-                        renameSession(currentSessionId, content.trim().slice(0, 60) || 'Chat');
+                        const currentName = getSessionName(currentSessionId);
+                        if (!currentName || currentName === 'New chat') {
+                            renameSession(currentSessionId, generateFallbackTitle(content));
+                        }
                     }
 
                     // Persist final state.

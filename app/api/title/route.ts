@@ -34,7 +34,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
     }
 
-    if (!Array.isArray(messages) || messages.length <= 1) {
+    if (!Array.isArray(messages)) {
+        return NextResponse.json(
+            { error: 'Messages must be an array.' },
+            { status: 400 },
+        );
+    }
+
+    // Strip system messages first — system prompt is not needed for title generation
+    const conversationMessages = (messages as ChatMessage[]).filter((m) => m.role !== 'system');
+
+    if (conversationMessages.length <= 1) {
         return NextResponse.json(
             { error: 'Not enough conversation history to generate a title yet.' },
             { status: 400 },
@@ -73,9 +83,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
             model.trim(),
         );
-
-        // Strip system messages — system prompt is not needed for title generation
-        const conversationMessages = (messages as ChatMessage[]).filter((m) => m.role !== 'system');
 
         const title = await generateSessionTitle(
             effectiveBaseUrl,

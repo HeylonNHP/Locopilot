@@ -43,7 +43,9 @@ function HomeInner() {
     loadSessions,
   );
 
-  const isCurrentSessionStreaming = state.currentSessionId !== null && state.streamingSessions.has(state.currentSessionId);
+  const isCurrentSessionStreaming = state.currentSessionId !== null
+    ? state.streamingSessions.has(state.currentSessionId)
+    : state.streamingSessions.has(-1);
 
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
