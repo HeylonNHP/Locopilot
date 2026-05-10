@@ -298,6 +298,12 @@ async function runSingleAgent(
     ];
 
     let finalContent = '';
+    const toolCallFingerprints = new Set<string>();
+
+    const CIRCUIT_BREAKER_NOTICE =
+        '[System: You have already called this exact tool with the same arguments in a previous turn. ' +
+        'You appear to be stuck in a loop. Try a fundamentally different approach. ' +
+        'If the task is genuinely blocked, summarize what you have discovered so far and return that as your final answer.]';
 
     while (!isInterruptOrAbort(signal)) {
         await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orcPrompt);
@@ -347,6 +353,13 @@ async function runSingleAgent(
             }
 
             onProgress?.(`Sub-agent ${agent.id}: ${toolCall.function.name}`);
+
+            const fingerprint = `${toolCall.function.name}:${JSON.stringify(toolCall.function.arguments)}`;
+            if (toolCallFingerprints.has(fingerprint)) {
+                messages.push({ role: 'user', content: CIRCUIT_BREAKER_NOTICE });
+                continue;
+            }
+            toolCallFingerprints.add(fingerprint);
 
             const toolResult = await executeNestedToolCall(agent.id, toolCall, labeledOutput, onProgress, context, signal);
             messages.push(sanitizeChatMessage({
