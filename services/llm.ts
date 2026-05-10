@@ -65,8 +65,9 @@ export function sendLlmChat(
     params: ChatParams,
     onChunk?: (chunk: ChatApiResponse) => void,
     timeoutMs?: number,
+    signal?: AbortSignal,
 ): Promise<ChatApiResponse> {
-    return activeAdapter.sendChat(baseUrl, params, onChunk, timeoutMs);
+    return activeAdapter.sendChat(baseUrl, params, onChunk, timeoutMs, signal);
 }
 
 export function sendLlmChatStream(

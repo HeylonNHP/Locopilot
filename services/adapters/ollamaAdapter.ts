@@ -195,13 +195,15 @@ async function sendOllamaChat(
     params: ChatParams,
     onChunk?: (chunk: ChatApiResponse) => void,
     timeoutMs?: number | undefined,
+    signal?: AbortSignal,
 ): Promise<ChatApiResponse> {
     const config: any = {};
     if (timeoutMs !== undefined) config.timeout = timeoutMs;
+    if (signal) config.signal = signal;
 
     if (onChunk) {
         // Use streaming internally to provide progress but return full response
-        const streamParams: StreamChatParams = { ...params };
+        const streamParams: StreamChatParams = { ...params, ...(signal ? { signal } : {}) };
         if (timeoutMs !== undefined) streamParams.timeoutMs = timeoutMs;
         let fullMessage: ChatMessage = { role: 'assistant', content: '' };
         let lastChunk: ChatApiResponse | null = null;

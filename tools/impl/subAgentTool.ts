@@ -169,17 +169,12 @@ async function autoCompactSubAgentIfNeeded(
             config.numCtx,
         );
 
-        const orchestratorPromptIndex = result.newMessages.findIndex(
-            (message, index) =>
-                index > 0 &&
-                message.role === 'user' &&
-                message.content === orchestratorPrompt.content,
-        );
-
-        if (orchestratorPromptIndex > 1) {
-            result.newMessages.splice(orchestratorPromptIndex, 1);
-            result.newMessages.splice(1, 0, orchestratorPrompt);
-        } else if (orchestratorPromptIndex < 0) {
+        // After compaction, ensure the original orchestrator prompt is at position 1.
+        // The compaction may have preserved/summarized it, but we want the EXACT
+        // original prompt so the sub-agent doesn't lose its instructions.
+        if (result.newMessages.length > 1 && result.newMessages[1]!.role === 'user') {
+            result.newMessages[1] = orchestratorPrompt;
+        } else {
             result.newMessages.splice(1, 0, orchestratorPrompt);
         }
 
@@ -328,7 +323,7 @@ async function runSingleAgent(
             if (chunk.message?.content) {
                 output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
             }
-        });
+        }, undefined, signal);
 
         // Emit a trailing newline so successive tool outputs and the next LLM
         // turn are visually separated from the streamed response text.

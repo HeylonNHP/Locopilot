@@ -58,6 +58,7 @@ export interface ChatParams {
      */
     visionSupported?: boolean;
     options?: Record<string, unknown>;
+    signal?: AbortSignal;
 }
 
 export interface StreamChatParams extends ChatParams {
@@ -117,6 +118,7 @@ export interface LlmAdapter {
         params: ChatParams,
         onChunk?: (chunk: ChatApiResponse) => void,
         timeoutMs?: number,
+        signal?: AbortSignal,
     ): Promise<ChatApiResponse>;
     sendChatStream(baseUrl: string, params: StreamChatParams): AsyncGenerator<ChatApiResponse>;
     getApiErrorMessage(error: unknown): Promise<string>;
