@@ -1,4 +1,4 @@
-import chalk from 'chalk';
+
 import type { ToolSchema } from '../../tools/tools';
 
 export const subAgentToolSchema: ToolSchema = {
@@ -39,7 +39,7 @@ import {
     type ToolCallArguments,
     type ToolCallResult,
 } from '../toolRegistry';
-import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 
 function isInterruptOrAbort(signal?: AbortSignal): boolean {
     if (signal?.aborted) return true;
@@ -97,7 +97,7 @@ function prefixLines(message: string, prefix: string): string[] {
 }
 
 function makeLabeledSink(baseSink: ToolOutputSink, id: string): ToolOutputSink {
-    const prefix = `${chalk.dim(`[sub-agent: ${id}]`)} `;
+    const prefix = `[sub-agent: ${id}] `;
 
     return {
         writeLine(message: string): void {
@@ -157,9 +157,7 @@ async function autoCompactSubAgentIfNeeded(
     }
 
     const labeledOutput = makeLabeledSink(output, agentId);
-    labeledOutput.writeLine(
-        chalk.yellow(`⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...`),
-    );
+    labeledOutput.writeLine(`⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...`);
 
     try {
         const result = await compactHistory(
@@ -186,17 +184,15 @@ async function autoCompactSubAgentIfNeeded(
 
         if (result.stats.newTokenCount > config.numCtx) {
             labeledOutput.writeLine(
-                chalk.red(
-                    `⚠ Compaction reduced context but history is still over the model limit ` +
-                    `(${result.stats.newTokenCount}/${config.numCtx} tokens). The next turn may fail.`,
-                ),
+                `⚠ Compaction reduced context but history is still over the model limit ` +
+                `(${result.stats.newTokenCount}/${config.numCtx} tokens). The next turn may fail.`,
             );
         }
 
         return true;
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        labeledOutput.writeLine(chalk.red(`⚠ Auto-compaction failed: ${message}`));
+        labeledOutput.writeLine(`⚠ Auto-compaction failed: ${message}`);
         return false;
     }
 }
@@ -268,7 +264,7 @@ async function executeNestedToolCall(
     }
 
     if (toolName === 'run_command') {
-        output.writeLine(chalk.yellow(`\n[Sub-agent: ${agentId}] is requesting a command:`));
+        output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a command:`);
         return command.execute(
             toolCall.function.arguments,
             nestedProgress,
@@ -378,7 +374,7 @@ export class SubAgentTool implements IToolCommand {
     async execute(
         args: ToolCallArguments,
         onProgress?: (message: string) => void,
-        output: ToolOutputSink = terminalToolOutputSink,
+        output: ToolOutputSink = noopToolOutputSink,
         context?: RequestContext,
         signal?: AbortSignal,
     ): Promise<ToolCallResult> {

@@ -1,26 +1,18 @@
 /**
  * aiResponseRenderer.ts
  *
- * Centralised helpers for rendering AI responses in the terminal.
- *
- * `printAIResponse`   – prints a pre-built AI message string with the correct
- *                       label, markdown rendering, and status line cleanup.
- *                       Use this for fallback/error messages where you already
- *                       have the full text.
+ * Centralised helpers for rendering AI responses.
  *
  * `streamAIResponse`  – owns the full lifecycle of a single AI turn: creates
  *                       the HTTP stream, manages the interrupt handler, shows
  *                       a live character count on the status line while the
- *                       response arrives, then renders the full response as
- *                       formatted markdown once complete.  Returns the
- *                       accumulated content + tool calls + interrupted flag to
- *                       the caller.  The caller only needs to supply the chat
+ *                       response arrives, then renders the full response via the
+ *                       injected `renderAIResponse` once complete.  Returns
+ *                       the accumulated content + tool calls + interrupted flag
+ *                       to the caller.  The caller only needs to supply the chat
  *                       parameters and a status-update callback.
  */
 
-import chalk from 'chalk';
-import { renderMarkdown } from './services/markdownRenderer';
-import { clearLiveStatus } from './statusLine';
 import {
     sanitize,
     isInterruptRequested,
@@ -83,11 +75,11 @@ export type AIResponseRenderer = (content: string, opts?: { interrupted?: boolea
 /** Renderer type for thinking summary output. */
 export type ThinkingSummaryRenderer = (durationMs: number, thinkingChars: number) => void;
 
-/** The currently active AI response renderer (defaults to `printAIResponse`). */
-let renderAIResponse: AIResponseRenderer = printAIResponse;
+/** The currently active AI response renderer (defaults to a no-op). */
+let renderAIResponse: AIResponseRenderer = () => {};
 
-/** The currently active thinking summary renderer (defaults to `printThinkingSummary`). */
-let renderThinkingSummary: ThinkingSummaryRenderer = printThinkingSummary;
+/** The currently active thinking summary renderer (defaults to a no-op). */
+let renderThinkingSummary: ThinkingSummaryRenderer = () => {};
 
 /**
  * Replace the default AI response renderer.
@@ -167,54 +159,13 @@ export async function renderTurn(
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Renders a pre-built AI response string to the terminal.
- *
- * Clears any live status line, prints the appropriate prefix label, renders
- * the content as markdown (sanitized), and writes a trailing newline.
- *
- * Use this for cases where you already have the complete text (e.g. a fallback
- * message).  For live model output prefer `streamAIResponse`.
- *
- * @param content          - The text to display.
- * @param opts.interrupted - When true, uses the "(interrupted)" label variant.
- */
-export function printAIResponse(
-    content: string,
-    opts?: { interrupted?: boolean },
-): void {
-    clearLiveStatus();
-    const label = opts?.interrupted
-        ? chalk.yellow('\nAI (interrupted) > ')
-        : chalk.yellow('\nAI > ');
-    process.stdout.write(label);
-    process.stdout.write(renderMarkdown(sanitize(content)));
-    process.stdout.write('\n');
-}
-
-/**
- * Renders a thinking-summary line to the terminal.
- *
- * @param durationMs     - How long the model spent thinking (ms).
- * @param thinkingChars  - Number of thinking characters accumulated.
- */
-export function printThinkingSummary(durationMs: number, thinkingChars: number): void {
-    const durationSec = durationMs / 1000;
-    const durationStr = durationSec > 60
-        ? `${Math.floor(durationSec / 60)}m ${Math.floor(durationSec % 60)}s`
-        : `${durationSec.toFixed(1)}s`;
-
-    clearLiveStatus();
-    console.log(chalk.dim(`(Thought for ${durationStr} · ${thinkingChars} chars)`));
-}
-
-/**
  * Streams an AI response and shows a live character count on the status line.
  *
  * Opens the active LLM provider chat stream internally, wires up the interrupt handler, and
  * updates the status line with `"AI is responding... (N chars)"` as each chunk
  * arrives.  No raw text is written to the terminal during this phase.  Once the
  * stream is complete (or interrupted), the full accumulated response is rendered
- * as formatted markdown via `printAIResponse`.
+ * via `renderAIResponse`.
  *
  * Tool-call-only responses (no text content) produce no terminal output.
  *

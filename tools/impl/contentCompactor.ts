@@ -10,7 +10,7 @@
 import { type WebExtractionSettings } from '../web/htmlExtractor';
 import { sendLlmChatStream, type ChatMessage, type StreamChatParams } from '../../services/llm';
 import { countMessagesTokens, countTextTokens } from '../../services/tokenizer';
-import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { AsyncLocalStorage } from 'async_hooks';
 
 /**
@@ -334,7 +334,7 @@ export class ContentCompactor {
     }
 
     private get output(): ToolOutputSink {
-        return this.settings.output ?? terminalToolOutputSink;
+        return this.settings.output ?? noopToolOutputSink;
     }
 }
 

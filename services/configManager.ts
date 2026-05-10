@@ -6,7 +6,7 @@ import { input, select } from '@inquirer/prompts';
 
 import { validateLlmConnection } from './llm';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_MAX_QUERIES, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT, DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY, OLLAMA_CONNECT_TIMEOUT_MS } from '../constants';
-import type { Config } from '../slashCommands';
+import type { Config } from '../types/chatConfig';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const CONFIG_TMP_PATH = CONFIG_PATH + '.tmp';

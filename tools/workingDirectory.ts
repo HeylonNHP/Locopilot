@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { resolve } from 'node:path';
-import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput';
+import { noopToolOutputSink, type ToolOutputSink } from './toolOutput';
 
 const workingDirectories = new WeakMap<ToolOutputSink, string>();
 
@@ -9,7 +9,7 @@ function getDefaultWorkingDirectory(): string {
 }
 
 function normalizeOutput(output?: ToolOutputSink): ToolOutputSink {
-    return output ?? terminalToolOutputSink;
+    return output ?? noopToolOutputSink;
 }
 
 export function getAgentWorkingDirectory(output?: ToolOutputSink): string {

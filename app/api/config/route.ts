@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { loadConfig, saveConfig } from '../../../services/configManager';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
-import type { Config } from '../../../slashCommands';
+import type { Config } from '../../../types/chatConfig';
 
 export async function GET(): Promise<NextResponse> {
     try {

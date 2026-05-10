@@ -15,7 +15,6 @@ import {
     clearInterrupt,
     getToolSystemPrompt,
     handleToolCall,
-    installKeyInterruptListener,
     isInterruptRequested,
     type ToolCallResult,
 } from '../tools/tools';
@@ -23,7 +22,6 @@ import { fetchLlmModelInfo, getLlmModelContextLimit, type ChatMessage, type LlmM
 import { summarizeCommandError } from './errorSummary';
 import { sanitizeChatMessage } from './textUtils';
 import {
-    printAIResponse,
     renderTurn,
 } from '../aiResponseRenderer';
 import {
@@ -48,7 +46,7 @@ import {
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
 } from '../constants';
 import { saveConfig as persistConfig } from './configManager';
-import type { Config, ChatContext } from '../slashCommands';
+import type { Config, ChatContext } from '../types/chatConfig';
 
 export interface ChatSessionState {
     currentModel: string;

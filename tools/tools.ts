@@ -30,13 +30,13 @@ import { writeFileToolSchema } from './impl/writeFileTool';
 // Keep defaultShell export (used in runCommandToolSchema via defaultShell() call)
 export { defaultShell } from './impl/runCommandTool';
 import { toolRegistry } from './toolRegistry';
-import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput';
+import { noopToolOutputSink, type ToolOutputSink } from './toolOutput';
 import { buildToolUseNudge } from '../services/toolUseNudge';
 import type { RequestContext, ToolCallArguments, ToolCallResult } from './toolRegistry';
-export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, getInterruptHint, installKeyInterruptListener, removeKeyInterruptListener, clearInterrupt, isInterruptRequested } from './interruptManager';
+export { requestInterrupt, registerInterruptHandler, unregisterInterruptHandler, clearInterrupt, isInterruptRequested } from './interruptManager';
 export type { RequestContext, ToolCallArguments, ToolCallResult };
 export type { ToolOutputSink } from './toolOutput';
-export { terminalToolOutputSink } from './toolOutput';
+
 
 /**
  * Strips ANSI escape codes and Carriage Returns from text.
@@ -181,7 +181,7 @@ export async function handleToolCall(
     name: string,
     args: ToolCallArguments,
     onProgress?: (message: string) => void,
-    output: ToolOutputSink = terminalToolOutputSink,
+    output: ToolOutputSink = noopToolOutputSink,
     context?: RequestContext,
     signal?: AbortSignal,
 ): Promise<ToolCallResult> {

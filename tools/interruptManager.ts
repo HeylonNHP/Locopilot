@@ -1,13 +1,8 @@
 /**
- * Interrupt and TTY signal handling for Locopilot.
+ * Interrupt handling for Locopilot.
  *
- * This module manages the alternate interrupt key listener, raw mode state,
- * and the current interrupt flag used by the tool-call loop.
+ * Manages the interrupt flag and cancellable handler registry.
  */
-
-import chalk from 'chalk';
-import readline from 'readline';
-import { terminalToolOutputSink } from './toolOutput';
 
 // Set to true by requestInterrupt(); cleared by clearInterrupt().
 let interruptRequested = false;
@@ -16,11 +11,6 @@ let interruptRequested = false;
 // cancelled from outside without waiting for the natural finish.
 const interruptHandlers = new Map<number, (result: string) => void>();
 let nextInterruptHandlerId = 1;
-
-let keyInterruptListener: ((s: string, k: readline.Key) => void) | null = null;
-let prevRawMode: boolean | null = null;
-const DEFAULT_INTERRUPT_KEY_SPEC = 'Ctrl+X';
-let currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
 
 export function requestInterrupt(): void {
     interruptRequested = true;
@@ -42,83 +32,6 @@ export function unregisterInterruptHandler(id?: number): void {
     }
 
     interruptHandlers.delete(id);
-}
-
-export function getInterruptHint(): string {
-    return `Press ${chalk.bold(currentInterruptKeySpec)} to interrupt the AI loop.`;
-}
-
-export function installKeyInterruptListener(keySpec = 'Ctrl+X'): void {
-    if (!process.stdin.isTTY) return;
-
-    currentInterruptKeySpec = keySpec;
-    const spec = keySpec.toLowerCase();
-    const isCtrl = spec.startsWith('ctrl+');
-    const keyName = isCtrl ? spec.slice(5) : spec;
-
-    readline.emitKeypressEvents(process.stdin);
-
-    // Always capture the current raw mode before we change anything so
-    // removeKeyInterruptListener can reliably restore it.
-    if (prevRawMode === null) {
-        prevRawMode = process.stdin.isRaw ?? false;
-    }
-
-    if (keyInterruptListener) {
-        process.stdin.off('keypress', keyInterruptListener);
-        keyInterruptListener = null;
-    }
-
-    if (!process.stdin.isRaw) {
-        process.stdin.setRawMode(true);
-    }
-
-    process.stdin.resume();
-
-    keyInterruptListener = (str: string, key: readline.Key) => {
-        if (!key) return;
-
-        if (key.ctrl && key.name === 'c') {
-            process.kill(process.pid, 'SIGINT');
-            return;
-        }
-
-        const match = isCtrl
-            ? (key.ctrl && key.name === keyName)
-            : (key.name === keyName || str === keySpec);
-
-        if (match) {
-            terminalToolOutputSink.writeLine(chalk.yellow(`\n[${keySpec} pressed — interrupting AI loop...]\n`));
-            requestInterrupt();
-        }
-    };
-
-    process.stdin.on('keypress', keyInterruptListener);
-}
-
-export function removeKeyInterruptListener(): void {
-    currentInterruptKeySpec = DEFAULT_INTERRUPT_KEY_SPEC;
-
-    if (!process.stdin.isTTY) return;
-
-    // Remove the listener if it's still registered.
-    if (keyInterruptListener) {
-        process.stdin.off('keypress', keyInterruptListener);
-        keyInterruptListener = null;
-    }
-
-    // Always restore raw mode and pause stdin, even if the listener was
-    // already gone.  Skipping this step is what causes the terminal freeze:
-    // stdin stays in raw mode with no handler, so keypresses disappear and
-    // Ctrl+C no longer generates SIGINT on Windows.
-    const modeToRestore = prevRawMode ?? false;
-    prevRawMode = null;
-    try {
-        process.stdin.setRawMode(modeToRestore);
-    } catch {
-        // stdin may already be closed or in an unexpected state — ignore.
-    }
-    process.stdin.pause();
 }
 
 export function clearInterrupt(): void {

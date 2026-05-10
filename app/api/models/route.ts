@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 import { fetchLlmModels, fetchLlmModelInfo } from '../../../services/llm';
 import { access, readFile } from 'fs/promises';
 import path from 'path';
-import type { Config } from '../../../slashCommands';
+import type { Config } from '../../../types/chatConfig';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 

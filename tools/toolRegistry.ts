@@ -11,7 +11,6 @@
  * mutable state, so multiple HTTP requests can be served concurrently.
  */
 
-import chalk from 'chalk';
 import { WebSearchTool, type WebSearchSettings, type WebSearchToolArgs } from './impl/webSearchTool';
 import { FetchUrlTool, type FetchUrlToolArgs } from './impl/fetchUrlTool';
 import { FetchImageTool, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool';
@@ -21,7 +20,7 @@ import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool';
 import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCommandTool';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants';
 import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers';
-import { terminalToolOutputSink, type ToolOutputSink } from './toolOutput';
+import { noopToolOutputSink, type ToolOutputSink } from './toolOutput';
 import type { ToolDefinition } from '../services/llm';
 
 // --- Per-request context type ---
@@ -109,7 +108,7 @@ async function runWebSearch(
     args: WebSearchToolArgs,
     settings: WebSearchSettings,
     onProgress?: (message: string) => void,
-    output: ToolOutputSink = terminalToolOutputSink,
+    output: ToolOutputSink = noopToolOutputSink,
     signal?: AbortSignal,
 ): Promise<string> {
     const tool = new WebSearchTool({
@@ -118,7 +117,7 @@ async function runWebSearch(
             output,
         },
         onProgress: (message: string) => {
-            output.writeLine(chalk.dim(message));
+            output.writeLine(message);
             onProgress?.(message);
         },
     });
@@ -129,7 +128,7 @@ async function runFetchUrl(
     args: FetchUrlToolArgs,
     settings: WebSearchSettings,
     onProgress?: (message: string) => void,
-    output: ToolOutputSink = terminalToolOutputSink,
+    output: ToolOutputSink = noopToolOutputSink,
     signal?: AbortSignal,
 ): Promise<string> {
     const tool = new FetchUrlTool({
@@ -138,7 +137,7 @@ async function runFetchUrl(
             output,
         },
         onProgress: (message: string) => {
-            output.writeLine(chalk.dim(message));
+            output.writeLine(message);
             onProgress?.(message);
         },
     });
@@ -147,7 +146,7 @@ async function runFetchUrl(
 
 async function runReadFile(
     args: ReadFileToolArgs,
-    output: ToolOutputSink = terminalToolOutputSink,
+    output: ToolOutputSink = noopToolOutputSink,
     model?: string,
     numCtx?: number,
     signal?: AbortSignal,
@@ -158,7 +157,7 @@ async function runReadFile(
 
 async function runPatchFile(
     args: PatchFileToolArgs,
-    output: ToolOutputSink = terminalToolOutputSink,
+    output: ToolOutputSink = noopToolOutputSink,
     signal?: AbortSignal,
 ): Promise<string> {
     const tool = new PatchFileTool({ output });
@@ -167,7 +166,7 @@ async function runPatchFile(
 
 async function runWriteFile(
     args: WriteFileToolArgs,
-    output: ToolOutputSink = terminalToolOutputSink,
+    output: ToolOutputSink = noopToolOutputSink,
     signal?: AbortSignal,
 ): Promise<string> {
     const tool = new WriteFileTool({ output });
@@ -177,12 +176,12 @@ async function runWriteFile(
 function runFetchImage(
     args: FetchImageToolArgs,
     onProgress?: (message: string) => void,
-    output: ToolOutputSink = terminalToolOutputSink,
+    output: ToolOutputSink = noopToolOutputSink,
     signal?: AbortSignal,
 ): Promise<FetchImageResult> {
     const tool = new FetchImageTool({
         onProgress: (message: string) => {
-            output.writeLine(chalk.dim(message));
+            output.writeLine(message);
             onProgress?.(message);
         },
     });
@@ -195,7 +194,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'run_command',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink, context, signal) {
+            async execute(args, onProgress, output = noopToolOutputSink, context, signal) {
                 if (!args.command) return { content: '[Error: missing required argument "command"]' };
                 let timeoutMs = DEFAULT_TIMEOUT_MS;
                 if (args.timeout_seconds !== undefined) {
@@ -242,7 +241,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'web_search',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink, context, signal) {
+            async execute(args, onProgress, output = noopToolOutputSink, context, signal) {
                 const parsedQueries = parseQueriesInput(args.queries);
                 const webArgs: WebSearchToolArgs = {};
 
@@ -289,7 +288,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'fetch_url',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink, context, signal) {
+            async execute(args, onProgress, output = noopToolOutputSink, context, signal) {
                 if (typeof args.url !== 'string' || args.url.trim().length === 0) {
                     return { content: '[Error: missing required argument "url"]' };
                 }
@@ -318,7 +317,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'fetch_image',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink, _context, signal) {
+            async execute(args, onProgress, output = noopToolOutputSink, _context, signal) {
                 if (typeof args.source !== 'string' || args.source.trim().length === 0) {
                     return { content: '[Error: missing required argument "source"]' };
                 }
@@ -329,7 +328,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'read_file',
         {
-            async execute(args, _onProgress, output = terminalToolOutputSink, context, signal) {
+            async execute(args, _onProgress, output = noopToolOutputSink, context, signal) {
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -351,7 +350,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'patch_file',
         {
-            async execute(args, _onProgress, output = terminalToolOutputSink, _context, signal) {
+            async execute(args, _onProgress, output = noopToolOutputSink, _context, signal) {
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -370,7 +369,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'write_file',
         {
-            async execute(args, _onProgress, output = terminalToolOutputSink, _context, signal) {
+            async execute(args, _onProgress, output = noopToolOutputSink, _context, signal) {
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -390,7 +389,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'run_subagents',
         {
-            async execute(args, onProgress, output = terminalToolOutputSink, context, signal) {
+            async execute(args, onProgress, output = noopToolOutputSink, context, signal) {
                 const { SubAgentTool } = await import('./impl/subAgentTool');
                 const tool = new SubAgentTool();
                 return tool.execute(args, onProgress, output, context, signal);

@@ -1,7 +1,7 @@
 import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { StatOptions } from 'node:fs';
-import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { resolveAgentPath } from '../workingDirectory';
 
 import type { ToolSchema } from '../../tools/tools';
@@ -38,7 +38,7 @@ export class WriteFileTool {
     private readonly output: ToolOutputSink;
 
     constructor(options: WriteFileToolOptions = {}) {
-        this.output = options.output ?? terminalToolOutputSink;
+        this.output = options.output ?? noopToolOutputSink;
     }
 
     private log(message: string): void {
@@ -49,13 +49,6 @@ export class WriteFileTool {
         const rawPath = (args.path ?? '').trim();
         if (!rawPath) {
             const errorMsg = '[write_file error: missing required argument "path".]';
-            this.log(formatToolTranscript({
-                title: 'write_file error',
-                tone: 'error',
-                rows: [
-                    { label: 'reason', value: 'missing required argument "path".' },
-                ],
-            }));
             return errorMsg;
         }
 
@@ -63,28 +56,12 @@ export class WriteFileTool {
 
         if (typeof args.content !== 'string') {
             const errorMsg = '[write_file error: missing required argument "content".]';
-            this.log(formatToolTranscript({
-                title: 'write_file error',
-                tone: 'error',
-                rows: [
-                    { label: 'path', value: absPath, kind: 'path' },
-                    { label: 'reason', value: 'missing required argument "content".' },
-                ],
-            }));
             return errorMsg;
         }
 
         const mode = args.mode ? args.mode.trim().toLowerCase() : 'overwrite';
         if (!isValidMode(mode)) {
             const errorMsg = '[write_file error: invalid "mode". Expected "overwrite", "append", or "create".]';
-            this.log(formatToolTranscript({
-                title: 'write_file error',
-                tone: 'error',
-                rows: [
-                    { label: 'path', value: absPath, kind: 'path' },
-                    { label: 'reason', value: 'invalid "mode". Expected "overwrite", "append", or "create".' },
-                ],
-            }));
             return errorMsg;
         }
         const parent = dirname(absPath);
@@ -97,14 +74,6 @@ export class WriteFileTool {
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
                 const errorMsg = `[write_file error: unable to access path: ${error instanceof Error ? error.message : String(error)}]`;
-                this.log(formatToolTranscript({
-                    title: 'write_file error',
-                    tone: 'error',
-                    rows: [
-                        { label: 'path', value: absPath, kind: 'path' },
-                        { label: 'reason', value: error instanceof Error ? error.message : String(error), kind: 'block' },
-                    ],
-                }));
                 return errorMsg;
             }
         }
@@ -118,15 +87,6 @@ export class WriteFileTool {
                         'action: create',
                         'warning: file already exists. Use mode "overwrite" to replace it, or mode "append" to add to it.',
                     ].join('\n');
-                    this.log(formatToolTranscript({
-                        title: 'write_file warning',
-                        tone: 'warning',
-                        rows: [
-                            { label: 'path', value: absPath, kind: 'path' },
-                            { label: 'action', value: 'create' },
-                            { label: 'warning', value: 'file already exists. Use mode "overwrite" to replace it, or mode "append" to add to it.', kind: 'block' },
-                        ],
-                    }));
                     return warning;
                 }
                 await writeFile(absPath, args.content, { encoding: 'utf8', flag: 'wx', signal } as any);
@@ -136,15 +96,6 @@ export class WriteFileTool {
                     'action: create',
                     `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
                 ].join('\n');
-                this.log(formatToolTranscript({
-                    title: 'write_file result',
-                    tone: 'success',
-                    rows: [
-                        { label: 'path', value: absPath, kind: 'path' },
-                        { label: 'action', value: 'create' },
-                        { label: 'bytes_written', value: String(Buffer.byteLength(args.content, 'utf8')) },
-                    ],
-                }));
                 return result;
             }
 
@@ -156,15 +107,6 @@ export class WriteFileTool {
                     'action: overwrite',
                     `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
                 ].join('\n');
-                this.log(formatToolTranscript({
-                    title: 'write_file result',
-                    tone: 'success',
-                    rows: [
-                        { label: 'path', value: absPath, kind: 'path' },
-                        { label: 'action', value: 'overwrite' },
-                        { label: 'bytes_written', value: String(Buffer.byteLength(args.content, 'utf8')) },
-                    ],
-                }));
                 return result;
             }
 
@@ -176,26 +118,9 @@ export class WriteFileTool {
                 'action: append',
                 `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
             ].join('\n');
-            this.log(formatToolTranscript({
-                title: 'write_file result',
-                tone: 'success',
-                rows: [
-                    { label: 'path', value: absPath, kind: 'path' },
-                    { label: 'action', value: 'append' },
-                    { label: 'bytes_written', value: String(Buffer.byteLength(args.content, 'utf8')) },
-                ],
-            }));
             return result;
         } catch (error) {
             const errorMsg = `[write_file error: failed to write file: ${error instanceof Error ? error.message : String(error)}]`;
-            this.log(formatToolTranscript({
-                title: 'write_file error',
-                tone: 'error',
-                rows: [
-                    { label: 'path', value: absPath, kind: 'path' },
-                    { label: 'reason', value: error instanceof Error ? error.message : String(error), kind: 'block' },
-                ],
-            }));
             return errorMsg;
         }
     }

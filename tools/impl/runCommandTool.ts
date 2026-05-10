@@ -1,12 +1,10 @@
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { confirm } from '@inquirer/prompts';
-import chalk from 'chalk';
 import os from 'os';
-import { terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { getAgentWorkingDirectory, resolveAgentPath, setAgentWorkingDirectory } from '../workingDirectory';
 import {
     sanitize,
-    getInterruptHint,
     registerInterruptHandler,
     unregisterInterruptHandler,
 } from '../tools';
@@ -98,14 +96,14 @@ export function defaultShell(): string {
 /**
  * Determines the effective shell to use, accounting for platform-specific overrides.
  */
-function getEffectiveShell(requestedShell?: string, output: ToolOutputSink = terminalToolOutputSink): string {
+function getEffectiveShell(requestedShell?: string, output: ToolOutputSink = noopToolOutputSink): string {
     const shell = (requestedShell || defaultShell()).toLowerCase();
     if (isWindows) {
         // If the model requested a POSIX-style shell on Windows, override to
         // powershell and warn so the model understands the environment.
         const posixShells = new Set(['bash', 'sh', 'zsh', 'ksh', 'fish']);
         if (posixShells.has(shell) && shell !== 'powershell') {
-            output.writeLine(chalk.yellow(`Warning: requested shell '${shell}' is not native on Windows; using 'powershell' instead.`));
+            output.writeLine(`Warning: requested shell '${shell}' is not native on Windows; using 'powershell' instead.`);
             return 'powershell';
         }
     }
@@ -225,13 +223,13 @@ export async function runCommand(
     timeoutMs: number = DEFAULT_TIMEOUT_MS,
     onProgress?: (message: string) => void,
     cwd?: string,
-    output: ToolOutputSink = terminalToolOutputSink,
+    output: ToolOutputSink = noopToolOutputSink,
     yoloMode: boolean = false,
     signal?: AbortSignal,
 ): Promise<string> {
     const effectiveShell = getEffectiveShell(shell, output);
     const approvedYolo = yoloMode;
-    const agentOutput = output ?? terminalToolOutputSink;
+    const agentOutput = output ?? noopToolOutputSink;
     const trimmedCwd = cwd?.trim();
     const workingDirectory = trimmedCwd
         ? resolveAgentPath(agentOutput, trimmedCwd)
@@ -243,9 +241,9 @@ export async function runCommand(
     let commandToExecute = appendWorkingDirectoryProbe(command, effectiveShell, workdirMarker);
 
     // Show the user what the AI wants to run
-    output.writeLine(chalk.cyan(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`));
-    output.writeLine(`${chalk.bold('  Shell:')}   ${chalk.dim(effectiveShell)}`);
-    output.writeLine(`${chalk.bold('  Command:')} ${chalk.green(command)}\n`);
+    output.writeLine(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`);
+    output.writeLine(`  Shell:   ${effectiveShell}`);
+    output.writeLine(`  Command: ${command}\n`);
 
     let approved = approvedYolo;
     if (!approved) {
@@ -260,13 +258,13 @@ export async function runCommand(
     }
 
     if (!approved) {
-        output.writeLine(chalk.red('  Command rejected by user.\n'));
+        output.writeLine('  Command rejected by user.\n');
         return '[Command was rejected by the user.]';
     }
 
     const store = requestProcessState.getStore();
     const processId = store ? store.nextId++ : globalFallbackNextId++;
-    output.writeLine(chalk.dim(`  Running (id=${processId})... (${getInterruptHint()})\n`));
+    output.writeLine(`  Running (id=${processId})...\n`);
 
     const entry: ProcessEntry = {
         process: null as unknown as ChildProcess, // assigned immediately below
@@ -383,7 +381,7 @@ export async function runCommand(
                 setAgentWorkingDirectory(agentOutput, detectedWorkingDirectory);
             }
 
-            output.writeLine('\n' + chalk.dim(`  Process ${processId} exited with code ${code}.\n`));
+            output.writeLine(`\n  Process ${processId} exited with code ${code}.\n`);
             onProgress?.('run_command: completed.');
             finalize(exitCode);
         });
