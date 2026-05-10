@@ -60,12 +60,13 @@ interface FetchedImage {
     label: string;
 }
 
-async function fetchRemoteImage(url: string, timeoutMs: number): Promise<FetchedImage> {
+async function fetchRemoteImage(url: string, timeoutMs: number, signal?: AbortSignal): Promise<FetchedImage> {
     const response = await axios.get<ArrayBuffer>(url, {
         responseType: 'arraybuffer',
         timeout: timeoutMs,
         maxContentLength: MAX_IMAGE_BYTES,
         headers: { 'User-Agent': DEFAULT_USER_AGENT },
+        ...(signal ? { signal } : {}),
     });
 
     const buffer = Buffer.from(response.data);
@@ -96,8 +97,8 @@ function normalizeLocalImagePath(source: string): string {
     return source;
 }
 
-async function fetchLocalImage(filePath: string): Promise<FetchedImage> {
-    const buffer = await readFile(filePath);
+async function fetchLocalImage(filePath: string, signal?: AbortSignal): Promise<FetchedImage> {
+    const buffer = await readFile(filePath, { signal });
 
     if (buffer.length > MAX_IMAGE_BYTES) {
         throw new Error(`Image too large (${(buffer.length / 1_048_576).toFixed(1)} MB). Limit is 10 MB.`);
@@ -140,10 +141,10 @@ export class FetchImageTool {
             let image: FetchedImage;
 
             if (/^https?:\/\//i.test(source)) {
-                image = await fetchRemoteImage(source, this.timeoutMs);
+                image = await fetchRemoteImage(source, this.timeoutMs, signal);
             } else {
                 const filePath = normalizeLocalImagePath(source);
-                image = await fetchLocalImage(filePath);
+                image = await fetchLocalImage(filePath, signal);
             }
 
             this.progress('Fetch image: completed.');

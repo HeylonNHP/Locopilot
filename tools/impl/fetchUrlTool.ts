@@ -58,6 +58,7 @@ export class FetchUrlTool {
         try {
             const result = await fetchAndExtract(url, this.settings, {
                 usePlaywright: args.use_playwright === true,
+                ...(signal ? { signal } : {}),
             });
 
             this.progress('Fetch URL: completed.');

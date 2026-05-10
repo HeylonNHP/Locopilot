@@ -1,4 +1,5 @@
 import { readFile, stat, writeFile } from 'node:fs/promises';
+import type { StatOptions } from 'node:fs';
 import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { resolveAgentPath } from '../workingDirectory';
 
@@ -311,7 +312,7 @@ export class PatchFileTool {
         }
         let fileStat;
         try {
-            fileStat = await stat(absPath);
+            fileStat = await stat(absPath, { signal } as unknown as Parameters<typeof stat>[1]);
         } catch (error) {
             const errorMsg = `[patch_file error: unable to access file: ${error instanceof Error ? error.message : String(error)}]`;
             this.log(formatToolTranscript({
@@ -338,7 +339,7 @@ export class PatchFileTool {
             return errorMsg;
         }
 
-        const content = await readFile(absPath, { encoding: 'utf8' });
+        const content = await readFile(absPath, { encoding: 'utf8', signal });
         const patchMatches: PatchMatch[] = [];
 
         for (const [index, patch] of args.patches.entries()) {
@@ -419,7 +420,7 @@ export class PatchFileTool {
         }
 
         if (updatedContent !== content) {
-            await writeFile(absPath, updatedContent, { encoding: 'utf8' });
+            await writeFile(absPath, updatedContent, { encoding: 'utf8', signal } as any);
         }
 
         const result = [

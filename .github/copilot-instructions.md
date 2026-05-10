@@ -143,6 +143,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-05-10: Threaded AbortSignal through all tool implementations
+  - Files: `tools/impl/runCommandTool.ts`, `tools/impl/fetchUrlTool.ts`, `tools/impl/fetchImageTool.ts`, `tools/impl/webSearchTool.ts`, `tools/impl/readFileTool.ts`, `tools/impl/writeFileTool.ts`, `tools/impl/patchFileTool.ts`, `tools/impl/subAgentTool.ts`, `tools/web/htmlExtractor.ts`
+  - Summary: Commit `3cde6fb` threaded `signal?: AbortSignal` through all tool `run()`/`execute()` signatures but never passed it to the underlying async operations — meaning abort signals from the HTTP layer were completely ineffective for cancelling file I/O, HTTP fetches, and sub-agent LLM calls. Every affected tool now passes the signal to its underlying operations: `spawn()` (via `signal` option), `stdin.write()` (via abort guard), `waitForProcessSnapshot`/`checkProcessOutput`, `axios` calls, `readFile`/`writeFile`/`stat`/`mkdir`/`appendFile`, Playwright `goto`/`waitForLoadState`/`newContext`, and `sendLlmChat`. File-system and Playwright calls use `as any` type assertions to bypass stale TypeScript lib definitions that predate `AbortSignal` support.
+  - Intent: Ensure per-request abort signals can actually cancel long-running tool operations (file reads, command execution, web fetches, sub-agent LLM calls) when the client disconnects or the request is cancelled.
+
 - 2026-05-04: Fixed "invalid role: subagent_log" 400 error during compaction
   - Files: `app/api/chat/route.ts`, `app/api/compact/route.ts`, `.github/copilot-instructions.md`
   - Summary: `subagent_log` is a client-only UI role used in `chatStore.ts` to render sub-agent output bubbles. Ollama does not recognise this role and returns a 400 when it appears in a `/compact` message list. Both `chat/route.ts` and `compact/route.ts` now filter out `subagent_log` messages alongside `system` messages when building the server-side history for LLM calls and compaction.

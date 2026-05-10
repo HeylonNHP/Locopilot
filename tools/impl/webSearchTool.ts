@@ -109,7 +109,7 @@ export class WebSearchTool {
         for (const [queryIndex, query] of queries.entries()) {
             this.progress(`Web search: fetching DuckDuckGo results (${queryIndex + 1}/${queries.length}) for "${query}"...`);
 
-            const searchResults = await this.fetchSearchResults(query, effectiveResultsPerQuery);
+            const searchResults = await this.fetchSearchResults(query, effectiveResultsPerQuery, signal);
             if (searchResults.length === 0) {
                 querySections.push([
                     `query: ${query}`,
@@ -124,7 +124,7 @@ export class WebSearchTool {
                     `Web search: loading page ${resultIndex + 1}/${searchResults.length} for query ${queryIndex + 1}/${queries.length}...`,
                 );
 
-                const extracted = await this.fetchAndExtractText(result, args.use_playwright);
+                const extracted = await this.fetchAndExtractText(result, args.use_playwright, signal);
                 if (extracted) {
                     pages.push(extracted);
                 }
@@ -235,7 +235,7 @@ export class WebSearchTool {
         return added;
     }
 
-    private async fetchSearchResults(query: string, limit: number): Promise<DuckDuckGoResult[]> {
+    private async fetchSearchResults(query: string, limit: number, signal?: AbortSignal): Promise<DuckDuckGoResult[]> {
         const results: DuckDuckGoResult[] = [];
 
         // First page via GET
@@ -247,6 +247,7 @@ export class WebSearchTool {
                 Accept: 'text/html,application/xhtml+xml',
             },
             responseType: 'text',
+            ...(signal ? { signal } : {}),
         });
 
         let $ = cheerio.load(firstResponse.data);
@@ -278,6 +279,7 @@ export class WebSearchTool {
                         Referer: DUCKDUCKGO_HTML_SEARCH_URL,
                     },
                     responseType: 'text',
+                    ...(signal ? { signal } : {}),
                 },
             );
 
@@ -291,10 +293,11 @@ export class WebSearchTool {
         return results;
     }
 
-    private async fetchAndExtractText(result: DuckDuckGoResult, usePlaywright?: boolean): Promise<ExtractedPage | null> {
+    private async fetchAndExtractText(result: DuckDuckGoResult, usePlaywright?: boolean, signal?: AbortSignal): Promise<ExtractedPage | null> {
         try {
             const extracted = await fetchAndExtract(result.url, this.settings, {
                 usePlaywright: usePlaywright === true,
+                ...(signal ? { signal } : {}),
             });
 
             return {

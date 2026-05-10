@@ -197,7 +197,7 @@ function shouldPreferRenderedText(staticText: string, renderedText: string): boo
     return staticText.length < MIN_BROWSER_FALLBACK_TEXT_LENGTH && renderedText.length >= Math.floor(staticText.length * 0.75);
 }
 
-async function renderWithPlaywright(url: string, settings: WebExtractionSettings): Promise<RenderedPage | null> {
+async function renderWithPlaywright(url: string, settings: WebExtractionSettings, signal?: AbortSignal): Promise<RenderedPage | null> {
     try {
         const playwrightModule = await import('playwright');
         const browser = await playwrightModule.chromium.launch({ headless: true });
@@ -216,6 +216,7 @@ async function renderWithPlaywright(url: string, settings: WebExtractionSettings
             const context = await browser.newContext({
                 userAgent: headers['User-Agent'] ?? DEFAULT_USER_AGENT,
                 extraHTTPHeaders,
+                ...(signal ? { signal } : {}),
             });
 
             try {
@@ -226,12 +227,13 @@ async function renderWithPlaywright(url: string, settings: WebExtractionSettings
                     await page.goto(url, {
                         waitUntil: 'domcontentloaded',
                         timeout: timeoutMs,
+                        ...(signal ? { signal } : {}),
                     });
                 } catch {
                     // Continue with the partially rendered DOM if navigation times out.
                 }
 
-                await page.waitForLoadState('networkidle', { timeout: Math.min(timeoutMs, 5000) }).catch(() => undefined);
+                await page.waitForLoadState('networkidle', { timeout: Math.min(timeoutMs, 5000), ...(signal ? { signal } : {}) }).catch(() => undefined);
 
                 const html = await page.content();
                 const finalUrl = page.url() || url;
@@ -289,6 +291,7 @@ export function extractLinks(html: string, baseUrl: string): ExtractedLink[] {
 
 export interface FetchAndExtractOptions {
     usePlaywright?: boolean;
+    signal?: AbortSignal;
 }
 
 /**
@@ -303,9 +306,11 @@ export async function fetchAndExtract(
     url: string,
     settings: WebExtractionSettings,
     options: FetchAndExtractOptions = {},
+    signal?: AbortSignal,
 ): Promise<{ title: string; text: string; finalUrl: string; links: ExtractedLink[] }> {
     const response = await axios.get<string>(url, {
         timeout: settings.requestTimeoutMs,
+        ...(signal ? { signal } : {}),
         headers: buildWebRequestHeaders(
             url,
             settings.cookieHeader ? { cookieHeader: settings.cookieHeader } : undefined,
@@ -333,7 +338,7 @@ export async function fetchAndExtract(
     const shouldTryPlaywright = options.usePlaywright || shouldTryBrowserFallback(html, staticText);
     
     if (shouldTryPlaywright) {
-        const renderedPage = await renderWithPlaywright(url, settings);
+        const renderedPage = await renderWithPlaywright(url, settings, signal);
         if (renderedPage) {
             const renderedText = extractMainText(renderedPage.html, renderedPage.finalUrl);
             

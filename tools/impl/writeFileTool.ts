@@ -1,5 +1,6 @@
 import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import type { StatOptions } from 'node:fs';
 import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { resolveAgentPath } from '../workingDirectory';
 
@@ -87,11 +88,11 @@ export class WriteFileTool {
             return errorMsg;
         }
         const parent = dirname(absPath);
-        await mkdir(parent, { recursive: true });
+        await mkdir(parent, { recursive: true, signal } as unknown as Parameters<typeof mkdir>[1]);
 
         let fileExists = false;
         try {
-            const fileStat = await stat(absPath);
+            const fileStat = await stat(absPath, { signal } as unknown as Parameters<typeof stat>[1]);
             fileExists = fileStat.isFile();
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -128,7 +129,7 @@ export class WriteFileTool {
                     }));
                     return warning;
                 }
-                await writeFile(absPath, args.content, { encoding: 'utf8', flag: 'wx' });
+                await writeFile(absPath, args.content, { encoding: 'utf8', flag: 'wx', signal } as any);
                 const result = [
                     'write_file_result:',
                     `path: ${absPath}`,
@@ -148,7 +149,7 @@ export class WriteFileTool {
             }
 
             if (mode === 'overwrite') {
-                await writeFile(absPath, args.content, { encoding: 'utf8' });
+                await writeFile(absPath, args.content, { encoding: 'utf8', signal } as any);
                 const result = [
                     'write_file_result:',
                     `path: ${absPath}`,
@@ -168,7 +169,7 @@ export class WriteFileTool {
             }
 
             // mode === 'append'
-            await appendFile(absPath, args.content, { encoding: 'utf8' });
+            await appendFile(absPath, args.content, { encoding: 'utf8', signal } as any);
             const result = [
                 'write_file_result:',
                 `path: ${absPath}`,

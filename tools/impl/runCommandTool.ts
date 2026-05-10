@@ -286,6 +286,7 @@ export async function runCommand(
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: !isWindows,
         cwd: workingDirectory,
+        signal,
     });
     entry.process = child;
 
@@ -406,6 +407,8 @@ export async function runCommand(
             finalize(-1);
         });
 
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
         try {
             child.stdin.write(commandToExecute + '\n');
             child.stdin.end();
@@ -417,7 +420,7 @@ export async function runCommand(
     });
 }
 
-function waitForProcessSnapshot(entry: ProcessEntry, waitMs: number): Promise<void> {
+function waitForProcessSnapshot(entry: ProcessEntry, waitMs: number, signal?: AbortSignal): Promise<void> {
     if (waitMs <= 0 || entry.done) {
         return Promise.resolve();
     }
@@ -444,11 +447,16 @@ function waitForProcessSnapshot(entry: ProcessEntry, waitMs: number): Promise<vo
             finish();
         };
 
+
         const timer = setTimeout(() => {
             finish();
         }, waitMs);
 
         child?.once('close', handleClose);
+
+        if (signal) {
+            signal.addEventListener('abort', finish, { once: true });
+        }
 
         if (entry.done) {
             finish();
@@ -470,7 +478,7 @@ export async function checkProcessOutput(
 
     if (!entry.done && waitMs > 0) {
         onProgress?.(`check_process_output: waiting ${Math.round(waitMs / 1000)}s before sampling...`);
-        await waitForProcessSnapshot(entry, waitMs);
+        await waitForProcessSnapshot(entry, waitMs, signal);
     }
 
     if (entry.done) {

@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import type { StatOptions } from 'node:fs';
 import { formatToolTranscript, terminalToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { resolveAgentPath } from '../workingDirectory';
 import { countTextTokens } from '../../services/tokenizer';
@@ -82,7 +83,7 @@ export class ReadFileTool {
         const absPath = resolveAgentPath(this.output, rawPath);
         let fileStat;
         try {
-            fileStat = await stat(absPath);
+            fileStat = await stat(absPath, { signal } as unknown as StatOptions);
         } catch (error) {
             const errorMsg = `[read_file error: unable to access file: ${error instanceof Error ? error.message : String(error)}]`;
             this.log(formatToolTranscript({
@@ -178,7 +179,7 @@ export class ReadFileTool {
         }
 
         try {
-            const fileContents = await readFile(absPath, { encoding: 'utf8' });
+            const fileContents = await readFile(absPath, { encoding: 'utf8', signal });
             let excerpt = fileContents;
             let rangeDescription = 'full file';
 
