@@ -26,7 +26,7 @@ import { waitForApproval, resolveApproval } from '../../lib/approvalRegistry';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
 import { createSession, renameSession, getSessionName } from '../../../history';
-import { compactHistory } from '../../../services/compact';
+import { compactHistory, sanitizeContentForTitle } from '../../../services/compact';
 import { generateFallbackTitle } from '../../../services/titleUtils';
 import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 import { countMessagesTokens } from '../../../services/tokenizer';
@@ -735,7 +735,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     if (!parsedSessionId) {
                         const currentName = getSessionName(currentSessionId);
                         if (!currentName || currentName === 'New chat') {
-                            renameSession(currentSessionId, generateFallbackTitle(content));
+                            renameSession(currentSessionId, generateFallbackTitle(sanitizeContentForTitle(content)));
                         }
                     }
 

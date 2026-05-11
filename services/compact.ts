@@ -648,6 +648,12 @@ function extractTitleFromResponse(rawTitle: string): string {
 
     let title = (lines[0] ?? '').trim();
 
+    // Strip single-line JSON wrapper like {"title": "..."}
+    const jsonMatch = title.match(/^\s*\{\s*"title"\s*:\s*"(.+?)"\s*\}\s*$/);
+    if (jsonMatch) {
+        title = jsonMatch[1]!;
+    }
+
     // Strip surrounding quotes (both single and double, including smart quotes)
     title = title.replace(/^['""'']+|['""'']+$/g, '');
 
@@ -811,10 +817,10 @@ export async function generateSessionTitle(
                 continue;
             }
 
-            let title = extractTitleFromResponse(rawContent);
+            let title = '';
 
-            // Try structured JSON parse if the response looks like JSON
-            if (!title && (rawContent.startsWith('{') || rawContent.startsWith('['))) {
+            // Try structured JSON parse first if the response looks like JSON
+            if (rawContent.startsWith('{') || rawContent.startsWith('[')) {
                 try {
                     const parsed = JSON.parse(rawContent);
                     if (parsed && typeof parsed.title === 'string') {
@@ -823,6 +829,11 @@ export async function generateSessionTitle(
                 } catch {
                     // Ignore JSON parse errors
                 }
+            }
+
+            // Fallback to plain-text extraction
+            if (!title) {
+                title = extractTitleFromResponse(rawContent);
             }
 
             if (!title) {
