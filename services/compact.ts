@@ -680,7 +680,7 @@ function extractTitleFromResponse(rawTitle: string): string {
     return title.trim().slice(0, 80).trim();
 }
 
-function sanitizeContentForTitle(content: string): string {
+export function sanitizeContentForTitle(content: string): string {
     return content
         .replace(/<think>[\s\S]*?<\/think>/g, '')
         .replace(/\x1B\[[0-9;]*m/g, '')
