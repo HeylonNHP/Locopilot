@@ -13,15 +13,19 @@ import type { StableRefs } from './useStableRefs';
 export function useDataLoaders(refs: StableRefs) {
   const { state, dispatch } = useChat();
   const sessionLoadRequestIdRef = useRef(0);
+  const sessionSearchRequestIdRef = useRef(0);
 
   const loadSessions = useCallback(async (query?: string) => {
+    const requestId = sessionSearchRequestIdRef.current + 1;
+    sessionSearchRequestIdRef.current = requestId;
+
     try {
       const url = query ? `/api/sessions?q=${encodeURIComponent(query)}` : '/api/sessions';
       const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        dispatch({ type: 'SET_SESSIONS', sessions: data.sessions ?? [] });
-      }
+      if (!res.ok || sessionSearchRequestIdRef.current !== requestId) return;
+      const data = await res.json();
+      if (sessionSearchRequestIdRef.current !== requestId) return;
+      dispatch({ type: 'SET_SESSIONS', sessions: data.sessions ?? [] });
     } catch {
       // Silently ignore – sessions will be empty
     }
