@@ -27,6 +27,7 @@ function HomeInner() {
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
   const sessionSwitchIdRef = useRef<number | null>(null);
+  const currentSearchQueryRef = useRef('');
 
   useEffect(() => { isCompactingRef.current = isCompacting; }, [isCompacting]);
   useEffect(() => { isGeneratingTitleRef.current = isGeneratingTitle; }, [isGeneratingTitle]);
@@ -50,6 +51,7 @@ function HomeInner() {
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
 
   const handleSearchSessions = useCallback(async (query: string) => {
+    currentSearchQueryRef.current = query;
     if (query.trim()) {
       await loadSessions(query);
     } else {
@@ -161,7 +163,12 @@ function HomeInner() {
     async (id: number) => {
       try {
         await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
-        loadSessions();
+        const q = currentSearchQueryRef.current;
+        if (q.trim()) {
+          await loadSessions(q);
+        } else {
+          await loadSessions();
+        }
         dispatch({ type: 'DISCARD_SESSION', sessionId: id });
         if (refs.sessionIdRef.current === id) {
           dispatch({ type: 'CLEAR_MESSAGES' });
