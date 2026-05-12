@@ -424,6 +424,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                     const MAX_LLM_RETRIES = 3;
                     const RETRY_BASE_DELAY_MS = 1000;
                     let retryAttempt = 0;
+                    let firstContent = '';
+                    let firstThinking = '';
 
                     while (true) {
                         try {
@@ -486,6 +488,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                             wallClockTps = (evalCount > 0 && wallClockElapsedMs > 0)
                                 ? +(evalCount / (wallClockElapsedMs / 1000)).toFixed(2)
                                 : null;
+
+                            // Preserve the first successful response for auto-titling
+                            // across retries in case the subsequent attempt differs.
+                            if (!firstContent && content.trim()) {
+                                firstContent = content;
+                                firstThinking = thinking;
+                            }
 
                             break; // success — exit retry loop
                         } catch (err) {
@@ -734,8 +743,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                     const currentSessionId = activeSessionId!;
                     if (!parsedSessionId) {
                         const currentName = getSessionName(currentSessionId);
-                        if (!currentName || currentName === 'New chat') {
-                            renameSession(currentSessionId, generateFallbackTitle(sanitizeContentForTitle(content)));
+                        if (currentName === null || currentName === undefined || currentName === 'New chat') {
+                            const titleContent = firstContent || content;
+                            const titleThinking = firstThinking || thinking;
+                            const titleText = titleThinking ? `${titleContent}\n${titleThinking}` : titleContent;
+                            renameSession(currentSessionId, generateFallbackTitle(sanitizeContentForTitle(titleText)));
                         }
                     }
 

@@ -2,7 +2,7 @@
  * Per-session write queue — serializes updateSessionMessages calls for the
  * same session ID so concurrent HTTP requests don't overwrite each other.
  */
-import { updateSessionMessages, loadSessionMessages } from '../../history';
+import { updateSessionMessages, loadSessionMessages, renameSession } from '../../history';
 import type { SessionTokenStats } from '../../history';
 import type { ChatMessage } from '../../services/llm';
 
@@ -46,6 +46,33 @@ export async function enqueueSessionWrite(
     return next.finally(() => {
         if (sessionWriteQueues.get(sessionId) === next) {
             sessionWriteQueues.delete(sessionId);
+        }
+    });
+}
+
+/**
+ * Per-session rename queue — serializes renameSession calls for the same
+ * session ID so concurrent /title requests don't race on SQL writes.
+ */
+const sessionRenameQueues = new Map<number, Promise<void>>();
+
+export async function enqueueSessionRename(
+    sessionId: number,
+    newName: string,
+): Promise<void> {
+    const prev = sessionRenameQueues.get(sessionId) ?? Promise.resolve();
+    const next = prev.then(async () => {
+        renameSession(sessionId, newName);
+    }).catch((err) => {
+        console.error(
+            `[sessionWriteQueue] Failed to rename session ${sessionId}:`,
+            err instanceof Error ? err.message : String(err),
+        );
+    });
+    sessionRenameQueues.set(sessionId, next);
+    return next.finally(() => {
+        if (sessionRenameQueues.get(sessionId) === next) {
+            sessionRenameQueues.delete(sessionId);
         }
     });
 }

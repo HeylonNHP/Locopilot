@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { DEFAULT_NUM_CTX } from '../../../constants';
-import { listSessions, renameSession } from '../../../history';
+import { listSessions } from '../../../history';
+import { enqueueSessionRename } from '../../../app/lib/sessionWriteQueue';
 import { generateSessionTitle } from '../../../services/compact';
 import { loadConfig } from '../../../services/configManager';
 import { getLlmApiErrorMessage, type ChatMessage } from '../../../services/llm';
@@ -91,7 +92,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             effectiveNumCtx,
         );
 
-        renameSession(parsedSessionId, title);
+        await enqueueSessionRename(parsedSessionId, title);
 
         return NextResponse.json({
             sessionId: parsedSessionId,

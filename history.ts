@@ -178,7 +178,8 @@ export function listSessions(): Session[] {
  * Searches sessions by title and message content.
  */
 export function searchSessions(query: string): Session[] {
-    const q = `%${query.toLowerCase()}%`;
+    const escaped = query.toLowerCase().replace(/[%_]/g, '\\$&');
+    const q = `%${escaped}%`;
     return stmtSearchSessions.all(q, q) as Session[];
 }
 
