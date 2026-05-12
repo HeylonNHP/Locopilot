@@ -14,9 +14,10 @@ export function useDataLoaders(refs: StableRefs) {
   const { state, dispatch } = useChat();
   const sessionLoadRequestIdRef = useRef(0);
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (query?: string) => {
     try {
-      const res = await fetch('/api/sessions');
+      const url = query ? `/api/sessions?q=${encodeURIComponent(query)}` : '/api/sessions';
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         dispatch({ type: 'SET_SESSIONS', sessions: data.sessions ?? [] });

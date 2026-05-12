@@ -129,6 +129,10 @@ const stmtLoadMessages = db.prepare<[number]>(
     'SELECT role, content, thinking, tool_calls, images, subagent_id FROM messages WHERE session_id = ? ORDER BY id ASC',
 );
 
+const stmtSearchSessions = db.prepare<[string, string]>(
+    `SELECT DISTINCT s.* FROM sessions s\n     LEFT JOIN messages m ON m.session_id = s.id\n     WHERE LOWER(s.name) LIKE ? OR LOWER(m.content) LIKE ?\n     ORDER BY s.updated_at DESC`,
+);
+
 const stmtGetSessionName = db.prepare<[number]>(
     'SELECT name FROM sessions WHERE id = ?',
 );
@@ -168,6 +172,14 @@ export function getSessionName(sessionId: number): string | undefined {
  */
 export function listSessions(): Session[] {
     return stmtListSessions.all() as Session[];
+}
+
+/**
+ * Searches sessions by title and message content.
+ */
+export function searchSessions(query: string): Session[] {
+    const q = `%${query.toLowerCase()}%`;
+    return stmtSearchSessions.all(q, q) as Session[];
 }
 
 /**

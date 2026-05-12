@@ -1,11 +1,13 @@
 // GET /api/sessions - list all sessions
 // POST /api/sessions - create a new session
 import { NextRequest, NextResponse } from 'next/server';
-import { listSessions, createSession } from '../../../history';
+import { listSessions, createSession, searchSessions } from '../../../history';
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
     try {
-        const sessions = listSessions();
+        const { searchParams } = new URL(request.url);
+        const q = searchParams.get('q')?.trim();
+        const sessions = q ? searchSessions(q) : listSessions();
         return NextResponse.json({ sessions });
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';

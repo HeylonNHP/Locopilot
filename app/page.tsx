@@ -48,6 +48,14 @@ function HomeInner() {
     : state.streamingSessions.has(-1);
 
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
+
+  const handleSearchSessions = useCallback(async (query: string) => {
+    if (query.trim()) {
+      await loadSessions(query);
+    } else {
+      await loadSessions();
+    }
+  }, [loadSessions]);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
 
   const { handleSlashCommand } = useSlashCommands({
@@ -173,6 +181,7 @@ function HomeInner() {
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
         onSettings={handleOpenSettings}
+        onSearchSessions={handleSearchSessions}
       />
 
       <div className="main-area">

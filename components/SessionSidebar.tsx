@@ -1,7 +1,7 @@
 'use client';
 
-import { useChat, type Session } from '@/app/lib/chatStore';
-import type { KeyboardEvent } from 'react';
+import { useChat } from '@/app/lib/chatStore';
+import { useState, useEffect, useRef, type KeyboardEvent } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
 interface Props {
@@ -9,10 +9,31 @@ interface Props {
   onSelectSession: (id: number) => void;
   onDeleteSession: (id: number) => void;
   onSettings: () => void;
+  onSearchSessions: (query: string) => void;
 }
 
-export default function SessionSidebar({ onNewSession, onSelectSession, onDeleteSession, onSettings }: Props) {
+export default function SessionSidebar({
+  onNewSession,
+  onSelectSession,
+  onDeleteSession,
+  onSettings,
+  onSearchSessions,
+}: Props) {
   const { state } = useChat();
+  const [searchQuery, setSearchQuery] = useState('');
+  const isFirstRender = useRef(true);
+
+  // Debounced search: skip first render (page.tsx already loads on mount)
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      onSearchSessions(searchQuery);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [searchQuery, onSearchSessions]);
 
   const handleActionKeyDown = (
     event: KeyboardEvent<HTMLDivElement>,
@@ -27,7 +48,9 @@ export default function SessionSidebar({ onNewSession, onSelectSession, onDelete
   const clearPointerFocus = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.currentTarget.blur();
   };
-  
+
+  const isSearching = searchQuery.trim().length > 0;
+
   return (
     <div className="sidebar">
       <div className="sidebar-header">
@@ -48,10 +71,33 @@ export default function SessionSidebar({ onNewSession, onSelectSession, onDelete
           </button>
         </div>
       </div>
+
+      <div className="sidebar-search-wrap">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search sessions…"
+          className="sidebar-search"
+          aria-label="Search sessions"
+        />
+        {isSearching && (
+          <button
+            type="button"
+            onClick={() => setSearchQuery('')}
+            className="sidebar-search-clear"
+            aria-label="Clear search"
+            title="Clear search"
+          >
+            ×
+          </button>
+        )}
+      </div>
+
       <div className="flex-1 overflow-y-auto p-8">
         {state.sessions.length === 0 ? (
           <p className="sidebar-empty">
-            No sessions yet
+            {isSearching ? 'No sessions match your search' : 'No sessions yet'}
           </p>
         ) : (
           state.sessions.map((session) => {
