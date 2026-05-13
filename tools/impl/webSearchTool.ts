@@ -29,7 +29,8 @@ import * as cheerio from 'cheerio';
 import { cleanText, fetchAndExtract, DEFAULT_USER_AGENT, type ExtractedLink } from '../web/htmlExtractor';
 import type { ToolOutputSink } from '../toolOutput';
 
-const DUCKDUCKGO_HTML_SEARCH_URL = 'https://duckduckgo.com/html/';
+const DUCKDUCKGO_HTML_SEARCH_URL = 'https://html.duckduckgo.com/html/';
+const DDG_REGION = 'wt-wt'; // All regions
 
 export interface WebSearchSettings {
     maxQueries: number;
@@ -83,6 +84,13 @@ function parseDuckDuckGoRedirect(href: string): string {
     } catch {
         return href;
     }
+}
+
+// Per-query VQD cache (shared across all WebSearchTool instances for the lifetime of this module)
+const vqdCache = new Map<string, string>();
+
+function isDdgCaptcha($: ReturnType<typeof cheerio.load>): boolean {
+    return $('#challenge-form').length > 0;
 }
 
 export class WebSearchTool {
@@ -213,13 +221,28 @@ export class WebSearchTool {
         const seen = new Set(results.map((r) => r.url));
         let added = 0;
 
-        $('.result').each((_, element) => {
+        // Try the newer DDG HTML structure first (div#links > div.web-result),
+        // then fall back to the legacy .result selector.
+        const resultElements = $('div#links div.web-result').length > 0
+            ? $('div#links div.web-result')
+            : $('.result');
+
+        resultElements.each((_, element) => {
             if (results.length >= limit) return;
 
-            const link = $(element).find('a.result__a').first();
+            // Newer structure: h2 a for title, .result__snippet for snippet
+            let link = $(element).find('h2 a').first();
+            if (!link.length) {
+                link = $(element).find('a.result__a').first();
+            }
             const title = cleanText(link.text());
             const href = link.attr('href') ?? '';
-            const snippet = cleanText($(element).find('.result__snippet').first().text());
+
+            let snippetEl = $(element).find('a.result__snippet').first();
+            if (!snippetEl.length) {
+                snippetEl = $(element).find('.result__snippet').first();
+            }
+            const snippet = cleanText(snippetEl.text());
 
             if (!href || !title) return;
 
@@ -238,56 +261,109 @@ export class WebSearchTool {
     private async fetchSearchResults(query: string, limit: number, signal?: AbortSignal): Promise<DuckDuckGoResult[]> {
         const results: DuckDuckGoResult[] = [];
 
-        // First page via GET
-        const firstResponse = await axios.get<string>(DUCKDUCKGO_HTML_SEARCH_URL, {
-            params: { q: query },
+        const commonHeaders: Record<string, string> = {
+            'User-Agent': DEFAULT_USER_AGENT,
+            Accept: 'text/html,application/xhtml+xml',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Referer: DUCKDUCKGO_HTML_SEARCH_URL,
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-User': '?1',
+        };
+
+        // First page via POST (DDG HTML endpoint expects POST even for the intro page)
+        const firstPageData = new URLSearchParams({
+            q: query,
+            b: '',
+            kl: DDG_REGION,
+        }).toString();
+
+        const firstResponse = await axios.post<string>(DUCKDUCKGO_HTML_SEARCH_URL, firstPageData, {
             timeout: this.settings.requestTimeoutMs,
-            headers: {
-                'User-Agent': DEFAULT_USER_AGENT,
-                Accept: 'text/html,application/xhtml+xml',
-            },
+            headers: commonHeaders,
             responseType: 'text',
             ...(signal ? { signal } : {}),
         });
 
-        let $ = cheerio.load(firstResponse.data);
-        this.parseResultsFromPage($, results, limit);
+        const $first = cheerio.load(firstResponse.data);
+
+        // Check for CAPTCHA before anything else
+        if (isDdgCaptcha($first)) {
+            this.progress(`Web search: DuckDuckGo returned a CAPTCHA challenge for "${query}" — returning partial results only.`);
+            return results;
+        }
+
+        this.parseResultsFromPage($first, results, limit);
 
         if (results.length >= limit) return results;
 
-        // Extract vqd token required for subsequent pages
-        const vqd = ($('input[name="vqd"]').first().val() as string | undefined) ?? '';
-        if (!vqd) return results;
+        // Extract vqd token from the first page (try multiple selectors)
+        let vqd = ($first('input[name="vqd"]').first().val() as string | undefined) ?? '';
+        if (!vqd) {
+            // Try extracting from a script or link tag as a fallback
+            const vqdMatch = firstResponse.data.match(/vqd=([^"'&\s]+)/);
+            if (vqdMatch && vqdMatch[1]) {
+                vqd = vqdMatch[1];
+            }
+        }
+        if (!vqd) {
+            this.progress(`Web search: could not extract vqd token for "${query}" — pagination unavailable.`);
+            return results;
+        }
 
-        // Subsequent pages via POST with offset (DDG uses steps of 30)
-        let offset = 30;
+        // Cache the vqd token for this query
+        vqdCache.set(query, vqd);
+
+        // Subsequent pages via POST with proper offset stepping.
+        // DDG page 2 offset=10, page 3+ offset=10+(pageNum-2)*15
+        let pageNum = 2;
         while (results.length < limit) {
-            const pageResponse = await axios.post<string>(
-                DUCKDUCKGO_HTML_SEARCH_URL,
-                new URLSearchParams({
-                    q: query,
-                    vqd,
-                    s: String(offset),
-                    dc: String(offset + 1),
-                }).toString(),
-                {
+            const offset = pageNum === 2 ? 10 : 10 + (pageNum - 2) * 15;
+            const pageData = new URLSearchParams({
+                q: query,
+                vqd,
+                s: String(offset),
+                dc: String(offset + 1),
+                nextParams: '',
+                api: 'd.js',
+                o: 'json',
+                v: 'l',
+                kl: DDG_REGION,
+            }).toString();
+
+            let pageResponse;
+            try {
+                pageResponse = await axios.post<string>(DUCKDUCKGO_HTML_SEARCH_URL, pageData, {
                     timeout: this.settings.requestTimeoutMs,
-                    headers: {
-                        'User-Agent': DEFAULT_USER_AGENT,
-                        Accept: 'text/html,application/xhtml+xml',
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        Referer: DUCKDUCKGO_HTML_SEARCH_URL,
-                    },
+                    headers: commonHeaders,
                     responseType: 'text',
                     ...(signal ? { signal } : {}),
-                },
-            );
+                });
+            } catch (err) {
+                // If we get a 403 or network error, stop paginating
+                this.progress(`Web search: pagination request failed for page ${pageNum} (${err instanceof Error ? err.message : String(err)})`);
+                break;
+            }
 
-            $ = cheerio.load(pageResponse.data);
-            const added = this.parseResultsFromPage($, results, limit);
+            const $page = cheerio.load(pageResponse.data);
+
+            if (isDdgCaptcha($page)) {
+                this.progress(`Web search: DuckDuckGo CAPTCHA on page ${pageNum} — stopping pagination.`);
+                break;
+            }
+
+            // Also update vqd from this page if present (may rotate)
+            const freshVqd = ($page('input[name="vqd"]').first().val() as string | undefined) ?? '';
+            if (freshVqd) {
+                vqd = freshVqd;
+                vqdCache.set(query, vqd);
+            }
+
+            const added = this.parseResultsFromPage($page, results, limit);
             if (added === 0) break; // No more results available
 
-            offset += 30;
+            pageNum++;
         }
 
         return results;
