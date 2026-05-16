@@ -1,5 +1,10 @@
 
 import type { ToolSchema } from '../../tools/tools';
+import {
+    discoverSkills,
+    loadSkillState,
+    getEnabledSkills,
+} from '../../services/skillManager';
 
 export const subAgentToolSchema: ToolSchema = {
     name: 'run_subagents',
@@ -66,7 +71,7 @@ const SUB_AGENT_AUTO_COMPACT_NOTICE =
     'The original orchestrator request has been preserved verbatim above. ' +
     'Please continue working on that request without asking for confirmation.';
 
-function buildSubAgentSystemPrompt(): string {
+function buildSubAgentSystemPrompt(skillInfo?: string): string {
     const dateTimeStr = new Date().toLocaleString('en-US', {
         weekday: 'long',
         year: 'numeric',
@@ -78,7 +83,7 @@ function buildSubAgentSystemPrompt(): string {
         timeZoneName: 'short',
     });
 
-    return (
+    let prompt =
         'You are a focused sub-agent running inside Locopilot.\n' +
         `Current date and time: ${dateTimeStr}\n\n` +
         'You are isolated from the parent conversation. The parent agent will provide all required context in the user message.\n' +
@@ -86,8 +91,15 @@ function buildSubAgentSystemPrompt(): string {
         'Work autonomously until the task is complete.\n' +
         'When you are done, return one final concise, self-contained summary for the parent agent.\n' +
         'Do not ask the parent agent for missing context; instead, explain briefly what is missing if the task is blocked.\n' +
-        'Do not mention internal chain-of-thought.\n'
-    );
+        'Do not mention internal chain-of-thought.\n';
+
+    if (skillInfo) {
+        prompt += '\n## Inherited Skills\n' +
+            'The following skills from the parent conversation are active:\n' +
+            skillInfo + '\n';
+    }
+
+    return prompt;
 }
 
 function prefixLines(message: string, prefix: string): string[] {
@@ -285,11 +297,12 @@ async function runSingleAgent(
     onProgress?: (message: string) => void,
     context?: RequestContext,
     signal?: AbortSignal,
+    skillSummary?: string,
 ): Promise<string> {
     const orcPrompt: ChatMessage = { role: 'user', content: agent.prompt };
     const labeledOutput = makeLabeledSink(output, agent.id);
     const messages: ChatMessage[] = [
-        { role: 'system', content: buildSubAgentSystemPrompt() },
+        { role: 'system', content: buildSubAgentSystemPrompt(skillSummary) },
         orcPrompt,
     ];
 
@@ -395,13 +408,35 @@ export class SubAgentTool implements IToolCommand {
 
         const results: CompletedSubAgent[] = [];
 
+        // Compute skill summary for sub-agent inheritance
+        let skillSummary: string | undefined;
+        try {
+            const allSkills = discoverSkills();
+            const skillState = loadSkillState();
+            const enabledSkills = getEnabledSkills(allSkills, skillState);
+            if (enabledSkills.length > 0) {
+                const alwaysApply = enabledSkills.filter((s) => s.alwaysApply);
+                const autoInvoke = enabledSkills.filter((s) => s.autoInvoke && !s.alwaysApply);
+                const parts: string[] = [];
+                if (alwaysApply.length > 0) {
+                    parts.push('Always active:\n' + alwaysApply.map((s) => `- ${s.name}: ${s.description}`).join('\n'));
+                }
+                if (autoInvoke.length > 0) {
+                    parts.push('Available on demand:\n' + autoInvoke.map((s) => `- ${s.name}: ${s.description}`).join('\n'));
+                }
+                if (parts.length > 0) skillSummary = parts.join('\n\n');
+            }
+        } catch {
+            // Best-effort; leave skillSummary undefined
+        }
+
         for (const agent of subAgentArgs.agents as Required<SubAgentSpec>[]) {
             if (isInterruptOrAbort(signal)) {
                 break;
             }
 
             try {
-                const content = await runSingleAgent(agent, config, config.tools, output, onProgress, context, signal);
+                const content = await runSingleAgent(agent, config, config.tools, output, onProgress, context, signal, skillSummary);
                 results.push({ id: agent.id, content });
             } catch (error) {
                 results.push({

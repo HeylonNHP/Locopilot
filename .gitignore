@@ -60,3 +60,12 @@ next-env.d.ts
 
 # TypeScript build info
 *.tsbuildinfo
+
+# ── Skills system ───────────────────────────────────────────
+# User-created skills should not be committed.  The .gitkeep
+# ensures the directory itself is tracked so it exists on clone.
+.locopilot/skills/*
+!.locopilot/skills/.gitkeep
+
+# Per-project skill enable/disable state (user preference)
+.locopilot/skills.json

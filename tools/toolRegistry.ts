@@ -11,6 +11,8 @@
  * mutable state, so multiple HTTP requests can be served concurrently.
  */
 
+import { promises as fsp } from 'fs';
+import * as path from 'path';
 import { WebSearchTool, type WebSearchSettings, type WebSearchToolArgs } from './impl/webSearchTool';
 import { FetchUrlTool, type FetchUrlToolArgs } from './impl/fetchUrlTool';
 import { FetchImageTool, type FetchImageToolArgs, type FetchImageResult } from './impl/fetchImageTool';
@@ -34,6 +36,8 @@ export interface RequestContext {
     yoloMode: boolean;
     webSearch: WebSearchSettings;
     subAgent: SubAgentConfig;
+    /** Tool names allowed by active always-apply skills; undefined = no restriction */
+    allowedTools?: string[] | undefined;
 }
 
 export interface ToolWebSearchConfig {
@@ -82,6 +86,14 @@ export interface ToolCallArguments {
         id?: string;
         prompt?: string;
     }>;
+    skill_name?: string;
+    name?: string;
+    description?: string;
+    body?: string;
+    alwaysApply?: boolean;
+    autoInvoke?: boolean;
+    globPatterns?: string[];
+    allowedTools?: string[];
 }
 
 /** Result returned by a tool command. Most tools only set content; vision tools also set images. */
@@ -100,6 +112,21 @@ export interface IToolCommand {
         context?: RequestContext,
         signal?: AbortSignal,
     ): Promise<ToolCallResult>;
+}
+
+// --- Tool permission helper ---
+
+/**
+ * Checks whether a tool is allowed by the current RequestContext.
+ * Returns an error string if the tool is not allowed, or null if it is.
+ */
+function checkToolAllowed(toolName: string, context?: RequestContext): string | null {
+    if (context?.allowedTools && context.allowedTools.length > 0) {
+        if (!context.allowedTools.includes(toolName)) {
+            return `[Error: tool "${toolName}" is not allowed by the currently active skills. Allowed tools: ${context.allowedTools.join(', ')}]`;
+        }
+    }
+    return null;
 }
 
 // --- Private adapter helpers ---
@@ -195,6 +222,8 @@ export const toolRegistry = new Map<string, IToolCommand>([
         'run_command',
         {
             async execute(args, onProgress, output = noopToolOutputSink, context, signal) {
+                const permErr = checkToolAllowed('run_command', context);
+                if (permErr) return { content: permErr };
                 if (!args.command) return { content: '[Error: missing required argument "command"]' };
                 let timeoutMs = DEFAULT_TIMEOUT_MS;
                 if (args.timeout_seconds !== undefined) {
@@ -221,7 +250,9 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'check_process_output',
         {
-            async execute(args, onProgress, _output, _context, signal) {
+            async execute(args, onProgress, _output, context, signal) {
+                const permErr = checkToolAllowed('check_process_output', context);
+                if (permErr) return { content: permErr };
                 if (args.process_id === undefined) {
                     return { content: '[Error: missing required argument "process_id"]' };
                 }
@@ -242,6 +273,8 @@ export const toolRegistry = new Map<string, IToolCommand>([
         'web_search',
         {
             async execute(args, onProgress, output = noopToolOutputSink, context, signal) {
+                const permErr = checkToolAllowed('web_search', context);
+                if (permErr) return { content: permErr };
                 const parsedQueries = parseQueriesInput(args.queries);
                 const webArgs: WebSearchToolArgs = {};
 
@@ -289,6 +322,8 @@ export const toolRegistry = new Map<string, IToolCommand>([
         'fetch_url',
         {
             async execute(args, onProgress, output = noopToolOutputSink, context, signal) {
+                const permErr = checkToolAllowed('fetch_url', context);
+                if (permErr) return { content: permErr };
                 if (typeof args.url !== 'string' || args.url.trim().length === 0) {
                     return { content: '[Error: missing required argument "url"]' };
                 }
@@ -317,7 +352,9 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'fetch_image',
         {
-            async execute(args, onProgress, output = noopToolOutputSink, _context, signal) {
+            async execute(args, onProgress, output = noopToolOutputSink, context, signal) {
+                const permErr = checkToolAllowed('fetch_image', context);
+                if (permErr) return { content: permErr };
                 if (typeof args.source !== 'string' || args.source.trim().length === 0) {
                     return { content: '[Error: missing required argument "source"]' };
                 }
@@ -329,6 +366,8 @@ export const toolRegistry = new Map<string, IToolCommand>([
         'read_file',
         {
             async execute(args, _onProgress, output = noopToolOutputSink, context, signal) {
+                const permErr = checkToolAllowed('read_file', context);
+                if (permErr) return { content: permErr };
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -350,7 +389,9 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'patch_file',
         {
-            async execute(args, _onProgress, output = noopToolOutputSink, _context, signal) {
+            async execute(args, _onProgress, output = noopToolOutputSink, context, signal) {
+                const permErr = checkToolAllowed('patch_file', context);
+                if (permErr) return { content: permErr };
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -369,7 +410,9 @@ export const toolRegistry = new Map<string, IToolCommand>([
     [
         'write_file',
         {
-            async execute(args, _onProgress, output = noopToolOutputSink, _context, signal) {
+            async execute(args, _onProgress, output = noopToolOutputSink, context, signal) {
+                const permErr = checkToolAllowed('write_file', context);
+                if (permErr) return { content: permErr };
                 if (typeof args.path !== 'string' || args.path.trim().length === 0) {
                     return { content: '[Error: missing required argument "path"]' };
                 }
@@ -390,9 +433,92 @@ export const toolRegistry = new Map<string, IToolCommand>([
         'run_subagents',
         {
             async execute(args, onProgress, output = noopToolOutputSink, context, signal) {
+                const permErr = checkToolAllowed('run_subagents', context);
+                if (permErr) return { content: permErr };
                 const { SubAgentTool } = await import('./impl/subAgentTool');
                 const tool = new SubAgentTool();
                 return tool.execute(args, onProgress, output, context, signal);
+            },
+        },
+    ],
+    [
+        'load_skill',
+        {
+            async execute(args, _onProgress, _output, context) {
+                const permErr = checkToolAllowed('load_skill', context);
+                if (permErr) return { content: permErr };
+                if (typeof args.skill_name !== 'string' || args.skill_name.trim().length === 0) {
+                    return { content: '[Error: missing required argument "skill_name"]' };
+                }
+
+                // Dynamic import to avoid circular deps (skillManager imports from services/)
+                const { getSkillByName, discoverSkills, loadSkillState, getEnabledSkills } = await import('../services/skillManager');
+                const skillName = args.skill_name.trim();
+                const skill = getSkillByName(skillName);
+
+                if (!skill) {
+                    // Re-discover in case cache is stale
+                    const allSkills = discoverSkills();
+                    const state = loadSkillState();
+                    const enabled = getEnabledSkills(allSkills, state);
+                    const available = enabled
+                        .filter((s) => s.autoInvoke)
+                        .map((s) => s.name)
+                        .join(', ');
+                    return { content: `[Skill "${skillName}" not found or not enabled. Available skills: ${available || '(none)'}]` };
+                }
+
+                return { content: skill.body };
+            },
+        },
+    ],
+    [
+        'create_skill',
+        {
+            async execute(args, _onProgress, _output, context) {
+                const permErr = checkToolAllowed('create_skill', context);
+                if (permErr) return { content: permErr };
+                if (typeof args.name !== 'string' || args.name.trim().length === 0) {
+                    return { content: '[Error: missing required argument "name"]' };
+                }
+                if (typeof args.description !== 'string' || args.description.trim().length === 0) {
+                    return { content: '[Error: missing required argument "description"]' };
+                }
+                if (typeof args.body !== 'string' || args.body.trim().length === 0) {
+                    return { content: '[Error: missing required argument "body"]' };
+                }
+
+                const sanitizedName = args.name.trim().toLowerCase().replace(/\s+/g, '-');
+                const skillDir = path.join(process.cwd(), '.locopilot', 'skills', sanitizedName);
+                const skillMdPath = path.join(skillDir, 'SKILL.md');
+
+                const alwaysApply = args.alwaysApply === true;
+                const autoInvoke = args.autoInvoke !== false; // default true
+
+                let frontmatter = `---\nname: ${sanitizedName}\ndescription: ${args.description.trim()}\nalwaysApply: ${alwaysApply}\nautoInvoke: ${autoInvoke}\n`;
+
+                if (Array.isArray(args.globPatterns) && args.globPatterns.length > 0) {
+                    frontmatter += `globPatterns: ${JSON.stringify(args.globPatterns)}\n`;
+                }
+                if (Array.isArray(args.allowedTools) && args.allowedTools.length > 0) {
+                    frontmatter += `allowedTools: ${JSON.stringify(args.allowedTools)}\n`;
+                }
+
+                frontmatter += `---\n\n${args.body.trim()}\n`;
+
+                try {
+                    await fsp.mkdir(skillDir, { recursive: true });
+                    await fsp.writeFile(skillMdPath, frontmatter, 'utf-8');
+
+                    // Dynamic import to avoid circular deps
+                    const { invalidateSkillCache } = await import('../services/skillManager');
+                    invalidateSkillCache();
+
+                    return { content: `Skill "${sanitizedName}" created successfully at ${skillMdPath}.` };
+                } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    return { content: `[Error: failed to create skill "${sanitizedName}": ${msg}]` };
+                }
             },
         },
     ],

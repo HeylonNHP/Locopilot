@@ -10,6 +10,7 @@ import { useSessionUrlParam } from './hooks/useSessionUrlParam';
 import ChatMessageBubble from '@/components/ChatMessageBubble';
 import ChatInput from '@/components/ChatInput';
 import SessionSidebar from '@/components/SessionSidebar';
+import SkillsPanel from '@/components/SkillsPanel';
 import ApprovalModal from '@/components/ApprovalModal';
 import StatusBar from '@/components/StatusBar';
 import SettingsModal from '@/components/SettingsModal';
@@ -277,6 +278,8 @@ function HomeInner() {
           onReject={handleReject}
         />
       )}
+
+      <SkillsPanel onPromptAI={handleSend} />
 
       {showSettings && <SettingsModal onClose={handleCloseSettings} />}
     </div>

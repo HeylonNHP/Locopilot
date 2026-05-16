@@ -33,6 +33,7 @@ import { countMessagesTokens } from '../../../services/tokenizer';
 import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
 import { createSystemPrompt } from '../../../services/chatSession';
+import { discoverSkills, loadSkillState, getEnabledSkills, getAllowedToolsFromSkills } from '../../../services/skillManager';
 import { enterRequestScope } from '../../../tools/impl/runCommandTool';
 
 // Prevent static generation – this route must always run on the server.
@@ -255,8 +256,20 @@ export async function POST(req: NextRequest): Promise<Response> {
                         effectiveCompactionModel = resolveCompactionModel(config.compactionModel, model as string);
                     }
 
+                    // Compute allowedTools from always-apply skills (best-effort)
+                    let allowedTools: string[] | undefined;
+                    try {
+                        const allSkills = discoverSkills();
+                        const skillState = loadSkillState();
+                        const enabledSkills = getEnabledSkills(allSkills, skillState);
+                        allowedTools = getAllowedToolsFromSkills(enabledSkills.filter((s) => s.alwaysApply));
+                    } catch {
+                        // Skills discovery is best-effort; leave allowedTools undefined
+                    }
+
                     requestContext = {
                         yoloMode: config?.yolo ?? false,
+                        allowedTools,
                         webSearch: {
                             maxQueries: config?.webSearch?.maxQueries ?? 3,
                             resultsPerQuery: config?.webSearch?.resultsPerQuery ?? 3,
@@ -277,6 +290,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // Config load is best-effort; defaults already apply.
                     requestContext = {
                         yoloMode: false,
+                        allowedTools: undefined,
                         webSearch: {
                             maxQueries: 3,
                             resultsPerQuery: 3,

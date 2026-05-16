@@ -14,6 +14,10 @@ export interface Config {
         resultsPerQuery: number;
         perPageCharLimit: number;
     };
+    skills?: {
+        enabled: string[];
+        disabled: string[];
+    };
 }
 
 export interface ChatContext {

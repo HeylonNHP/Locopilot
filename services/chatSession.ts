@@ -46,6 +46,13 @@ import {
     DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
 } from '../constants';
 import { saveConfig as persistConfig } from './configManager';
+import {
+    discoverSkills,
+    loadSkillState,
+    getEnabledSkills,
+    buildAlwaysApplyPrompt,
+    buildAvailableSkillsSummary,
+} from './skillManager';
 import type { Config, ChatContext } from '../types/chatConfig';
 
 export interface ChatSessionState {
@@ -95,10 +102,23 @@ export function createSystemPrompt(visionSupported?: boolean, yoloMode: boolean 
         hour: "2-digit", minute: "2-digit", second: "2-digit",
         timeZoneName: "short"
     });
+
+    // Load skills
+    const allSkills = discoverSkills();
+    const state = loadSkillState();
+    const enabledSkills = getEnabledSkills(allSkills, state);
+    const alwaysApplySection = buildAlwaysApplyPrompt(enabledSkills);
+    const availableSkillsSection = buildAvailableSkillsSummary(enabledSkills);
+
     return (
         `You are Locopilot, a helpful AI assistant running inside a terminal application.\n` +
-        `Current date and time: ${dateTimeStr}\n\n` +
-        getToolSystemPrompt(yoloMode, visionSupported)
+        `Current date and time: ${dateTimeStr}\n` +
+        `${alwaysApplySection}` +
+        `\n` +
+        getToolSystemPrompt(yoloMode, visionSupported) +
+        `${availableSkillsSection}` +
+        `\nYou may call \`load_skill\` to load the full instructions for any available skill listed above.\n` +
+        `Skill creation: You can create new skills for the user by calling create_skill(name, description, body, ...). This writes a SKILL.md file to .locopilot/skills/<name>/ that becomes immediately available. Use this proactively when the user describes a reusable convention or workflow they'd like to preserve. You can also update existing skills by calling create_skill with the same name.\n`
     );
 }
 

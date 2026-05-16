@@ -26,6 +26,10 @@ import { fetchImageToolSchema } from './impl/fetchImageTool';
 import { readFileToolSchema } from './impl/readFileTool';
 import { patchFileToolSchema } from './impl/patchFileTool';
 import { writeFileToolSchema } from './impl/writeFileTool';
+import { loadSkillToolSchema } from './impl/loadSkillTool';
+import { getToolPrompt as getLoadSkillPrompt } from './impl/loadSkillTool';
+import { createSkillToolSchema } from './impl/createSkillTool';
+import { getToolPrompt as getCreateSkillPrompt } from './impl/createSkillTool';
 
 // Keep defaultShell export (used in runCommandToolSchema via defaultShell() call)
 export { defaultShell } from './impl/runCommandTool';
@@ -130,6 +134,14 @@ export const TOOLS: OllamaTool[] = [
         type: 'function',
         function: subAgentToolSchema,
     },
+    {
+        type: 'function',
+        function: loadSkillToolSchema,
+    },
+    {
+        type: 'function',
+        function: createSkillToolSchema,
+    },
 ];
 
 /**
@@ -148,6 +160,8 @@ export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean
         getReadFilePrompt() +
         getPatchFilePrompt() +
         getWriteFilePrompt() +
+        getLoadSkillPrompt() +
+        getCreateSkillPrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- Use sub-agents aggressively for any information-heavy or multi-step work — they absorb intermediate results into isolated contexts, preserving your own context window for high-level reasoning. You do NOT need the user to request them.\n' +
@@ -166,7 +180,10 @@ export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean
         'When the user asks you to do something that involves the filesystem, the terminal,\n' +
         'running programs, or inspecting the system, use these tools rather than refusing\n' +
         'or guessing. Always prefer calling a tool over saying you cannot do something.\n' +
-        'When a command completes, summarise its output clearly for the user.'
+        'When a command completes, summarise its output clearly for the user.\n' +
+        '\n' +
+        'Skills: Use \`load_skill(skill_name)\` to retrieve full instructions for any skill listed under "Available Skills" above. ' +
+        'Only call load_skill when a skill is clearly relevant to the current task.'
     );
 }
 // Automatic nudging was removed in favour of a manual `/nudge` command.
