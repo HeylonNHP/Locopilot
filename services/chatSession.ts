@@ -47,7 +47,8 @@ import {
 } from '../constants';
 import { saveConfig as persistConfig } from './configManager';
 import {
-    discoverSkills,
+    getCachedSkills,
+    invalidateSkillCache,
     loadSkillState,
     getEnabledSkills,
     buildAlwaysApplyPrompt,
@@ -103,8 +104,11 @@ export function createSystemPrompt(visionSupported?: boolean, yoloMode: boolean 
         timeZoneName: "short"
     });
 
-    // Load skills
-    const allSkills = discoverSkills();
+    // Refresh skill cache at conversation boundaries (start / compaction)
+    invalidateSkillCache();
+
+    // Load skills from the unified cache so system prompt and load_skill agree
+    const allSkills = getCachedSkills();
     const state = loadSkillState();
     const enabledSkills = getEnabledSkills(allSkills, state);
     const alwaysApplySection = buildAlwaysApplyPrompt(enabledSkills);

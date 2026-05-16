@@ -108,6 +108,17 @@ function HomeInner() {
     controller?.abort();
   }, [state.currentSessionId]);
 
+  const handleSkillPrompt = useCallback(
+    (message: string) => {
+      if (isCurrentSessionStreaming) {
+        dispatch({ type: 'ADD_MESSAGE', message: { role: 'system', content: 'Cannot manage skills while the AI is responding. Stop the response first.' } });
+        return;
+      }
+      handleSend(message);
+    },
+    [isCurrentSessionStreaming, handleSend, dispatch],
+  );
+
   const handleApprove = useCallback(async () => {
     const requestId = state.pendingApprovalId;
     if (requestId) {
@@ -279,7 +290,7 @@ function HomeInner() {
         />
       )}
 
-      <SkillsPanel onPromptAI={handleSend} />
+      <SkillsPanel onPromptAI={handleSkillPrompt} />
 
       {showSettings && <SettingsModal onClose={handleCloseSettings} />}
     </div>

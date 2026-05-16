@@ -175,6 +175,21 @@ function getStateFilePath(projectDir?: string): string {
     return path.join(base, '.locopilot', 'skills.json');
 }
 
+// ── Write queue to serialise concurrent skill-state mutations ─────────────
+
+let skillStateWriteQueue: Promise<void> = Promise.resolve();
+
+async function saveSkillStateUnqueued(
+    state: { enabled: string[]; disabled: string[] },
+    projectDir?: string,
+): Promise<void> {
+    const statePath = getStateFilePath(projectDir);
+    const dir = path.dirname(statePath);
+
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(statePath, JSON.stringify({ enabled: state.enabled, disabled: state.disabled }, null, 2), 'utf-8');
+}
+
 /**
  * Load enabled skill names from .locopilot/skills.json.
  * If skills.json doesn't exist, returns empty arrays.
@@ -200,50 +215,83 @@ export function loadSkillState(projectDir?: string): { enabled: string[]; disabl
 
 /**
  * Save enabled/disabled state to .locopilot/skills.json.
+ * Delegates to the write queue so concurrent mutations are serialised.
  */
 export async function saveSkillState(
     state: { enabled: string[]; disabled: string[] },
     projectDir?: string,
 ): Promise<void> {
-    const statePath = getStateFilePath(projectDir);
-    const dir = path.dirname(statePath);
-
-    await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(statePath, JSON.stringify({ enabled: state.enabled, disabled: state.disabled }, null, 2), 'utf-8');
+    skillStateWriteQueue = skillStateWriteQueue.then(
+        () => saveSkillStateUnqueued(state, projectDir),
+        () => saveSkillStateUnqueued(state, projectDir),
+    );
+    return skillStateWriteQueue;
 }
 
 /**
  * Enable a skill (add to enabled, remove from disabled).
+ * The read-modify-write runs inside the write queue to prevent TOCTOU races.
  */
 export async function enableSkill(name: string, projectDir?: string): Promise<void> {
-    const state = loadSkillState(projectDir);
-    const enabled = new Set(state.enabled);
-    const disabled = new Set(state.disabled);
+    skillStateWriteQueue = skillStateWriteQueue.then(async () => {
+        const state = loadSkillState(projectDir);
+        const enabled = new Set(state.enabled);
+        const disabled = new Set(state.disabled);
 
-    enabled.add(name);
-    disabled.delete(name);
+        enabled.add(name);
+        disabled.delete(name);
 
-    await saveSkillState(
-        { enabled: Array.from(enabled), disabled: Array.from(disabled) },
-        projectDir,
-    );
+        await saveSkillStateUnqueued(
+            { enabled: Array.from(enabled), disabled: Array.from(disabled) },
+            projectDir,
+        );
+    }, async () => {
+        const state = loadSkillState(projectDir);
+        const enabled = new Set(state.enabled);
+        const disabled = new Set(state.disabled);
+
+        enabled.add(name);
+        disabled.delete(name);
+
+        await saveSkillStateUnqueued(
+            { enabled: Array.from(enabled), disabled: Array.from(disabled) },
+            projectDir,
+        );
+    });
+    return skillStateWriteQueue;
 }
 
 /**
  * Disable a skill (add to disabled, remove from enabled).
+ * The read-modify-write runs inside the write queue to prevent TOCTOU races.
  */
 export async function disableSkill(name: string, projectDir?: string): Promise<void> {
-    const state = loadSkillState(projectDir);
-    const enabled = new Set(state.enabled);
-    const disabled = new Set(state.disabled);
+    skillStateWriteQueue = skillStateWriteQueue.then(async () => {
+        const state = loadSkillState(projectDir);
+        const enabled = new Set(state.enabled);
+        const disabled = new Set(state.disabled);
 
-    disabled.add(name);
-    enabled.delete(name);
+        disabled.add(name);
+        enabled.delete(name);
 
-    await saveSkillState(
-        { enabled: Array.from(enabled), disabled: Array.from(disabled) },
-        projectDir,
-    );
+        await saveSkillStateUnqueued(
+            { enabled: Array.from(enabled), disabled: Array.from(disabled) },
+            projectDir,
+        );
+    }, async () => {
+        const state = loadSkillState(projectDir);
+        const enabled = new Set(state.enabled);
+        const disabled = new Set(state.disabled);
+
+        disabled.add(name);
+        enabled.delete(name);
+
+        await saveSkillStateUnqueued(
+            { enabled: Array.from(enabled), disabled: Array.from(disabled) },
+            projectDir,
+        );
+    });
+    return skillStateWriteQueue;
 }
 
 // ── Filtering ────────────────────────────────────────────────────────────────
@@ -424,6 +472,14 @@ export function getSkillByName(name: string): Skill | undefined {
     if (enabled.length === 0) return undefined;
 
     return skill;
+}
+
+/**
+ * Get all currently cached skills (for system-prompt construction).
+ * Calls ensureCache() so the cache is populated if not yet initialised.
+ */
+export function getCachedSkills(): Skill[] {
+    return Array.from(ensureCache().values());
 }
 
 /**

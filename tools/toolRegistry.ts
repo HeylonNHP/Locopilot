@@ -452,11 +452,13 @@ export const toolRegistry = new Map<string, IToolCommand>([
                 }
 
                 // Dynamic import to avoid circular deps (skillManager imports from services/)
-                const { getSkillByName, discoverSkills, loadSkillState, getEnabledSkills } = await import('../services/skillManager');
+                const { getSkillByName, discoverSkills, loadSkillState, getEnabledSkills, invalidateSkillCache } = await import('../services/skillManager');
                 const skillName = args.skill_name.trim();
                 const skill = getSkillByName(skillName);
 
                 if (!skill) {
+                    // Cache may be stale — invalidate before re-discovering
+                    invalidateSkillCache();
                     // Re-discover in case cache is stale
                     const allSkills = discoverSkills();
                     const state = loadSkillState();
@@ -489,7 +491,21 @@ export const toolRegistry = new Map<string, IToolCommand>([
                 }
 
                 const sanitizedName = args.name.trim().toLowerCase().replace(/\s+/g, '-');
-                const skillDir = path.join(process.cwd(), '.locopilot', 'skills', sanitizedName);
+
+                // Validate skill name to prevent path traversal
+                if (sanitizedName.length === 0 || sanitizedName.length > 64 || /^[.\-]/.test(sanitizedName)) {
+                    return { content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]` };
+                }
+                if (/[/\\\x00]/.test(sanitizedName) || sanitizedName.includes('..')) {
+                    return { content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]` };
+                }
+
+                const skillsBaseDir = path.resolve(process.cwd(), '.locopilot', 'skills');
+                const skillDir = path.resolve(skillsBaseDir, sanitizedName);
+                if (!skillDir.startsWith(skillsBaseDir + path.sep) && skillDir !== skillsBaseDir) {
+                    return { content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]` };
+                }
+
                 const skillMdPath = path.join(skillDir, 'SKILL.md');
 
                 const alwaysApply = args.alwaysApply === true;
