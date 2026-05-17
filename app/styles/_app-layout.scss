@@ -16,6 +16,8 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  // Keep content clear of the fixed SkillsPanel (36px collapsed width + 4px buffer)
+  margin-right: 40px;
 }
 
 .messages-area {

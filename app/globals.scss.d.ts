@@ -1,1 +1,4 @@
-// Type declaration for global SCSS imports (used by layout.tsx)
+declare module '*.scss' {
+  const content: Record<string, string>;
+  export default content;
+}
