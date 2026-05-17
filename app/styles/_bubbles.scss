@@ -1,0 +1,193 @@
+// ================================================================
+//  Component: ChatMessageBubble
+// ================================================================
+
+// ── User bubble ──────────────────────────────────────────────
+.bubble-user {
+  &-wrap {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
+  }
+
+  max-width: 70%;
+  padding: 10px 16px;
+  border-radius: 20px 20px 4px 20px;
+  background: linear-gradient(180deg, #33D1FF 0%, #00A8E8 60%, #0077B6 100%);
+  color: white;
+  font-size: 14px;
+  line-height: 1.5;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    0 4px 12px rgba(0, 120, 180, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.45) 0%,
+      rgba(255, 255, 255, 0.15) 40%,
+      transparent 40%
+    );
+    pointer-events: none;
+  }
+}
+
+// ── Tool result bubble ───────────────────────────────────────
+.bubble-tool {
+  &-wrap {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 4px;
+  }
+
+  max-width: 90%;
+  border-radius: 12px;
+  background: rgba(200, 245, 255, 0.25);
+  border: 1px solid var(--glass-border-soft);
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0, 80, 120, 0.06);
+
+  &-content {
+    padding: 8px 12px;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    overflow: auto;
+    max-height: 200px;
+  }
+}
+
+// ── System message ───────────────────────────────────────────
+.bubble-system {
+  &-wrap {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+
+  max-width: 80%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255, 245, 200, 0.3);
+  border: 1px solid rgba(255, 220, 100, 0.3);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #8a7a4a;
+  white-space: pre-wrap;
+  text-align: center;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(100, 80, 0, 0.05);
+}
+
+// ── Sub-agent log ────────────────────────────────────────────
+.bubble-subagent {
+  &-wrap {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 4px;
+  }
+
+  max-width: 90%;
+  border-radius: 12px;
+  background: rgba(220, 255, 220, 0.25);
+  border: 1px solid rgba(113, 171, 35, 0.2);
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0, 80, 0, 0.05);
+
+  &-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-align: left;
+    transition: color 0.2s ease;
+
+    &:hover {
+      color: var(--text-primary);
+    }
+
+    &-open {
+      border-bottom: 1px solid rgba(113, 171, 35, 0.15);
+    }
+  }
+
+  &-log {
+    margin: 0;
+    padding: 8px 12px;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    overflow-y: auto;
+    max-height: 300px;
+  }
+}
+
+// ── AI / assistant bubble ────────────────────────────────────
+.bubble-ai {
+  &-wrap {
+    margin-bottom: 12px;
+  }
+
+  &-msg {
+    max-width: 80%;
+    padding: 12px 18px;
+    border-radius: 20px 20px 20px 4px;
+    background: rgba(255, 255, 255, 0.22);
+    border: 1px solid var(--glass-border);
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: normal;
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    box-shadow: 0 4px 16px rgba(0, 80, 120, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    color: var(--text-primary);
+  }
+}
+
+// ── Thinking toggle ──────────────────────────────────────────
+.bubble-thinking {
+  &-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 0;
+    transition: color 0.2s ease;
+
+    &:hover {
+      color: var(--accent);
+    }
+  }
+
+  &-box {
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    border-left: 3px solid var(--accent);
+    margin-top: 4px;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+}

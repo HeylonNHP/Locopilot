@@ -1,0 +1,16 @@
+// ================================================================
+//  Locopilot styles.scss — utilities, components, scrollbar
+//  Loaded in root layout alongside globals.scss
+// ================================================================
+
+@use 'styles/utilities';
+@use 'styles/scrollbar';
+@use 'styles/sidebar';
+@use 'styles/bubbles';
+@use 'styles/chat-input';
+@use 'styles/statusbar';
+@use 'styles/model-selector';
+@use 'styles/approval-modal';
+@use 'styles/settings-modal';
+@use 'styles/skills-panel';
+@use 'styles/app-layout';

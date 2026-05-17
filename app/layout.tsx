@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
-import './globals.css';
-import './styles.css';
+import './globals.scss';
+import './styles.scss';
 import { ChatProvider } from './lib/chatStore';
 
 export const metadata: Metadata = {

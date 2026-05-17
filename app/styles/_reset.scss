@@ -1,0 +1,41 @@
+// ================================================================
+//  CSS Reset & base element styles
+// ================================================================
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Oxygen, Ubuntu, sans-serif;
+  background:
+    // Floating bubbles
+    radial-gradient(circle at 15% 25%, rgba(255, 255, 255, 0.35) 0%, transparent 25%),
+    radial-gradient(circle at 75% 15%, rgba(255, 255, 255, 0.25) 0%, transparent 20%),
+    radial-gradient(circle at 55% 65%, rgba(255, 255, 255, 0.2) 0%, transparent 18%),
+    radial-gradient(circle at 85% 80%, rgba(255, 255, 255, 0.3) 0%, transparent 22%),
+    radial-gradient(circle at 35% 85%, rgba(255, 255, 255, 0.15) 0%, transparent 15%),
+    // Sky to grass gradient
+    linear-gradient(170deg,
+      #4FC3F7 0%,
+      #81D4FA 15%,
+      #B3E5FC 30%,
+      #E1F5FE 45%,
+      #F1F8E9 60%,
+      #DCEDC8 75%,
+      #C5E1A5 90%,
+      #AED581 100%
+    );
+  background-attachment: fixed;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  display: flex;
+}

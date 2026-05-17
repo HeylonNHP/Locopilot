@@ -1,0 +1,54 @@
+// ================================================================
+//  Component: StatusBar
+// ================================================================
+
+.statusbar {
+  padding: 6px 16px;
+  border-top: 1px solid var(--glass-border-soft);
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+
+  &-streaming {
+    color: var(--accent);
+    font-weight: 600;
+    text-shadow: 0 0 8px rgba(0, 168, 232, 0.3);
+  }
+
+  &-token {
+    &-green {
+      color: #22c55e;
+      font-weight: 600;
+    }
+
+    &-yellow {
+      color: #eab308;
+      font-weight: 600;
+    }
+
+    &-red {
+      color: #ef4444;
+      font-weight: 600;
+    }
+  }
+
+  &-model {
+    cursor: pointer;
+    transition: color 0.2s ease;
+    user-select: none;
+    border-radius: 6px;
+    padding: 2px 6px;
+    margin: -2px -6px;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--accent);
+      background: rgba(0, 168, 232, 0.1);
+    }
+  }
+}

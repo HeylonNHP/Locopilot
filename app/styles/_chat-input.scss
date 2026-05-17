@@ -1,0 +1,124 @@
+@use 'mixins' as *;
+
+// ================================================================
+//  Component: ChatInput
+// ================================================================
+
+.chat-input {
+  &-wrap {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+
+  &-field-wrap {
+    flex: 1;
+    position: relative;
+  }
+
+  // ── Slash-command autocomplete ───────────────────────────────
+  &-suggestions {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    background: rgba(248, 252, 255, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 16px;
+    z-index: 10;
+    overflow: hidden;
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    box-shadow: 0 16px 40px rgba(0, 60, 100, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+
+  &-suggestion-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background 0.15s ease;
+
+    &:hover {
+      background: rgba(0, 168, 232, 0.1);
+    }
+  }
+
+  &-suggestion-active {
+    background: rgba(0, 168, 232, 0.15);
+  }
+
+  &-suggestion-cmd {
+    font-family: monospace;
+  }
+
+  &-suggestion-desc {
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  // ── Textarea ─────────────────────────────────────────────────
+  &-textarea {
+    width: 100%;
+    padding: 12px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.35);
+    color: var(--text-primary);
+    font-size: 14px;
+    resize: none;
+    overflow-y: hidden;
+    max-height: 200px;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+    box-shadow: inset 0 2px 4px rgba(0, 60, 100, 0.06), 0 2px 8px rgba(0, 80, 120, 0.06);
+
+    &::placeholder {
+      color: var(--text-secondary);
+      opacity: 0.7;
+    }
+
+    &:focus {
+      background: rgba(255, 255, 255, 0.5);
+      border-color: rgba(0, 168, 232, 0.5);
+      box-shadow:
+        inset 0 2px 4px rgba(0, 60, 100, 0.06),
+        0 0 0 3px rgba(0, 168, 232, 0.15),
+        0 4px 12px rgba(0, 80, 120, 0.1);
+    }
+
+    &.chat-input-drag-active {
+      background: rgba(255, 255, 255, 0.65);
+      border-color: rgba(0, 168, 232, 0.8);
+      box-shadow:
+        0 0 0 4px rgba(0, 168, 232, 0.2),
+        inset 0 2px 4px rgba(0, 60, 100, 0.06),
+        0 4px 12px rgba(0, 80, 120, 0.1);
+    }
+  }
+
+  // ── Send button ──────────────────────────────────────────────
+  &-send {
+    padding: 12px 24px;
+    border-radius: 50px;
+    border: none;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+
+    &-active {
+      @include gel-button;
+    }
+
+    &-disabled {
+      @include gel-button-disabled;
+    }
+  }
+}

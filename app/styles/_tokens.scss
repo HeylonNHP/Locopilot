@@ -1,0 +1,33 @@
+// ================================================================
+//  Locopilot Design Tokens — Frutiger Aero palette
+//  CSS custom properties for runtime theming
+// ================================================================
+
+:root {
+  // ── Nature palette ─────────────────────────────────────────
+  --sky-deep: #0689E4;
+  --sky-bright: #00A8E8;
+  --sky-light: #87CEEB;
+  --aqua: #00C4C7;
+  --grass: #71AB23;
+  --sun: #FBB905;
+  --cloud: #F0F8FF;
+  --glass-white: rgba(255, 255, 255, 0.15);
+  --glass-heavy: rgba(255, 255, 255, 0.28);
+  --glass-light: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(255, 255, 255, 0.45);
+  --glass-border-soft: rgba(255, 255, 255, 0.25);
+
+  // ── Functional tokens ──────────────────────────────────────
+  --bg-primary: transparent;
+  --bg-secondary: var(--glass-white);
+  --bg-tertiary: var(--glass-light);
+  --text-primary: #1a3a5c;
+  --text-secondary: #5a7a9a;
+  --text-white: #ffffff;
+  --accent: #00A8E8;
+  --accent-hover: #33D1FF;
+  --accent-green: #71AB23;
+  --shadow-soft: 0 8px 32px rgba(0, 80, 120, 0.12);
+  --shadow-lift: 0 12px 40px rgba(0, 60, 100, 0.18);
+}

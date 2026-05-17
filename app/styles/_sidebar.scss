@@ -1,0 +1,113 @@
+@use 'mixins' as *;
+
+// ================================================================
+//  Component: SessionSidebar
+// ================================================================
+
+.sidebar {
+  width: 260px;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border-right: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-shadow: 4px 0 24px rgba(0, 60, 100, 0.08);
+
+  &-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--glass-border-soft);
+  }
+
+  &-title {
+    font-size: 18px;
+    margin: 0 0 12px 0;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+
+  &-btn-new {
+    flex: 1;
+    @include pill-btn-ghost;
+    border-style: dashed;
+  }
+
+  &-btn-settings {
+    @include pill-btn-ghost;
+  }
+
+  &-search {
+    &-wrap {
+      position: relative;
+      padding: 0 16px;
+      margin-bottom: 12px;
+    }
+
+    width: 100%;
+    padding: 6px 28px 6px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--glass-border-soft);
+    background: rgba(255, 255, 255, 0.45);
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
+    box-sizing: border-box;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition: all 0.2s ease;
+
+    &::placeholder {
+      color: var(--text-secondary);
+      opacity: 0.7;
+    }
+
+    &:focus {
+      background: rgba(255, 255, 255, 0.6);
+      border-color: rgba(0, 168, 232, 0.5);
+      box-shadow: 0 0 0 3px rgba(0, 168, 232, 0.15);
+    }
+
+    &-clear {
+      position: absolute;
+      right: 28px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      padding: 2px 4px;
+      opacity: 0.6;
+      transition: opacity 0.2s ease;
+
+      &:hover {
+        opacity: 1;
+        color: var(--text-primary);
+      }
+    }
+  }
+
+  &-empty {
+    color: var(--text-secondary);
+    font-size: 13px;
+    padding: 8px;
+    text-align: center;
+  }
+
+  &-footer {
+    padding: 12px 16px;
+    border-top: 1px solid var(--glass-border-soft);
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color 0.2s ease;
+
+    &:hover {
+      color: var(--text-primary);
+    }
+  }
+}

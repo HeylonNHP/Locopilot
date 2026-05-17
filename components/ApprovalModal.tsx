@@ -1,7 +1,5 @@
 'use client';
 
-import '@/app/styles.css';
-
 interface Props {
   command: { name: string; args: any };
   onApprove: () => void;

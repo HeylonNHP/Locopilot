@@ -1,0 +1,9 @@
+// ================================================================
+//  Locopilot globals.scss — reset, tokens, shared abstractions
+//  Loaded in root layout
+// ================================================================
+
+@use 'styles/reset';
+@use 'styles/tokens';
+@use 'styles/animations';
+@use 'styles/shared';

@@ -1,0 +1,135 @@
+@use 'mixins' as *;
+
+// ================================================================
+//  Component: SettingsModal
+// ================================================================
+
+.settings {
+  &-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(100, 180, 255, 0.25);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &-panel {
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 24px;
+    width: 480px;
+    max-width: 90%;
+    max-height: 90vh;
+    border: 1px solid var(--glass-border);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    box-shadow: var(--shadow-lift), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+
+  &-scroll {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  &-heading {
+    margin: 0 0 16px 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+
+  &-error {
+    margin-bottom: 16px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(220, 80, 80, 0.4);
+    background: rgba(255, 200, 200, 0.35);
+    color: #a03030;
+    font-size: 13px;
+    line-height: 1.5;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+
+  &-row {
+    margin-bottom: 16px;
+  }
+
+  &-label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+
+  &-input {
+    @include glass-input;
+    font-size: 14px;
+  }
+
+  &-check-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &-check-label {
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+
+  &-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    padding: 16px 24px;
+    border-top: 1px solid var(--glass-border-soft);
+  }
+
+  &-btn-cancel {
+    padding: 8px 16px;
+    border-radius: 50px;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.3);
+      box-shadow: 0 2px 8px rgba(0, 80, 120, 0.1);
+    }
+  }
+
+  &-btn-save {
+    padding: 8px 16px;
+    border-radius: 50px;
+    border: none;
+    color: white;
+    font-weight: 600;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+
+    &-active {
+      @include gel-button;
+    }
+
+    &-disabled {
+      @include gel-button-disabled;
+      cursor: progress;
+    }
+  }
+}
