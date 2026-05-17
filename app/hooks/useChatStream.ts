@@ -28,7 +28,7 @@ export function useChatStream(
   const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: any }>>>(new Map());
   const subagentBufferRef = useRef<Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null; sessionId?: number }>>(new Map());
   const retryPayloadRef = useRef<{ body: string } | null>(null);
-  const requestFailedRef = useRef(false);
+  const requestFailedMapRef = useRef<Map<number, boolean>>(new Map());
   // --------------------------------------------------------------------------
 
   const handleEvent = useCallback(
@@ -233,7 +233,7 @@ export function useChatStream(
           break;
 
         case 'error':
-          requestFailedRef.current = true;
+          if (requestId != null) requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: data.message ?? 'Unknown error' });
           dispatch({ type: 'SET_CURRENT_TPS', tps: null });
           break;
@@ -268,6 +268,7 @@ export function useChatStream(
       const requestId = nextRequestIdRef.current++;
       bufferOwnerMapRef.current.set(requestId, sessionId);
       bufferedEventsRef.current.delete(sessionId);
+      requestFailedMapRef.current.set(requestId, false);
 
       try {
         const response = await fetch('/api/chat', {
@@ -330,10 +331,10 @@ export function useChatStream(
           err.message?.includes('fetch') ||
           err.name === 'TypeError'
         ) {
-          requestFailedRef.current = true;
+          requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
         } else {
-          requestFailedRef.current = true;
+          requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: err.message });
         }
       } finally {
@@ -360,9 +361,10 @@ export function useChatStream(
           bufferedEventsRef.current.delete(ownerId);
         }
         loadSessions();
-        if (!requestFailedRef.current) {
+        if (!requestFailedMapRef.current.get(requestId)) {
           retryPayloadRef.current = null;
         }
+        requestFailedMapRef.current.delete(requestId);
       }
     },
     [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions],
@@ -434,7 +436,7 @@ export function useChatStream(
         webSearch: refs.webSearchRef.current,
       };
       retryPayloadRef.current = { body: JSON.stringify(bodyObj) };
-      requestFailedRef.current = false;
+      requestFailedMapRef.current.set(requestId, false);
 
       try {
         const response = await fetch('/api/chat', {
@@ -519,10 +521,10 @@ export function useChatStream(
           err.message?.includes('fetch') ||
           err.name === 'TypeError'
         ) {
-          requestFailedRef.current = true;
+          requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
         } else {
-          requestFailedRef.current = true;
+          requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: err.message });
         }
       } finally {
@@ -549,9 +551,10 @@ export function useChatStream(
           bufferedEventsRef.current.delete(ownerId);
         }
         loadSessions();
-        if (!requestFailedRef.current) {
+        if (!requestFailedMapRef.current.get(requestId)) {
           retryPayloadRef.current = null;
         }
+        requestFailedMapRef.current.delete(requestId);
       }
     },
     [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions],

@@ -16,13 +16,13 @@ export default function SettingsModal({ onClose }: Props) {
   const [yolo, setYolo] = useState(state.yolo);
   const [thinkingEnabled, setThinkingEnabled] = useState(state.thinkingEnabled);
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
-  const totalSeconds = Math.floor(state.chatTimeoutMs / 1000);
+  const totalSeconds = Math.floor((state.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000);
   const [chatTimeoutHours, setChatTimeoutHours] = useState(String(Math.floor(totalSeconds / 3600)));
   const [chatTimeoutMinutes, setChatTimeoutMinutes] = useState(String(Math.floor((totalSeconds % 3600) / 60)));
   const [chatTimeoutSeconds, setChatTimeoutSeconds] = useState(String(totalSeconds % 60));
-  const [webMaxQueries, setWebMaxQueries] = useState(String(state.webSearch.maxQueries));
-  const [webResultsPerQuery, setWebResultsPerQuery] = useState(String(state.webSearch.resultsPerQuery));
-  const [webPerPageCharLimit, setWebPerPageCharLimit] = useState(String(state.webSearch.perPageCharLimit));
+  const [webMaxQueries, setWebMaxQueries] = useState(String(state.webSearch?.maxQueries ?? 3));
+  const [webResultsPerQuery, setWebResultsPerQuery] = useState(String(state.webSearch?.resultsPerQuery ?? 3));
+  const [webPerPageCharLimit, setWebPerPageCharLimit] = useState(String(state.webSearch?.perPageCharLimit ?? 5000));
   const [modelContextLimit, setModelContextLimit] = useState(state.modelContextLimit);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -136,7 +136,7 @@ export default function SettingsModal({ onClose }: Props) {
               className="settings-input"
             >
               <option value="">Select a model...</option>
-              {state.models.map((m) => (
+              {(state.models ?? []).map((m) => (
                 <option key={m.name} value={m.name}>
                   {m.name}
                 </option>
@@ -237,7 +237,7 @@ export default function SettingsModal({ onClose }: Props) {
               className="settings-input"
             >
               <option value="">Same as main model</option>
-              {state.models.map((m) => (
+              {(state.models ?? []).map((m) => (
                 <option key={m.name} value={m.name}>
                   {m.name}
                 </option>

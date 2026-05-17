@@ -97,9 +97,22 @@ export default function ModelSelector({ anchorRef, isOpen, onClose }: ModelSelec
     };
   }, [isOpen, onClose]);
 
+  // Destructure only the fields used by handleSelect so the callback
+  // does not depend on the entire state object (which changes on every
+  // render during streaming, defeating useCallback).
+  const {
+    model,
+    baseUrl,
+    yolo,
+    thinkingEnabled,
+    compactionModel,
+    chatTimeoutMs,
+    webSearch,
+  } = state;
+
   const handleSelect = useCallback(
     async (modelName: string) => {
-      if (modelName === state.model) {
+      if (modelName === model) {
         onClose();
         return;
       }
@@ -112,13 +125,13 @@ export default function ModelSelector({ anchorRef, isOpen, onClose }: ModelSelec
         // The effective (clamped) limit is applied in-memory via
         // SET_MODEL_CONTEXT_LIMIT after fetching the model's info.
         const config = {
-          baseUrl: state.baseUrl,
+          baseUrl,
           model: modelName,
-          yolo: state.yolo,
-          thinkingEnabled: state.thinkingEnabled,
-          compactionModel: state.compactionModel,
-          chatTimeoutMs: state.chatTimeoutMs,
-          webSearch: state.webSearch,
+          yolo,
+          thinkingEnabled,
+          compactionModel,
+          chatTimeoutMs,
+          webSearch,
         };
         await fetch('/api/config', {
           method: 'PUT',
@@ -137,7 +150,7 @@ export default function ModelSelector({ anchorRef, isOpen, onClose }: ModelSelec
 
       onClose();
     },
-    [dispatch, onClose, state],
+    [dispatch, onClose, model, baseUrl, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch],
   );
 
   if (!isOpen) return null;

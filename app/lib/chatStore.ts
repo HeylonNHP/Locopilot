@@ -15,14 +15,9 @@ export interface ChatMessage {
   subagentId?: string;
 }
 
-// Monotonic counter — module-level so it survives re-renders but resets on
-// full page reload, which is fine since IDs only need to be stable within a
-// single client session.
-let msgCounter = 0;
-
 /** Return a copy of msg with a stable `id` field if it doesn't already have one. */
 function withId(msg: ChatMessage): ChatMessage {
-  return msg.id !== undefined ? msg : { ...msg, id: String(++msgCounter) };
+  return msg.id !== undefined ? msg : { ...msg, id: crypto.randomUUID() };
 }
 
 export interface Session {
