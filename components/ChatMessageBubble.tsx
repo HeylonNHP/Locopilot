@@ -1,8 +1,13 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { type ChatMessage } from '@/app/lib/chatStore';
 import { useEffect, useRef, useState } from 'react';
-import MarkdownMessage from './MarkdownMessage';
+
+const MarkdownMessage = dynamic(() => import('./MarkdownMessage'), {
+  ssr: false,
+  loading: () => null,
+});
 
 interface Props {
   message: ChatMessage;

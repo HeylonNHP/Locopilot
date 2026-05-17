@@ -143,6 +143,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-05-18: Moved markdown bubble sanitization to client-only loading
+  - Files: `components/ChatMessageBubble.tsx`
+  - Summary: Loaded `MarkdownMessage` with `next/dynamic({ ssr: false })` so the server bundle no longer initializes `isomorphic-dompurify`/`jsdom` during the initial page render.
+  - Intent: Keep markdown rendering and sanitization intact while preventing SSR from touching the browser-only sanitizer stack.
+
 - 2026-05-10: Threaded AbortSignal through all tool implementations
   - Files: `tools/impl/runCommandTool.ts`, `tools/impl/fetchUrlTool.ts`, `tools/impl/fetchImageTool.ts`, `tools/impl/webSearchTool.ts`, `tools/impl/readFileTool.ts`, `tools/impl/writeFileTool.ts`, `tools/impl/patchFileTool.ts`, `tools/impl/subAgentTool.ts`, `tools/web/htmlExtractor.ts`
   - Summary: Commit `3cde6fb` threaded `signal?: AbortSignal` through all tool `run()`/`execute()` signatures but never passed it to the underlying async operations — meaning abort signals from the HTTP layer were completely ineffective for cancelling file I/O, HTTP fetches, and sub-agent LLM calls. Every affected tool now passes the signal to its underlying operations: `spawn()` (via `signal` option), `stdin.write()` (via abort guard), `waitForProcessSnapshot`/`checkProcessOutput`, `axios` calls, `readFile`/`writeFile`/`stat`/`mkdir`/`appendFile`, Playwright `goto`/`waitForLoadState`/`newContext`, and `sendLlmChat`. File-system and Playwright calls use `as any` type assertions to bypass stale TypeScript lib definitions that predate `AbortSignal` support.
