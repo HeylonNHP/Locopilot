@@ -1575,6 +1575,9 @@
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skills-panel-skill-badges {
@@ -1612,6 +1615,7 @@
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
+  overflow-wrap: break-word;
   word-break: break-word;
 }
 
@@ -1931,6 +1935,12 @@
   background: linear-gradient(180deg, #b0c4de 0%, #90a4be 100%);
   cursor: not-allowed;
   box-shadow: 0 2px 6px rgba(0, 40, 80, 0.1);
+}
+
+.skills-panel-form-error {
+  color: #c41e3a;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 /* ── Edit form on skill card ──────────────────────────────── */

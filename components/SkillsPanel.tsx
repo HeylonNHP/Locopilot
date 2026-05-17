@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SkillApiItem } from '@/app/api/skills/route';
 
 interface Props {
@@ -19,9 +19,12 @@ export default function SkillsPanel({ onPromptAI }: Props) {
   const [newDescription, setNewDescription] = useState('');
   const [newMode, setNewMode] = useState<'auto-invoke' | 'always-apply'>('auto-invoke');
   const [newGenerateAI, setNewGenerateAI] = useState(true);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   const [editingSkill, setEditingSkill] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+
+  const togglingRef = useRef(false);
 
   const fetchSkills = useCallback(async () => {
     try {
@@ -34,6 +37,7 @@ export default function SkillsPanel({ onPromptAI }: Props) {
       }
       const data = (await res.json()) as { skills: SkillApiItem[] };
       setSkills(data.skills ?? []);
+      setCreating(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load skills');
     } finally {
@@ -47,13 +51,28 @@ export default function SkillsPanel({ onPromptAI }: Props) {
 
   useEffect(() => {
     if (!isExpanded) return;
-    const interval = setInterval(fetchSkills, 5000);
+    const interval = setInterval(() => {
+      if (!togglingRef.current) fetchSkills();
+    }, 5000);
     return () => clearInterval(interval);
   }, [isExpanded, fetchSkills]);
+
+  useEffect(() => {
+    if (!creating) return;
+    const timer = setTimeout(() => setCreating(false), 15000);
+    return () => clearTimeout(timer);
+  }, [creating]);
+
+  useEffect(() => {
+    if (isExpanded) {
+      fetchSkills();
+    }
+  }, [isExpanded]);
 
   const toggleSkill = useCallback(
     async (name: string, currentEnabled: boolean) => {
       const action = currentEnabled ? 'disable' : 'enable';
+      togglingRef.current = true;
       setSkills((prev) =>
         prev.map((s) => (s.name === name ? { ...s, enabled: !currentEnabled } : s)),
       );
@@ -72,6 +91,8 @@ export default function SkillsPanel({ onPromptAI }: Props) {
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to update skill');
         await fetchSkills();
+      } finally {
+        togglingRef.current = false;
       }
     },
     [fetchSkills],
@@ -89,10 +110,38 @@ export default function SkillsPanel({ onPromptAI }: Props) {
   const handleCreateSubmit = useCallback(() => {
     if (!onPromptAI || !newName.trim()) return;
     setCreating(true);
-    const message = `Please create a skill named "${newName.trim()}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.`;
+    let message: string;
+    if (newGenerateAI) {
+      message = `Please create a skill named "${newName.trim()}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.`;
+    } else {
+      message = `Please create a minimal skill named "${newName.trim()}" with description "${newDescription.trim()}". The mode should be ${newMode}. Use a simple placeholder body like "# ${newName.trim()}\n\nSkill instructions go here." Use the create_skill tool.`;
+    }
     onPromptAI(message);
-    resetCreateForm();
-  }, [onPromptAI, newName, newDescription, newMode, resetCreateForm]);
+    setShowCreateForm(false);
+    setNewName('');
+    setNewDescription('');
+    setNewMode('auto-invoke');
+    setNewGenerateAI(true);
+    setNameError(null);
+  }, [onPromptAI, newName, newDescription, newMode, newGenerateAI]);
+
+  const handleNameChange = (value: string) => {
+    setNewName(value);
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      setNameError(null);
+    } else if (trimmed.length > 64) {
+      setNameError('Name must be 64 characters or fewer');
+    } else if (/^[.\-]/.test(trimmed)) {
+      setNameError('Name cannot start with . or -');
+    } else if (/[/\\]/.test(trimmed) || trimmed.includes('..')) {
+      setNameError('Name cannot contain path separators or ..');
+    } else if (/\x00/.test(trimmed)) {
+      setNameError('Name contains invalid characters');
+    } else {
+      setNameError(null);
+    }
+  };
 
   const startEdit = useCallback((skill: SkillApiItem) => {
     setEditingSkill(skill.name);
@@ -157,7 +206,7 @@ export default function SkillsPanel({ onPromptAI }: Props) {
               </button>
               <button
                 className="skills-panel-header-btn"
-                onClick={() => setIsExpanded(false)}
+                onClick={() => { setIsExpanded(false); setCreating(false); }}
                 aria-label="Close skills panel"
                 title="Close"
               >
@@ -172,8 +221,9 @@ export default function SkillsPanel({ onPromptAI }: Props) {
                 className="skills-panel-form-input"
                 placeholder="Skill name"
                 value={newName}
-                onChange={(e) => setNewName(e.target.value)}
+                onChange={(e) => handleNameChange(e.target.value)}
               />
+              {nameError && <div className="skills-panel-form-error">{nameError}</div>}
               <textarea
                 className="skills-panel-form-textarea"
                 placeholder="Description"
@@ -219,7 +269,7 @@ export default function SkillsPanel({ onPromptAI }: Props) {
                 <button
                   className="skills-panel-form-btn-create"
                   onClick={handleCreateSubmit}
-                  disabled={!newName.trim() || creating}
+                  disabled={!newName.trim() || creating || !!nameError}
                 >
                   {creating ? 'Creating…' : 'Create'}
                 </button>
@@ -278,8 +328,9 @@ export default function SkillsPanel({ onPromptAI }: Props) {
                       )}
                     </div>
                   </div>
-                  <label className="skills-panel-toggle-switch">
+                  <label className="skills-panel-toggle-switch" aria-label={`Toggle ${skill.name}`} htmlFor={`skill-toggle-${skill.name}`}>
                     <input
+                      id={`skill-toggle-${skill.name}`}
                       type="checkbox"
                       checked={skill.enabled}
                       onChange={() => toggleSkill(skill.name, skill.enabled)}
