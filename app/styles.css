@@ -1176,6 +1176,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  padding-right: 44px;
 }
 
 .messages-area {
@@ -1418,7 +1419,10 @@
    ================================================================== */
 
 .skills-panel {
-  flex-shrink: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 50;
   display: flex;
   flex-direction: column;
   height: 100vh;
