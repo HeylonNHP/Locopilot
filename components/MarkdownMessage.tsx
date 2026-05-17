@@ -1,6 +1,6 @@
 'use client';
 
-import DOMPurify from 'dompurify';
+import DOMPurify from 'isomorphic-dompurify';
 import { marked } from 'marked';
 import { useMemo } from 'react';
 
@@ -10,18 +10,27 @@ interface Props {
 }
 
 // Ensure all anchor tags open safely in a new tab.
-DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A') {
-    node.setAttribute('target', '_blank');
-    node.setAttribute('rel', 'noreferrer noopener');
-  }
-});
+// Guard against SSR environments where DOMPurify initialization may not be complete.
+let hookRegistered = false;
+function registerHook() {
+  if (hookRegistered || typeof DOMPurify.addHook !== 'function') return;
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.tagName === 'A') {
+      node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noreferrer noopener');
+    }
+  });
+  hookRegistered = true;
+}
 
 function renderMarkdownHtml(source: string): string {
   const trimmed = source.trim();
   if (!trimmed) {
     return '';
   }
+
+  // Register the anchor hook once (lazy, SSR-safe).
+  registerHook();
 
   const rawHtml = marked.parse(trimmed, { breaks: true, gfm: true }) as string;
 
