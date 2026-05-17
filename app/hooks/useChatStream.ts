@@ -26,13 +26,13 @@ export function useChatStream(
   const nextRequestIdRef = useRef(0);
   const bufferOwnerMapRef = useRef<Map<number, number>>(new Map());
   const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: any }>>>(new Map());
-  const subagentBufferRef = useRef<Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null }>>(new Map());
+  const subagentBufferRef = useRef<Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null; sessionId?: number }>>(new Map());
   const retryPayloadRef = useRef<{ body: string } | null>(null);
   const requestFailedRef = useRef(false);
   // --------------------------------------------------------------------------
 
   const handleEvent = useCallback(
-    (event: string, data: any) => {
+    (event: string, data: any, requestId?: number) => {
       // ── session_created must ALWAYS be processed first ──────────────────
       // It syncs bufferOwnerMapRef and refs.sessionIdRef to the real
       // session ID.  If the buffer guard below intercepted it, the guard
@@ -67,26 +67,29 @@ export function useChatStream(
             bufferOwnerMapRef.current.set(reqId, realId);
           }
         }
+        // Migrate subagent buffer entries from placeholder -1 to the real session ID
+        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
+          if (entry.sessionId === -1 || entry.sessionId === undefined) {
+            entry.sessionId = realId;
+          }
+        }
         refs.sessionIdRef.current = realId;
         dispatch({ type: 'SET_CURRENT_SESSION', id: realId });
         loadSessions();
         return;
       }
 
-      // If a stream is active and the user has navigated to a different session,
-      // buffer this event so it doesn't land in the wrong message list.
-      if (
-        bufferOwnerMapRef.current.size > 0 &&
-        !new Set(bufferOwnerMapRef.current.values()).has(refs.sessionIdRef.current ?? -1)
-      ) {
-        // Find which session owns this stream and buffer there
-        for (const [reqId, sessId] of bufferOwnerMapRef.current) {
-          if (!bufferedEventsRef.current.has(sessId)) {
-            bufferedEventsRef.current.set(sessId, []);
+      // If this event belongs to a stream whose session is NOT the visible
+      // session, buffer it so it doesn't land in the wrong message list.
+      if (requestId != null) {
+        const ownerSessionId = bufferOwnerMapRef.current.get(requestId);
+        if (ownerSessionId !== undefined && ownerSessionId !== (refs.sessionIdRef.current ?? -1)) {
+          if (!bufferedEventsRef.current.has(ownerSessionId)) {
+            bufferedEventsRef.current.set(ownerSessionId, []);
           }
-          bufferedEventsRef.current.get(sessId)!.push({ event, data });
+          bufferedEventsRef.current.get(ownerSessionId)!.push({ event, data });
+          return;
         }
-        return;
       }
 
       switch (event) {
@@ -148,12 +151,17 @@ export function useChatStream(
         case 'subagent_chunk': {
           const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
           const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
+          const ownerSessionId = requestId != null ? bufferOwnerMapRef.current.get(requestId) : undefined;
           const buffer = subagentBufferRef.current.get(agentId);
           if (buffer) {
             buffer.text += text;
             if (buffer.timer) clearTimeout(buffer.timer);
           } else {
-            subagentBufferRef.current.set(agentId, { text, timer: null });
+            subagentBufferRef.current.set(agentId, {
+              text,
+              timer: null,
+              ...(ownerSessionId !== undefined ? { sessionId: ownerSessionId } : {}),
+            });
           }
           const entry = subagentBufferRef.current.get(agentId)!;
           entry.timer = setTimeout(() => {
@@ -308,9 +316,9 @@ export function useChatStream(
           if (done) break;
           try {
             const parsed = JSON.parse(value.data);
-            handleEvent(value.event || 'message', parsed);
+            handleEvent(value.event || 'message', parsed, requestId);
           } catch {
-            handleEvent(value.event || 'message', value.data);
+            handleEvent(value.event || 'message', value.data, requestId);
           }
         }
       } catch (err: any) {
@@ -329,15 +337,17 @@ export function useChatStream(
           dispatch({ type: 'SET_ERROR', error: err.message });
         }
       } finally {
-        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
-          if (entry.timer) clearTimeout(entry.timer);
-          dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
-        }
-        subagentBufferRef.current.clear();
-
-        // Use bufferOwnerMapRef (updated by session_created) instead of
-        // the captured sessionId, which may still be -1 for new sessions.
         const ownerId = bufferOwnerMapRef.current.get(requestId);
+
+        // Only flush subagent buffers belonging to this session
+        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
+          if (entry.sessionId === ownerId || entry.sessionId === undefined) {
+            if (entry.timer) clearTimeout(entry.timer);
+            dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
+            subagentBufferRef.current.delete(agentId);
+          }
+        }
+
         if (ownerId !== undefined) {
           abortControllersRef.current.delete(ownerId);
           setStreamingSessions(prev => {
@@ -495,9 +505,9 @@ export function useChatStream(
 
           try {
             const parsed = JSON.parse(value.data);
-            handleEvent(value.event || 'message', parsed);
+            handleEvent(value.event || 'message', parsed, requestId);
           } catch {
-            handleEvent(value.event || 'message', value.data);
+            handleEvent(value.event || 'message', value.data, requestId);
           }
         }
       } catch (err: any) {
@@ -516,15 +526,17 @@ export function useChatStream(
           dispatch({ type: 'SET_ERROR', error: err.message });
         }
       } finally {
-        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
-          if (entry.timer) clearTimeout(entry.timer);
-          dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
-        }
-        subagentBufferRef.current.clear();
-
-        // Use bufferOwnerMapRef (updated by session_created) instead of
-        // the captured sessionId, which may still be -1 for new sessions.
         const ownerId = bufferOwnerMapRef.current.get(requestId);
+
+        // Only flush subagent buffers belonging to this session
+        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
+          if (entry.sessionId === ownerId || entry.sessionId === undefined) {
+            if (entry.timer) clearTimeout(entry.timer);
+            dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
+            subagentBufferRef.current.delete(agentId);
+          }
+        }
+
         if (ownerId !== undefined) {
           abortControllersRef.current.delete(ownerId);
           setStreamingSessions(prev => {
