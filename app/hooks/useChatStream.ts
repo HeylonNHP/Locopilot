@@ -188,7 +188,7 @@ export function useChatStream(
               },
             });
           }
-          if (typeof data.tps === 'number') {
+          if (data.tps !== undefined) {
             dispatch({ type: 'SET_CURRENT_TPS', tps: data.tps });
           }
           break;

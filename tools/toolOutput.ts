@@ -8,6 +8,11 @@ export interface ToolOutputSink {
      * The default terminal sink ignores this — it only shows finalised output.
      */
     writeAgentChunk?(agentId: string, type: 'thinking' | 'content', text: string): void;
+    /**
+     * Optional: report live tokens-per-second during a sub-agent turn so the
+     * web UI can show the sub-agent's generation speed in the status bar.
+     */
+    reportTps?(tps: number | null): void;
 }
 
 export type ConfirmationPrompt = (message: string) => Promise<boolean>;

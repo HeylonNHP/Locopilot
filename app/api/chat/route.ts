@@ -600,6 +600,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             phase: 'tools',
                             tokensUsed: promptEvalCount + evalCount,
                             tokenLimit: effectiveNumCtx,
+                            tps: null,
                         });
 
                         const tokensUsedSoFar = promptEvalCount + evalCount;
@@ -697,6 +698,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     if (text) {
                                         sendEvent('subagent_chunk', { agentId, type, text });
                                     }
+                                },
+                                reportTps(tps: number | null): void {
+                                    sendEvent('status', { phase: 'subagent', tps });
                                 },
                             };
 

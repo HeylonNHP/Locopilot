@@ -322,6 +322,12 @@ async function runSingleAgent(
 
         onProgress?.(`Sub-agent ${agent.id}: thinking`);
 
+        // Track rough tokens and wall-clock time so the web UI can show
+        // live tokens-per-second while the sub-agent is generating.
+        let subagentStartMs = Date.now();
+        let subagentRoughTokens = 0;
+        let subagentLastTpsStatusMs = 0;
+
         const response = await sendLlmChat(config.baseUrl, {
             model: config.model,
             messages,
@@ -334,11 +340,25 @@ async function runSingleAgent(
             // chunk sequence so thinking and content are visually separated.
             if (chunk.message?.thinking) {
                 output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
+                subagentRoughTokens += Math.max(1, Math.ceil(chunk.message.thinking.length / 4));
             }
             if (chunk.message?.content) {
                 output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
+                subagentRoughTokens += Math.max(1, Math.ceil(chunk.message.content.length / 4));
+            }
+
+            const now = Date.now();
+            if (now - subagentLastTpsStatusMs > 800) {
+                const elapsedSec = (now - subagentStartMs) / 1000;
+                if (elapsedSec > 0) {
+                    output.reportTps?.(+(subagentRoughTokens / elapsedSec).toFixed(2));
+                }
+                subagentLastTpsStatusMs = now;
             }
         }, undefined, signal);
+
+        // Clear the live TPS indicator now that generation has finished.
+        output.reportTps?.(null);
 
         // Emit a trailing newline so successive tool outputs and the next LLM
         // turn are visually separated from the streamed response text.
