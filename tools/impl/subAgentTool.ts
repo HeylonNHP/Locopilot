@@ -132,6 +132,7 @@ async function autoCompactSubAgentIfNeeded(
     output: ToolOutputSink,
     agentId: string,
     orchestratorPrompt: ChatMessage,
+    signal?: AbortSignal,
 ): Promise<boolean> {
     if (config.numCtx <= 0) {
         return false;
@@ -177,6 +178,11 @@ async function autoCompactSubAgentIfNeeded(
             config.compactionModel,
             messages,
             config.numCtx,
+            undefined,
+            1.0,
+            2,
+            undefined,
+            signal,
         );
 
         // After compaction, ensure the original orchestrator prompt is at position 1.
@@ -315,7 +321,7 @@ async function runSingleAgent(
         'If the task is genuinely blocked, summarize what you have discovered so far and return that as your final answer.]';
 
     while (!isInterruptOrAbort(signal)) {
-        await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orcPrompt);
+        await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orcPrompt, signal);
         if (isInterruptOrAbort(signal)) {
             break;
         }

@@ -77,6 +77,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             (message: string) => {
                 compactPhases.push(message);
             },
+            1.0,
+            2,
+            undefined,
+            request.signal,
         );
 
         const parsedSessionId = typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0

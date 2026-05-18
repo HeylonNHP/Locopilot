@@ -99,6 +99,7 @@ async function measureConversationTokens(
     messages: ChatMessage[],
     numCtx: number,
     onProgress?: (message: string) => void,
+    signal?: AbortSignal,
 ): Promise<number> {
     onProgress?.('Measuring conversation tokens...');
     
@@ -116,7 +117,7 @@ async function measureConversationTokens(
                 num_predict: 1, // Set to 1 to minimize generation overhead
                 temperature: 0,
             },
-        });
+        }, undefined, undefined, signal);
 
         const stats = getLlmTurnStats(response);
         if (stats) {
@@ -276,6 +277,7 @@ async function distillToolMessages(
     historyMessages: ChatMessage[],
     numCtx: number,
     onProgress?: (message: string) => void,
+    signal?: AbortSignal,
 ): Promise<ChatMessage[]> {
     const distilledMessages: ChatMessage[] = [];
 
@@ -296,11 +298,21 @@ async function distillToolMessages(
 
         const previous = historyMessages[index - 1];
         const toolName = previous ? getToolMessageName(previous) : 'unknown_tool';
+
+        // Guard against sending massive tool outputs to the distillation LLM.
+        // A single tool output can exceed numCtx, causing the distillation call
+        // itself to fail with a 400.
+        const DISTILL_INPUT_MAX_CHARS = Math.min(50_000, numCtx * 8);
+        const distillInputContent = message.content.length > DISTILL_INPUT_MAX_CHARS
+            ? message.content.slice(0, DISTILL_INPUT_MAX_CHARS) +
+              `\n\n[...truncated ${message.content.length - DISTILL_INPUT_MAX_CHARS} chars for distillation]`
+            : message.content;
+
         const input =
             `Tool name: ${toolName}\n` +
-            `Tool output length: ${message.content.length} chars\n\n` +
+            `Tool output length: ${message.content.length} chars${message.content.length > DISTILL_INPUT_MAX_CHARS ? ' (truncated for distillation)' : ''}\n\n` +
             'Tool output:\n' +
-            message.content;
+            distillInputContent;
 
         let distilledContent = '';
         const distillResponse = await sendLlmChat(baseUrl, {
@@ -322,7 +334,7 @@ async function distillToolMessages(
                     `Distilling tool output ${index + 1}/${historyMessages.length} (${toolName})... (${distilledContent.length} chars)`
                 );
             }
-        });
+        }, undefined, signal);
 
         const rawDigest = (distillResponse.message?.content ?? '').trim();
         const digest = rawDigest.length > 0
@@ -363,8 +375,9 @@ export async function compactHistory(
     aggressiveFactor: number = 1.0,
     remainingRetries: number = 2,
     onStats?: (stats: CompactStats) => void,
+    signal?: AbortSignal,
 ): Promise<CompactResult> {
-    const oldTokenCount = await measureConversationTokens(baseUrl, model, messages, numCtx, onProgress);
+    const oldTokenCount = await measureConversationTokens(baseUrl, model, messages, numCtx, onProgress, signal);
 
     // Filter out system messages — the system prompt is injected on-the-fly
     // by the caller and should not be preserved through compaction.
@@ -458,6 +471,7 @@ export async function compactHistory(
         historySplit.messagesToSummarise,
         numCtx,
         onProgress,
+        signal,
     );
 
     // Also distill large tool outputs in the preserved window so they don't
@@ -469,6 +483,7 @@ export async function compactHistory(
         historySplit.preservedRecentMessages,
         numCtx,
         onProgress,
+        signal,
     );
 
     const summarisedSourceTokenEstimate = Math.max(
@@ -543,6 +558,7 @@ export async function compactHistory(
                 temperature: 0,
                 ...(numPredict !== undefined ? { num_predict: numPredict } : {}),
             },
+            signal,
         })) {
             const content = chunk.message?.content ?? '';
             if (content.length > 0) {
@@ -591,7 +607,7 @@ export async function compactHistory(
         ...preparedRecentMessages,
     ];
 
-    const newTokenCount = await measureConversationTokens(baseUrl, model, newMessages, numCtx, onProgress);
+    const newTokenCount = await measureConversationTokens(baseUrl, model, newMessages, numCtx, onProgress, signal);
 
     if (newTokenCount >= oldTokenCount && oldTokenCount > 0) {
         throw new Error(
@@ -611,7 +627,7 @@ export async function compactHistory(
             `retrying with ${retryFactor.toFixed(1)}x stronger compression (${remainingRetries} attempt(s) left)...`,
         );
         const retryResult = await compactHistory(
-            baseUrl, model, newMessages, numCtx, onProgress, retryFactor, remainingRetries - 1, onStats,
+            baseUrl, model, newMessages, numCtx, onProgress, retryFactor, remainingRetries - 1, onStats, signal,
         );
         // Report stats relative to the original pre-compaction history.
         return {

@@ -357,18 +357,22 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     (message: string) => {
                                         sendEvent('compact_progress', { message });
                                     },
+                                    1.0,
+                                    2,
+                                    undefined,
+                                    req.signal,
                                 );
-                                // Send the compacted message list to the client BEFORE
-                                // appending the LLM-only continuation nudge, so the
-                                // client's state mirrors the clean compacted history.
-                                sendEvent('compact', {
-                                    messages: compactResult.newMessages,
-                                    stats: compactResult.stats,
-                                });
                                 // Replace server-side history with the compacted result.
                                 currentMessages.splice(0, currentMessages.length, ...compactResult.newMessages);
                                 // Persist compacted history so the frontend sees the reduced state.
                                 await flushSessionState();
+                                // Send the compacted message list to the client AFTER
+                                // persisting so the client doesn't see a state that
+                                // might fail to persist.
+                                sendEvent('compact', {
+                                    messages: compactResult.newMessages,
+                                    stats: compactResult.stats,
+                                });
                                 // LLM-only nudge – not sent to the client.
                                 currentMessages.push({
                                     role: 'user',
