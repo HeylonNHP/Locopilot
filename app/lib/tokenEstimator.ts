@@ -27,6 +27,9 @@ export function estimateMessagesTokens(messages: ChatMessage[]): number {
         total += estimateTextTokens(JSON.stringify(tc.function?.arguments ?? {}));
       }
     }
+    if (msg.images && msg.images.length > 0) {
+      total += msg.images.length * 1024;
+    }
   }
-  return total + 2;
+  return messages.length > 0 ? total + 2 : 0;
 }

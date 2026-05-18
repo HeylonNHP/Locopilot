@@ -2,6 +2,7 @@
 // DELETE /api/sessions/[id] - delete a session
 import { NextRequest, NextResponse } from 'next/server';
 import { loadSessionMessages, deleteSession, listSessions } from '../../../../history';
+import { countMessagesTokens } from '../../../../services/tokenizer';
 
 export async function GET(
     _request: NextRequest,
@@ -28,7 +29,13 @@ export async function GET(
         }
 
         const messages = loadSessionMessages(sessionId);
-        return NextResponse.json({ session, messages });
+        const messagesForCounting = (messages as any[]).filter(
+            (m) => m.role !== 'subagent_log',
+        );
+        const estimatedTokens = messagesForCounting.length > 0
+            ? countMessagesTokens(messagesForCounting, session.model)
+            : 0;
+        return NextResponse.json({ session, messages, estimatedTokens });
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         return NextResponse.json(

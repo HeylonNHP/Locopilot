@@ -23,7 +23,7 @@ interface PsResponse {
     }>;
 }
 
-const CONTEXT_LIMIT_KEY_PATTERN = /(?:^|[._])(?:context_length|num_ctx|context_window)$/i;
+const CONTEXT_LIMIT_KEY_PATTERN = /(?:^|[._])(?:context_length|num_ctx|context_window|max_position_embeddings|max_sequence_length)$/i;
 
 function parsePositiveInteger(value: unknown): number | null {
     if (typeof value === 'number') {

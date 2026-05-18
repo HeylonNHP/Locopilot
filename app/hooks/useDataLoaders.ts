@@ -65,14 +65,30 @@ export function useDataLoaders(refs: StableRefs) {
         // don't dispatch token stats for a now-stale session.
         if (sessionLoadRequestIdRef.current !== requestId) return;
       }
-      if (data.session?.last_total_tokens && data.session?.last_prompt_eval_count !== undefined && data.session?.last_eval_count !== undefined) {
+      if (data.estimatedTokens != null) {
+        dispatch({
+          type: 'SET_TOKEN_STATS',
+          stats: {
+            promptEvalCount: 0,
+            evalCount: data.estimatedTokens,
+            totalTokens: data.estimatedTokens,
+            tokenLimit: state.numCtx,
+            isEstimated: true,
+          },
+          targetSessionId: sessionId,
+        });
+      } else if (data.session?.last_total_tokens && data.session?.last_prompt_eval_count !== undefined && data.session?.last_eval_count !== undefined) {
+        // Use the session's own persisted context limit if available, otherwise
+        // fall back to the currently-displayed one. This prevents restored
+        // sessions from showing wrong percentages after model/context switches.
+        const tokenLimit = data.session.num_ctx ?? state.numCtx;
         dispatch({
           type: 'SET_TOKEN_STATS',
           stats: {
             promptEvalCount: data.session.last_prompt_eval_count ?? 0,
             evalCount: data.session.last_eval_count ?? 0,
             totalTokens: data.session.last_total_tokens ?? 0,
-            tokenLimit: state.numCtx,
+            tokenLimit,
           },
           targetSessionId: sessionId,
         });

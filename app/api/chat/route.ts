@@ -30,7 +30,7 @@ import { compactHistory, sanitizeContentForTitle } from '../../../services/compa
 import { generateFallbackTitle } from '../../../services/titleUtils';
 import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 import { countMessagesTokens } from '../../../services/tokenizer';
-import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
+import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
 import { createSystemPrompt } from '../../../services/chatSession';
 import { discoverSkills, loadSkillState, getEnabledSkills, getAllowedToolsFromSkills } from '../../../services/skillManager';
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     const effectiveNumCtx = typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
         ? Math.floor(numCtx)
-        : 4096;
+        : DEFAULT_NUM_CTX;
 
     const effectiveChatTimeoutMs = typeof chatTimeoutMs === 'number' && Number.isFinite(chatTimeoutMs) && chatTimeoutMs > 0
         ? Math.floor(chatTimeoutMs)
@@ -382,7 +382,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         'The conversation history was automatically compacted due to context length. ' +
                                         'Please continue working on the original task without asking for confirmation.',
                                 });
-                                lastAuthoritativeTokens = 0;
+                                lastAuthoritativeTokens = countMessagesTokens(currentMessages, model as string);
                                 if (compactResult.stats.newTokenCount > effectiveNumCtx) {
                                     sendEvent('status', {
                                         phase: 'compact_overflow',
@@ -402,10 +402,12 @@ export async function POST(req: NextRequest): Promise<Response> {
                     }
 
                     // Signal that we are about to start an LLM call.
+                    const promptEstimate = countMessagesTokens(currentMessages, model as string);
                     sendEvent('status', {
                         phase: 'thinking',
-                        tokensUsed: undefined,
+                        tokensUsed: promptEstimate,
                         tokenLimit: effectiveNumCtx,
+                        isEstimated: true,
                     });
 
                     // -- Call the LLM via the active adapter ------------------

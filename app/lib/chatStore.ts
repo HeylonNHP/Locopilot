@@ -13,6 +13,8 @@ export interface ChatMessage {
   name?: string;
   /** Set on subagent_log messages to identify which sub-agent produced the output. */
   subagentId?: string;
+  /** Base64-encoded image data for vision-capable models. */
+  images?: string[];
 }
 
 /** Return a copy of msg with a stable `id` field if it doesn't already have one. */
@@ -51,6 +53,7 @@ export interface SessionState {
         tokenLimit: number;
         promptTps?: number;
         evalTps?: number;
+        isEstimated?: boolean;
     } | null;
     currentTps: number | null;
     compactingPhases: string[];
@@ -89,6 +92,7 @@ interface ChatState {
     tokenLimit: number;
     promptTps?: number;
     evalTps?: number;
+    isEstimated?: boolean;
   } | null;
   currentTps: number | null;
   compactingPhases: string[];

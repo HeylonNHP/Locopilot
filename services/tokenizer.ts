@@ -41,6 +41,9 @@ function getEncoder(model: string): TiktokenLike {
         encoder = tiktoken.encoding_for_model(model);
         currentEncoderModel = model;
     } catch {
+        // Model doesn't have a known encoding — keep whatever encoder we already
+        // have (or fall back to cl100k_base on first load). We still record
+        // currentEncoderModel so we don't retry encoding_for_model every call.
         if (!encoder) {
             try {
                 encoder = tiktoken.get_encoding('cl100k_base');
@@ -49,6 +52,8 @@ function getEncoder(model: string): TiktokenLike {
                 encoder = fallbackEncoder;
                 currentEncoderModel = 'cl100k_base';
             }
+        } else {
+            currentEncoderModel = model;
         }
     }
 
@@ -89,5 +94,5 @@ export function countMessagesTokens(messages: ChatMessage[], model: string): num
         }
     }
 
-    return total + 2;
+    return messages.length > 0 ? total + 2 : 0;
 }

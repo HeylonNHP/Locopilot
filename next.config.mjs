@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ['better-sqlite3', 'playwright'],
+  serverExternalPackages: ['better-sqlite3', 'playwright', 'isomorphic-dompurify', 'jsdom'],
   webpack: (config, { isServer, webpack }) => {
     // Allow loading WASM files required by @dqbd/tiktoken
     config.experiments = { ...config.experiments, asyncWebAssembly: true, layers: true };

@@ -1,8 +1,7 @@
 'use client';
 
-import { useMemo, useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useChat } from '@/app/lib/chatStore';
-import { estimateMessagesTokens } from '@/app/lib/tokenEstimator';
 import ModelSelector from './ModelSelector';
 
 export default function StatusBar() {
@@ -21,14 +20,9 @@ export default function StatusBar() {
     setShowSelector(false);
   }, []);
 
-  // Compute a client-side estimate so we ALWAYS show something.
-  // When authoritative SSE stats arrive they override this.
-  const estimatedTokens = useMemo(() => estimateMessagesTokens(messages), [messages]);
-
-  // Always use state.numCtx as the token limit — it's the user's current
-  // setting and what the backend actually uses. tokenStats may contain a
-  // stale tokenLimit from a previous turn.
-  const totalTokens = tokenStats?.totalTokens ?? estimatedTokens;
+  // Use the backend-provided token count. If we haven't received one yet
+  // (briefly before the first SSE event) show 0 instead of a local guess.
+  const totalTokens = tokenStats?.totalTokens ?? 0;
   const tokenLimit = state.numCtx;
 
   const pct = tokenLimit > 0 ? Math.round((totalTokens / tokenLimit) * 100) : 0;
@@ -37,8 +31,10 @@ export default function StatusBar() {
   if (pct >= 90) tokenColorClass = 'statusbar-token-red';
   else if (pct >= 75) tokenColorClass = 'statusbar-token-yellow';
 
-  // Mark whether we're showing an estimate or authoritative count
-  const isEstimated = tokenStats === null;
+  // Mark whether we're showing an estimate or authoritative count.
+  // Backend-driven estimates carry isEstimated=true; absent stats mean
+  // we haven't heard from the backend yet (briefly before first SSE event).
+  const isEstimated = tokenStats?.isEstimated ?? (tokenStats === null);
   const sourceLabel = isEstimated ? '(est)' : '';
 
   // Tokens-per-second display: live rough estimate during streaming,

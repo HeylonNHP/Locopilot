@@ -184,6 +184,7 @@ export function useChatStream(
                 tokenLimit: data.tokenLimit,
                 promptEvalCount: 0,
                 evalCount: data.tokensUsed,
+                isEstimated: data.isEstimated ?? false,
               },
             });
           }
