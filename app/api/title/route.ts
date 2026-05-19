@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { DEFAULT_NUM_CTX } from '../../../constants';
-import { listSessions } from '../../../history';
+import { listSessions, loadSessionMessages } from '../../../history';
 import { enqueueSessionRename } from '../../../app/lib/sessionWriteQueue';
 import { generateSessionTitle } from '../../../services/compact';
 import { loadConfig } from '../../../services/configManager';
-import { getLlmApiErrorMessage, type ChatMessage } from '../../../services/llm';
+import { getLlmApiErrorMessage } from '../../../services/llm';
 import { resolveCompactionModel } from '../../../services/modelManager';
 
 export const dynamic = 'force-dynamic';
@@ -21,7 +21,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
     }
 
-    const messages = body.messages;
     const model = body.model;
     const numCtx = body.numCtx;
     const baseUrl = body.baseUrl;
@@ -31,23 +30,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (typeof model !== 'string' || !model.trim()) {
         return NextResponse.json(
             { error: 'Model name is required.' },
-            { status: 400 },
-        );
-    }
-
-    if (!Array.isArray(messages)) {
-        return NextResponse.json(
-            { error: 'Messages must be an array.' },
-            { status: 400 },
-        );
-    }
-
-    // Strip system messages first — system prompt is not needed for title generation
-    const conversationMessages = (messages as ChatMessage[]).filter((m) => m.role !== 'system');
-
-    if (conversationMessages.length <= 1) {
-        return NextResponse.json(
-            { error: 'Not enough conversation history to generate a title yet.' },
             { status: 400 },
         );
     }
@@ -67,6 +49,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return NextResponse.json(
             { error: `Session with id ${parsedSessionId} not found.` },
             { status: 404 },
+        );
+    }
+
+    // Load messages from the database — non-system messages only
+    const conversationMessages = loadSessionMessages(parsedSessionId);
+
+    if (conversationMessages.length <= 1) {
+        return NextResponse.json(
+            { error: 'Not enough conversation history to generate a title yet.' },
+            { status: 400 },
         );
     }
 

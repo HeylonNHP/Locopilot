@@ -328,7 +328,6 @@ export function useSlashCommands({
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                messages: currentMessages,
                 model: refs.modelRef.current,
                 numCtx: refs.numCtxRef.current,
                 baseUrl: refs.baseUrlRef.current,
