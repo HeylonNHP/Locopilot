@@ -64,6 +64,7 @@
     background: rgba(255, 255, 255, 0.55);
     border: 1px solid var(--glass-border-soft);
     overflow: hidden;
+    position: relative;
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
 
@@ -76,6 +77,41 @@
       line-height: 1.55;
       color: #1a3a5c;
     }
+  }
+
+  .code-copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--glass-border-soft);
+    background: rgba(255, 255, 255, 0.75);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    line-height: 1.4;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.95);
+      color: var(--text-primary);
+      opacity: 1;
+    }
+
+    &--copied {
+      background: rgba(0, 168, 232, 0.15);
+      color: var(--accent);
+      opacity: 1;
+    }
+  }
+
+  pre:hover .code-copy-btn {
+    opacity: 0.85;
   }
 
   blockquote {
