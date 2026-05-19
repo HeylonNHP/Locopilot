@@ -311,7 +311,8 @@ export function useSlashCommands({
             addSystem('Select a model before running /title.');
             return;
           }
-          if (currentMessages.length <= 1) {
+          const nonSystemMessages = currentMessages.filter((m: ChatMessage) => m.role !== 'system');
+          if (nonSystemMessages.length <= 1) {
             addSystem('Not enough conversation history to generate a title yet.');
             return;
           }
@@ -341,13 +342,6 @@ export function useSlashCommands({
             if (typeof data?.title !== 'string' || data.title.trim().length === 0) {
               throw new Error('Title generation returned an invalid title.');
             }
-
-            // Optimistically update the sidebar so the new title appears immediately
-            const sessionId = refs.sessionIdRef.current;
-            const updatedSessions = state.sessions.map((s) =>
-              s.id === sessionId ? { ...s, name: data.title } : s
-            );
-            dispatch({ type: 'SET_SESSIONS', sessions: updatedSessions });
 
             await loadSessions();
           } catch (error) {
