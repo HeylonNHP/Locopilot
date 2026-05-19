@@ -61,7 +61,6 @@ export default function MarkdownMessage({ source, className }: Props) {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Wait for the browser to finish painting the dangerouslySetInnerHTML content
     const attachButtons = () => {
       if (!containerRef.current) return;
       const preBlocks = containerRef.current.querySelectorAll('pre');
@@ -72,16 +71,39 @@ export default function MarkdownMessage({ source, className }: Props) {
         // Skip if this pre already has a copy button
         if (pre.querySelector('.code-copy-btn')) return;
 
+        // Ensure pre is positioned so the absolute button anchors correctly
+        const computedPosition = window.getComputedStyle(pre).position;
+        if (computedPosition === 'static') {
+          (pre as HTMLElement).style.position = 'relative';
+        }
+
         const btn = document.createElement('button');
         btn.className = 'code-copy-btn';
         btn.textContent = 'Copy';
         btn.setAttribute('aria-label', 'Copy code to clipboard');
         btn.type = 'button';
 
+        // Inline styles ensure visibility even if SCSS fails to load
+        btn.style.cssText = `
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          padding: 4px 10px;
+          border-radius: 6px;
+          border: 1px solid rgba(0,80,140,0.15);
+          background: rgba(255,255,255,0.9);
+          color: #0066cc;
+          font-size: 11px;
+          font-family: inherit;
+          cursor: pointer;
+          z-index: 10;
+          line-height: 1.4;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        `;
+
         btn.addEventListener('click', () => {
           const text = code.textContent || '';
           navigator.clipboard.writeText(text).catch(() => {
-            // Fallback for environments where clipboard API fails
             const textarea = document.createElement('textarea');
             textarea.value = text;
             textarea.style.position = 'fixed';
@@ -97,10 +119,12 @@ export default function MarkdownMessage({ source, className }: Props) {
           });
 
           btn.textContent = 'Copied!';
-          btn.classList.add('code-copy-btn--copied');
+          btn.style.background = 'rgba(0,168,232,0.15)';
+          btn.style.color = '#00a8e8';
           setTimeout(() => {
             btn.textContent = 'Copy';
-            btn.classList.remove('code-copy-btn--copied');
+            btn.style.background = 'rgba(255,255,255,0.9)';
+            btn.style.color = '#0066cc';
           }, 1500);
         });
 
@@ -108,7 +132,6 @@ export default function MarkdownMessage({ source, className }: Props) {
       });
     };
 
-    // Use rAF to ensure DOM is settled after dangerouslySetInnerHTML
     requestAnimationFrame(attachButtons);
   }, [source]);
 
