@@ -61,49 +61,56 @@ export default function MarkdownMessage({ source, className }: Props) {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const preBlocks = containerRef.current.querySelectorAll('pre');
-    preBlocks.forEach((pre) => {
-      const code = pre.querySelector('code');
-      if (!code) return;
+    // Wait for the browser to finish painting the dangerouslySetInnerHTML content
+    const attachButtons = () => {
+      if (!containerRef.current) return;
+      const preBlocks = containerRef.current.querySelectorAll('pre');
+      preBlocks.forEach((pre) => {
+        const code = pre.querySelector('code');
+        if (!code) return;
 
-      // Skip if this pre already has a copy button
-      if (pre.querySelector('.code-copy-btn')) return;
+        // Skip if this pre already has a copy button
+        if (pre.querySelector('.code-copy-btn')) return;
 
-      const btn = document.createElement('button');
-      btn.className = 'code-copy-btn';
-      btn.textContent = 'Copy';
-      btn.setAttribute('aria-label', 'Copy code to clipboard');
-      btn.type = 'button';
+        const btn = document.createElement('button');
+        btn.className = 'code-copy-btn';
+        btn.textContent = 'Copy';
+        btn.setAttribute('aria-label', 'Copy code to clipboard');
+        btn.type = 'button';
 
-      btn.addEventListener('click', () => {
-        const text = code.textContent || '';
-        navigator.clipboard.writeText(text).catch(() => {
-          // Fallback for environments where clipboard API fails
-          const textarea = document.createElement('textarea');
-          textarea.value = text;
-          textarea.style.position = 'fixed';
-          textarea.style.opacity = '0';
-          document.body.appendChild(textarea);
-          textarea.select();
-          try {
-            document.execCommand('copy');
-          } catch {
-            // silently fail
-          }
-          document.body.removeChild(textarea);
+        btn.addEventListener('click', () => {
+          const text = code.textContent || '';
+          navigator.clipboard.writeText(text).catch(() => {
+            // Fallback for environments where clipboard API fails
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+              document.execCommand('copy');
+            } catch {
+              // silently fail
+            }
+            document.body.removeChild(textarea);
+          });
+
+          btn.textContent = 'Copied!';
+          btn.classList.add('code-copy-btn--copied');
+          setTimeout(() => {
+            btn.textContent = 'Copy';
+            btn.classList.remove('code-copy-btn--copied');
+          }, 1500);
         });
 
-        btn.textContent = 'Copied!';
-        btn.classList.add('code-copy-btn--copied');
-        setTimeout(() => {
-          btn.textContent = 'Copy';
-          btn.classList.remove('code-copy-btn--copied');
-        }, 1500);
+        pre.appendChild(btn);
       });
+    };
 
-      pre.appendChild(btn);
-    });
-  }, [html]);
+    // Use rAF to ensure DOM is settled after dangerouslySetInnerHTML
+    requestAnimationFrame(attachButtons);
+  }, [source]);
 
   if (!html) {
     return null;
