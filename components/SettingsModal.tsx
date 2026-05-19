@@ -12,7 +12,7 @@ export default function SettingsModal({ onClose }: Props) {
   const { state, dispatch } = useChat();
   const [model, setModel] = useState(state.model);
   const [baseUrl, setBaseUrl] = useState(state.baseUrl);
-  const [numCtx, setNumCtx] = useState(String(state.numCtx));
+  const [numCtx, setNumCtx] = useState(String(state.requestedNumCtx));
   const [yolo, setYolo] = useState(state.yolo);
   const [thinkingEnabled, setThinkingEnabled] = useState(state.thinkingEnabled);
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
@@ -163,6 +163,15 @@ export default function SettingsModal({ onClose }: Props) {
               className="settings-input"
             />
           </div>
+
+          {state.numCtx !== state.requestedNumCtx && (
+            <div className="settings-row">
+              <label className="settings-label">Effective Context Size</label>
+              <span className="settings-input text-secondary" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                {state.numCtx.toLocaleString()} (capped by model limit)
+              </span>
+            </div>
+          )}
 
           <div className="settings-row">
             <label className="settings-label">Execution Mode</label>
