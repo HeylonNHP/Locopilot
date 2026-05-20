@@ -2,7 +2,7 @@ import type { ToolSchema } from '../../tools/tools';
 
 export const fetchImageToolSchema: ToolSchema = {
     name: 'fetch_image',
-    description: 'Fetches an image from a URL or local file path and attaches it to the conversation. Only use with vision-capable models. Supported formats: JPEG, PNG, GIF, WebP, BMP. Maximum size: 10 MB.',
+    description: 'Fetches an image from a URL or local file path and attaches it to the conversation. Only use with vision-capable models. Supported formats: JPEG, PNG, GIF, WebP, BMP.',
     parameters: {
         type: 'object',
         properties: {
@@ -13,8 +13,8 @@ export const fetchImageToolSchema: ToolSchema = {
 };
 
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
-const DEFAULT_TIMEOUT_MS = 15_000;
+/** Default download timeout: 60 seconds — large images or slow connections need more time. */
+const DEFAULT_TIMEOUT_MS = 60_000;
 
 import axios from 'axios';
 import { readFile } from 'fs/promises';
@@ -64,15 +64,11 @@ async function fetchRemoteImage(url: string, timeoutMs: number, signal?: AbortSi
     const response = await axios.get<ArrayBuffer>(url, {
         responseType: 'arraybuffer',
         timeout: timeoutMs,
-        maxContentLength: MAX_IMAGE_BYTES,
         headers: { 'User-Agent': DEFAULT_USER_AGENT },
         ...(signal ? { signal } : {}),
     });
 
     const buffer = Buffer.from(response.data);
-    if (buffer.length > MAX_IMAGE_BYTES) {
-        throw new Error(`Image too large (${(buffer.length / 1_048_576).toFixed(1)} MB). Limit is 10 MB.`);
-    }
 
     const mimeType = await detectMimeTypeFromBytes(buffer);
 
@@ -99,10 +95,6 @@ function normalizeLocalImagePath(source: string): string {
 
 async function fetchLocalImage(filePath: string, signal?: AbortSignal): Promise<FetchedImage> {
     const buffer = await readFile(filePath, { signal });
-
-    if (buffer.length > MAX_IMAGE_BYTES) {
-        throw new Error(`Image too large (${(buffer.length / 1_048_576).toFixed(1)} MB). Limit is 10 MB.`);
-    }
 
     const mimeType = await detectMimeTypeFromBytes(buffer);
 
