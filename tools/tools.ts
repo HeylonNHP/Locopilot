@@ -30,6 +30,8 @@ import { loadSkillToolSchema } from './impl/loadSkillTool';
 import { getToolPrompt as getLoadSkillPrompt } from './impl/loadSkillTool';
 import { createSkillToolSchema } from './impl/createSkillTool';
 import { getToolPrompt as getCreateSkillPrompt } from './impl/createSkillTool';
+import { readPdfToolSchema } from './impl/readPdfTool';
+import { getToolPrompt as getReadPdfPrompt } from './impl/readPdfTool';
 
 // Keep defaultShell export (used in runCommandToolSchema via defaultShell() call)
 export { defaultShell } from './impl/runCommandTool';
@@ -142,6 +144,10 @@ export const TOOLS: OllamaTool[] = [
         type: 'function',
         function: createSkillToolSchema,
     },
+    {
+        type: 'function',
+        function: readPdfToolSchema,
+    },
 ];
 
 /**
@@ -162,10 +168,12 @@ export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean
         getWriteFilePrompt() +
         getLoadSkillPrompt() +
         getCreateSkillPrompt() +
+        getReadPdfPrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- Use sub-agents aggressively for any information-heavy or multi-step work — they absorb intermediate results into isolated contexts, preserving your own context window for high-level reasoning. You do NOT need the user to request them.\n' +
         '- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n' +
+        '- If a URL or local path ends in .pdf, prefer read_pdf over fetch_url or read_file.\n' +
         '- Do NOT ask the user for permission yourself; ' +
         (yoloMode
             ? 'the user has already provided implicit consent via YOLO mode.'

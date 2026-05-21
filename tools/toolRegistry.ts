@@ -19,6 +19,7 @@ import { FetchImageTool, type FetchImageToolArgs, type FetchImageResult } from '
 import { ReadFileTool, type ReadFileToolArgs } from './impl/readFileTool';
 import { PatchFileTool, type PatchFileToolArgs, type PatchFilePatch } from './impl/patchFileTool';
 import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool';
+import { ReadPdfTool, type ReadPdfToolArgs } from './impl/readPdfTool';
 import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCommandTool';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants';
 import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers';
@@ -94,6 +95,9 @@ export interface ToolCallArguments {
     autoInvoke?: boolean;
     globPatterns?: string[];
     allowedTools?: string[];
+    start_page?: number;
+    end_page?: number;
+    extract_images?: boolean;
 }
 
 /** Result returned by a tool command. Most tools only set content; vision tools also set images. */
@@ -212,6 +216,17 @@ function runFetchImage(
             onProgress?.(message);
         },
     });
+    return tool.run(args, signal);
+}
+
+async function runReadPdf(
+    args: ReadPdfToolArgs,
+    output: ToolOutputSink = noopToolOutputSink,
+    model?: string,
+    numCtx?: number,
+    signal?: AbortSignal,
+): Promise<ToolCallResult> {
+    const tool = new ReadPdfTool({ output, model, numCtx });
     return tool.run(args, signal);
 }
 
@@ -535,6 +550,22 @@ export const toolRegistry = new Map<string, IToolCommand>([
                     const msg = err instanceof Error ? err.message : String(err);
                     return { content: `[Error: failed to create skill "${sanitizedName}": ${msg}]` };
                 }
+            },
+        },
+    ],
+    [
+        'read_pdf',
+        {
+            async execute(args, _onProgress, output = noopToolOutputSink, context, signal) {
+                const permErr = checkToolAllowed('read_pdf', context);
+                if (permErr) return { content: permErr };
+                if (typeof args.path !== 'string' || args.path.trim().length === 0) {
+                    return { content: '[Error: missing required argument "path"]' };
+                }
+                const pdfArgs: ReadPdfToolArgs = { path: args.path, extract_images: args.extract_images === true };
+                if (args.start_page !== undefined) pdfArgs.start_page = args.start_page;
+                if (args.end_page !== undefined) pdfArgs.end_page = args.end_page;
+                return runReadPdf(pdfArgs, output, context?.subAgent?.model, context?.subAgent?.numCtx, signal);
             },
         },
     ],

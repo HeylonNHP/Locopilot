@@ -29,6 +29,7 @@ The actual tool behavior is delegated to modules in `tools/impl/`:
 - `tools/impl/fetchUrlTool.ts`
 - `tools/impl/fetchImageTool.ts`
 - `tools/impl/readFileTool.ts`
+- `tools/impl/readPdfTool.ts`
 - `tools/impl/patchFileTool.ts`
 - `tools/impl/writeFileTool.ts`
 
@@ -97,7 +98,8 @@ To add a new tool, follow these steps:
    - Export the runtime class and `getToolPrompt()`.
    - Keep the concrete implementation isolated from the dispatcher.
 
-6. Update any tests or UI docs that depend on tool names/params.
+6. Update `getToolSystemPrompt()` in `tools/tools.ts` so the new `getToolPrompt()` is concatenated in the correct order and uses a unique sequential number.
+7. Update this guide (`TOOL_GUIDE.md`) and the root `README.md` when adding new tools.
 
 ## Modifying an existing tool
 
@@ -130,8 +132,12 @@ When changing an existing tool:
   - `fetch_url`
   - `fetch_image`
   - `read_file`
-- `patch_file`
+  - `read_pdf`
+  - `patch_file`
   - `write_file`
+  - `run_subagents`
+  - `load_skill`
+  - `create_skill`
 
 - `check_process_output` accepts optional `poll_interval_seconds` so the model can intentionally slow down polling for long-running commands.
 - `patch_file` is the preferred way to make small targeted edits to an existing file because it preserves the rest of the file and rejects mismatched patches atomically.
@@ -141,7 +147,7 @@ When changing an existing tool:
 - `npx tsc --noEmit` passes.
 - New tool names are added to both `TOOLS` and `toolRegistry`.
 - Shared args appear in `ToolCallArguments`.
-- `getToolSystemPrompt()` still composes the correct prompt strings.
+- `getToolSystemPrompt()` still composes the correct prompt strings, with each `getToolPrompt()` using a unique sequential number.
 - No behaviour changes are introduced by the refactor.
 
 ## Recommended future improvements
