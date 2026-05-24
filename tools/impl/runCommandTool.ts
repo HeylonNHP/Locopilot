@@ -51,7 +51,7 @@ interface RequestProcessState {
 
 const requestProcessState = new AsyncLocalStorage<RequestProcessState>();
 
-// Global fallback registry for non-request (CLI/tests) usage
+// Global fallback registry for direct module usage in tests
 const globalFallbackRegistry = new Map<number, ProcessEntry>();
 let globalFallbackNextId = 1;
 

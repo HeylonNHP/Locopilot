@@ -48,7 +48,7 @@ import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 
 function isInterruptOrAbort(signal?: AbortSignal): boolean {
     if (signal?.aborted) return true;
-    // Fallback to global interrupt for CLI path where no signal is passed.
+    // Fallback to global interrupt when no signal is passed.
     return isInterruptRequested();
 }
 

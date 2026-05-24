@@ -188,7 +188,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Compaction model resolved from config (set below); starts as the chat model.
             let effectiveCompactionModel: string = model as string;
             // Last authoritative token count from Ollama; used by the auto-compact
-            // check so it matches the CLI's anchored estimate.
+            // check so it stays anchored to the latest exact provider count.
             let lastAuthoritativeTokens = 0;
             // Whether YOLO mode is active (set from config below). When true,
             // run_command skips the approval gate and executes unconditionally.
@@ -331,7 +331,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 while (true) {
 
                     // Auto-compact when approaching the context limit, mirroring the
-                    // CLI's autoCompactIfNeeded() in services/chatSession.ts.
+                    // server-side autoCompactIfNeeded() logic in services/chatSession.ts.
                     if (effectiveNumCtx > 0) {
                         const tokensUsed = lastAuthoritativeTokens > 0
                             ? lastAuthoritativeTokens

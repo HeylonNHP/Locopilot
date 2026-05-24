@@ -34,7 +34,6 @@ import { countMessagesTokens } from './tokenizer';
 import { updatePhase, clearLiveStatus, updateVram } from '../statusLine';
 import { fetchLlmRunningModelVram } from './llm';
 import { compactHistory, printCompactStats, type CompactStats } from './compact';
-import { generateFallbackTitle } from './titleUtils';
 import { resolveCompactionModel } from './modelManager';
 import {
     AUTO_COMPACT_THRESHOLD_PCT,
@@ -548,18 +547,3 @@ export async function processAITurn(
     return { shouldContinue: false, wasInterrupted: false, finalStats: sessionTokenStats };
 }
 
-/**
- * Names the session from the first user message.
- *
- * NOTE: CLI uses the user prompt as the fallback title source, while the
- * web path uses the first assistant response for better topic summarisation.
- * This divergence is intentional: in the CLI we only have the prompt at the
- * moment the session is created, whereas on the web we wait for the first
- * response and then call generateFallbackTitle() with the assistant content.
- */
-export function nameSessionFromPrompt(state: ChatSessionState, prompt: string): void {
-    if (!state.sessionNamed) {
-        state.sessionNamed = true;
-        renameSession(state.currentSessionId, generateFallbackTitle(prompt));
-    }
-}

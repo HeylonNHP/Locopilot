@@ -79,7 +79,7 @@ interface ChatState {
   pendingCommand: { name: string; args: any } | null;
   showApproval: boolean;
   pendingApprovalId: string | null;
-  // Additional config fields from CLI
+  // Additional persisted config fields
   yolo: boolean;
   thinkingEnabled: boolean;
   compactionModel: string;
