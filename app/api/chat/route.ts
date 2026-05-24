@@ -30,7 +30,7 @@ import { compactHistory } from '../../../services/compact';
 import { sanitizeContentForTitle } from '../../../services/titleGeneration';
 import { generateFallbackTitle } from '../../../services/titleUtils';
 import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
-import { countMessagesTokens } from '../../../services/tokenizer';
+import { countMessagesTokens, countTextTokens } from '../../../services/tokenizer';
 import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
 import { createSystemPrompt } from '../../../services/chatSession';
@@ -271,6 +271,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                     requestContext = {
                         yoloMode: config?.yolo ?? false,
                         allowedTools,
+                        model: model as string,
+                        numCtx: effectiveNumCtx,
                         webSearch: {
                             maxQueries: config?.webSearch?.maxQueries ?? 3,
                             resultsPerQuery: config?.webSearch?.resultsPerQuery ?? 3,
@@ -292,6 +294,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                     requestContext = {
                         yoloMode: false,
                         allowedTools: undefined,
+                        model: model as string,
+                        numCtx: effectiveNumCtx,
                         webSearch: {
                             maxQueries: 3,
                             resultsPerQuery: 3,
@@ -474,8 +478,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     if (contentChunk) {
                                         content += contentChunk;
                                         sendEvent('chunk', contentChunk);
-                                        // Rough live token estimate for t/s display (≈4 chars/token).
-                                        roughTokens += Math.max(1, Math.ceil(contentChunk.length / 4));
+                                        // Live token count for t/s display.
+                                        roughTokens += countTextTokens(contentChunk, model as string);
                                         const now = Date.now();
                                         if (now - lastTpsStatusMs > 800) {
                                             const elapsedSec = (now - streamStartMs) / 1000;

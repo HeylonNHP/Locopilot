@@ -39,6 +39,10 @@ export interface RequestContext {
     subAgent: SubAgentConfig;
     /** Tool names allowed by active always-apply skills; undefined = no restriction */
     allowedTools?: string[] | undefined;
+    /** Model name for the current request (top-level, used by tools like read_pdf even outside sub-agents) */
+    model?: string;
+    /** Context window size for the current request (top-level, used by tools like read_pdf even outside sub-agents) */
+    numCtx?: number;
 }
 
 export interface ToolWebSearchConfig {
@@ -396,7 +400,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         start_line: args.start_line,
                         end_line: args.end_line,
                         line_count: args.line_count,
-                    }, output, context?.subAgent?.model, context?.subAgent?.numCtx, signal),
+                    }, output, context?.subAgent?.model ?? context?.model, context?.subAgent?.numCtx ?? context?.numCtx, signal),
                 };
             },
         },
@@ -565,7 +569,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                 const pdfArgs: ReadPdfToolArgs = { path: args.path, extract_images: args.extract_images === true };
                 if (args.start_page !== undefined) pdfArgs.start_page = args.start_page;
                 if (args.end_page !== undefined) pdfArgs.end_page = args.end_page;
-                return runReadPdf(pdfArgs, output, context?.subAgent?.model, context?.subAgent?.numCtx, signal);
+                return runReadPdf(pdfArgs, output, context?.subAgent?.model ?? context?.model, context?.subAgent?.numCtx ?? context?.numCtx, signal);
             },
         },
     ],

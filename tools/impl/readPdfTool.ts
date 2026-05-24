@@ -4,7 +4,7 @@ import { readFile, stat } from 'node:fs/promises';
 const require = createRequire(import.meta.url);
 const { PDFParse } = require('pdf-parse');
 
-import { IMAGE_TOKEN_ESTIMATE, READ_FILE_TOKEN_CRITICAL_PCT, READ_FILE_TOKEN_WARN_PCT } from '../../constants';
+import { IMAGE_TOKEN_ESTIMATE, READ_FILE_CHAR_WARN_THRESHOLD, READ_FILE_TOKEN_CRITICAL_PCT, READ_FILE_TOKEN_WARN_PCT } from '../../constants';
 import { countTextTokens } from '../../services/tokenizer';
 import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { resolveAgentPath } from '../workingDirectory';
@@ -84,7 +84,7 @@ export class ReadPdfTool {
 
         let fileStat;
         try {
-            fileStat = await stat(absPath, { signal } as any);
+            fileStat = await stat(absPath);
         } catch (error) {
             return { content: `[read_pdf error: unable to access file: ${error instanceof Error ? error.message : String(error)}]` };
         }
@@ -236,6 +236,26 @@ export class ReadPdfTool {
                             `💡  Consider using sub-agents to process large files — they have isolated context and won't consume your working memory.\n`;
                     }
                 }
+            } else if (this.model && extractedText.length > 0 && extractedText.length >= READ_FILE_CHAR_WARN_THRESHOLD) {
+                // Fallback: model known but numCtx unknown — use accurate token counting.
+                let tokenEstimate = 0;
+                try {
+                    tokenEstimate = countTextTokens(extractedText, this.model);
+                } catch {
+                    tokenEstimate = 0;
+                }
+                if (tokenEstimate > 0) {
+                    tokenWarning =
+                        `\n⚠️  Size Notice: This PDF excerpt is approximately ${tokenEstimate.toLocaleString()} tokens.\n` +
+                        `💡  Context size is unknown, so a percentage check isn't available. Consider using sub-agents to process large files — they have isolated context and won't consume your working memory.\n`;
+                }
+            } else if (extractedText.length > 0 && extractedText.length >= READ_FILE_CHAR_WARN_THRESHOLD) {
+                // Last resort: model and context size both unknown.
+                // Estimate tokens using the ~4 chars/token heuristic.
+                const roughTokenEstimate = Math.round(extractedText.length / 4);
+                tokenWarning =
+                    `\n⚠️  Size Notice: This PDF excerpt is ${extractedText.length.toLocaleString()} characters (roughly ~${roughTokenEstimate.toLocaleString()} tokens, estimated at ~4 chars/token).\n` +
+                    `💡  Model/context size is unknown, so a precise token check isn't available. Consider using sub-agents to process large files — they have isolated context and won't consume your working memory.\n`;
             }
 
             // --- Image extraction ---
@@ -246,6 +266,7 @@ export class ReadPdfTool {
                     const imageResult = await parser.getImage({
                         partial: range(startPage, endPage),
                         imageBuffer: true,
+                        imageDataUrl: false,
                     });
                     if (imageResult?.pages) {
                         const extractedImages: string[] = [];
@@ -344,6 +365,7 @@ export class ReadPdfTool {
  * Guards against negative or non-finite bounds.
  */
 function range(from: number, to: number): number[] {
+    if (from > to) return [];
     const start = Math.max(1, Math.floor(from));
     const end = Math.max(start, Math.floor(to));
     const result: number[] = [];

@@ -10,6 +10,7 @@
 import { type WebExtractionSettings } from '../web/htmlExtractor';
 import { sendLlmChatStream, type ChatMessage, type StreamChatParams } from '../../services/llm';
 import { countMessagesTokens, countTextTokens } from '../../services/tokenizer';
+import { APPROX_CHARS_PER_TOKEN } from '../../constants';
 import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { AsyncLocalStorage } from 'async_hooks';
 
@@ -55,7 +56,6 @@ Provide only the compacted content, without any additional commentary or markup.
 const MAX_COMPACTION_ATTEMPTS = 3;
 const MIN_COMPACTION_NUM_CTX = 4096;
 const COMPACTION_CONTEXT_BUFFER_TOKENS = 256;
-const APPROX_CHARS_PER_TOKEN = 4;
 const OUTPUT_TOKEN_BUFFER_RATIO = 1.2;
 const INITIAL_OUTPUT_SCALE = 0.9;
 const RETRY_OUTPUT_SCALE_STEP = 0.1;

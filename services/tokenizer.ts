@@ -2,8 +2,7 @@ import { createRequire } from 'node:module';
 
 import { type ChatMessage } from './llm';
 import { stripSpecialTokens } from './textUtils';
-import { estimateTextTokens as estimateHeuristicTextTokens } from './tokenHeuristics';
-import { IMAGE_TOKEN_ESTIMATE } from '../constants';
+import { IMAGE_TOKEN_ESTIMATE, APPROX_CHARS_PER_TOKEN } from '../constants';
 
 let encoder: TiktokenLike | null = null;
 let currentEncoderModel: string | null = null;
@@ -16,6 +15,11 @@ interface TiktokenLike {
 
 // Fallback approximate encoder when the real tiktoken WASM fails to load.
 // Uses a rough heuristic of ~4 characters per token (typical for GPT-like tokenizers).
+function estimateHeuristicTextTokens(text: string): number {
+    if (!text) return 0;
+    return Math.max(1, Math.ceil(text.length / APPROX_CHARS_PER_TOKEN));
+}
+
 const fallbackEncoder: TiktokenLike = {
     encode(text: string): number[] {
         const estimated = estimateHeuristicTextTokens(text);

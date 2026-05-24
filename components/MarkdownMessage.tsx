@@ -90,9 +90,9 @@ export default function MarkdownMessage({ source, className }: Props) {
           right: 8px;
           padding: 4px 10px;
           border-radius: 6px;
-          border: 1px solid rgba(0,80,140,0.15);
-          background: rgba(255,255,255,0.9);
-          color: #0066cc;
+          border: 1px solid var(--glass-border-soft);
+          background: rgba(255,255,255,0.8);
+          color: var(--text-secondary);
           font-size: 11px;
           font-family: inherit;
           cursor: pointer;
@@ -103,7 +103,8 @@ export default function MarkdownMessage({ source, className }: Props) {
 
         btn.addEventListener('click', () => {
           const text = code.textContent || '';
-          navigator.clipboard.writeText(text).catch(() => {
+
+          const fallbackCopy = () => {
             const textarea = document.createElement('textarea');
             textarea.value = text;
             textarea.style.position = 'fixed';
@@ -116,15 +117,21 @@ export default function MarkdownMessage({ source, className }: Props) {
               // silently fail
             }
             document.body.removeChild(textarea);
-          });
+          };
+
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).catch(fallbackCopy);
+          } else {
+            fallbackCopy();
+          }
 
           btn.textContent = 'Copied!';
           btn.style.background = 'rgba(0,168,232,0.15)';
-          btn.style.color = '#00a8e8';
+          btn.style.color = 'var(--accent)';
           setTimeout(() => {
             btn.textContent = 'Copy';
-            btn.style.background = 'rgba(255,255,255,0.9)';
-            btn.style.color = '#0066cc';
+            btn.style.background = 'rgba(255,255,255,0.8)';
+            btn.style.color = 'var(--text-secondary)';
           }, 1500);
         });
 

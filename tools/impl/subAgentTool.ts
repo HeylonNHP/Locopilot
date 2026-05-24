@@ -34,7 +34,7 @@ import { AUTO_COMPACT_THRESHOLD_PCT } from '../../constants';
 import { compactHistory } from '../../services/compact';
 import { sendLlmChat, type ChatMessage, type ToolCall, type ToolDefinition } from '../../services/llm';
 import { sanitizeChatMessage } from '../../services/textUtils';
-import { countMessagesTokens } from '../../services/tokenizer';
+import { countMessagesTokens, countTextTokens } from '../../services/tokenizer';
 import { isInterruptRequested } from '../interruptManager';
 import {
     toolRegistry,
@@ -346,11 +346,11 @@ async function runSingleAgent(
             // chunk sequence so thinking and content are visually separated.
             if (chunk.message?.thinking) {
                 output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
-                subagentRoughTokens += Math.max(1, Math.ceil(chunk.message.thinking.length / 4));
+                subagentRoughTokens += Math.max(1, countTextTokens(chunk.message.thinking, config.model));
             }
             if (chunk.message?.content) {
                 output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
-                subagentRoughTokens += Math.max(1, Math.ceil(chunk.message.content.length / 4));
+                subagentRoughTokens += Math.max(1, countTextTokens(chunk.message.content, config.model));
             }
 
             const now = Date.now();
