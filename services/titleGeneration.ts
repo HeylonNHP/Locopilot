@@ -41,7 +41,13 @@ export function isValidTitle(title: string): { valid: boolean; reason?: string }
 /** Sanitizes message content before it is fed to the title LLM. */
 export function sanitizeContentForTitle(content: string): string {
     return content
+        // CDATA sections: Ollama/DeepSeek models wrap <thinking> blocks in
+        // <![CDATA[...]]>; strip the full CDATA wrapper first so the inner
+        // <thinking> pattern below doesn't leave orphan CDATA markers.
+        .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
         .replace(/<thinking>[\s\S]*?<\/thinking>/g, '')
+        // <think>...</think> tags used by DeepSeek R1 and QwQ models.
+        .replace(/<think>[\s\S]*?<\/think>/g, '')
         .replace(/\x1B\[[0-9;]*m/g, '')
         .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[image]')
         .replace(/```[\s\S]*?```/g, '[code]')

@@ -1,5 +1,8 @@
+import { createRequire } from 'node:module';
 import { readFile, stat } from 'node:fs/promises';
-import { PDFParse } from 'pdf-parse';
+
+const require = createRequire(import.meta.url);
+const { PDFParse } = require('pdf-parse');
 
 import { IMAGE_TOKEN_ESTIMATE, READ_FILE_TOKEN_CRITICAL_PCT, READ_FILE_TOKEN_WARN_PCT } from '../../constants';
 import { countTextTokens } from '../../services/tokenizer';
@@ -125,7 +128,7 @@ export class ReadPdfTool {
         }
 
         // --- Open PDF and get metadata ---
-        let parser: PDFParse | undefined;
+        let parser: InstanceType<typeof PDFParse> | undefined;
         let totalPages: number;
         try {
             parser = new PDFParse({ data: buffer });
@@ -251,7 +254,7 @@ export class ReadPdfTool {
                                 for (const img of page.images) {
                                     const data: Uint8Array | Buffer | ArrayBuffer | undefined = img.data;
                                     if (data && data.byteLength > 0) {
-                                        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+                                        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array);
                                         extractedImages.push(buf.toString('base64'));
                                     }
                                 }
