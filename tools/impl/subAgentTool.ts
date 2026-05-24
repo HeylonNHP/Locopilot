@@ -144,9 +144,9 @@ async function autoCompactSubAgentIfNeeded(
     // empty messagesToSummarise array because the sliding-window preservation
     // logic consumes everything after the latest user message (which sits at
     // index 0 of historyMessages).  The anchor-rescue fallback then has nothing
-    // to put into messagesToSummarise, so countMessagesTokens([], model) returns
-    // exactly 2 — the tokenizer's +2 overhead — yielding the cryptic error:
-    //   "The conversation history is too short to compact (~2 tokens)."
+    // to put into messagesToSummarise, so the downstream estimate can collapse
+    // to a tiny value and yield the cryptic error:
+    //   "The conversation history is too short to compact (~0 tokens)."
     //
     // MIN_SUMMARISE_TOKENS is 200, so a short sub-agent history (which is
     // structurally different from the main chat because it starts with a single

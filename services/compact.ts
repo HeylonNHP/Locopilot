@@ -18,7 +18,7 @@
 import chalk from 'chalk';
 import { sendLlmChat, sendLlmChatStream, getLlmTurnStats } from './llm';
 import type { ChatMessage } from './llm';
-import { countMessagesTokens } from './tokenizer';
+import { countMessageTokens, countMessagesTokens } from './tokenizer';
 
 // The instruction sent to the LLM when asking it to compact the history.
 function buildCompactSystemPrompt(params: {
@@ -194,7 +194,7 @@ function splitHistoryForCompaction(
             break;
         }
 
-        const estimatedMessageTokens = countMessagesTokens([message], model);
+        const estimatedMessageTokens = countMessageTokens(message, model);
         const meetsFloor = preservedFromEnd.length >= preserveRecentMessageFloor;
         const meetsBudget = preservedRecentTokens >= preserveRecentTokenBudget;
 
@@ -385,14 +385,14 @@ export async function compactHistory(
     if (historyMessages.length === 0) {
         throw new Error('Cannot compact: conversation has no content beyond the system prompt.');
     }
-    // ── Guard against degenerate "~2 tokens" crash ────────────────────────────
+    // ── Guard against degenerate empty-summary crash ─────────────────────────
     // Subagents (and any short-history code path) can reach this point with
     // messages === [system] — i.e. zero history beyond the system prompt.
     // splitHistoryForCompaction would then return an empty messagesToSummarise,
-    // and countMessagesTokens([], model) returns exactly 2 (the +2 overhead in
-    // the tokenizer).  That produces the cryptic error:
-    //   "The conversation history is too short to compact (~2 tokens)."
-    // which is impossible to debug because 2 tokens is nowhere near the
+    // and the downstream estimate collapses to a tiny value. That produces the
+    // cryptic error:
+    //   "The conversation history is too short to compact (~0 tokens)."
+    // which is impossible to debug because a near-empty history is nowhere near the
     // MIN_SUMMARISE_TOKENS threshold of 200.
     //
     // The deeper root: when the latest user message is the FIRST history entry
@@ -440,7 +440,7 @@ export async function compactHistory(
             // There is no pre-anchor history, but if the split left nothing to
             // summarise (which can happen when the preservation loop consumed
             // everything), fall back to summarising the whole history so we don't
-            // abort with a confusing "~2 tokens" error.
+            // abort with a confusing near-zero token estimate.
             if (historySplit.messagesToSummarise.length === 0) {
                 historySplit = {
                     messagesToSummarise: historyMessages,

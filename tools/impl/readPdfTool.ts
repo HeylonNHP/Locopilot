@@ -1,8 +1,19 @@
+import { readFile, stat } from 'node:fs/promises';
+import { PDFParse } from 'pdf-parse';
+
+import { IMAGE_TOKEN_ESTIMATE, READ_FILE_TOKEN_CRITICAL_PCT, READ_FILE_TOKEN_WARN_PCT } from '../../constants';
+import { countTextTokens } from '../../services/tokenizer';
+import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
+import { resolveAgentPath } from '../workingDirectory';
+import type { ToolCallResult } from '../toolRegistry';
 import type { ToolSchema } from '../../tools/tools';
+
+const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB — warn when no range provided
+const MAX_PAGES_PER_CALL = 50;
 
 export const readPdfToolSchema: ToolSchema = {
     name: 'read_pdf',
-    description: 'Reads text content and optionally extracts embedded images from a PDF file. Returns extracted text with page markers. Use start_page/end_page to read specific page ranges.',
+    description: `Reads text content and optionally extracts embedded images from a PDF file. Returns extracted text with page markers. Use start_page/end_page to read specific page ranges.`,
     parameters: {
         type: 'object',
         properties: {
@@ -20,24 +31,12 @@ export const readPdfToolSchema: ToolSchema = {
             },
             extract_images: {
                 type: 'boolean',
-                description: 'When true and the model supports vision, extracts embedded images from the selected pages and attaches them. Defaults to false. Each image costs ~1024 tokens in context.',
+                description: `When true and the model supports vision, extracts embedded images from the selected pages and attaches them. Defaults to false. Each image costs ~${IMAGE_TOKEN_ESTIMATE.toLocaleString()} tokens in context.`,
             },
         },
         required: ['path'],
     },
 };
-
-const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB — warn when no range provided
-const MAX_PAGES_PER_CALL = 50;
-const IMAGE_TOKEN_ESTIMATE = 1024;
-
-import { readFile, stat } from 'node:fs/promises';
-import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { resolveAgentPath } from '../workingDirectory';
-import { countTextTokens } from '../../services/tokenizer';
-import { READ_FILE_TOKEN_WARN_PCT, READ_FILE_TOKEN_CRITICAL_PCT } from '../../constants';
-import { PDFParse } from 'pdf-parse';
-import type { ToolCallResult } from '../toolRegistry';
 
 export interface ReadPdfToolArgs {
     path?: string;

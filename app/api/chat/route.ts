@@ -339,10 +339,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                         const usagePct = (tokensUsed / effectiveNumCtx) * 100;
 
                         // Only compact when there is enough history for the split logic to
-                        // produce a non-empty messagesToSummarise.  With fewer than 4 messages
-                        // the anchor-rescue fallback can return an empty array, causing the
-                        // confusing "~2 tokens" error (see tools/impl/subAgentTool.ts and
-                        // services/compact.ts for full context).
+                        // produce a non-empty messagesToSummarise. With fewer than 4 messages,
+                        // the anchor-rescue fallback can return an empty array, which would
+                        // otherwise trip the too-short guard with a confusing near-zero token
+                        // estimate (see tools/impl/subAgentTool.ts and services/compact.ts).
                         if (usagePct >= AUTO_COMPACT_THRESHOLD_PCT && currentMessages.length >= 4) {
                             sendEvent('status', {
                                 phase: 'compacting',
