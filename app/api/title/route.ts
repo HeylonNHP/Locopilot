@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_NUM_CTX } from '../../../constants';
 import { listSessions, loadSessionMessages } from '../../../history';
 import { enqueueSessionRename } from '../../../app/lib/sessionWriteQueue';
-import { generateSessionTitle } from '../../../services/compact';
+import { generateSessionTitle } from '../../../services/titleGeneration';
 import { loadConfig } from '../../../services/configManager';
 import { getLlmApiErrorMessage } from '../../../services/llm';
 import { resolveCompactionModel } from '../../../services/modelManager';
