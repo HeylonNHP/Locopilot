@@ -558,7 +558,7 @@ export async function compactHistory(
                 temperature: 0,
                 ...(numPredict !== undefined ? { num_predict: numPredict } : {}),
             },
-            signal,
+            ...(signal ? { signal } : {}),
         })) {
             const content = chunk.message?.content ?? '';
             if (content.length > 0) {
