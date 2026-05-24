@@ -7,7 +7,6 @@
 
 import { sendLlmChat } from './llm';
 import type { ChatMessage } from './llm';
-import { generateFallbackTitle } from './titleUtils';
 
 const TITLE_MAX_LEN = 80;
 const TITLE_MIN_LEN = 3;
@@ -52,17 +51,6 @@ export function sanitizeContentForTitle(content: string): string {
         .replace(/\s+/g, ' ')
         .trim();
 }
-
-/** Cheap deterministic path: use the first user prompt if it already looks title-worthy. */
-function extractDeterministicTitle(messages: ChatMessage[]): string | null {
-    const firstUser = messages.find((m) => m.role === 'user')?.content ?? '';
-    const clean = sanitizeContentForTitle(firstUser).replace(/[.,;:!?]+$/, '').trim();
-    if (isValidTitle(clean).valid && clean.length >= 8) {
-        return `💬 ${generateFallbackTitle(clean)}`;
-    }
-    return null;
-}
-
 function looksLikeApology(title: string): boolean {
     return /\b(?:i['’]?m sorry|sorry|apolog(?:y|ize)|can(?:'t|not)|cannot|unable|won't|will not|no permission|cannot create|cannot write|no access|not allowed)\b/i.test(title);
 }
@@ -95,12 +83,6 @@ export async function generateSessionTitle(
 ): Promise<string> {
     if (messages.length <= 1) {
         throw new Error('Not enough conversation history to generate a session title.');
-    }
-
-    const deterministic = extractDeterministicTitle(messages);
-    if (deterministic) {
-        onProgress?.('Using prompt-based title.');
-        return deterministic;
     }
 
     const isSmallModel = /(?:^|[-_\s])(?:7b|8b|3b|4b|small|mini)(?:[-_\s]|$)/i.test(model);
