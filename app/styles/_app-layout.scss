@@ -22,11 +22,8 @@
   flex: 1;
   overflow-y: auto;
   padding: 16px;
-  padding-right: 44px;
   display: flex;
   flex-direction: column;
-  // Keep scrollbar clear of the fixed SkillsPanel (36px collapsed width + 4px buffer)
-  margin-right: 40px;
 }
 
 .input-area {

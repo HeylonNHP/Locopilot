@@ -5,13 +5,9 @@
 // ================================================================
 
 .skills-panel {
-  position: fixed;
-  right: 0;
-  top: 0;
-  bottom: 110px;
-  z-index: 50;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.12);
   backdrop-filter: blur(20px) saturate(160%);
