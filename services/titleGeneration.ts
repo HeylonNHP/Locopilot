@@ -53,6 +53,10 @@ export function sanitizeContentForTitle(content: string): string {
         .replace(/```[\s\S]*?```/g, '[code]')
         .replace(/\{[^{}]*"name"\s*:\s*"[^"]+"[^{}]*\}/g, '[tool]')
         .replace(/https?:\/\/[^\s]+/g, '[link]')
+        // Windows absolute paths (e.g. C:\Users\foo\bar.xml or \\server\share)
+        .replace(/(?:[A-Za-z]:\\|\\\\)[^\s,;"'`<>\]\)]+/g, '[path]')
+        // Unix absolute paths (e.g. /home/user/file.txt)
+        .replace(/\/(?:[a-zA-Z0-9._-]+\/)+[a-zA-Z0-9._-]+/g, '[path]')
         .replace(/\*\*/g, '').replace(/\*/g, '').replace(/`/g, '').replace(/_/g, '').replace(/~/g, '')
         .replace(/\s+/g, ' ')
         .trim();
@@ -185,57 +189,55 @@ export async function generateSessionTitle(
 
     const firstUserContent = messages.find((m) => m.role === 'user')?.content?.trim() ?? '';
 
+    const SHARED_RULES =
+        '- Summarise what the USER WANTED TO DO or the topic discussed — not the literal text they typed\n' +
+        '- 3 to 6 words that a human could glance at to recognise the conversation\n' +
+        '- Pick one relevant emoji that represents the main topic\n' +
+        '- Under 55 characters total (emoji does not count)\n' +
+        '- Do NOT include file paths, URLs, code snippets, variable names, or quoted strings\n' +
+        '- Do NOT use generic filler words like "chat", "conversation", "response", "result", or "output"\n' +
+        '- Do NOT include refusals, apologies, or limitation language';
+
+    const SHARED_EXAMPLES =
+        'Good titles:\n' +
+        '  [USER] Can you review C:\\Users\\foo\\report.xml?  →  📄 XML Report Review\n' +
+        '  [USER] Give me a fun fact about https://en.wikipedia.org/wiki/Moon  →  🌕 Moon Fun Facts\n' +
+        '  [USER] Perform investigation using subagents with web searches  →  🔍 Web Investigation with Subagents\n' +
+        '  [USER] How do I fix a 503 error on Nginx?  →  🌐 Nginx 503 Error Fix\n\n' +
+        'Bad titles (NEVER produce these):\n' +
+        '  ❌ C:\\Users\\foo\\report.xml  (raw file path)\n' +
+        '  ❌ Give me a fun fact about https://  (raw user message)\n' +
+        '  ❌ Perform investigation using subagents with web searches to s  (truncated input)';
+
     const strategies: Array<{ system: string; user: string; format?: string | Record<string, unknown> }> = [
         {
             system:
                 'You are a concise session title generator. Given a conversation between a user and an AI assistant, ' +
-                'generate a short descriptive title (2-8 words) and pick a single relevant emoji that captures the topic.\n' +
-                'Respond with ONLY a JSON object in this exact format: {"title": "<emoji> <title>"}\n' +
-                'Rules:\n' +
-                '- 2 to 8 words, under 80 characters (emoji does not count toward the word limit)\n' +
-                '- Pick one relevant emoji that represents the main topic\n' +
-                '- Capture the main topic or task\n' +
-                '- Do NOT use generic words like "json", "title", "chat", "response", "result", "output", "text", or "conversation"\n' +
-                '- Do NOT include refusals, apologies, or limitation language in the title',
+                'generate a short human-readable title and pick a single relevant emoji.\n' +
+                'Respond with ONLY a JSON object in this exact format: {"title": "<emoji> <title>"}\n\n' +
+                SHARED_EXAMPLES + '\n\nRules:\n' + SHARED_RULES,
             user: `Generate a short session title for this conversation:\n\n${conversationText}\n\nRespond with JSON only.`,
             format: 'json',
         },
         {
             system:
                 'You are a concise session title generator. Given a conversation between a user and an AI assistant, ' +
-                'generate a short descriptive title (2-8 words) and pick a single relevant emoji that captures the topic.\n\n' +
-                'Good examples:\n' +
-                '[USER] How do I fix a 503 error on Nginx?\n' +
-                '[ASSISTANT] Check upstream server configs and restart.\n' +
-                '→ 🌐 Nginx 503 Error Troubleshooting\n\n' +
-                '[USER] Explain how Python async/await works\n' +
-                '[ASSISTANT] Async/await is syntactic sugar over coroutines...\n' +
-                '→ 🐍 Python Async/Await Explained\n\n' +
-                'Bad examples (NEVER do this):\n' +
-                '→ json\n' +
-                '→ title\n' +
-                '→ response\n' +
-                '→ Chat\n\n' +
-                'Rules:\n' +
-                '- Return ONLY the emoji + title — no quotes, no prefixes, no explanation\n' +
-                '- 2 to 8 words, under 80 characters (emoji does not count toward the word limit)\n' +
-                '- Pick one relevant emoji that represents the main topic\n' +
-                '- Capture the main topic or task\n' +
-                '- Do NOT use generic words like "json", "title", "chat", "response", "result", "output", "text", or "conversation"\n' +
-                '- Do NOT include refusals, apologies, or limitation language in the title',
+                'generate a short human-readable title and pick a single relevant emoji.\n\n' +
+                SHARED_EXAMPLES + '\n\nRules:\n' + SHARED_RULES + '\n' +
+                '- Return ONLY the emoji + title — no quotes, no prefixes, no explanation',
             user: `Generate a short session title for this conversation:\n\n${conversationText}\n\nTitle:`,
         },
         {
             system:
-                'You generate short titles for chat conversations. Pick one relevant emoji and output exactly one line: <emoji> <title>. ' +
-                'No quotes, no formatting, no prefixes like "Title:". Just the emoji and title. ' +
-                'Do NOT use generic words like "json", "title", "chat", "response", "result", "output", "text", or "conversation".',
-            user: `Conversation:\n${conversationText.slice(0, 2000)}\n\nShort title (2-8 words):`,
+                'You generate short titles for chat conversations. Output exactly one line: <emoji> <title>. ' +
+                'No quotes, no formatting, no prefixes. ' +
+                'Summarise the user\'s goal in 3-6 words — never use raw file paths, URLs, or literal user input as the title.',
+            user: `Conversation:\n${conversationText.slice(0, 2000)}\n\nShort title (3-6 words):`,
         },
         {
             system:
-                'Generate a brief title for this chat. Pick one relevant emoji and output only the emoji + title text. ' +
-                'Do NOT use generic words like "json", "title", "chat", "response", "result", "output", "text", or "conversation".',
+                'Give this chat a short title. Output only: <emoji> <title>. ' +
+                'Describe the topic or goal in plain words. Never copy file paths, URLs, or raw input into the title.',
             user: `${conversationText.slice(0, 1500)}\n\nTitle:`,
         },
     ];
@@ -310,10 +312,26 @@ export async function generateSessionTitle(
     }
 
     if (firstUserContent.length > 0) {
-        const fallback = firstUserContent.replace(/\s+/g, ' ').trim().slice(0, 60).trim();
-        if (fallback.length > 0) {
+        // Sanitize to strip file paths, URLs, code, etc. then derive a
+        // human-readable fallback rather than truncating raw input mid-word.
+        let fallback = sanitizeContentForTitle(firstUserContent);
+        // Strip common prompt filler at the start ("please", "can you", etc.)
+        fallback = fallback
+            .replace(/^(?:please\b[,\s]*|can\s+you\b[,\s]*|could\s+you\b[,\s]*|help\s+me\b[,\s]*|i\s+(?:need|want)\s+(?:to\s+)?|give\s+me\b[,\s]*)/i, '')
+            .trim();
+        // Take only the first sentence/clause to avoid overly long fallbacks
+        const clause = fallback.match(/^[^.!?\n,;]+/)?.[0]?.trim() ?? fallback;
+        // Trim to 45 chars ending on a whole word
+        let short = clause.length > 45
+            ? clause.slice(0, 45).replace(/\s\S+$/, '').trim()
+            : clause;
+        // Capitalise first letter
+        short = short.charAt(0).toUpperCase() + short.slice(1);
+        // Reject if only placeholder tokens remain after sanitization
+        const isOnlyPlaceholders = /^(?:\[(?:path|link|code|tool|image)\]\s*)+$/i.test(short);
+        if (!isOnlyPlaceholders && short.length >= TITLE_MIN_LEN) {
             onProgress?.('Using first message as fallback title.');
-            return `${pickEmojiForTitle(fallback)} ${fallback}`;
+            return `${pickEmojiForTitle(short)} ${short}`;
         }
     }
 
