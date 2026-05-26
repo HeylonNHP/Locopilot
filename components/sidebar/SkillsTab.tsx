@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SkillApiItem } from '@/app/api/skills/route';
 
 interface Props {
-    onPromptAI?: (message: string) => void;
+    onPromptAI: ((message: string) => void) | undefined;
 }
 
 export default function SkillsTab({ onPromptAI }: Props) {
