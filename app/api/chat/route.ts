@@ -372,7 +372,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     req.signal,
                                 );
                                 // Replace server-side history with the compacted result.
-                                currentMessages.splice(0, currentMessages.length, ...compactResult.newMessages);
+                                const preservedSystemMessage = currentMessages[0];
+                                if (!preservedSystemMessage || preservedSystemMessage.role !== 'system') {
+                                    throw new Error('Cannot compact: missing system prompt.');
+                                }
+                                currentMessages.splice(0, currentMessages.length, preservedSystemMessage, ...compactResult.newMessages);
                                 // Persist compacted history so the frontend sees the reduced state.
                                 await flushSessionState();
                                 // Send the compacted message list to the client AFTER
