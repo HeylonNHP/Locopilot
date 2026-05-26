@@ -39,6 +39,8 @@ export interface RequestContext {
     subAgent: SubAgentConfig;
     /** Tool names allowed by active always-apply skills; undefined = no restriction */
     allowedTools?: string[] | undefined;
+    /** Tool names disabled for the main LLM (from user config) */
+    disabledMainTools?: string[];
     /** Model name for the current request (top-level, used by tools like read_pdf even outside sub-agents) */
     model?: string;
     /** Context window size for the current request (top-level, used by tools like read_pdf even outside sub-agents) */

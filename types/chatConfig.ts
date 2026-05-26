@@ -18,6 +18,10 @@ export interface Config {
         enabled: string[];
         disabled: string[];
     };
+    tools?: {
+        disabledMain: string[];
+        disabledSubAgent: string[];
+    };
 }
 
 export interface ChatContext {

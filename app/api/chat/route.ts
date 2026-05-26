@@ -268,9 +268,12 @@ export async function POST(req: NextRequest): Promise<Response> {
                         // Skills discovery is best-effort; leave allowedTools undefined
                     }
 
+                    const disabledMain = config?.tools?.disabledMain ?? [];
+                    const disabledSubAgent = config?.tools?.disabledSubAgent ?? [];
                     requestContext = {
                         yoloMode: config?.yolo ?? false,
                         allowedTools,
+                        disabledMainTools: disabledMain,
                         model: model as string,
                         numCtx: effectiveNumCtx,
                         webSearch: {
@@ -286,7 +289,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             model: model as string,
                             numCtx: effectiveNumCtx,
                             compactionModel: resolveCompactionModel(config?.compactionModel ?? '', model as string),
-                            tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
+                            tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
                         },
                     };
                 } catch {
@@ -294,6 +297,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     requestContext = {
                         yoloMode: false,
                         allowedTools: undefined,
+                        disabledMainTools: [],
                         model: model as string,
                         numCtx: effectiveNumCtx,
                         webSearch: {
@@ -423,7 +427,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                     const params: StreamChatParams = {
                         model: model as string,
                         messages: currentMessages,
-                        tools: TOOLS,
+                        tools: requestContext.disabledMainTools?.length
+                            ? TOOLS.filter((t) => !requestContext.disabledMainTools!.includes(t.function.name))
+                            : TOOLS,
                         numCtx: effectiveNumCtx,
                         signal: req.signal,
                         timeoutMs: effectiveChatTimeoutMs,
