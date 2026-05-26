@@ -247,6 +247,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // and YOLO settings reflect the latest user preferences.
                 // Build per-request context from config (no global state setters).
                 let requestContext: RequestContext;
+                let disabledSubAgent: string[] = [];
                 try {
                     const config = await loadConfig();
                     if (config) {
@@ -269,7 +270,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     }
 
                     const disabledMain = config?.tools?.disabledMain ?? [];
-                    const disabledSubAgent = config?.tools?.disabledSubAgent ?? [];
+                    disabledSubAgent = config?.tools?.disabledSubAgent ?? [];
                     requestContext = {
                         yoloMode: config?.yolo ?? false,
                         allowedTools,
@@ -313,7 +314,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             model: model as string,
                             numCtx: effectiveNumCtx,
                             compactionModel: model as string,
-                            tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents'),
+                            tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
                         },
                     };
                 }

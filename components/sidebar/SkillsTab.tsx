@@ -24,6 +24,7 @@ export default function SkillsTab({ onPromptAI }: Props) {
     const [editText, setEditText] = useState('');
 
     const togglingRef = useRef(false);
+    const pendingCreationNameRef = useRef<string | null>(null);
 
     const fetchSkills = useCallback(async () => {
         try {
@@ -35,8 +36,15 @@ export default function SkillsTab({ onPromptAI }: Props) {
                 throw new Error(data.error ?? `HTTP ${res.status}`);
             }
             const data = (await res.json()) as { skills: SkillApiItem[] };
-            setSkills(data.skills ?? []);
-            setCreating(false);
+            const nextSkills = data.skills ?? [];
+            setSkills(nextSkills);
+            if (
+                pendingCreationNameRef.current &&
+                nextSkills.some((skill) => skill.name === pendingCreationNameRef.current)
+            ) {
+                pendingCreationNameRef.current = null;
+                setCreating(false);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load skills');
         } finally {
@@ -54,12 +62,6 @@ export default function SkillsTab({ onPromptAI }: Props) {
         }, 5000);
         return () => clearInterval(interval);
     }, [fetchSkills]);
-
-    useEffect(() => {
-        if (!creating) return;
-        const timer = setTimeout(() => setCreating(false), 15000);
-        return () => clearTimeout(timer);
-    }, [creating]);
 
     const toggleSkill = useCallback(
         async (name: string, currentEnabled: boolean) => {
@@ -95,16 +97,19 @@ export default function SkillsTab({ onPromptAI }: Props) {
         setNewMode('auto-invoke');
         setNewGenerateAI(true);
         setCreating(false);
+        pendingCreationNameRef.current = null;
     }, []);
 
     const handleCreateSubmit = useCallback(() => {
-        if (!onPromptAI || !newName.trim()) return;
+        const trimmedName = newName.trim();
+        if (!onPromptAI || !trimmedName) return;
+        pendingCreationNameRef.current = trimmedName;
         setCreating(true);
         let message: string;
         if (newGenerateAI) {
-            message = `Please create a skill named "${newName.trim()}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.`;
+            message = `Please create a skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.`;
         } else {
-            message = `Please create a minimal skill named "${newName.trim()}" with description "${newDescription.trim()}". The mode should be ${newMode}. Use a simple placeholder body like "# ${newName.trim()}\n\nSkill instructions go here." Use the create_skill tool.`;
+            message = `Please create a minimal skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Use a simple placeholder body like "# ${trimmedName}\n\nSkill instructions go here." Use the create_skill tool.`;
         }
         onPromptAI(message);
         setShowCreateForm(false);
