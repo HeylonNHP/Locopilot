@@ -1,4 +1,5 @@
 'use client';
+import './ApprovalModal.scss';
 
 interface Props {
   command: { name: string; args: any };

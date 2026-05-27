@@ -1,4 +1,5 @@
 'use client';
+import './SettingsModal.scss';
 
 import { useState } from 'react';
 import { useChat } from '@/app/lib/chatStore';

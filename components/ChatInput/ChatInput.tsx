@@ -1,4 +1,5 @@
 'use client';
+import './ChatInput.scss';
 
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 

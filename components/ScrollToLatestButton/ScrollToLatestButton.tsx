@@ -1,4 +1,5 @@
 'use client';
+import './ScrollToLatestButton.scss';
 
 interface ScrollToLatestButtonProps {
   visible: boolean;

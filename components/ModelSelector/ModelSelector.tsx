@@ -1,4 +1,5 @@
 'use client';
+import './ModelSelector.scss';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useChat } from '@/app/lib/chatStore';

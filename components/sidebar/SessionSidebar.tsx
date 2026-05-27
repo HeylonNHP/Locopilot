@@ -1,4 +1,5 @@
 'use client';
+import './SessionSidebar.scss';
 
 import { useChat } from '@/app/lib/chatStore';
 import { useState, useEffect, useRef, type KeyboardEvent } from 'react';

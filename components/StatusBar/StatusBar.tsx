@@ -1,8 +1,9 @@
 'use client';
+import './StatusBar.scss';
 
 import { useState, useRef, useCallback } from 'react';
 import { useChat } from '@/app/lib/chatStore';
-import ModelSelector from './ModelSelector';
+import ModelSelector from '../ModelSelector';
 
 export default function StatusBar() {
   const { state } = useChat();

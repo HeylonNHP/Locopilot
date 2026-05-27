@@ -1,4 +1,5 @@
 'use client';
+import './SkillsPanel.scss';
 
 import { useState } from 'react';
 import SkillsTab from './SkillsTab';

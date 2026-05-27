@@ -1,10 +1,11 @@
 'use client';
+import './ChatMessageBubble.scss';
 
 import dynamic from 'next/dynamic';
 import { type ChatMessage } from '@/app/lib/chatStore';
 import { useEffect, useRef, useState } from 'react';
 
-const MarkdownMessage = dynamic(() => import('./MarkdownMessage'), {
+const MarkdownMessage = dynamic(() => import('../MarkdownMessage'), {
   ssr: false,
   loading: () => null,
 });

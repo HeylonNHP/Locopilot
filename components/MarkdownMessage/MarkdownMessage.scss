@@ -1,0 +1,141 @@
+// ================================================================
+//  Component: MarkdownMessage
+// ================================================================
+
+.markdown-message {
+  color: var(--text-primary);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+
+  > :first-child { margin-top: 0; }
+  > :last-child { margin-bottom: 0; }
+
+  p { margin: 0 0 0.85rem; }
+
+  ul,
+  ol {
+    margin: 0 0 0.85rem;
+    padding-left: 1.35rem;
+  }
+
+  li {
+    + li { margin-top: 0.25rem; }
+
+    > p { margin-bottom: 0.35rem; }
+  }
+
+  a {
+    color: #0066cc;
+    text-decoration: underline;
+    text-underline-offset: 0.12em;
+    font-weight: 500;
+  }
+
+  code {
+    padding: 0.12rem 0.35rem;
+    border-radius: 6px;
+    background: rgba(0, 100, 180, 0.08);
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.94em;
+    color: #005577;
+  }
+
+  pre {
+    margin: 0 0 0.85rem;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid var(--glass-border-soft);
+    overflow: hidden;
+    position: relative;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+
+    code {
+      display: block;
+      padding: 0.9rem 1rem;
+      overflow-x: auto;
+      background: transparent;
+      font-size: 0.92em;
+      line-height: 1.55;
+      color: #1a3a5c;
+    }
+  }
+
+  .code-copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--glass-border-soft);
+    background: rgba(255, 255, 255, 0.8);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    line-height: 1.4;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.95);
+      color: var(--text-primary);
+      opacity: 1;
+    }
+
+    &--copied {
+      background: rgba(0, 168, 232, 0.15);
+      color: var(--accent);
+      opacity: 1;
+    }
+  }
+
+  blockquote {
+    margin: 0 0 0.85rem;
+    padding-left: 0.9rem;
+    border-left: 3px solid var(--accent);
+    color: var(--text-secondary);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    margin: 0 0 0.75rem;
+    line-height: 1.25;
+    color: #0f2a4a;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 0.85rem;
+  }
+
+  th,
+  td {
+    border: 1px solid rgba(0, 80, 140, 0.12);
+    padding: 0.45rem 0.65rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    background: rgba(0, 160, 230, 0.08);
+    font-weight: 600;
+  }
+
+  hr {
+    margin: 0.9rem 0;
+    border: 0;
+    border-top: 1px solid rgba(0, 80, 140, 0.15);
+  }
+
+  // ── Thinking variant ────────────────────────────────────────
+  &--thinking {
+    color: var(--text-secondary);
+
+    a {
+      color: #0066cc;
+    }
+  }
+}

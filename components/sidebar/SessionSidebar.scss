@@ -1,4 +1,4 @@
-@use 'mixins' as *;
+@use '../../app/styles/mixins' as *;
 
 // ================================================================
 //  Component: SessionSidebar
@@ -110,4 +110,54 @@
       color: var(--text-primary);
     }
   }
+}
+
+// ── Session sidebar rows ─────────────────────────────────────
+.session-row {
+  margin-bottom: 6px;
+  border-radius: 12px;
+  background: var(--glass-light);
+  border: 1px solid var(--glass-border-soft);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 2px 8px rgba(0, 80, 120, 0.08);
+    transform: translateX(2px);
+  }
+
+  &[data-selected='true'] {
+    background: rgba(0, 168, 232, 0.15);
+    border-color: rgba(0, 168, 232, 0.35);
+    box-shadow: 0 2px 12px rgba(0, 168, 232, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  }
+
+  &__action {
+    outline: none;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    touch-action: manipulation;
+
+    &:focus,
+    &:focus-visible {
+      outline: none;
+    }
+
+    &::-moz-focus-inner {
+      border: 0;
+    }
+  }
+}
+
+.session-streaming-indicator {
+  color: var(--accent);
+  font-size: 10px;
+  animation: aero-pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
 }
