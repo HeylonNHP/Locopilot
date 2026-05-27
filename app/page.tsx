@@ -9,6 +9,7 @@ import { useSlashCommands } from './hooks/useSlashCommands';
 import { useSessionUrlParam } from './hooks/useSessionUrlParam';
 import ChatMessageBubble from '@/components/ChatMessageBubble';
 import ChatInput from '@/components/ChatInput';
+import ScrollToLatestButton from '@/components/ScrollToLatestButton';
 import { SessionSidebar, SkillsPanel } from '@/components/sidebar';
 import ApprovalModal from '@/components/ApprovalModal';
 import StatusBar from '@/components/StatusBar';
@@ -21,9 +22,15 @@ function HomeInner() {
   const [isCompacting, setIsCompacting] = useState(false);
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
+  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
 
   const abortControllersRef = useRef<Map<number, AbortController>>(new Map());
+  const messagesAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
+  const currentSessionIdRef = useRef<number | null>(state.currentSessionId);
+  const previousSessionIdRef = useRef<number | null | undefined>(undefined);
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
   const sessionSwitchIdRef = useRef<number | null>(null);
@@ -31,6 +38,34 @@ function HomeInner() {
 
   useEffect(() => { isCompactingRef.current = isCompacting; }, [isCompacting]);
   useEffect(() => { isGeneratingTitleRef.current = isGeneratingTitle; }, [isGeneratingTitle]);
+  useEffect(() => { currentSessionIdRef.current = state.currentSessionId; }, [state.currentSessionId]);
+
+  const handleMessagesAreaScroll = useCallback(() => {
+    const container = messagesAreaRef.current;
+    if (!container) return;
+
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const isAtBottom = distanceFromBottom <= 32;
+
+    isAtBottomRef.current = isAtBottom;
+
+    if (programmaticScrollRef.current && !isAtBottom) {
+      return;
+    }
+
+    if (isAtBottom) {
+      programmaticScrollRef.current = false;
+    }
+
+    setShowScrollToLatest(!isAtBottom && container.scrollHeight > container.clientHeight + 1);
+  }, []);
+
+  const scrollMessagesToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    programmaticScrollRef.current = true;
+    messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+    isAtBottomRef.current = true;
+    setShowScrollToLatest(false);
+  }, []);
 
   const refs = useStableRefs(state);
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
@@ -80,16 +115,25 @@ function HomeInner() {
   }, []);
 
   useEffect(() => {
+    const currentSessionId = currentSessionIdRef.current;
+    const sessionChanged = previousSessionIdRef.current !== currentSessionId;
+
+    if (!sessionChanged && !isAtBottomRef.current) {
+      return;
+    }
+
     // Immediate scroll handles streaming tokens well, but when a whole
     // conversation is loaded at once (session switch) the DOM keeps growing
     // as markdown/images settle. Fire a second deferred scroll to land at
     // the true bottom after layout stabilises.
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    scrollMessagesToLatest('smooth');
     const timer = setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      scrollMessagesToLatest('smooth');
     }, 120);
+
+    previousSessionIdRef.current = currentSessionId;
     return () => clearTimeout(timer);
-  }, [state.messages]);
+  }, [state.messages, scrollMessagesToLatest]);
 
   const handleSend = useCallback(
     async (message: string) => {
@@ -203,52 +247,63 @@ function HomeInner() {
       />
 
       <div className="main-area">
-        <div className="messages-area">
-          {state.messages.length === 0 ? (
-            <div className="empty-state">
-              <h1 className="font-24 font-normal m-0">Locopilot</h1>
-              <p className="m-0">Local, Private, Safe AI Assistant</p>
-              {state.models.length > 0 && (
-                <p className="font-13 m-0">
-                  {state.models.length} model{state.models.length !== 1 ? 's' : ''} available
-                </p>
-              )}
-            </div>
-          ) : (
-            state.messages.map((msg, i) => (
-              <ChatMessageBubble key={msg.id ?? i} message={msg} />
-            ))
-          )}
-
-          {state.error && (
-            <div className="error-banner">
-              <div className="error-header">
-                <span className="error-message">Something went wrong.</span>
-                <button
-                  className="error-details-toggle"
-                  onClick={() => setShowErrorDetails(!showErrorDetails)}
-                >
-                  {showErrorDetails ? 'Hide details ▲' : 'Details ▼'}
-                </button>
+        <div className="messages-shell">
+          <div
+            ref={messagesAreaRef}
+            className={`messages-area ${showScrollToLatest ? 'messages-area--has-scroll-button' : ''}`}
+            onScroll={handleMessagesAreaScroll}
+          >
+            {state.messages.length === 0 ? (
+              <div className="empty-state">
+                <h1 className="font-24 font-normal m-0">Locopilot</h1>
+                <p className="m-0">Local, Private, Safe AI Assistant</p>
+                {state.models.length > 0 && (
+                  <p className="font-13 m-0">
+                    {state.models.length} model{state.models.length !== 1 ? 's' : ''} available
+                  </p>
+                )}
               </div>
-              {showErrorDetails && (
-                <pre className="error-details">{state.error}</pre>
-              )}
-              <div className="error-actions">
-                <button onClick={retry} className="error-retry-btn" disabled={isCurrentSessionStreaming}>
-                  Retry
-                </button>
-                <button
-                  onClick={() => dispatch({ type: 'SET_ERROR', error: null })}
-                  className="error-dismiss-btn"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          )}
+            ) : (
+              state.messages.map((msg, i) => (
+                <ChatMessageBubble key={msg.id ?? i} message={msg} />
+              ))
+            )}
 
-          <div ref={messagesEndRef} />
+            {state.error && (
+              <div className="error-banner">
+                <div className="error-header">
+                  <span className="error-message">Something went wrong.</span>
+                  <button
+                    className="error-details-toggle"
+                    onClick={() => setShowErrorDetails(!showErrorDetails)}
+                  >
+                    {showErrorDetails ? 'Hide details ▲' : 'Details ▼'}
+                  </button>
+                </div>
+                {showErrorDetails && (
+                  <pre className="error-details">{state.error}</pre>
+                )}
+                <div className="error-actions">
+                  <button onClick={retry} className="error-retry-btn" disabled={isCurrentSessionStreaming}>
+                    Retry
+                  </button>
+                  <button
+                    onClick={() => dispatch({ type: 'SET_ERROR', error: null })}
+                    className="error-dismiss-btn"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          <ScrollToLatestButton
+            visible={showScrollToLatest && state.messages.length > 0}
+            onClick={() => scrollMessagesToLatest('smooth')}
+          />
         </div>
 
         <div className="input-area">
