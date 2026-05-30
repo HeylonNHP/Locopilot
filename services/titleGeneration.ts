@@ -65,77 +65,8 @@ function looksLikeApology(title: string): boolean {
     return /\b(?:i['']?m sorry|sorry|apolog(?:y|ize)|can(?:'t|not)|cannot|unable|won't|will not|no permission|cannot create|cannot write|no access|not allowed)\b/i.test(title);
 }
 
-/** Keyword → emoji map for when the LLM omits an emoji or we fall back to the prompt. */
-const EMOJI_MAP: ReadonlyArray<{ keywords: string[]; emoji: string }> = [
-    // Media
-    { keywords: ['video', 'video2x', 'ffmpeg', 'movie', 'film', 'clip'], emoji: '🎥' },
-    { keywords: ['image', 'photo', 'picture', 'screenshot', 'gallery'], emoji: '🖼️' },
-    { keywords: ['audio', 'sound', 'music', 'podcast', 'radio'], emoji: '🎵' },
-    { keywords: ['game', 'gaming', 'controller', 'player'], emoji: '🎮' },
-    // Dev & infra
-    { keywords: ['nginx', 'apache', 'server', 'http', 'host', 'web server'], emoji: '🌐' },
-    { keywords: ['docker', 'container', 'kubernetes', 'pod', 'k8s'], emoji: '🐳' },
-    { keywords: ['git', 'github', 'commit', 'branch', 'merge', 'repository'], emoji: '🌿' },
-    { keywords: ['ci', 'cd', 'pipeline', 'deploy', 'deployment', 'build', 'release'], emoji: '🚀' },
-    { keywords: ['database', 'sql', 'sqlite', 'postgres', 'mysql', 'mongo'], emoji: '🗄️' },
-    { keywords: ['api', 'rest', 'graphql', 'endpoint', 'swagger'], emoji: '🔌' },
-    { keywords: ['test', 'testing', 'unit test', 'jest', 'pytest'], emoji: '🧪' },
-    { keywords: ['python', 'django', 'flask', 'fastapi'], emoji: '🐍' },
-    { keywords: ['javascript', 'typescript', 'node', 'react', 'vue', 'angular'], emoji: '🟨' },
-    { keywords: ['rust', 'cargo', 'rustc'], emoji: '🦀' },
-    { keywords: ['go', 'golang'], emoji: '🐹' },
-    { keywords: ['java', 'kotlin', 'spring'], emoji: '☕' },
-    { keywords: ['ruby', 'rails', 'gem'], emoji: '💎' },
-    { keywords: ['php', 'laravel', 'symfony'], emoji: '🐘' },
-    { keywords: ['css', 'style', 'tailwind', 'bootstrap', 'sass'], emoji: '🎨' },
-    { keywords: ['html', 'markup', 'dom', 'frontend'], emoji: '🌐' },
-    { keywords: ['cloud', 'aws', 'azure', 'gcp', 's3', 'lambda'], emoji: '☁️' },
-    { keywords: ['network', 'vpn', 'proxy', 'firewall', 'lan', 'wan'], emoji: '📡' },
-    // Actions & topics
-    { keywords: ['error', 'bug', 'crash', 'debug', 'fix', 'broken', 'issue'], emoji: '🐛' },
-    { keywords: ['config', 'setting', 'configuration', 'env', 'ini', 'yaml'], emoji: '⚙️' },
-    { keywords: ['tool', 'cli', 'command', 'terminal', 'shell', 'bash', 'powershell'], emoji: '🛠️' },
-    { keywords: ['install', 'setup', 'package', 'npm', 'pip', 'brew', 'apt'], emoji: '📦' },
-    { keywords: ['update', 'upgrade', 'version', 'bump', 'changelog'], emoji: '⬆️' },
-    { keywords: ['search', 'query', 'find', 'lookup', 'grep', 'locate'], emoji: '🔍' },
-    { keywords: ['copy', 'paste', 'clipboard', 'duplicate', 'clone'], emoji: '📋' },
-    { keywords: ['delete', 'remove', 'trash', 'clean', 'purge', 'uninstall'], emoji: '🗑️' },
-    { keywords: ['write', 'edit', 'draft', 'compose', 'create', 'generate'], emoji: '📝' },
-    { keywords: ['read', 'view', 'open', 'inspect', 'review', 'examine'], emoji: '👁️' },
-    { keywords: ['check', 'verify', 'validate', 'confirm', 'assert'], emoji: '✅' },
-    { keywords: ['warning', 'alert', 'caution', 'notice', 'deprecated'], emoji: '⚠️' },
-    { keywords: ['security', 'auth', 'password', 'login', 'encrypt', 'oauth', 'jwt'], emoji: '🔒' },
-    { keywords: ['idea', 'plan', 'design', 'architecture', 'proposal', 'strategy'], emoji: '💡' },
-    // Data & docs
-    { keywords: ['chart', 'graph', 'plot', 'data', 'analytics', 'metric', 'stats'], emoji: '📊' },
-    { keywords: ['document', 'doc', 'readme', 'manual', 'wiki', 'guide'], emoji: '📚' },
-    { keywords: ['pdf', 'report', 'paper', 'whitepaper', 'specification'], emoji: '📄' },
-    { keywords: ['file', 'directory', 'folder', 'path', 'filesystem'], emoji: '📁' },
-    { keywords: ['json', 'xml', 'csv', 'tsv', 'yaml', 'toml'], emoji: '📋' },
-    { keywords: ['markdown', 'md', 'mdx'], emoji: '📝' },
-    // Hardware & system
-    { keywords: ['cpu', 'gpu', 'ram', 'memory', 'hardware', 'device', 'driver'], emoji: '💻' },
-    { keywords: ['phone', 'mobile', 'android', 'ios', 'app', 'apk'], emoji: '📱' },
-    { keywords: ['robot', 'automation', 'script', 'cron', 'workflow', 'bot'], emoji: '🤖' },
-    { keywords: ['ai', 'model', 'llm', 'gpt', 'ollama', 'neural', 'ml', 'inference'], emoji: '🧠' },
-    // Misc
-    { keywords: ['email', 'mail', 'smtp', 'imap', 'inbox', 'newsletter'], emoji: '📧' },
-    { keywords: ['time', 'date', 'schedule', 'calendar', 'timer', 'deadline'], emoji: '⏰' },
-    { keywords: ['location', 'map', 'gps', 'place', 'address', 'coordinates'], emoji: '📍' },
-    { keywords: ['money', 'cost', 'price', 'budget', 'billing', 'invoice', 'payment'], emoji: '💰' },
-    { keywords: ['home', 'house', 'local', 'localhost', 'self-hosted'], emoji: '🏠' },
-];
-
-/** Picks the most relevant emoji for a title based on keyword matching. */
-function pickEmojiForTitle(title: string): string {
-    const lower = title.toLowerCase();
-    for (const { keywords, emoji } of EMOJI_MAP) {
-        if (keywords.some((k) => lower.includes(k))) {
-            return emoji;
-        }
-    }
-    return '💬';
-}
+/** Fallback emoji used when the LLM fails to include one after all retry attempts. */
+const FALLBACK_EMOJI = '💬';
 
 function extractTitleFromResponse(raw: string): string {
     const line = raw.split('\n').find((l) => l.trim().length > 0) ?? '';
@@ -190,21 +121,23 @@ export async function generateSessionTitle(
     const firstUserContent = messages.find((m) => m.role === 'user')?.content?.trim() ?? '';
 
     const SHARED_RULES =
+        '- The FIRST character MUST be a single relevant emoji — this is mandatory, never skip it\n' +
         '- Summarise what the USER WANTED TO DO or the topic discussed — not the literal text they typed\n' +
-        '- 3 to 6 words that a human could glance at to recognise the conversation\n' +
-        '- Pick one relevant emoji that represents the main topic\n' +
+        '- 3 to 6 words after the emoji that a human could glance at to recognise the conversation\n' +
         '- Under 55 characters total (emoji does not count)\n' +
         '- Do NOT include file paths, URLs, code snippets, variable names, or quoted strings\n' +
         '- Do NOT use generic filler words like "chat", "conversation", "response", "result", or "output"\n' +
         '- Do NOT include refusals, apologies, or limitation language';
 
     const SHARED_EXAMPLES =
-        'Good titles:\n' +
+        'Examples — note every title starts with an emoji:\n' +
         '  [USER] Can you review C:\\Users\\foo\\report.xml?  →  📄 XML Report Review\n' +
         '  [USER] Give me a fun fact about https://en.wikipedia.org/wiki/Moon  →  🌕 Moon Fun Facts\n' +
         '  [USER] Perform investigation using subagents with web searches  →  🔍 Web Investigation with Subagents\n' +
-        '  [USER] How do I fix a 503 error on Nginx?  →  🌐 Nginx 503 Error Fix\n\n' +
+        '  [USER] How do I fix a 503 error on Nginx?  →  🌐 Nginx 503 Error Fix\n' +
+        '  [USER] Help me write a Python script to rename files  →  🐍 Python File Rename Script\n\n' +
         'Bad titles (NEVER produce these):\n' +
+        '  ❌ XML Report Review  (missing leading emoji)\n' +
         '  ❌ C:\\Users\\foo\\report.xml  (raw file path)\n' +
         '  ❌ Give me a fun fact about https://  (raw user message)\n' +
         '  ❌ Perform investigation using subagents with web searches to s  (truncated input)';
@@ -213,7 +146,7 @@ export async function generateSessionTitle(
         {
             system:
                 'You are a concise session title generator. Given a conversation between a user and an AI assistant, ' +
-                'generate a short human-readable title and pick a single relevant emoji.\n' +
+                'generate a short human-readable title. The title MUST start with a single relevant emoji.\n' +
                 'Respond with ONLY a JSON object in this exact format: {"title": "<emoji> <title>"}\n\n' +
                 SHARED_EXAMPLES + '\n\nRules:\n' + SHARED_RULES,
             user: `Generate a short session title for this conversation:\n\n${conversationText}\n\nRespond with JSON only.`,
@@ -222,23 +155,26 @@ export async function generateSessionTitle(
         {
             system:
                 'You are a concise session title generator. Given a conversation between a user and an AI assistant, ' +
-                'generate a short human-readable title and pick a single relevant emoji.\n\n' +
+                'generate a short human-readable title. The title MUST start with a single relevant emoji.\n\n' +
                 SHARED_EXAMPLES + '\n\nRules:\n' + SHARED_RULES + '\n' +
                 '- Return ONLY the emoji + title — no quotes, no prefixes, no explanation',
-            user: `Generate a short session title for this conversation:\n\n${conversationText}\n\nTitle:`,
+            user: `Generate a short session title for this conversation:\n\n${conversationText}\n\nTitle (emoji first):`,
         },
         {
             system:
-                'You generate short titles for chat conversations. Output exactly one line: <emoji> <title>. ' +
+                'Give this chat conversation a short title. ' +
+                'IMPORTANT: the title MUST begin with a relevant emoji — never omit it. ' +
+                'Output exactly one line in this format: <emoji> <title>. ' +
                 'No quotes, no formatting, no prefixes. ' +
-                'Summarise the user\'s goal in 3-6 words — never use raw file paths, URLs, or literal user input as the title.',
-            user: `Conversation:\n${conversationText.slice(0, 2000)}\n\nShort title (3-6 words):`,
+                'Summarise the user\'s goal in 3-6 words — never use raw file paths, URLs, or literal user input.',
+            user: `Conversation:\n${conversationText.slice(0, 2000)}\n\nShort title (emoji then 3-6 words):`,
         },
         {
             system:
-                'Give this chat a short title. Output only: <emoji> <title>. ' +
+                'Give this chat a short title. ' +
+                'The title MUST start with an emoji. Output only: <emoji> <title>. ' +
                 'Describe the topic or goal in plain words. Never copy file paths, URLs, or raw input into the title.',
-            user: `${conversationText.slice(0, 1500)}\n\nTitle:`,
+            user: `${conversationText.slice(0, 1500)}\n\nTitle (start with emoji):`,
         },
     ];
 
@@ -304,7 +240,16 @@ export async function generateSessionTitle(
                 continue;
             }
 
-            return /^\p{Extended_Pictographic}/u.test(title) ? title : `${pickEmojiForTitle(title)} ${title}`;
+            if (!/^\p{Extended_Pictographic}/u.test(title)) {
+                // LLM ignored the emoji requirement — retry with the next strategy
+                // unless this is the last one, in which case prepend the fallback.
+                if (attempt < strategies.length - 1) {
+                    lastError = 'title missing required leading emoji';
+                    continue;
+                }
+                return `${FALLBACK_EMOJI} ${title}`;
+            }
+            return title;
         } catch (err) {
             lastError = err instanceof Error ? err.message : 'Unknown error';
             continue;
@@ -331,7 +276,7 @@ export async function generateSessionTitle(
         const isOnlyPlaceholders = /^(?:\[(?:path|link|code|tool|image)\]\s*)+$/i.test(short);
         if (!isOnlyPlaceholders && short.length >= TITLE_MIN_LEN) {
             onProgress?.('Using first message as fallback title.');
-            return `${pickEmojiForTitle(short)} ${short}`;
+            return `${FALLBACK_EMOJI} ${short}`;
         }
     }
 
