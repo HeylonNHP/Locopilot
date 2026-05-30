@@ -1,33 +1,37 @@
 // ================================================================
-//  Locopilot Design Tokens — Frutiger Aero palette
-//  CSS custom properties for runtime theming
+//  Locopilot Design Tokens — semantic aliases over theme colours
+//  Raw colour values live in _theme-colors.scss.
+//  These tokens form the stable contract consumed by mixins and
+//  component styles; only this file should be referenced by them.
 // ================================================================
 
 :root {
-  // ── Nature palette ─────────────────────────────────────────
-  --sky-deep: #0689E4;
-  --sky-bright: #00A8E8;
-  --sky-light: #87CEEB;
-  --aqua: #00C4C7;
-  --grass: #71AB23;
-  --sun: #FBB905;
-  --cloud: #F0F8FF;
-  --glass-white: rgba(255, 255, 255, 0.15);
-  --glass-heavy: rgba(255, 255, 255, 0.28);
-  --glass-light: rgba(255, 255, 255, 0.08);
-  --glass-border: rgba(255, 255, 255, 0.45);
-  --glass-border-soft: rgba(255, 255, 255, 0.25);
+  // ── Nature palette (semantic aliases) ──────────────────────
+  --sky-deep:   var(--color-sky-alt);
+  --sky-bright: var(--color-sky-core);
+  --sky-light:  var(--color-sky-soft);
+  --aqua:       var(--color-aqua);
+  --grass:      var(--color-grass);
+  --sun:        var(--color-sun);
+  --cloud:      var(--color-cloud);
 
-  // ── Functional tokens ──────────────────────────────────────
-  --bg-primary: transparent;
-  --bg-secondary: var(--glass-white);
-  --bg-tertiary: var(--glass-light);
-  --text-primary: #1a3a5c;
-  --text-secondary: #5a7a9a;
-  --text-white: #ffffff;
-  --accent: #00A8E8;
-  --accent-hover: #33D1FF;
-  --accent-green: #71AB23;
-  --shadow-soft: 0 8px 32px rgba(0, 80, 120, 0.12);
-  --shadow-lift: 0 12px 40px rgba(0, 60, 100, 0.18);
+  // ── Functional tokens ───────────────────────────────────────
+  --bg-primary:     transparent;
+  --bg-secondary:   var(--glass-white);
+  --bg-tertiary:    var(--glass-light);
+  --text-primary:   var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-white:     var(--color-text-white);
+  --accent:         var(--color-sky-core);
+  --accent-hover:   var(--color-sky-bright);
+  --accent-green:   var(--color-grass);
+  --shadow-soft:    0 8px 32px rgba(var(--rgb-shadow-deep), 0.12);
+  --shadow-lift:    0 12px 40px rgba(var(--rgb-shadow-navy), 0.18);
+
+  // ── Status tokens ────────────────────────────────────────────
+  --status-success:     var(--color-success);
+  --status-warning:     var(--color-warning);
+  --status-danger:      var(--color-danger);
+  --status-error:       var(--color-error);
+  --status-error-light: var(--color-error-light);
 }

@@ -9,11 +9,11 @@
   flex-direction: column;
   flex-shrink: 0;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--glass-panel);
   backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
   border-left: 1px solid var(--glass-border);
-  box-shadow: -4px 0 24px rgba(0, 60, 100, 0.08);
+  box-shadow: -4px 0 24px rgba(var(--rgb-shadow-navy), 0.08);
   transition: width 0.25s ease;
   width: 36px;
 
@@ -212,7 +212,7 @@
 
     &:hover {
       background: rgba(255, 255, 255, 0.15);
-      box-shadow: 0 2px 8px rgba(0, 80, 120, 0.08);
+      box-shadow: 0 2px 8px rgba(var(--rgb-shadow-deep), 0.08);
       transform: translateX(-2px);
     }
 

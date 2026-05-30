@@ -5,7 +5,7 @@
 .statusbar {
   padding: 6px 16px;
   border-top: 1px solid var(--glass-border-soft);
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--glass-panel);
   font-size: 12px;
   color: var(--text-secondary);
   display: flex;
@@ -17,22 +17,22 @@
   &-streaming {
     color: var(--accent);
     font-weight: 600;
-    text-shadow: 0 0 8px rgba(0, 168, 232, 0.3);
+    text-shadow: 0 0 8px rgba(var(--rgb-accent), 0.3);
   }
 
   &-token {
     &-green {
-      color: #22c55e;
+      color: var(--status-success);
       font-weight: 600;
     }
 
     &-yellow {
-      color: #eab308;
+      color: var(--status-warning);
       font-weight: 600;
     }
 
     &-red {
-      color: #ef4444;
+      color: var(--status-danger);
       font-weight: 600;
     }
   }
@@ -48,7 +48,7 @@
 
     &:hover {
       color: var(--accent);
-      background: rgba(0, 168, 232, 0.1);
+      background: rgba(var(--rgb-accent), 0.1);
     }
   }
 }

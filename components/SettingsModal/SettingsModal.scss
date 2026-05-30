@@ -8,7 +8,7 @@
   &-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(100, 180, 255, 0.25);
+    background: var(--overlay-modal);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     z-index: 1000;
@@ -50,9 +50,9 @@
     margin-bottom: 16px;
     padding: 10px 12px;
     border-radius: 12px;
-    border: 1px solid rgba(220, 80, 80, 0.4);
-    background: rgba(255, 200, 200, 0.35);
-    color: #a03030;
+    border: 1px solid var(--border-error-soft);
+    background: var(--bg-error-soft);
+    color: var(--color-text-error);
     font-size: 13px;
     line-height: 1.5;
     backdrop-filter: blur(4px);

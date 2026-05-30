@@ -21,14 +21,14 @@ body {
     radial-gradient(circle at 35% 85%, rgba(255, 255, 255, 0.15) 0%, transparent 15%),
     // Sky to grass gradient
     linear-gradient(170deg,
-      #4FC3F7 0%,
-      #81D4FA 15%,
-      #B3E5FC 30%,
-      #E1F5FE 45%,
-      #F1F8E9 60%,
-      #DCEDC8 75%,
-      #C5E1A5 90%,
-      #AED581 100%
+      var(--bg-gradient-0)  0%,
+      var(--bg-gradient-1) 15%,
+      var(--bg-gradient-2) 30%,
+      var(--bg-gradient-3) 45%,
+      var(--bg-gradient-4) 60%,
+      var(--bg-gradient-5) 75%,
+      var(--bg-gradient-6) 90%,
+      var(--bg-gradient-7) 100%
     );
   background-attachment: fixed;
   color: var(--text-primary);

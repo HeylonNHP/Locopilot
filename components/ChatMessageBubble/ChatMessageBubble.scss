@@ -13,14 +13,14 @@
   max-width: 70%;
   padding: 10px 16px;
   border-radius: 20px 20px 4px 20px;
-  background: linear-gradient(180deg, #33D1FF 0%, #00A8E8 60%, #0077B6 100%);
+  background: linear-gradient(180deg, var(--gradient-primary-0) 0%, var(--gradient-primary-1) 60%, var(--gradient-primary-2) 100%);
   color: white;
   font-size: 14px;
   line-height: 1.5;
   position: relative;
   overflow: hidden;
   box-shadow:
-    0 4px 12px rgba(0, 120, 180, 0.25),
+    0 4px 12px rgba(var(--rgb-shadow-blue), 0.25),
     inset 0 1px 0 rgba(255, 255, 255, 0.4);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
 
@@ -48,12 +48,12 @@
 
   max-width: 90%;
   border-radius: 12px;
-  background: rgba(200, 245, 255, 0.25);
+  background: var(--bg-tool-bubble);
   border: 1px solid var(--glass-border-soft);
   overflow: hidden;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 2px 8px rgba(0, 80, 120, 0.06);
+  box-shadow: 0 2px 8px rgba(var(--rgb-shadow-deep), 0.06);
 
   &-content {
     padding: 8px 12px;
@@ -77,16 +77,16 @@
   max-width: 80%;
   padding: 8px 12px;
   border-radius: 12px;
-  background: rgba(255, 245, 200, 0.3);
-  border: 1px solid rgba(255, 220, 100, 0.3);
+  background: var(--bg-system-bubble);
+  border: 1px solid var(--border-system-bubble);
   font-size: 13px;
   line-height: 1.5;
-  color: #8a7a4a;
+  color: var(--color-text-system);
   white-space: pre-wrap;
   text-align: center;
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  box-shadow: 0 2px 8px rgba(100, 80, 0, 0.05);
+  box-shadow: 0 2px 8px rgba(var(--rgb-shadow-deep), 0.05);
 }
 
 // ── Sub-agent log ────────────────────────────────────────────
@@ -99,12 +99,12 @@
 
   max-width: 90%;
   border-radius: 12px;
-  background: rgba(220, 255, 220, 0.25);
-  border: 1px solid rgba(113, 171, 35, 0.2);
+  background: var(--bg-subagent-bubble);
+  border: 1px solid var(--border-subagent);
   overflow: hidden;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 2px 8px rgba(0, 80, 0, 0.05);
+  box-shadow: 0 2px 8px rgba(var(--rgb-success), 0.05);
 
   &-toggle {
     display: flex;
@@ -125,7 +125,7 @@
     }
 
     &-open {
-      border-bottom: 1px solid rgba(113, 171, 35, 0.15);
+      border-bottom: 1px solid var(--border-subagent-toggle);
     }
   }
 
@@ -158,7 +158,7 @@
     white-space: normal;
     backdrop-filter: blur(12px) saturate(140%);
     -webkit-backdrop-filter: blur(12px) saturate(140%);
-    box-shadow: 0 4px 16px rgba(0, 80, 120, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    box-shadow: 0 4px 16px rgba(var(--rgb-shadow-deep), 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.35);
     color: var(--text-primary);
   }
 }

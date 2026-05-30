@@ -84,11 +84,11 @@
 .text-secondary { color: var(--text-secondary); }
 .text-white { color: var(--text-white); }
 .text-accent { color: var(--accent); }
-.text-error { color: #c41e3a; }
-.text-error-light { color: #e84a6a; }
-.text-green { color: #4ade80; }
-.text-yellow { color: #facc15; }
-.text-red { color: #ef4444; }
+.text-error { color: var(--status-error); }
+.text-error-light { color: var(--status-error-light); }
+.text-green { color: var(--color-green-bright); }
+.text-yellow { color: var(--color-yellow-bright); }
+.text-red { color: var(--status-danger); }
 
 .text-center { text-align: center; }
 .text-left { text-align: left; }
@@ -144,8 +144,8 @@
 .bg-tertiary { background: var(--bg-tertiary); }
 .bg-accent { background: var(--accent); }
 .bg-transparent { background: transparent; }
-.bg-overlay { background: rgba(100, 180, 255, 0.25); }
-.bg-light-error { background: rgba(255, 200, 200, 0.4); }
+.bg-overlay { background: var(--overlay-modal); }
+.bg-light-error { background: var(--bg-error-soft); }
 
 // ── Cursors & display ───────────────────────────────────────
 .cursor-pointer { cursor: pointer; }

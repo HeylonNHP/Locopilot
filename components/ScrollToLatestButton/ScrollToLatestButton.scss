@@ -14,7 +14,7 @@
   gap: 8px;
   padding: 10px 14px;
   border-radius: 999px;
-  @include glass-panel(12px, 150%, rgba(248, 252, 255, 0.88), 0 10px 24px rgba(0, 60, 100, 0.16));
+  @include glass-panel(12px, 150%, rgba(248, 252, 255, 0.88), 0 10px 24px rgba(var(--rgb-shadow-navy), 0.16));
   color: var(--text-primary);
   font-family: inherit;
   font-size: 13px;
@@ -26,14 +26,14 @@
     transform: translateY(-1px);
     background: rgba(255, 255, 255, 0.95);
     box-shadow:
-      0 14px 28px rgba(0, 60, 100, 0.18),
+      0 14px 28px rgba(var(--rgb-shadow-navy), 0.18),
       inset 0 1px 0 rgba(255, 255, 255, 0.45);
   }
 
   &:active {
     transform: translateY(1px);
     box-shadow:
-      0 6px 16px rgba(0, 60, 100, 0.14),
-      inset 0 2px 4px rgba(0, 60, 100, 0.08);
+      0 6px 16px rgba(var(--rgb-shadow-navy), 0.14),
+      inset 0 2px 4px rgba(var(--rgb-shadow-navy), 0.08);
   }
 }

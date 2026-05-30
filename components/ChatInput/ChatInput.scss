@@ -22,14 +22,14 @@
     bottom: calc(100% + 8px);
     left: 0;
     right: 0;
-    background: rgba(248, 252, 255, 0.78);
+    background: var(--bg-suggestions);
     border: 1px solid rgba(255, 255, 255, 0.72);
     border-radius: 16px;
     z-index: 10;
     overflow: hidden;
     backdrop-filter: blur(24px) saturate(180%);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
-    box-shadow: 0 16px 40px rgba(0, 60, 100, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    box-shadow: 0 16px 40px rgba(var(--rgb-shadow-navy), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
   }
 
   &-suggestion-item {
@@ -43,12 +43,12 @@
     transition: background 0.15s ease;
 
     &:hover {
-      background: rgba(0, 168, 232, 0.1);
+      background: rgba(var(--rgb-accent), 0.1);
     }
   }
 
   &-suggestion-active {
-    background: rgba(0, 168, 232, 0.15);
+    background: rgba(var(--rgb-accent), 0.15);
   }
 
   &-suggestion-cmd {
@@ -75,7 +75,7 @@
     font-family: inherit;
     outline: none;
     box-sizing: border-box;
-    box-shadow: inset 0 2px 4px rgba(0, 60, 100, 0.06), 0 2px 8px rgba(0, 80, 120, 0.06);
+    box-shadow: inset 0 2px 4px rgba(var(--rgb-shadow-navy), 0.06), 0 2px 8px rgba(var(--rgb-shadow-deep), 0.06);
 
     &::placeholder {
       color: var(--text-secondary);
@@ -84,20 +84,20 @@
 
     &:focus {
       background: rgba(255, 255, 255, 0.5);
-      border-color: rgba(0, 168, 232, 0.5);
+      border-color: rgba(var(--rgb-accent), 0.5);
       box-shadow:
-        inset 0 2px 4px rgba(0, 60, 100, 0.06),
-        0 0 0 3px rgba(0, 168, 232, 0.15),
-        0 4px 12px rgba(0, 80, 120, 0.1);
+        inset 0 2px 4px rgba(var(--rgb-shadow-navy), 0.06),
+        0 0 0 3px rgba(var(--rgb-accent), 0.15),
+        0 4px 12px rgba(var(--rgb-shadow-deep), 0.1);
     }
 
     &.chat-input-drag-active {
       background: rgba(255, 255, 255, 0.65);
-      border-color: rgba(0, 168, 232, 0.8);
+      border-color: rgba(var(--rgb-accent), 0.8);
       box-shadow:
-        0 0 0 4px rgba(0, 168, 232, 0.2),
-        inset 0 2px 4px rgba(0, 60, 100, 0.06),
-        0 4px 12px rgba(0, 80, 120, 0.1);
+        0 0 0 4px rgba(var(--rgb-accent), 0.2),
+        inset 0 2px 4px rgba(var(--rgb-shadow-navy), 0.06),
+        0 4px 12px rgba(var(--rgb-shadow-deep), 0.1);
     }
   }
 

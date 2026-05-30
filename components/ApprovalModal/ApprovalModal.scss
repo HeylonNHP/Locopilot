@@ -8,7 +8,7 @@
   &-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(100, 180, 255, 0.25);
+    background: var(--overlay-modal);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     display: flex;

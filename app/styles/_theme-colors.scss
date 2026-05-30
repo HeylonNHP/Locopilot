@@ -1,0 +1,117 @@
+// ================================================================
+//  Locopilot Theme Colours — Frutiger Aero
+//
+//  Single source of truth for all colour values.
+//  Raw hex, rgba, gradient stops, and shadow tints live here.
+//
+//  To create a new theme, add an override block:
+//    html[data-theme='dark'] { --color-sky-core: …; … }
+//  Only properties that differ need to be re-declared.
+// ================================================================
+
+:root,
+html[data-theme='frutiger-aero'] {
+  // ── Base palette ───────────────────────────────────────────
+  --color-sky-bright:       #33D1FF;   // hover accent / gradient-primary start
+  --color-sky-core:         #00A8E8;   // primary accent
+  --color-sky-deep:         #0077B6;   // gradient-primary end / dark accent
+  --color-sky-alt:          #0689E4;   // legacy --sky-deep alias
+  --color-sky-soft:         #87CEEB;   // legacy --sky-light alias
+  --color-aqua:             #00C4C7;
+  --color-grass:            #71AB23;
+  --color-sun:              #FBB905;
+  --color-cloud:            #F0F8FF;
+
+  // ── Text colours ───────────────────────────────────────────
+  --color-text-primary:     #1a3a5c;
+  --color-text-secondary:   #5a7a9a;
+  --color-text-white:       #ffffff;
+  --color-text-system:      #8a7a4a;   // system message bubble
+  --color-text-error:       #a03030;   // settings / inline error text
+
+  // ── Glass surface layers ────────────────────────────────────
+  // White-overlay tints; override all in dark themes.
+  --glass-white:            rgba(255, 255, 255, 0.15);
+  --glass-heavy:            rgba(255, 255, 255, 0.28);
+  --glass-light:            rgba(255, 255, 255, 0.08);
+  --glass-panel:            rgba(255, 255, 255, 0.12);  // sidebar / input-area / status-bar panels
+  --glass-border:           rgba(255, 255, 255, 0.45);
+  --glass-border-soft:      rgba(255, 255, 255, 0.25);
+
+  // ── RGB channel triplets for rgba() compositing ─────────────
+  // Usage: rgba(var(--rgb-accent), 0.15)
+  --rgb-accent:             0, 168, 232;   // sky-core
+  --rgb-shadow-navy:        0, 60, 100;    // deep page / popover shadows
+  --rgb-shadow-blue:        0, 120, 180;   // button-level shadows
+  --rgb-shadow-deep:        0, 80, 120;    // mid-depth panel shadows
+  --rgb-shadow-mid:         0, 100, 160;   // softer hover shadows
+  --rgb-danger:             220, 60, 60;   // danger button hover shadow
+  --rgb-success:            60, 160, 60;   // success button hover shadow
+
+  // ── Status colours ──────────────────────────────────────────
+  --color-success:          #22c55e;
+  --color-warning:          #eab308;
+  --color-danger:           #ef4444;
+  --color-error:            #c41e3a;
+  --color-error-light:      #e84a6a;
+  --color-green-bright:     #4ade80;   // utility .text-green
+  --color-yellow-bright:    #facc15;   // utility .text-yellow
+
+  // ── Error surface tints ─────────────────────────────────────
+  --bg-error-soft:          rgba(255, 200, 200, 0.35);
+  --border-error-soft:      rgba(220, 80, 80, 0.40);
+
+  // ── Gel gradient stops — primary (sky / user bubble / default button) ──
+  --gradient-primary-0:     #33D1FF;
+  --gradient-primary-1:     #00A8E8;
+  --gradient-primary-2:     #0077B6;
+
+  // ── Gel gradient stops — disabled ──────────────────────────
+  --gradient-disabled-0:    #b0c4de;
+  --gradient-disabled-1:    #90a4be;
+
+  // ── Gel gradient stops — danger (stop button) ───────────────
+  --gradient-danger-0:      #ff8a8a;
+  --gradient-danger-1:      #ff5252;
+  --gradient-danger-2:      #e53935;
+
+  // ── Gel gradient stops — success (retry button) ─────────────
+  --gradient-success-0:     #81c784;
+  --gradient-success-1:     #4caf50;
+  --gradient-success-2:     #388e3c;
+
+  // ── Page background gradient stops ──────────────────────────
+  --bg-gradient-0:          #4FC3F7;   // sky top
+  --bg-gradient-1:          #81D4FA;
+  --bg-gradient-2:          #B3E5FC;
+  --bg-gradient-3:          #E1F5FE;
+  --bg-gradient-4:          #F1F8E9;   // grass start
+  --bg-gradient-5:          #DCEDC8;
+  --bg-gradient-6:          #C5E1A5;
+  --bg-gradient-7:          #AED581;   // grass bottom
+
+  // ── Scrollbar gradient states ───────────────────────────────
+  --scrollbar-thumb-0:      rgba(0, 200, 255, 0.35);
+  --scrollbar-thumb-1:      rgba(0, 168, 232, 0.40);
+  --scrollbar-thumb-2:      rgba(0, 130, 200, 0.35);
+  --scrollbar-hover-0:      rgba(0, 220, 255, 0.50);
+  --scrollbar-hover-1:      rgba(0, 190, 255, 0.55);
+  --scrollbar-hover-2:      rgba(0, 150, 220, 0.50);
+  --scrollbar-active-0:     rgba(0, 240, 255, 0.60);
+  --scrollbar-active-1:     rgba(0, 210, 255, 0.65);
+  --scrollbar-active-2:     rgba(0, 170, 240, 0.60);
+  --scrollbar-firefox:      rgba(0, 168, 232, 0.40);
+
+  // ── Bubble surface tints ────────────────────────────────────
+  --bg-tool-bubble:         rgba(200, 245, 255, 0.25);  // tool result
+  --bg-system-bubble:       rgba(255, 245, 200, 0.30);  // system message
+  --border-system-bubble:   rgba(255, 220, 100, 0.30);
+  --bg-subagent-bubble:     rgba(220, 255, 220, 0.25);  // sub-agent log
+  --border-subagent:        rgba(113, 171, 35, 0.20);
+  --border-subagent-toggle: rgba(113, 171, 35, 0.15);
+
+  // ── Overlay / popover surfaces ──────────────────────────────
+  --overlay-modal:          rgba(100, 180, 255, 0.25);  // modal backdrop tint
+  --bg-suggestions:         rgba(248, 252, 255, 0.78);  // autocomplete dropdown
+  --bg-popover:             rgba(240, 250, 255, 0.82);  // model selector popover
+}

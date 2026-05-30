@@ -42,7 +42,7 @@
 
 .input-area {
   padding: 16px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--glass-panel);
   backdrop-filter: blur(16px) saturate(140%);
   -webkit-backdrop-filter: blur(16px) saturate(140%);
   border-top: 1px solid var(--glass-border);
@@ -67,7 +67,7 @@
 
 // ── Stop button ──────────────────────────────────────────────
 .stop-btn {
-  @include gel-button(#ff8a8a, #ff5252, #e53935);
+  @include gel-button(var(--gradient-danger-0), var(--gradient-danger-1), var(--gradient-danger-2));
   padding: 4px 14px;
   font-size: 12px;
   border: 1px solid rgba(255, 100, 100, 0.35);
@@ -88,7 +88,7 @@
 
   &:hover {
     box-shadow:
-      0 4px 12px rgba(220, 60, 60, 0.35),
+      0 4px 12px rgba(var(--rgb-danger), 0.35),
       inset 0 1px 0 rgba(255, 255, 255, 0.5),
       inset 0 -1px 0 rgba(0, 0, 0, 0.08);
   }
@@ -132,7 +132,7 @@
   }
 
   &-retry-btn {
-    @include gel-button(#81c784, #4caf50, #388e3c);
+    @include gel-button(var(--gradient-success-0), var(--gradient-success-1), var(--gradient-success-2));
     padding: 4px 12px;
     font-size: 12px;
     border: 1px solid rgba(100, 200, 100, 0.35);
@@ -153,7 +153,7 @@
 
     &:hover {
       box-shadow:
-        0 4px 12px rgba(60, 160, 60, 0.3),
+        0 4px 12px rgba(var(--rgb-success), 0.3),
         inset 0 1px 0 rgba(255, 255, 255, 0.5),
         inset 0 -1px 0 rgba(0, 0, 0, 0.08);
     }

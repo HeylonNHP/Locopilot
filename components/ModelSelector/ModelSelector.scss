@@ -9,14 +9,14 @@
   max-height: 420px;
   display: flex;
   flex-direction: column;
-  background: rgba(240, 250, 255, 0.82);
+  background: var(--bg-popover);
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 16px;
   z-index: 1000;
   overflow: hidden;
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  box-shadow: 0 16px 40px rgba(0, 60, 100, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  box-shadow: 0 16px 40px rgba(var(--rgb-shadow-navy), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 
   &-header {
     padding: 12px 12px 8px;
@@ -58,7 +58,7 @@
     outline: none;
 
     &:hover {
-      background: rgba(0, 168, 232, 0.1);
+      background: rgba(var(--rgb-accent), 0.1);
     }
 
     &-active {
@@ -66,7 +66,7 @@
       font-weight: 600;
 
       &:hover {
-        background: rgba(0, 168, 232, 0.15);
+        background: rgba(var(--rgb-accent), 0.15);
       }
 
       .model-selector-badge {
@@ -112,8 +112,8 @@
     align-items: center;
     padding: 2px 6px;
     border-radius: 999px;
-    border: 1px solid rgba(0, 168, 232, 0.18);
-    background: rgba(0, 168, 232, 0.12);
+    border: 1px solid rgba(var(--rgb-accent), 0.18);
+    background: rgba(var(--rgb-accent), 0.12);
     color: var(--accent);
     font-size: 10px;
     font-weight: 700;
