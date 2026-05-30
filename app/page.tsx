@@ -28,7 +28,6 @@ function HomeInner() {
   const messagesAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
-  const programmaticScrollUntilRef = useRef(0);
   const currentSessionIdRef = useRef<number | null>(state.currentSessionId);
   const previousSessionIdRef = useRef<number | null | undefined>(undefined);
   const isCompactingRef = useRef(false);
@@ -40,32 +39,8 @@ function HomeInner() {
   useEffect(() => { isGeneratingTitleRef.current = isGeneratingTitle; }, [isGeneratingTitle]);
   useEffect(() => { currentSessionIdRef.current = state.currentSessionId; }, [state.currentSessionId]);
 
-  const handleMessagesAreaScroll = useCallback(() => {
-    const container = messagesAreaRef.current;
-    if (!container) return;
-
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    const isAtBottom = distanceFromBottom <= 32;
-
-    isAtBottomRef.current = isAtBottom;
-
-    const isProgrammatic = Date.now() < programmaticScrollUntilRef.current;
-    if (isProgrammatic && !isAtBottom) {
-      return;
-    }
-
-    if (isAtBottom) {
-      programmaticScrollUntilRef.current = 0;
-    }
-
-    setShowScrollToLatest(!isAtBottom && container.scrollHeight > container.clientHeight + 1);
-  }, []);
-
   const scrollMessagesToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    programmaticScrollUntilRef.current = Date.now() + 400;
     messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
-    isAtBottomRef.current = true;
-    setShowScrollToLatest(false);
   }, []);
 
   const refs = useStableRefs(state);
@@ -115,15 +90,24 @@ function HomeInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initialise scroll-state from real DOM after first paint so a long
-  // conversation that loads above the fold immediately shows the Latest button.
+  // IntersectionObserver on the sentinel replaces manual scroll-distance
+  // arithmetic.  The 32px rootMargin bottom matches the legacy tolerance.
   useEffect(() => {
     const container = messagesAreaRef.current;
-    if (!container) return;
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    const isAtBottom = distanceFromBottom <= 32;
-    isAtBottomRef.current = isAtBottom;
-    setShowScrollToLatest(!isAtBottom && container.scrollHeight > container.clientHeight + 1);
+    const sentinel = messagesEndRef.current;
+    if (!container || !sentinel) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const isAtBottom = entry.isIntersecting;
+        isAtBottomRef.current = isAtBottom;
+        setShowScrollToLatest(!isAtBottom && container.scrollHeight > container.clientHeight + 1);
+      },
+      { root: container, rootMargin: '0px 0px 32px 0px', threshold: 0 },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -263,7 +247,6 @@ function HomeInner() {
           <div
             ref={messagesAreaRef}
             className={`messages-area ${showScrollToLatest ? 'messages-area--has-scroll-button' : ''}`}
-            onScroll={handleMessagesAreaScroll}
           >
             {state.messages.length === 0 ? (
               <div className="empty-state">
