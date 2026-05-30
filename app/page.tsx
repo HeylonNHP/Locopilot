@@ -28,7 +28,7 @@ function HomeInner() {
   const messagesAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
-  const programmaticScrollRef = useRef(false);
+  const programmaticScrollUntilRef = useRef(0);
   const currentSessionIdRef = useRef<number | null>(state.currentSessionId);
   const previousSessionIdRef = useRef<number | null | undefined>(undefined);
   const isCompactingRef = useRef(false);
@@ -49,19 +49,20 @@ function HomeInner() {
 
     isAtBottomRef.current = isAtBottom;
 
-    if (programmaticScrollRef.current && !isAtBottom) {
+    const isProgrammatic = Date.now() < programmaticScrollUntilRef.current;
+    if (isProgrammatic && !isAtBottom) {
       return;
     }
 
     if (isAtBottom) {
-      programmaticScrollRef.current = false;
+      programmaticScrollUntilRef.current = 0;
     }
 
     setShowScrollToLatest(!isAtBottom && container.scrollHeight > container.clientHeight + 1);
   }, []);
 
   const scrollMessagesToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    programmaticScrollRef.current = true;
+    programmaticScrollUntilRef.current = Date.now() + 400;
     messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
     isAtBottomRef.current = true;
     setShowScrollToLatest(false);
@@ -112,6 +113,17 @@ function HomeInner() {
     loadModels();
     loadConfig();
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Initialise scroll-state from real DOM after first paint so a long
+  // conversation that loads above the fold immediately shows the Latest button.
+  useEffect(() => {
+    const container = messagesAreaRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const isAtBottom = distanceFromBottom <= 32;
+    isAtBottomRef.current = isAtBottom;
+    setShowScrollToLatest(!isAtBottom && container.scrollHeight > container.clientHeight + 1);
   }, []);
 
   useEffect(() => {
