@@ -72,7 +72,7 @@ export function useDataLoaders(refs: StableRefs) {
             promptEvalCount: 0,
             evalCount: data.estimatedTokens,
             totalTokens: data.estimatedTokens,
-            tokenLimit: state.numCtx,
+            tokenLimit: refs.numCtxRef.current,
             isEstimated: true,
           },
           targetSessionId: sessionId,
@@ -81,7 +81,7 @@ export function useDataLoaders(refs: StableRefs) {
         // Use the session's own persisted context limit if available, otherwise
         // fall back to the currently-displayed one. This prevents restored
         // sessions from showing wrong percentages after model/context switches.
-        const tokenLimit = data.session.num_ctx ?? state.numCtx;
+        const tokenLimit = data.session.num_ctx ?? refs.numCtxRef.current;
         dispatch({
           type: 'SET_TOKEN_STATS',
           stats: {

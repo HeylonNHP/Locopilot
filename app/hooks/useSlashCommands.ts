@@ -32,7 +32,7 @@ export function useSlashCommands({
   loadSessions,
   sendChatMessage,
 }: SlashCommandDeps) {
-  const { state, dispatch } = useChat();
+  const { dispatch } = useChat();
 
   const parseDownloadFileName = (contentDisposition: string | null): string => {
     if (!contentDisposition) {
@@ -142,7 +142,7 @@ export function useSlashCommands({
         }
 
         case 'sessions': {
-          const { sessions } = state;
+          const sessions = refs.sessionsRef.current;
           if (sessions.length === 0) {
             addSystem('No saved sessions yet.');
           } else {
@@ -156,7 +156,7 @@ export function useSlashCommands({
         }
 
         case 'delete': {
-          const { sessions } = state;
+          const sessions = refs.sessionsRef.current;
           if (sessions.length === 0) {
             addSystem('No saved sessions to delete.');
             return;
@@ -439,7 +439,6 @@ export function useSlashCommands({
       onOpenSettings,
       loadSessions,
       sendChatMessage,
-      state.sessions,
     ],
   );
 

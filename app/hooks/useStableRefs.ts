@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import type { ChatMessage, LLmModel, WebSearchConfig } from '@/app/lib/chatStore';
+import type { ChatMessage, LLmModel, Session, WebSearchConfig } from '@/app/lib/chatStore';
 
 /** A mutable ref container (the writable counterpart to React 19's read-only RefObject). */
 export type WritableRef<T> = { current: T };
@@ -16,6 +16,7 @@ export interface StableRefs {
   numCtxRef: WritableRef<number>;
   baseUrlRef: WritableRef<string>;
   sessionIdRef: WritableRef<number | null>;
+  sessionsRef: WritableRef<Session[]>;
   modelsRef: WritableRef<LLmModel[]>;
   yoloRef: WritableRef<boolean>;
   thinkingEnabledRef: WritableRef<boolean>;
@@ -30,6 +31,7 @@ interface StableRefsInput {
   numCtx: number;
   baseUrl: string;
   currentSessionId: number | null;
+  sessions: Session[];
   models: LLmModel[];
   yolo: boolean;
   thinkingEnabled: boolean;
@@ -49,6 +51,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const numCtxRef = useRef(state.numCtx);
   const baseUrlRef = useRef(state.baseUrl);
   const sessionIdRef = useRef(state.currentSessionId);
+  const sessionsRef = useRef(state.sessions);
   const modelsRef = useRef(state.models);
   const yoloRef = useRef(state.yolo);
   const thinkingEnabledRef = useRef(state.thinkingEnabled);
@@ -61,6 +64,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   useEffect(() => { numCtxRef.current = state.numCtx; }, [state.numCtx]);
   useEffect(() => { baseUrlRef.current = state.baseUrl; }, [state.baseUrl]);
   useEffect(() => { sessionIdRef.current = state.currentSessionId; }, [state.currentSessionId]);
+  useEffect(() => { sessionsRef.current = state.sessions; }, [state.sessions]);
   useEffect(() => { modelsRef.current = state.models; }, [state.models]);
   useEffect(() => { yoloRef.current = state.yolo; }, [state.yolo]);
   useEffect(() => { thinkingEnabledRef.current = state.thinkingEnabled; }, [state.thinkingEnabled]);
@@ -79,6 +83,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       numCtxRef,
       baseUrlRef,
       sessionIdRef,
+      sessionsRef,
       modelsRef,
       yoloRef,
       thinkingEnabledRef,
