@@ -122,6 +122,15 @@ html[data-theme='frutiger-aero'] {
   --glass-input-bg:         rgba(255, 255, 255, 0.35);
   --glass-input-focus:      rgba(255, 255, 255, 0.50);
 
+  // ── Code surfaces ─────────────────────────────────────────
+  --code-inline-bg:         rgba(0, 100, 180, 0.08);
+  --code-inline-text:       #005577;
+  --code-block-bg:          rgba(255, 255, 255, 0.55);
+  --code-block-text:        #1a3a5c;
+  --code-copy-bg:           rgba(255, 255, 255, 0.80);
+  --code-copy-hover-bg:     rgba(255, 255, 255, 0.95);
+  --code-copy-active-bg:    rgba(0, 168, 232, 0.15);
+
   // ── Background atmosphere bubbles ─────────────────────────
   --bg-bubble-1:            rgba(255, 255, 255, 0.35);
   --bg-bubble-2:            rgba(255, 255, 255, 0.25);
@@ -161,6 +170,15 @@ html[data-theme='dark'] {
   --glass-gloss-mid:        rgba(255, 255, 255, 0.05);
   --glass-input-bg:         rgba(255, 255, 255, 0.08);
   --glass-input-focus:      rgba(255, 255, 255, 0.12);
+
+  // Code surfaces
+  --code-inline-bg:         rgba(56, 189, 248, 0.12);
+  --code-inline-text:       #BFEAFF;
+  --code-block-bg:          rgba(7, 16, 30, 0.94);
+  --code-block-text:        #D9E8F7;
+  --code-copy-bg:           rgba(255, 255, 255, 0.08);
+  --code-copy-hover-bg:     rgba(56, 189, 248, 0.14);
+  --code-copy-active-bg:    rgba(56, 189, 248, 0.20);
   // RGB triplets
   --rgb-accent:             56, 189, 248;
   --rgb-shadow-navy:        0, 5, 20;
