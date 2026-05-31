@@ -14,6 +14,47 @@ interface Props {
   message: ChatMessage;
 }
 
+/** Detect MIME type from the first bytes of a raw base64 string (no data-URI prefix). */
+function detectImageMimeType(base64: string): string {
+  // Decode the first 4 bytes to check magic bytes
+  try {
+    const bytes = atob(base64.slice(0, 8));
+    const b = (i: number) => bytes.charCodeAt(i);
+    if (b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4e && b(3) === 0x47) return 'image/png';
+    if (b(0) === 0xff && b(1) === 0xd8) return 'image/jpeg';
+    if (b(0) === 0x47 && b(1) === 0x49 && b(2) === 0x46) return 'image/gif';
+    if (b(0) === 0x52 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x46) return 'image/webp';
+  } catch {
+    // Invalid base64 or insufficient bytes — return opaque type so the
+    // browser won't attempt to decode it as a specific format
+    return 'application/octet-stream';
+  }
+  // Unknown magic bytes but valid base64 — JPEG is the most common fallback
+  return 'image/jpeg';
+}
+
+/** Renders the images array attached to a message as a flex thumbnail strip. */
+function AttachmentImages({ images }: { images: string[] }) {
+  if (images.length === 0) return null;
+  return (
+    <div className="bubble-attachment-images">
+      {images.map((base64, i) => {
+        const mime = detectImageMimeType(base64);
+        // Stable key: use a short content prefix so React doesn't mix up siblings
+        const key = `img-${i}-${base64.slice(0, 16)}`;
+        return (
+          <img
+            key={key}
+            src={`data:${mime};base64,${base64}`}
+            alt={`Attached image ${i + 1}`}
+            className="bubble-attachment-image"
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ChatMessageBubble({ message }: Props) {
   const [showThinking, setShowThinking] = useState(false);
   const [subagentCollapsed, setSubagentCollapsed] = useState(false);
@@ -38,6 +79,9 @@ export default function ChatMessageBubble({ message }: Props) {
     return (
       <div className="bubble-user-wrap">
         <div className="bubble-user">
+          {message.images && message.images.length > 0 && (
+            <AttachmentImages images={message.images} />
+          )}
           {message.content}
         </div>
       </div>

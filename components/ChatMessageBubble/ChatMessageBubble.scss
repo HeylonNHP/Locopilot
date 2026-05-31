@@ -163,6 +163,25 @@
   }
 }
 
+// ── Attached images strip ────────────────────────────────────
+.bubble-attachment {
+  &-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  &-image {
+    max-width: 100%;
+    max-height: 300px;
+    border-radius: 8px;
+    cursor: zoom-in;
+    object-fit: contain;
+    display: block;
+  }
+}
+
 // ── Thinking toggle ──────────────────────────────────────────
 .bubble-thinking {
   &-btn {

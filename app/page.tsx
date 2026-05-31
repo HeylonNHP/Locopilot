@@ -8,7 +8,7 @@ import { useChatStream } from './hooks/useChatStream';
 import { useSlashCommands } from './hooks/useSlashCommands';
 import { useSessionUrlParam } from './hooks/useSessionUrlParam';
 import ChatMessageBubble from '@/components/ChatMessageBubble';
-import ChatInput from '@/components/ChatInput';
+import ChatInput, { type Attachment } from '@/components/ChatInput';
 import ScrollToLatestButton from '@/components/ScrollToLatestButton';
 import { SessionSidebar, SkillsPanel } from '@/components/sidebar';
 import ApprovalModal from '@/components/ApprovalModal';
@@ -134,12 +134,26 @@ function HomeInner() {
   }, [state.messages, scrollMessagesToLatest]);
 
   const handleSend = useCallback(
-    async (message: string) => {
+    async (message: string, attachments?: Attachment[]) => {
       const trimmed = message.trim();
-      if (!trimmed) return;
+      const hasAttachments = (attachments?.length ?? 0) > 0;
+      if (!trimmed && !hasAttachments) return;
       dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
-      if (trimmed.startsWith('/')) await handleSlashCommand(trimmed);
-      else await sendChatMessage(message);
+      // Slash commands don't accept attachments — warn if the user had some pending.
+      if (trimmed.startsWith('/')) {
+        if (hasAttachments) {
+          dispatch({
+            type: 'ADD_MESSAGE',
+            message: {
+              role: 'system',
+              content: `Attachments are not supported with slash commands. Your ${attachments!.length} file(s) were not sent.`,
+            },
+          });
+        }
+        await handleSlashCommand(trimmed);
+      } else {
+        await sendChatMessage(message, attachments);
+      }
     },
     [dispatch, handleSlashCommand, sendChatMessage],
   );
@@ -155,7 +169,7 @@ function HomeInner() {
         dispatch({ type: 'ADD_MESSAGE', message: { role: 'system', content: 'Cannot manage skills while the AI is responding. Stop the response first.' } });
         return;
       }
-      handleSend(message);
+      handleSend(message, []);
     },
     [isCurrentSessionStreaming, handleSend, dispatch],
   );

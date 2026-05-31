@@ -5,6 +5,8 @@ import type { MutableRefObject } from 'react';
 import { useChat, type ChatMessage } from '@/app/lib/chatStore';
 import type { StableRefs } from './useStableRefs';
 import { EventSourceParserStream } from 'eventsource-parser/stream';
+import type { Attachment } from '@/components/ChatInput';
+import { langFromFilename } from '@/components/ChatInput';
 
 /**
  * Owns the SSE event dispatcher and the sendChatMessage driver that runs a
@@ -396,8 +398,95 @@ export function useChatStream(
     [handleEvent],
   );
 
+  // ---------------------------------------------------------------------------
+  // Attachment resolution — converts Attachment[] into extra message content
+  // and/or a base64 images array before sending to the LLM.
+  // ---------------------------------------------------------------------------
+  async function resolveAttachments(
+    message: string,
+    attachments: Attachment[],
+  ): Promise<{ content: string; images: string[] }> {
+    if (attachments.length === 0) return { content: message, images: [] };
+
+    const images: string[] = [];
+    const textBlocks: string[] = [];
+
+    for (const att of attachments) {
+      if (att.type === 'image' && typeof att.base64 === 'string' && att.base64.length > 0) {
+        images.push(att.base64);
+        continue;
+      }
+
+      if (att.type === 'text' && att.textContent !== undefined) {
+        const TEXT_INLINE_LIMIT = 50_000;
+        if (att.textContent.length <= TEXT_INLINE_LIMIT) {
+          // Small file: inject inline
+          const lang = langFromFilename(att.name);
+          textBlocks.push(`**${att.name}**\n\`\`\`${lang}\n${att.textContent}\n\`\`\``);
+        } else {
+          // Large file: upload to server, inject partial + hint
+          try {
+            const form = new FormData();
+            form.append('file', att.file ?? new Blob([att.textContent ?? ''], { type: att.mimeType }), att.name);
+            form.append('filename', att.name);
+            const uploadAbort = new AbortController();
+            const uploadTimer = setTimeout(() => uploadAbort.abort(), 60_000);
+            const res = await fetch('/api/files/upload', { method: 'POST', body: form, signal: uploadAbort.signal });
+            clearTimeout(uploadTimer);
+            if (res.ok) {
+              const data = await res.json() as { text: string; totalChars: number; tempPath: string; truncated: boolean };
+              const lang = langFromFilename(att.name);
+              const partial = data.text;
+              const notice = data.truncated
+                ? `\n\n_File truncated at ${TEXT_INLINE_LIMIT.toLocaleString()} of ${data.totalChars.toLocaleString()} chars. Full file saved at \`${data.tempPath}\` — use \`read_file\` with \`start_line\` or \`start\`/\`length\` to read more._`
+                : '';
+              textBlocks.push(`**${att.name}**\n\`\`\`${lang}\n${partial}\n\`\`\`${notice}`);
+            } else {
+              // Server error — fall back to inserting as much as we can inline
+              const lang = langFromFilename(att.name);
+              const safeFallback = (att.textContent ?? '').slice(0, TEXT_INLINE_LIMIT);
+              textBlocks.push(`**${att.name}** _(upload failed — showing first ${TEXT_INLINE_LIMIT.toLocaleString()} chars)_\n\`\`\`${lang}\n${safeFallback}\n\`\`\``);
+            }
+          } catch {
+            const lang = langFromFilename(att.name);
+            const safeFallback = (att.textContent ?? '').slice(0, TEXT_INLINE_LIMIT);
+            textBlocks.push(`**${att.name}** _(upload error — showing first ${TEXT_INLINE_LIMIT.toLocaleString()} chars)_\n\`\`\`${lang}\n${safeFallback}\n\`\`\``);
+          }
+        }
+        continue;
+      }
+
+      if (att.type === 'pdf' && att.file) {
+        try {
+          const form = new FormData();
+          form.append('file', att.file, att.name);
+          form.append('filename', att.name);
+          const uploadAbort = new AbortController();
+          const uploadTimer = setTimeout(() => uploadAbort.abort(), 60_000);
+          const res = await fetch('/api/files/upload', { method: 'POST', body: form, signal: uploadAbort.signal });
+          clearTimeout(uploadTimer);
+          if (res.ok) {
+            const data = await res.json() as { text: string; pageCount: number; tempPath: string; truncated: boolean };
+            const notice = data.truncated
+              ? `\n\n_PDF has ${data.pageCount} total pages. Showing pages 1–50. Full file saved at \`${data.tempPath}\` — use \`read_pdf\` with \`start_page\`/\`end_page\` to read more._`
+              : '';
+            textBlocks.push(`**${att.name}** (PDF, ${data.pageCount} page${data.pageCount === 1 ? '' : 's'})\n\n${data.text}${notice}`);
+          } else {
+            textBlocks.push(`**${att.name}** _(PDF upload failed — provide the file path instead)_`);
+          }
+        } catch {
+          textBlocks.push(`**${att.name}** _(PDF upload error — provide the file path instead)_`);
+        }
+        continue;
+      }
+    }
+
+    const prefix = textBlocks.length > 0 ? textBlocks.join('\n\n') + '\n\n' : '';
+    return { content: prefix + message, images };
+  }
+
   const sendChatMessage = useCallback(
-    async (message: string) => {
+    async (message: string, attachments?: Attachment[]) => {
       const sessionId = refs.sessionIdRef.current ?? -1;
       if (streamingSessions.has(sessionId)) return;
 
@@ -407,7 +496,10 @@ export function useChatStream(
       }
 
       const currentMessages = refs.messagesRef.current;
-      const userMessage: ChatMessage = { role: 'user', content: message };
+
+      // Process attachments into message content + images
+      const { content, images } = await resolveAttachments(message, attachments ?? []);
+      const userMessage: ChatMessage = { role: 'user', content, ...(images.length > 0 ? { images } : {}) };
 
       dispatch({ type: 'ADD_MESSAGE', message: userMessage });
       dispatch({ type: 'SET_ERROR', error: null });
