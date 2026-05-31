@@ -1,9 +1,8 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import type { MutableRefObject } from 'react';
 import { useChat, type ChatMessage } from '@/app/lib/chatStore';
-import type { StableRefs } from './useStableRefs';
+import type { StableRefs, WritableRef } from './useStableRefs';
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import type { Attachment } from '@/components/ChatInput';
 import { langFromFilename } from '@/components/ChatInput';
@@ -14,7 +13,7 @@ import { langFromFilename } from '@/components/ChatInput';
  */
 export function useChatStream(
   refs: StableRefs,
-  abortControllersRef: MutableRefObject<Map<number, AbortController>>,
+  abortControllersRef: WritableRef<Map<number, AbortController>>,
   loadSessions: () => Promise<void>,
 ) {
   const { state, dispatch } = useChat();

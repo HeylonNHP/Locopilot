@@ -1,25 +1,27 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import type { MutableRefObject } from 'react';
 import type { ChatMessage, LLmModel, WebSearchConfig } from '@/app/lib/chatStore';
+
+/** A mutable ref container (the writable counterpart to React 19's read-only RefObject). */
+export type WritableRef<T> = { current: T };
 
 /**
  * A stable container of refs that mirror the most recently rendered state values.
  * Used to avoid stale closures inside SSE callbacks and async handlers.
  */
 export interface StableRefs {
-  messagesRef: MutableRefObject<ChatMessage[]>;
-  modelRef: MutableRefObject<string>;
-  numCtxRef: MutableRefObject<number>;
-  baseUrlRef: MutableRefObject<string>;
-  sessionIdRef: MutableRefObject<number | null>;
-  modelsRef: MutableRefObject<LLmModel[]>;
-  yoloRef: MutableRefObject<boolean>;
-  thinkingEnabledRef: MutableRefObject<boolean>;
-  compactionModelRef: MutableRefObject<string>;
-  chatTimeoutMsRef: MutableRefObject<number>;
-  webSearchRef: MutableRefObject<WebSearchConfig>;
+  messagesRef: WritableRef<ChatMessage[]>;
+  modelRef: WritableRef<string>;
+  numCtxRef: WritableRef<number>;
+  baseUrlRef: WritableRef<string>;
+  sessionIdRef: WritableRef<number | null>;
+  modelsRef: WritableRef<LLmModel[]>;
+  yoloRef: WritableRef<boolean>;
+  thinkingEnabledRef: WritableRef<boolean>;
+  compactionModelRef: WritableRef<string>;
+  chatTimeoutMsRef: WritableRef<number>;
+  webSearchRef: WritableRef<WebSearchConfig>;
 }
 
 interface StableRefsInput {

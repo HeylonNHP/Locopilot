@@ -2,7 +2,7 @@
 
 import { useCallback, useRef } from 'react';
 import type { Dispatch } from 'react';
-import type { MutableRefObject } from 'react';
+import type { WritableRef } from './useStableRefs';
 
 // Minimal set of action shapes consumed here
 type SessionAction =
@@ -12,7 +12,7 @@ type SessionAction =
 
 interface UseSessionActionsOptions {
   dispatch: Dispatch<SessionAction>;
-  sessionIdRef: MutableRefObject<number | null>;
+  sessionIdRef: WritableRef<number | null>;
   loadSessions: (query?: string) => Promise<void>;
   loadSessionMessages: (id: number) => Promise<void>;
   replayBufferedEvents: (id: number) => void;

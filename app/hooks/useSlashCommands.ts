@@ -1,16 +1,16 @@
 'use client';
 
 import { useCallback } from 'react';
-import type { MutableRefObject, Dispatch, SetStateAction } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import { useChat, type ChatMessage } from '@/app/lib/chatStore';
 import { buildToolUseNudge } from '@/services/toolUseNudge';
-import type { StableRefs } from './useStableRefs';
+import type { StableRefs, WritableRef } from './useStableRefs';
 
 interface SlashCommandDeps {
   refs: StableRefs;
   isCurrentSessionStreaming: boolean;
-  isCompactingRef: MutableRefObject<boolean>;
-  isGeneratingTitleRef: MutableRefObject<boolean>;
+  isCompactingRef: WritableRef<boolean>;
+  isGeneratingTitleRef: WritableRef<boolean>;
   setIsCompacting: Dispatch<SetStateAction<boolean>>;
   setIsGeneratingTitle: Dispatch<SetStateAction<boolean>>;
   onOpenSettings: () => void;
