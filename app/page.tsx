@@ -7,13 +7,19 @@ import { useDataLoaders } from './hooks/useDataLoaders';
 import { useChatStream } from './hooks/useChatStream';
 import { useSlashCommands } from './hooks/useSlashCommands';
 import { useSessionUrlParam } from './hooks/useSessionUrlParam';
+import { useScrollManager } from './hooks/useScrollManager';
+import { useApproval } from './hooks/useApproval';
+import { useSessionActions } from './hooks/useSessionActions';
 import ChatMessageBubble from '@/components/ChatMessageBubble';
-import ChatInput, { type Attachment } from '@/components/ChatInput';
+import { type Attachment } from '@/components/ChatInput';
 import ScrollToLatestButton from '@/components/ScrollToLatestButton';
 import { SessionSidebar, SkillsPanel } from '@/components/sidebar';
 import ApprovalModal from '@/components/ApprovalModal';
 import StatusBar from '@/components/StatusBar';
 import SettingsModal from '@/components/SettingsModal';
+import { ErrorBanner } from '@/components/ErrorBanner';
+import { InputArea } from '@/components/InputArea';
+import { EmptyState } from '@/components/EmptyState';
 
 /** Inner component — uses useSearchParams so must live inside Suspense. */
 function HomeInner() {
@@ -21,30 +27,23 @@ function HomeInner() {
   const [showSettings, setShowSettings] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
-  const [showErrorDetails, setShowErrorDetails] = useState(false);
-  const [showScrollToLatest, setShowScrollToLatest] = useState(false);
 
   const abortControllersRef = useRef<Map<number, AbortController>>(new Map());
-  const messagesAreaRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const isAtBottomRef = useRef(true);
   const currentSessionIdRef = useRef<number | null>(state.currentSessionId);
-  const previousSessionIdRef = useRef<number | null | undefined>(undefined);
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
-  const sessionSwitchIdRef = useRef<number | null>(null);
-  const currentSearchQueryRef = useRef('');
 
   useEffect(() => { isCompactingRef.current = isCompacting; }, [isCompacting]);
   useEffect(() => { isGeneratingTitleRef.current = isGeneratingTitle; }, [isGeneratingTitle]);
   useEffect(() => { currentSessionIdRef.current = state.currentSessionId; }, [state.currentSessionId]);
 
-  const scrollMessagesToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
-  }, []);
-
   const refs = useStableRefs(state);
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
+
+  const { showScrollToLatest, scrollToLatest, messagesAreaRef, messagesEndRef } = useScrollManager({
+    messages: state.messages,
+    currentSessionId: state.currentSessionId,
+  });
 
   // ── URL param: restore session from ?session=<id> on mount; keep URL in sync ──
   useSessionUrlParam({ onLoadSessionMessages: loadSessionMessages });
@@ -60,16 +59,20 @@ function HomeInner() {
     : state.streamingSessions.has(-1);
 
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
-
-  const handleSearchSessions = useCallback(async (query: string) => {
-    currentSearchQueryRef.current = query;
-    if (query.trim()) {
-      await loadSessions(query);
-    } else {
-      await loadSessions();
-    }
-  }, [loadSessions]);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
+
+  const { handleApprove, handleReject } = useApproval({
+    dispatch,
+    pendingApprovalId: state.pendingApprovalId,
+  });
+
+  const { handleNewSession, handleSelectSession, handleDeleteSession, handleSearchSessions } = useSessionActions({
+    dispatch,
+    sessionIdRef: refs.sessionIdRef,
+    loadSessions,
+    loadSessionMessages,
+    replayBufferedEvents,
+  });
 
   const { handleSlashCommand } = useSlashCommands({
     refs,
@@ -90,53 +93,10 @@ function HomeInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // IntersectionObserver on the sentinel replaces manual scroll-distance
-  // arithmetic.  The 32px rootMargin bottom matches the legacy tolerance.
-  useEffect(() => {
-    const container = messagesAreaRef.current;
-    const sentinel = messagesEndRef.current;
-    if (!container || !sentinel) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (!entry) return;
-        const isAtBottom = entry.isIntersecting;
-        isAtBottomRef.current = isAtBottom;
-        setShowScrollToLatest(!isAtBottom && container.scrollHeight > container.clientHeight + 1);
-      },
-      { root: container, rootMargin: '0px 0px 32px 0px', threshold: 0 },
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const currentSessionId = currentSessionIdRef.current;
-    const sessionChanged = previousSessionIdRef.current !== currentSessionId;
-
-    if (!sessionChanged && !isAtBottomRef.current) {
-      return;
-    }
-
-    // Immediate scroll handles streaming tokens well, but when a whole
-    // conversation is loaded at once (session switch) the DOM keeps growing
-    // as markdown/images settle. Fire a second deferred scroll to land at
-    // the true bottom after layout stabilises.
-    scrollMessagesToLatest('smooth');
-    const timer = setTimeout(() => {
-      scrollMessagesToLatest('smooth');
-    }, 120);
-
-    previousSessionIdRef.current = currentSessionId;
-    return () => clearTimeout(timer);
-  }, [state.messages, scrollMessagesToLatest]);
-
   const handleSend = useCallback(
-    async (message: string, attachments?: Attachment[]) => {
+    async (message: string, attachments: Attachment[]) => {
       const trimmed = message.trim();
-      const hasAttachments = (attachments?.length ?? 0) > 0;
+      const hasAttachments = attachments.length > 0;
       if (!trimmed && !hasAttachments) return;
       dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
       // Slash commands don't accept attachments — warn if the user had some pending.
@@ -146,7 +106,7 @@ function HomeInner() {
             type: 'ADD_MESSAGE',
             message: {
               role: 'system',
-              content: `Attachments are not supported with slash commands. Your ${attachments!.length} file(s) were not sent.`,
+              content: `Attachments are not supported with slash commands. Your ${attachments.length} file(s) were not sent.`,
             },
           });
         }
@@ -174,80 +134,6 @@ function HomeInner() {
     [isCurrentSessionStreaming, handleSend, dispatch],
   );
 
-  const handleApprove = useCallback(async () => {
-    const requestId = state.pendingApprovalId;
-    if (requestId) {
-      try {
-        await fetch('/api/approve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ requestId, approved: true }),
-        });
-      } catch {
-        // Keep modal open on failure so the user can retry
-        return;
-      }
-    }
-    dispatch({ type: 'SHOW_APPROVAL', command: null });
-  }, [dispatch, state.pendingApprovalId]);
-
-  const handleReject = useCallback(async () => {
-    const requestId = state.pendingApprovalId;
-    if (requestId) {
-      try {
-        await fetch('/api/approve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ requestId, approved: false }),
-        });
-      } catch {
-        // Keep modal open on failure so the user can retry
-        return;
-      }
-    }
-    dispatch({ type: 'SHOW_APPROVAL', command: null });
-  }, [dispatch, state.pendingApprovalId]);
-
-  const handleNewSession = useCallback(async () => {
-    // SET_CURRENT_SESSION with null auto-saves old state and restores new-session defaults
-    dispatch({ type: 'SET_CURRENT_SESSION', id: null });
-    await loadSessions();
-  }, [dispatch, loadSessions]);
-
-  const handleSelectSession = useCallback(
-    async (sessionId: number) => {
-      sessionSwitchIdRef.current = sessionId;
-      // SET_CURRENT_SESSION auto-saves old state and restores target state
-      dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
-      await loadSessionMessages(sessionId);
-      if (sessionSwitchIdRef.current !== sessionId) return;
-      replayBufferedEvents(sessionId);
-    },
-    [dispatch, loadSessionMessages, replayBufferedEvents],
-  );
-
-  const handleDeleteSession = useCallback(
-    async (id: number) => {
-      try {
-        await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
-        const q = currentSearchQueryRef.current;
-        if (q.trim()) {
-          await loadSessions(q);
-        } else {
-          await loadSessions();
-        }
-        dispatch({ type: 'DISCARD_SESSION', sessionId: id });
-        if (refs.sessionIdRef.current === id) {
-          dispatch({ type: 'CLEAR_MESSAGES' });
-          dispatch({ type: 'SET_CURRENT_SESSION', id: null });
-        }
-      } catch {
-        // Silently ignore
-      }
-    },
-    [refs, dispatch, loadSessions],
-  );
-
   return (
     <div className="app-root">
       <SessionSidebar
@@ -265,15 +151,7 @@ function HomeInner() {
             className={`messages-area ${showScrollToLatest ? 'messages-area--has-scroll-button' : ''}`}
           >
             {state.messages.length === 0 ? (
-              <div className="empty-state">
-                <h1 className="font-24 font-normal m-0">Locopilot</h1>
-                <p className="m-0">Local, Private, Safe AI Assistant</p>
-                {state.models.length > 0 && (
-                  <p className="font-13 m-0">
-                    {state.models.length} model{state.models.length !== 1 ? 's' : ''} available
-                  </p>
-                )}
-              </div>
+              <EmptyState modelCount={state.models.length} />
             ) : (
               state.messages.map((msg, i) => (
                 <ChatMessageBubble key={msg.id ?? i} message={msg} />
@@ -281,31 +159,12 @@ function HomeInner() {
             )}
 
             {state.error && (
-              <div className="error-banner">
-                <div className="error-header">
-                  <span className="error-message">Something went wrong.</span>
-                  <button
-                    className="error-details-toggle"
-                    onClick={() => setShowErrorDetails(!showErrorDetails)}
-                  >
-                    {showErrorDetails ? 'Hide details ▲' : 'Details ▼'}
-                  </button>
-                </div>
-                {showErrorDetails && (
-                  <pre className="error-details">{state.error}</pre>
-                )}
-                <div className="error-actions">
-                  <button onClick={retry} className="error-retry-btn" disabled={isCurrentSessionStreaming}>
-                    Retry
-                  </button>
-                  <button
-                    onClick={() => dispatch({ type: 'SET_ERROR', error: null })}
-                    className="error-dismiss-btn"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </div>
+              <ErrorBanner
+                error={state.error}
+                isRetrying={isCurrentSessionStreaming}
+                onRetry={retry}
+                onDismiss={() => dispatch({ type: 'SET_ERROR', error: null })}
+              />
             )}
 
             <div ref={messagesEndRef} />
@@ -313,35 +172,19 @@ function HomeInner() {
 
           <ScrollToLatestButton
             visible={showScrollToLatest && state.messages.length > 0}
-            onClick={() => scrollMessagesToLatest('smooth')}
+            onClick={() => scrollToLatest('smooth')}
           />
         </div>
 
         <div className="input-area">
-          {isCurrentSessionStreaming ? (
-            <div className="streaming-indicator">
-              <span className="text-accent font-14">
-                ● {state.compactingPhases.length > 0
-                  ? state.compactingPhases[state.compactingPhases.length - 1]
-                  : 'Streaming...'}
-              </span>
-              <button onClick={handleStop} className="stop-btn">Stop</button>
-            </div>
-          ) : isCompacting ? (
-            <div className="streaming-indicator">
-              <span className="text-accent font-14">
-                ● {state.compactingPhases.length > 0
-                  ? state.compactingPhases[state.compactingPhases.length - 1]
-                  : 'Compacting conversation...'}
-              </span>
-            </div>
-          ) : isGeneratingTitle ? (
-            <div className="streaming-indicator">
-              <span className="text-accent font-14">● Generating session title...</span>
-            </div>
-          ) : (
-            <ChatInput onSend={handleSend} disabled={false} />
-          )}
+          <InputArea
+            isStreaming={isCurrentSessionStreaming}
+            isCompacting={isCompacting}
+            isGeneratingTitle={isGeneratingTitle}
+            compactingPhases={state.compactingPhases}
+            onStop={handleStop}
+            onSend={handleSend}
+          />
         </div>
 
         <StatusBar />
