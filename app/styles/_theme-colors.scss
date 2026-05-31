@@ -127,6 +127,11 @@ html[data-theme='frutiger-aero'] {
   --markdown-table-border:  rgba(0, 80, 140, 0.12);
   --markdown-table-head-bg: rgba(0, 160, 230, 0.08);
   --markdown-hr:            rgba(0, 80, 140, 0.15);
+  --latest-button-bg:       rgba(248, 252, 255, 0.88);
+  --latest-button-hover-bg: rgba(255, 255, 255, 0.95);
+  --latest-button-border:   rgba(255, 255, 255, 0.45);
+  --latest-button-shadow:   0 10px 24px rgba(var(--rgb-shadow-navy), 0.16);
+  --latest-button-text:     var(--text-primary);
 
   // ── Code surfaces ─────────────────────────────────────────
   --code-inline-bg:         rgba(0, 100, 180, 0.08);
@@ -182,6 +187,11 @@ html[data-theme='dark'] {
   --markdown-table-border:  rgba(255, 255, 255, 0.16);
   --markdown-table-head-bg: rgba(56, 189, 248, 0.10);
   --markdown-hr:            rgba(255, 255, 255, 0.12);
+  --latest-button-bg:       rgba(12, 20, 34, 0.92);
+  --latest-button-hover-bg: rgba(18, 28, 46, 0.98);
+  --latest-button-border:   rgba(255, 255, 255, 0.10);
+  --latest-button-shadow:   0 12px 26px rgba(0, 0, 0, 0.32);
+  --latest-button-text:     var(--text-primary);
 
   // Code surfaces
   --code-inline-bg:         rgba(56, 189, 248, 0.12);
