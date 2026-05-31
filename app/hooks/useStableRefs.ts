@@ -59,11 +59,17 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const chatTimeoutMsRef = useRef(state.chatTimeoutMs);
   const webSearchRef = useRef(state.webSearch);
 
+  // sessionIdRef must be updated synchronously during render (not in a useEffect)
+  // so the buffer guard in useChatStream.ts sees the new session immediately after
+  // a SET_CURRENT_SESSION dispatch. A useEffect update runs after the browser paint,
+  // creating a ~16–50ms window in which SSE events from the old session bypass the
+  // guard and contaminate the new session's message list.
+  sessionIdRef.current = state.currentSessionId;
+
   useEffect(() => { messagesRef.current = state.messages; }, [state.messages]);
   useEffect(() => { modelRef.current = state.model; }, [state.model]);
   useEffect(() => { numCtxRef.current = state.numCtx; }, [state.numCtx]);
   useEffect(() => { baseUrlRef.current = state.baseUrl; }, [state.baseUrl]);
-  useEffect(() => { sessionIdRef.current = state.currentSessionId; }, [state.currentSessionId]);
   useEffect(() => { sessionsRef.current = state.sessions; }, [state.sessions]);
   useEffect(() => { modelsRef.current = state.models; }, [state.models]);
   useEffect(() => { yoloRef.current = state.yolo; }, [state.yolo]);

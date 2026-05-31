@@ -200,9 +200,13 @@ export function useChatStream(
           }
           break;
 
-        case 'compact':
+        case 'compact': {
+          // Guard SET_MESSAGES and SET_TOKEN_STATS with the owning session so a
+          // compaction that completes after the user has switched sessions cannot
+          // overwrite the newly-viewed session's message list or token stats.
+          const compactOwner = requestId != null ? bufferOwnerMapRef.current.get(requestId) : undefined;
           if (Array.isArray(data.messages)) {
-            dispatch({ type: 'SET_MESSAGES', messages: data.messages });
+            dispatch({ type: 'SET_MESSAGES', messages: data.messages, ...(compactOwner !== undefined ? { targetSessionId: compactOwner } : {}) });
           }
           if (typeof data.stats?.newTokenCount === 'number') {
             dispatch({
@@ -213,6 +217,7 @@ export function useChatStream(
                 totalTokens: data.stats.newTokenCount,
                 tokenLimit: data.tokenLimit ?? refs.numCtxRef.current ?? state.numCtx,
               },
+              ...(compactOwner !== undefined ? { targetSessionId: compactOwner } : {}),
             });
           } else {
             dispatch({ type: 'CLEAR_TOKEN_STATS' });
@@ -225,14 +230,20 @@ export function useChatStream(
             },
           });
           break;
+        }
 
-        case 'done':
-          if (data.sessionId) {
-            dispatch({ type: 'SET_CURRENT_SESSION', id: data.sessionId });
-          }
+        case 'done': {
+          // Do NOT call SET_CURRENT_SESSION here. If the user switched sessions
+          // while a stream was running, dispatching SET_CURRENT_SESSION(A) would
+          // forcibly snap the UI back to session A against the user's will.
+          // session_created already handles new-session ID assignment; for
+          // existing sessions this dispatch was always a redundant no-op at best.
+          // This event is in DELTA_EVENTS so it is buffered when the user is away
+          // and replayed (applying the final tokenStats) when they return.
           if (data.tokenStats) dispatch({ type: 'SET_TOKEN_STATS', stats: data.tokenStats });
           dispatch({ type: 'SET_CURRENT_TPS', tps: null });
           break;
+        }
 
         case 'error':
           if (requestId != null) requestFailedMapRef.current.set(requestId, true);
@@ -377,7 +388,20 @@ export function useChatStream(
    * were buffered while the user was viewing a different session.  No-op when
    * no stream is active or the target session doesn't own the active stream.
    */
-  const DELTA_EVENTS = new Set(['chunk', 'thinking', 'tool_progress', 'subagent_chunk', 'status', 'compact_progress']);
+  // Events to replay when the user switches back to a buffered session.
+  // Includes:
+  //   - Incremental content deltas (chunk, thinking, tool_progress, …)
+  //   - done: applies the final authoritative token stats for the session
+  //   - approval_request: re-surfaces the approval modal on return so the user
+  //     can still approve/reject a pending run_command (the server waits up to
+  //     120 s; if already timed out the POST to /api/approve is a harmless no-op)
+  // Excludes tool_call / tool_result / subagent_output / compact because those
+  // messages are flushed to SQLite mid-stream (Phase 2) and are reloaded from
+  // DB on session switch — replaying them here would create duplicates.
+  const DELTA_EVENTS = new Set([
+    'chunk', 'thinking', 'tool_progress', 'subagent_chunk', 'status',
+    'compact_progress', 'done', 'approval_request',
+  ]);
 
   const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
@@ -385,10 +409,6 @@ export function useChatStream(
       const buffered = bufferedEventsRef.current.get(sessionKey) ?? [];
       bufferedEventsRef.current.delete(sessionKey);
       for (const { event, data } of buffered) {
-        // Only replay "delta" events that append to existing messages.
-        // "Creation" events (tool_call, tool_result, subagent_output, compact, done)
-        // are skipped because mid-stream DB flushes (Phase 2) already persisted
-        // those messages to SQLite. Replaying them would create duplicates.
         if (DELTA_EVENTS.has(event)) {
           handleEvent(event, data);
         }

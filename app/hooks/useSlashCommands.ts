@@ -239,6 +239,11 @@ export function useSlashCommands({
             return;
           }
 
+          // Capture the session ID now, before the async fetch. If the user
+          // switches sessions while compaction is in-flight, targetSessionId
+          // ensures the result lands in the correct session slot rather than
+          // overwriting whatever session happens to be active at resolve-time.
+          const compactSessionId = refs.sessionIdRef.current;
           isCompactingRef.current = true;
           setIsCompacting(true);
           try {
@@ -251,7 +256,7 @@ export function useSlashCommands({
                 numCtx: refs.numCtxRef.current,
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
-                sessionId: refs.sessionIdRef.current,
+                sessionId: compactSessionId,
               }),
             });
 
@@ -259,7 +264,7 @@ export function useSlashCommands({
             if (!response.ok) throw new Error(data?.error ?? `HTTP ${response.status}`);
             if (!Array.isArray(data?.messages)) throw new Error('Compaction returned an invalid message list.');
 
-            dispatch({ type: 'SET_MESSAGES', messages: data.messages as ChatMessage[] });
+            dispatch({ type: 'SET_MESSAGES', messages: data.messages as ChatMessage[], ...(compactSessionId !== null ? { targetSessionId: compactSessionId } : {}) });
             if (typeof data?.stats?.newTokenCount === 'number') {
               dispatch({
                 type: 'SET_TOKEN_STATS',
@@ -269,6 +274,7 @@ export function useSlashCommands({
                   totalTokens: data.stats.newTokenCount,
                   tokenLimit: refs.numCtxRef.current,
                 },
+                ...(compactSessionId !== null ? { targetSessionId: compactSessionId } : {}),
               });
             }
             const oldTokens = data.stats?.oldTokenCount;
