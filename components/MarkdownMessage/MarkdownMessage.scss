@@ -113,21 +113,21 @@
 
   th,
   td {
-    border: 1px solid rgba(0, 80, 140, 0.12);
+    border: 1px solid var(--markdown-table-border);
     padding: 0.45rem 0.65rem;
     text-align: left;
     vertical-align: top;
   }
 
   th {
-    background: rgba(0, 160, 230, 0.08);
+    background: var(--markdown-table-head-bg);
     font-weight: 600;
   }
 
   hr {
     margin: 0.9rem 0;
     border: 0;
-    border-top: 1px solid rgba(0, 80, 140, 0.15);
+    border-top: 1px solid var(--markdown-hr);
   }
 
   // ── Thinking variant ────────────────────────────────────────

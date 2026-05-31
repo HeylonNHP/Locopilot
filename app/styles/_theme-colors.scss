@@ -122,6 +122,12 @@ html[data-theme='frutiger-aero'] {
   --glass-input-bg:         rgba(255, 255, 255, 0.35);
   --glass-input-focus:      rgba(255, 255, 255, 0.50);
 
+  // ── Response surfaces ─────────────────────────────────────
+  --bubble-ai-bg:           rgba(255, 255, 255, 0.22);
+  --markdown-table-border:  rgba(0, 80, 140, 0.12);
+  --markdown-table-head-bg: rgba(0, 160, 230, 0.08);
+  --markdown-hr:            rgba(0, 80, 140, 0.15);
+
   // ── Code surfaces ─────────────────────────────────────────
   --code-inline-bg:         rgba(0, 100, 180, 0.08);
   --code-inline-text:       #005577;
@@ -170,6 +176,12 @@ html[data-theme='dark'] {
   --glass-gloss-mid:        rgba(255, 255, 255, 0.05);
   --glass-input-bg:         rgba(255, 255, 255, 0.08);
   --glass-input-focus:      rgba(255, 255, 255, 0.12);
+
+  // ── Response surfaces ─────────────────────────────────────
+  --bubble-ai-bg:           rgba(8, 16, 28, 0.94);
+  --markdown-table-border:  rgba(255, 255, 255, 0.16);
+  --markdown-table-head-bg: rgba(56, 189, 248, 0.10);
+  --markdown-hr:            rgba(255, 255, 255, 0.12);
 
   // Code surfaces
   --code-inline-bg:         rgba(56, 189, 248, 0.12);
