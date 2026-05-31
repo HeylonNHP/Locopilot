@@ -24,6 +24,10 @@ function langFromFilename(name: string): string {
 export type AttachmentType = 'image' | 'text' | 'pdf';
 
 export interface Attachment {
+  /** Stable per-attachment UI id — generated at attach time so repeated pastes
+   *  of identically-named images (e.g. "image.png" from clipboard) are
+   *  treated as distinct entries. */
+  id: string;
   type: AttachmentType;
   name: string;
   mimeType: string;
@@ -176,19 +180,16 @@ export default function ChatInput({ onSend, disabled }: Props) {
 
     const next: Attachment[] = [];
     for (const file of accepted) {
-      // Deduplicate by name — checked again inside the functional state update below,
-      // but also checked here to avoid async work for obvious duplicates.
-      if (next.some((a) => a.name === file.name)) continue;
-
+      const id = crypto.randomUUID();
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       const isImage = file.type.startsWith('image/');
 
       if (isPdf) {
-        next.push({ type: 'pdf', name: file.name, mimeType: file.type || 'application/pdf', sizeBytes: file.size, file });
+        next.push({ id, type: 'pdf', name: file.name, mimeType: file.type || 'application/pdf', sizeBytes: file.size, file });
       } else if (isImage) {
         try {
           const base64 = await readFileAsBase64(file);
-          next.push({ type: 'image', name: file.name, mimeType: file.type, sizeBytes: file.size, base64 });
+          next.push({ id, type: 'image', name: file.name, mimeType: file.type, sizeBytes: file.size, base64 });
         } catch {
           // Skip unreadable images
         }
@@ -196,7 +197,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
         // Text / code file
         try {
           const textContent = await readFileAsText(file);
-          next.push({ type: 'text', name: file.name, mimeType: file.type || 'text/plain', sizeBytes: file.size, textContent });
+          next.push({ id, type: 'text', name: file.name, mimeType: file.type || 'text/plain', sizeBytes: file.size, textContent });
         } catch {
           // Skip unreadable files
         }
@@ -204,12 +205,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
     }
 
     if (next.length > 0) {
-      // Use functional form to deduplicate against the latest state (avoids stale
-      // closure issue where two rapid adds could both bypass the above check).
-      setAttachments((prev) => {
-        const incoming = next.filter((a) => !prev.some((p) => p.name === a.name));
-        return incoming.length > 0 ? [...prev, ...incoming] : prev;
-      });
+      setAttachments((prev) => [...prev, ...next]);
     }
   }, []);
 
@@ -465,7 +461,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
                 <button
                   type="button"
                   className="chat-input-attachment-remove"
-                  onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
+                  onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
                   aria-label={`Remove ${att.name}`}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
@@ -475,7 +471,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
               );
               if (att.type === 'image' && att.base64) {
                 return (
-                  <div key={`${att.name}-${idx}`} className="chat-input-attachment-img-card" title={att.name}>
+                  <div key={att.id} className="chat-input-attachment-img-card" title={att.name}>
                     <img
                       src={`data:${att.mimeType};base64,${att.base64}`}
                       alt={att.name}
@@ -489,7 +485,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
                 );
               }
               return (
-                <div key={`${att.name}-${idx}`} className={`chat-input-attachment-chip chat-input-attachment-chip--${att.type}`}>
+                <div key={att.id} className={`chat-input-attachment-chip chat-input-attachment-chip--${att.type}`}>
                   <span className="chat-input-attachment-icon">
                     {att.type === 'pdf' ? (
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
