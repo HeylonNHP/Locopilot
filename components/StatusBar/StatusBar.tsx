@@ -1,7 +1,7 @@
 'use client';
 import './StatusBar.scss';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useChat } from '@/app/lib/chatStore';
 import ModelSelector from '../ModelSelector';
 
@@ -9,7 +9,13 @@ export default function StatusBar() {
   const { state } = useChat();
   const { tokenStats, model, messages } = state;
   const [showSelector, setShowSelector] = useState(false);
+  const [isDark, setIsDark] = useState(false);
   const modelRef = useRef<HTMLSpanElement>(null);
+
+  // Sync isDark with the current data-theme attribute (set by FOUC script or toggle)
+  useEffect(() => {
+    setIsDark(document.documentElement.getAttribute('data-theme') === 'dark');
+  }, []);
 
   const handleOpenSelector = useCallback(() => {
     if (state.models.length > 0 && model) {
@@ -20,6 +26,13 @@ export default function StatusBar() {
   const handleCloseSelector = useCallback(() => {
     setShowSelector(false);
   }, []);
+
+  const handleThemeToggle = useCallback(() => {
+    const next = isDark ? 'frutiger-aero' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('locopilot-theme', next); } catch (_) {}
+    setIsDark(!isDark);
+  }, [isDark]);
 
   // Use the backend-provided token count. If we haven't received one yet
   // (briefly before the first SSE event) show 0 instead of a local guess.
@@ -77,6 +90,15 @@ export default function StatusBar() {
         isOpen={showSelector}
         onClose={handleCloseSelector}
       />
+
+      <button
+        className="statusbar-theme-toggle"
+        onClick={handleThemeToggle}
+        title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+        aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      >
+        {isDark ? '☀' : '🌙'}
+      </button>
     </div>
   );
 }

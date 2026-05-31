@@ -14,11 +14,11 @@ body {
   font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Oxygen, Ubuntu, sans-serif;
   background:
     // Floating bubbles
-    radial-gradient(circle at 15% 25%, rgba(255, 255, 255, 0.35) 0%, transparent 25%),
-    radial-gradient(circle at 75% 15%, rgba(255, 255, 255, 0.25) 0%, transparent 20%),
-    radial-gradient(circle at 55% 65%, rgba(255, 255, 255, 0.2) 0%, transparent 18%),
-    radial-gradient(circle at 85% 80%, rgba(255, 255, 255, 0.3) 0%, transparent 22%),
-    radial-gradient(circle at 35% 85%, rgba(255, 255, 255, 0.15) 0%, transparent 15%),
+    radial-gradient(circle at 15% 25%, var(--bg-bubble-1) 0%, transparent 25%),
+    radial-gradient(circle at 75% 15%, var(--bg-bubble-2) 0%, transparent 20%),
+    radial-gradient(circle at 55% 65%, var(--bg-bubble-3) 0%, transparent 18%),
+    radial-gradient(circle at 85% 80%, var(--bg-bubble-4) 0%, transparent 22%),
+    radial-gradient(circle at 35% 85%, var(--bg-bubble-5) 0%, transparent 15%),
     // Sky to grass gradient
     linear-gradient(170deg,
       var(--bg-gradient-0)  0%,
