@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 
 interface UseScrollManagerOptions {
   /** Reactive message list — used as an effect dependency to trigger scroll. */
@@ -12,8 +12,8 @@ interface UseScrollManagerOptions {
 interface UseScrollManagerResult {
   showScrollToLatest: boolean;
   scrollToLatest: (behavior?: ScrollBehavior) => void;
-  messagesAreaRef: React.RefObject<HTMLDivElement>;
-  messagesEndRef: React.RefObject<HTMLDivElement>;
+  messagesAreaRef: RefObject<HTMLDivElement | null>;
+  messagesEndRef: RefObject<HTMLDivElement | null>;
 }
 
 /**
