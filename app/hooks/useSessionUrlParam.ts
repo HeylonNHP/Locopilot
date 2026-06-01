@@ -91,5 +91,5 @@ export function useSessionUrlParam({ onLoadSessionMessages }: UseSessionUrlParam
     }
 
     isInitialMountRef.current = false;
-  }, [state.currentSessionId]);
+  }, [state.currentSessionId, searchParams]);
 }

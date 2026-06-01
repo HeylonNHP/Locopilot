@@ -141,6 +141,13 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (action.targetSessionId !== undefined && action.targetSessionId !== state.currentSessionId) {
         return state;
       }
+      if (
+        action.messages.length === 0
+        && action.targetSessionId !== undefined
+        && state.streamingSessions.has(action.targetSessionId)
+      ) {
+        return state;
+      }
       return {
         ...state,
         messages: action.messages

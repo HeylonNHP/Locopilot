@@ -57,7 +57,9 @@ export function useDataLoaders(refs: StableRefs) {
       if (!res.ok || sessionLoadRequestIdRef.current !== requestId) return;
       const data = await res.json();
       if (sessionLoadRequestIdRef.current !== requestId) return;
-      if (data.messages) dispatch({ type: 'SET_MESSAGES', messages: data.messages, targetSessionId: sessionId });
+      if (data.messages?.length > 0) {
+        dispatch({ type: 'SET_MESSAGES', messages: data.messages, targetSessionId: sessionId });
+      }
       if (data.session?.model) {
         await loadModelContextLimit(data.session.model);
         // Re-check after the await — the user may have switched sessions
