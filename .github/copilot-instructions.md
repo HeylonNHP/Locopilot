@@ -145,9 +145,10 @@ Feature summary:
 ## Change History
 
 - 2026-06-01: Added `/clear-images` slash command
-  - Files: `app/hooks/useSlashCommands.ts`, `app/api/clear-images/route.ts` (new), `.github/copilot-instructions.md`
+  - Files: `app/hooks/useSlashCommands.ts`, `app/api/clear-images/route.ts` (new), `components/ChatInput/ChatInput.tsx`, `.github/copilot-instructions.md`
   - Summary: Added a new `/clear-images` slash command and a `POST /api/clear-images` endpoint. The handler strips `images` from every message in the active session, dispatches `SET_MESSAGES` with the cleaned list, and asks the server to persist the change via `updateSessionMessages`. Reports the number of images removed and the approximate token budget freed (1,024 tokens per image, matching `IMAGE_TOKEN_ESTIMATE` in `constants.ts`).
   - Intent: Provide a panic-button recovery for WebUI sessions that have attached too many images and started failing with vision context errors, complementing `/compact` (which only summarises text) and `/new` (which discards everything).
+  - Lesson: The slash-command autocomplete dropdown is driven by a hard-coded `COMMANDS` array in `components/ChatInput/ChatInput.tsx` (outside `app/`), NOT by anything in `app/hooks/useSlashCommands.ts`. When adding a new slash command, that array must be updated in addition to the dispatcher and `/help` text — otherwise the command works when typed manually but doesn't appear in the dropdown.
 
 - 2026-05-18: Moved markdown bubble sanitization to client-only loading
   - Files: `components/ChatMessageBubble.tsx`

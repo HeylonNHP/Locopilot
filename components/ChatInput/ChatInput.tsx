@@ -88,6 +88,7 @@ const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : us
 
 const COMMANDS = [
   { command: '/clear', description: 'Clear conversation' },
+  { command: '/clear-images', description: 'Remove image attachments to free context' },
   { command: '/compact', description: 'Summarise conversation history' },
   { command: '/ctx', description: 'Set context size' },
   { command: '/delete', description: 'Delete a session' },
