@@ -70,6 +70,7 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
     - `/settings`: Change App and Session settings (replaces initial startup prompts).
     - `/compact`: Force conversation summarization to recover context.
   - `/dump`: Export the current conversation history, including the system prompt and tool call/tool result details, to a markdown debug file.
+    - `/clear-images`: Remove all image attachments from the active conversation, both in client state and persisted SQLite, to free vision context and recover from 400 errors.
     - `/sessions`: Switch between multiple persistent chat histories.
     - `/delete`: Remove a session from the local database.
     - `/nudge`: Manually inject a tool-use reminder if the AI is hesitant.
@@ -142,6 +143,11 @@ Feature summary:
     - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
+
+- 2026-06-01: Added `/clear-images` slash command
+  - Files: `app/hooks/useSlashCommands.ts`, `app/api/clear-images/route.ts` (new), `.github/copilot-instructions.md`
+  - Summary: Added a new `/clear-images` slash command and a `POST /api/clear-images` endpoint. The handler strips `images` from every message in the active session, dispatches `SET_MESSAGES` with the cleaned list, and asks the server to persist the change via `updateSessionMessages`. Reports the number of images removed and the approximate token budget freed (1,024 tokens per image, matching `IMAGE_TOKEN_ESTIMATE` in `constants.ts`).
+  - Intent: Provide a panic-button recovery for WebUI sessions that have attached too many images and started failing with vision context errors, complementing `/compact` (which only summarises text) and `/new` (which discards everything).
 
 - 2026-05-18: Moved markdown bubble sanitization to client-only loading
   - Files: `components/ChatMessageBubble.tsx`
