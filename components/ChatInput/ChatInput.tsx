@@ -93,7 +93,6 @@ const COMMANDS = [
   { command: '/ctx', description: 'Set context size' },
   { command: '/delete', description: 'Delete a session' },
   { command: '/dump', description: 'Export conversation to markdown' },
-  { command: '/exit', description: 'Reload page' },
   { command: '/help', description: 'Show all commands' },
   { command: '/model', description: 'Switch model' },
   { command: '/new', description: 'Start fresh conversation' },

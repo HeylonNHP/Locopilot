@@ -111,8 +111,7 @@ export function useSlashCommands({
             '/delete    - Delete a session\n' +
             '/settings  - Open settings modal\n' +
             '/new       - Start a fresh conversation\n' +
-            '/nudge     - Manually remind AI to use tools\n' +
-            '/exit      - Exit (reloads page)',
+            '/nudge     - Manually remind AI to use tools',
           );
           return;
         }
@@ -183,12 +182,6 @@ export function useSlashCommands({
           dispatch({ type: 'SET_CURRENT_SESSION', id: null });
           await loadSessions();
           addSystem('Started a new conversation.');
-          return;
-        }
-
-        case 'exit': {
-          addSystem('Reloading page...');
-          window.location.reload();
           return;
         }
 

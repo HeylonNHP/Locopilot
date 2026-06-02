@@ -74,7 +74,7 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
     - `/sessions`: Switch between multiple persistent chat histories.
     - `/delete`: Remove a session from the local database.
     - `/nudge`: Manually inject a tool-use reminder if the AI is hesitant.
-    - `/exit` / `/help`: Application control and documentation.
+    - `/help`: Application control and documentation.
 
 ## Tool-calling / Command-execution
 
