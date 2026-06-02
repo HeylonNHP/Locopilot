@@ -144,6 +144,7 @@
 // ── AI / assistant bubble ────────────────────────────────────
 .bubble-ai {
   &-wrap {
+    position: relative;
     margin-bottom: 12px;
   }
 
@@ -160,6 +161,66 @@
     -webkit-backdrop-filter: blur(12px) saturate(140%);
     box-shadow: 0 4px 16px rgba(var(--rgb-shadow-deep), 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.35);
     color: var(--text-primary);
+  }
+}
+
+// ── Copy raw markdown (assistant bubble action) ──────────────
+.bubble-copy-md {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border-soft);
+  background: var(--code-copy-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 5;
+
+  &:hover {
+    background: var(--code-copy-hover-bg);
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: none;
+    opacity: 1;
+    background: var(--code-copy-hover-bg);
+    color: var(--text-primary);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0;
+  }
+
+  &--copied {
+    opacity: 1;
+    background: var(--code-copy-active-bg);
+    color: var(--accent);
+  }
+}
+
+// Reveal the copy button on hover/focus of the AI bubble wrap so it
+// stays out of the way until the user reaches for it. Keyboard users
+// get the same affordance via :focus-within on the wrap.
+.bubble-ai-wrap:hover .bubble-copy-md,
+.bubble-ai-wrap:focus-within .bubble-copy-md {
+  opacity: 0.85;
+
+  &:hover {
+    opacity: 1;
   }
 }
 
