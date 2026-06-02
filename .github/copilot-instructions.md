@@ -142,12 +142,12 @@ Feature summary:
     - Summary: Removed the code that rolled back `messages.length` to `historyLengthBeforeTurn` when an AI turn was interrupted or failed due to an Ollama API error.
     - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
+## Change History
+
 - 2026-06-02: Added "Copy markdown" action button to assistant chat bubbles
   - Files: `components/ChatMessageBubble/ChatMessageBubble.tsx`, `components/ChatMessageBubble/ChatMessageBubble.scss`
   - Summary: Added a small hover-revealed button in the top-right corner of every assistant (`role: 'assistant'`) message bubble. Clicking it copies the bubble's raw markdown source (`message.content` — the verbatim streamed text held in the chat store) to the clipboard, using the same `navigator.clipboard.writeText` + `document.execCommand('copy')` fallback pattern already used by the per-`<pre>` code-block copy button in `MarkdownMessage.tsx`. The button label flips to `Copied!` with an inline checkmark SVG for 1500 ms after a successful copy, then reverts. The button is rendered in the React tree (not via DOM mutation), disabled while the bubble has no content, and uses the existing `--code-copy-bg` / `--code-copy-hover-bg` / `--code-copy-active-bg` / `--accent` / `--text-secondary` / `--glass-border-soft` variables — so it picks up both light and dark themes for free. The hover-reveal uses `opacity: 0 → 0.85` on `.bubble-ai-wrap:hover` and `.bubble-ai-wrap:focus-within` so keyboard users get the same affordance. The `.bubble-ai-wrap` was given `position: relative` (one-line SCSS change) to anchor the absolutely-positioned button. A cleanup `useEffect` clears the `Copied!` timeout if the bubble unmounts mid-flash.
   - Intent: Give users a one-click way to copy the raw markdown of an AI reply (e.g. to paste into a doc, ticket, or external editor) without having to select-and-copy around rendered formatting. Mirrors the existing per-`<pre>` copy button UX so the action feels native to the design, and reuses the only existing clipboard pattern in the codebase to stay consistent.
-
-## Change History
 
 - 2026-06-01: Added `/clear-images` slash command
   - Files: `app/hooks/useSlashCommands.ts`, `app/api/clear-images/route.ts` (new), `components/ChatInput/ChatInput.tsx`, `.github/copilot-instructions.md`
