@@ -70,6 +70,7 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
     - `/settings`: Change App and Session settings (replaces initial startup prompts).
     - `/compact`: Force conversation summarization to recover context.
   - `/dump`: Export the current conversation history, including the system prompt and tool call/tool result details, to a markdown debug file.
+    - `/clear-images`: Remove all image attachments from the active conversation, both in client state and persisted SQLite, to free vision context and recover from 400 errors.
     - `/sessions`: Switch between multiple persistent chat histories.
     - `/delete`: Remove a session from the local database.
     - `/nudge`: Manually inject a tool-use reminder if the AI is hesitant.
@@ -147,6 +148,12 @@ Feature summary:
   - Intent: Give users a one-click way to copy the raw markdown of an AI reply (e.g. to paste into a doc, ticket, or external editor) without having to select-and-copy around rendered formatting. Mirrors the existing per-`<pre>` copy button UX so the action feels native to the design, and reuses the only existing clipboard pattern in the codebase to stay consistent.
 
 ## Change History
+
+- 2026-06-01: Added `/clear-images` slash command
+  - Files: `app/hooks/useSlashCommands.ts`, `app/api/clear-images/route.ts` (new), `components/ChatInput/ChatInput.tsx`, `.github/copilot-instructions.md`
+  - Summary: Added a new `/clear-images` slash command and a `POST /api/clear-images` endpoint. The handler strips `images` from every message in the active session, dispatches `SET_MESSAGES` with the cleaned list, and asks the server to persist the change via `updateSessionMessages`. Reports the number of images removed and the approximate token budget freed (1,024 tokens per image, matching `IMAGE_TOKEN_ESTIMATE` in `constants.ts`).
+  - Intent: Provide a panic-button recovery for WebUI sessions that have attached too many images and started failing with vision context errors, complementing `/compact` (which only summarises text) and `/new` (which discards everything).
+  - Lesson: The slash-command autocomplete dropdown is driven by a hard-coded `COMMANDS` array in `components/ChatInput/ChatInput.tsx` (outside `app/`), NOT by anything in `app/hooks/useSlashCommands.ts`. When adding a new slash command, that array must be updated in addition to the dispatcher and `/help` text — otherwise the command works when typed manually but doesn't appear in the dropdown.
 
 - 2026-05-18: Moved markdown bubble sanitization to client-only loading
   - Files: `components/ChatMessageBubble.tsx`

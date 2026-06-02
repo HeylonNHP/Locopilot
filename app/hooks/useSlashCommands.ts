@@ -102,6 +102,7 @@ export function useSlashCommands({
             'Available commands:\n' +
             '/help      - Show all available commands\n' +
             '/clear     - Clear messages\n' +
+            '/clear-images - Remove image attachments to free context\n' +
             '/model [name] - Switch LLM model\n' +
             '/compact   - Summarise conversation history\n' +
             '/title     - Generate a title for current session\n' +
@@ -118,6 +119,62 @@ export function useSlashCommands({
 
         case 'clear': {
           dispatch({ type: 'CLEAR_MESSAGES' });
+          return;
+        }
+
+        case 'clear-images': {
+          const currentMessages = refs.messagesRef.current;
+          const sessionId = refs.sessionIdRef.current;
+
+          // Count what we're about to remove so we can report it
+          let removedImages = 0;
+          let removedMessages = 0;
+          for (const m of currentMessages) {
+            if (m.images && m.images.length > 0) {
+              removedImages += m.images.length;
+              removedMessages += 1;
+            }
+          }
+
+          if (removedImages === 0) {
+            addSystem('No image attachments to clear.');
+            return;
+          }
+
+          // Update client state immediately so the UI re-renders without images
+          const stripped = currentMessages.map((m) => {
+            if (m.images && m.images.length > 0) {
+              const { images: _images, ...rest } = m;
+              return rest as ChatMessage;
+            }
+            return m;
+          });
+          dispatch({ type: 'SET_MESSAGES', messages: stripped });
+
+          // Persist in the background — failure is non-fatal
+          if (sessionId) {
+            try {
+              const response = await fetch('/api/clear-images', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sessionId }),
+              });
+              if (!response.ok) {
+                addSystem(`Cleared from view, but server save failed: HTTP ${response.status}`);
+                return;
+              }
+            } catch (error) {
+              addSystem(`Cleared from view, but server save failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+              return;
+            }
+          }
+
+          const freedTokens = removedImages * 1024;
+          addSystem(
+            `🖼️ **Cleared image attachments:** ${removedImages} image${removedImages === 1 ? '' : 's'} ` +
+            `from ${removedMessages} message${removedMessages === 1 ? '' : 's'}. ` +
+            `(~${freedTokens.toLocaleString()} tokens freed)`,
+          );
           return;
         }
 
