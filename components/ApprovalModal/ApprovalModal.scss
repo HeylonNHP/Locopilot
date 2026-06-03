@@ -80,4 +80,34 @@
     padding: 8px 20px;
     font-size: 14px;
   }
+
+  &-mcp-tool-name {
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  &-args-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: var(--font-mono, monospace);
+    font-size: 13px;
+  }
+
+  &-args-row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+
+  &-args-key {
+    color: var(--text-muted, #888);
+    flex-shrink: 0;
+  }
+
+  &-args-value {
+    color: var(--text-primary);
+    word-break: break-all;
+  }
 }

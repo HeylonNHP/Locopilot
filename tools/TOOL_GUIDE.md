@@ -138,9 +138,39 @@ When changing an existing tool:
   - `run_subagents`
   - `load_skill`
   - `create_skill`
+  - `mcp_call` (Phase 1: delegates to MCP servers in `~/.locopilot/mcp.json`)
 
 - `check_process_output` accepts optional `poll_interval_seconds` so the model can intentionally slow down polling for long-running commands.
 - `patch_file` is the preferred way to make small targeted edits to an existing file because it preserves the rest of the file and rejects mismatched patches atomically.
+
+## MCP tools (Phase 1)
+
+`mcp_call` is a thin meta-tool that delegates to MCP (Model Context
+Protocol) servers configured in `~/.locopilot/mcp.json`. The tool itself
+takes a server name, a tool name, and an optional arguments object; the
+actual call goes through `mcp/schemaAdapter.ts` which connects to the
+named server on first use, namespaces the call as
+`mcp__<server>__<tool>`, and forwards the result back as a normal
+`ToolCallResult`.
+
+Phase 1 only ships stdio transport (one `Client` per server, process-global,
+lazy-connect on first call). The `mcp__<server>__<tool>` schemas from
+already-connected servers are merged into the LLM's tool list by
+`app/api/chat/route.ts` at the start of each chat request.
+
+The `/mcp` slash command (and `GET /api/mcp`) lists configured servers
+and their tool counts. `/mcp reload` re-reads the on-disk config and
+re-initialises all clients (no hot-reload, no file watcher in Phase 1).
+
+User-disabled tools (`tools.disabledMain` in the Locopilot config, exposed
+to tools as `RequestContext.disabledMainTools`) are enforced inside
+`runMCPCall` itself: any `mcp_call` whose namespaced target appears in the
+list returns an error before the dispatcher is reached, regardless of
+which path (main LLM, sub-agent, YOLO mode, or the server's own
+`autoApprove` list) initiated the call. The namespaced form
+(`mcp__<server>__<tool>`) and the bare `mcp_call` token are both checked.
+
+See `MCP_INTEGRATION_PLAN.md` for the full design.
 
 ## Validation checklist before committing
 

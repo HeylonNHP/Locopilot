@@ -21,6 +21,7 @@ import { PatchFileTool, type PatchFileToolArgs, type PatchFilePatch } from './im
 import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool';
 import { ReadPdfTool, type ReadPdfToolArgs } from './impl/readPdfTool';
 import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCommandTool';
+import { runMCPCall } from './impl/mcpTool';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants';
 import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers';
 import { noopToolOutputSink, type ToolOutputSink } from './toolOutput';
@@ -41,6 +42,20 @@ export interface RequestContext {
     allowedTools?: string[] | undefined;
     /** Tool names disabled for the main LLM (from user config) */
     disabledMainTools?: string[];
+    /**
+     * Per-request set of `mcp__<server>__<tool>` names the user has
+     * pre-approved for this turn. Populated by the chat route from the
+     * approval registry when an approval_request is resolved positively,
+     * or eagerly when the server's `autoApprove` list covers the tool.
+     * If the namespaced MCP tool name is in this list, `mcp_call`
+     * proceeds without prompting. YOLO mode is also treated as an
+     * implicit per-call approval regardless of this list.
+     *
+     * Stored as `string[]` to match the rest of the per-request
+     * context; consumers (notably `runMCPCall`) wrap it in a `Set`
+     * for O(1) membership checks.
+     */
+    mcpApprovals?: string[] | undefined;
     /** Model name for the current request (top-level, used by tools like read_pdf even outside sub-agents) */
     model?: string;
     /** Context window size for the current request (top-level, used by tools like read_pdf even outside sub-agents) */
@@ -104,6 +119,12 @@ export interface ToolCallArguments {
     start_page?: number;
     end_page?: number;
     extract_images?: boolean;
+    // MCP tool-call args (Phase 1). The LLM should call the namespaced
+    // `mcp__<server>__<tool>` name directly, but we expose a single
+    // `mcp_call` tool that splits the namespace for clarity.
+    server?: string;
+    tool?: string;
+    arguments?: Record<string, unknown>;
 }
 
 /** Result returned by a tool command. Most tools only set content; vision tools also set images. */
@@ -572,6 +593,16 @@ export const toolRegistry = new Map<string, IToolCommand>([
                 if (args.start_page !== undefined) pdfArgs.start_page = args.start_page;
                 if (args.end_page !== undefined) pdfArgs.end_page = args.end_page;
                 return runReadPdf(pdfArgs, output, context?.subAgent?.model ?? context?.model, context?.subAgent?.numCtx ?? context?.numCtx, signal);
+            },
+        },
+    ],
+    [
+        'mcp_call',
+        {
+            async execute(args, _onProgress, _output, context, signal) {
+                const permErr = checkToolAllowed('mcp_call', context);
+                if (permErr) return { content: permErr };
+                return runMCPCall(args, context, signal);
             },
         },
     ],

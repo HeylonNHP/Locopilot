@@ -16,6 +16,7 @@
   "dependencies": {
     "@dqbd/tiktoken": "^1.0.22",
     "@inquirer/prompts": "^8.2.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
     "axios": "^1.16.0",
     "better-sqlite3": "^12.6.2",

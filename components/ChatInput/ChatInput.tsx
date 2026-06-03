@@ -94,6 +94,7 @@ const COMMANDS = [
   { command: '/delete', description: 'Delete a session' },
   { command: '/dump', description: 'Export conversation to markdown' },
   { command: '/help', description: 'Show all commands' },
+  { command: '/mcp', description: 'List MCP servers (or /mcp reload)' },
   { command: '/model', description: 'Switch model' },
   { command: '/new', description: 'Start fresh conversation' },
   { command: '/nudge', description: 'Remind AI to use tools' },

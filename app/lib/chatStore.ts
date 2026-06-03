@@ -76,7 +76,7 @@ interface ChatState {
   modelContextLimit: number | null;
   error: string | null;
   // Approval dialog
-  pendingCommand: { name: string; args: any } | null;
+  pendingCommand: { name: string; args: any; toolCallName?: string } | null;
   showApproval: boolean;
   pendingApprovalId: string | null;
   // Additional persisted config fields
@@ -117,7 +117,7 @@ type ChatAction =
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
   | { type: 'SET_MODEL_CONTEXT_LIMIT'; limit: number | null }
-  | { type: 'SHOW_APPROVAL'; command: { name: string; args: any } | null; requestId?: string }
+  | { type: 'SHOW_APPROVAL'; command: { name: string; args: any; toolCallName?: string } | null; requestId?: string }
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'REMOVE_LAST_ASSISTANT' }
   | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats']; targetSessionId?: number }

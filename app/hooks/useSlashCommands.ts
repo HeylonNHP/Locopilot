@@ -103,6 +103,7 @@ export function useSlashCommands({
             '/help      - Show all available commands\n' +
             '/clear     - Clear messages\n' +
             '/clear-images - Remove image attachments to free context\n' +
+            '/mcp       - List MCP servers and their tools, or /mcp reload\n' +
             '/model [name] - Switch LLM model\n' +
             '/compact   - Summarise conversation history\n' +
             '/title     - Generate a title for current session\n' +
@@ -455,6 +456,72 @@ export function useSlashCommands({
 
         case 'nudge': {
           await sendChatMessage(buildToolUseNudge(refs.yoloRef.current));
+          return;
+        }
+
+        case 'mcp': {
+          const subCommand = (args.split(' ')[0] ?? '').toLowerCase();
+          if (subCommand === 'reload') {
+            try {
+              const response = await fetch('/api/mcp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'reload' }),
+              });
+              if (!response.ok) {
+                throw new Error(await readErrorMessage(response));
+              }
+              addSystem('🔄 MCP servers reloaded.');
+            } catch (error) {
+              addSystem(`MCP reload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+            return;
+          }
+          if (subCommand && subCommand !== 'list') {
+            addSystem('Usage: /mcp [list|reload]\n\n/mcp list   - show configured servers and their tools\n/mcp reload - close all clients and re-read mcp.json');
+            return;
+          }
+          try {
+            const response = await fetch('/api/mcp', { method: 'GET' });
+            if (!response.ok) {
+              throw new Error(await readErrorMessage(response));
+            }
+            const data = (await response.json()) as { servers?: Array<{
+              name: string;
+              status: string;
+              transport: string;
+              description?: string;
+              lastError?: string;
+              toolCount: number;
+              tools: Array<{ name: string; description?: string; fullName: string }>;
+            }> };
+            const servers = data.servers ?? [];
+            if (servers.length === 0) {
+              addSystem('No MCP servers configured. Add a `mcpServers` block to `~/.locopilot/mcp.json` to get started.');
+              return;
+            }
+            const lines: string[] = ['MCP servers (from ~/.locopilot/mcp.json):'];
+            for (const server of servers) {
+              const statusEmoji =
+                server.status === 'connected' ? '🟢' :
+                server.status === 'connecting' ? '🟡' :
+                server.status === 'error' ? '🔴' :
+                server.status === 'not_loaded' ? '⚪' : '⚪';
+              const desc = server.description ? ` — ${server.description}` : '';
+              lines.push(`  ${statusEmoji} ${server.name} [${server.transport}] (${server.status}, ${server.toolCount} tool${server.toolCount === 1 ? '' : 's'})${desc}`);
+              if (server.lastError) {
+                lines.push(`      last error: ${server.lastError}`);
+              }
+              for (const tool of server.tools) {
+                const toolDesc = tool.description ? ` — ${tool.description}` : '';
+                lines.push(`      • ${tool.fullName}${toolDesc}`);
+              }
+            }
+            lines.push('\nUse /mcp reload after editing mcp.json to apply changes.');
+            addSystem(lines.join('\n'));
+          } catch (error) {
+            addSystem(`MCP list failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
           return;
         }
 

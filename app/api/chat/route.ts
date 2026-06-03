@@ -36,6 +36,7 @@ import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textU
 import { createSystemPrompt } from '../../../services/chatSession';
 import { discoverSkills, loadSkillState, getEnabledSkills, getAllowedToolsFromSkills } from '../../../services/skillManager';
 import { enterRequestScope } from '../../../tools/impl/runCommandTool';
+import { getMergedMCPToolDefinitions, getMCPServerConfig } from '../../../mcp';
 
 // Prevent static generation – this route must always run on the server.
 export const dynamic = 'force-dynamic';
@@ -243,6 +244,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                     activeSessionId = createSession('New chat', model as string);
                     sendEvent('session_created', { sessionId: activeSessionId });
                 }
+                // Per-request MCP approval set. Mutated in place when the user
+                // resolves an approval_request event for a specific mcp_call.
+                const mcpApprovalsSet = new Set<string>();
+
                 // Load runtime tool configuration from disk so that web search
                 // and YOLO settings reflect the latest user preferences.
                 // Build per-request context from config (no global state setters).
@@ -275,6 +280,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         yoloMode: config?.yolo ?? false,
                         allowedTools,
                         disabledMainTools: disabledMain,
+                        mcpApprovals: Array.from(mcpApprovalsSet),
                         model: model as string,
                         numCtx: effectiveNumCtx,
                         webSearch: {
@@ -299,6 +305,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         yoloMode: false,
                         allowedTools: undefined,
                         disabledMainTools: [],
+                        mcpApprovals: Array.from(mcpApprovalsSet),
                         model: model as string,
                         numCtx: effectiveNumCtx,
                         webSearch: {
@@ -317,6 +324,22 @@ export async function POST(req: NextRequest): Promise<Response> {
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
                         },
                     };
+                }
+
+                // Build the merged tool list (static native TOOLS + dynamic MCP
+                // tool defs from already-connected servers). Computed once per
+                // request — tool additions/removals only take effect on the
+                // next request (matches Phase 1's "no hot-reload" decision).
+                // Type is the union of OllamaTool (native) and ToolDefinition
+                // (MCP dynamic) — both shapes are accepted by the LLM adapter.
+                type AnyTool = (typeof TOOLS)[number] | import('../../../services/adapters/llmAdapter').ToolDefinition;
+                let mergedTools: AnyTool[];
+                try {
+                    const mcpToolDefs = await getMergedMCPToolDefinitions();
+                    mergedTools = [...TOOLS, ...mcpToolDefs];
+                } catch {
+                    // MCP tool discovery is best-effort: fall back to native tools only.
+                    mergedTools = [...TOOLS];
                 }
 
                 // Determine vision support for the selected model so we can strip
@@ -433,8 +456,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                         model: model as string,
                         messages: currentMessages,
                         tools: requestContext.disabledMainTools?.length
-                            ? TOOLS.filter((t) => !requestContext.disabledMainTools!.includes(t.function.name))
-                            : TOOLS,
+                            ? mergedTools.filter((t) => !requestContext.disabledMainTools!.includes(t.function.name))
+                            : mergedTools,
                         numCtx: effectiveNumCtx,
                         signal: req.signal,
                         timeoutMs: effectiveChatTimeoutMs,
@@ -672,6 +695,94 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
                                     serverMessagesAccumulator.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
                                     continue;
+                                }
+                            }
+                            // ────────────────────────────────────────────────────────────
+
+                            // ── Approval gate for mcp_call (skipped in YOLO mode or when
+                            //    the namespaced target is in the per-server autoApprove
+                            //    list). Phase 1 keeps the gate inline; Phase 2 should
+                            //    unify this with the run_command flow + generalise
+                            //    approvalRegistry to any tool name. ────────────────
+                            if (toolName === 'mcp_call' && !effectiveYolo) {
+                                // Parse the requested target up-front so we can
+                                // apply the autoApprove / already-approved
+                                // short-circuits before doing any UI work.
+                                const requestedServer = typeof toolArgs?.server === 'string' ? toolArgs.server : '';
+                                const requestedTool = typeof toolArgs?.tool === 'string' ? toolArgs.tool : '';
+                                const namespacedTarget = requestedServer && requestedTool
+                                    ? `mcp__${requestedServer}__${requestedTool}`
+                                    : null;
+
+                                if (namespacedTarget) {
+                                    // A6: if the user already approved this
+                                    // namespaced target earlier in the same
+                                    // request (e.g. it was the first tool
+                                    // call in a multi-step plan), skip the
+                                    // prompt and proceed directly.
+                                    if (mcpApprovalsSet.has(namespacedTarget)) {
+                                        // Proceed without re-prompting.
+                                    } else {
+                                        // A5: honour the server's `autoApprove`
+                                        // list. If the tool is on the list, the
+                                        // user has already pre-authorised it
+                                        // (and the dispatcher enforces the same
+                                        // check, so the call will not be
+                                        // rejected by the dispatcher).
+                                        let autoApproved = false;
+                                        try {
+                                            const serverCfg = await getMCPServerConfig(requestedServer);
+                                            if (serverCfg?.autoApprove?.includes(requestedTool)) {
+                                                autoApproved = true;
+                                            }
+                                        } catch {
+                                            // Best-effort: if config lookup
+                                            // fails, fall through to the prompt.
+                                        }
+
+                                        if (autoApproved) {
+                                            mcpApprovalsSet.add(namespacedTarget);
+                                            requestContext.mcpApprovals = Array.from(mcpApprovalsSet);
+                                        } else {
+                                            const requestId = randomUUID();
+
+                                            const abortPromise = new Promise<boolean>((resolve) => {
+                                                if (req.signal.aborted) { resolve(false); return; }
+                                                req.signal.addEventListener('abort', () => resolve(false), { once: true });
+                                            });
+
+                                            sendEvent('approval_request', {
+                                                requestId,
+                                                toolName,
+                                                toolCallName: namespacedTarget,
+                                                args: toolArgs,
+                                            });
+
+                                            const approved = await Promise.race([
+                                                waitForApproval(requestId),
+                                                abortPromise,
+                                            ]);
+
+                                            resolveApproval(requestId, false);
+
+                                            if (!approved) {
+                                                const rejectedResult = '[MCP call rejected by user]';
+                                                sendEvent('tool_result', {
+                                                    name: toolName,
+                                                    result: rejectedResult,
+                                                    duration: 0,
+                                                });
+                                                currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                                serverMessagesAccumulator.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                                continue;
+                                            }
+
+                                            // Record the approval for any future call against
+                                            // the same namespaced target within this request.
+                                            mcpApprovalsSet.add(namespacedTarget);
+                                            requestContext.mcpApprovals = Array.from(mcpApprovalsSet);
+                                        }
+                                    }
                                 }
                             }
                             // ────────────────────────────────────────────────────────────

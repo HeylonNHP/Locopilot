@@ -117,7 +117,11 @@ export function useChatStream(
         case 'approval_request':
           dispatch({
             type: 'SHOW_APPROVAL',
-            command: { name: data.toolName ?? data.name, args: data.args },
+            command: {
+              name: data.toolName ?? data.name,
+              args: data.args,
+              ...(typeof data.toolCallName === 'string' ? { toolCallName: data.toolCallName } : {}),
+            },
             requestId: data.requestId,
           });
           break;
