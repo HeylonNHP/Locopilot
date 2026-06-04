@@ -27,14 +27,45 @@ function isString(value: unknown): value is string {
     return typeof value === 'string' && value.trim().length > 0;
 }
 
+// --- Type-level validation helpers ---
+
+/**
+ * Strict regex for an MCP namespaced tool name: `mcp__<server>__<tool>`.
+ * Matches the same shape produced by `buildNamespacedName()` in
+ * `mcp/schemaAdapter.ts`. Used by `/api/approve` to reject
+ * `grantedTools` entries that don't actually look like MCP tools —
+ * a defence against a malicious or buggy client trying to grant
+ * itself blanket permission to native tools like `run_command`.
+ */
+const NAMESPACED_MCP_TOOL_NAME_REGEX = /^mcp__[a-z0-9_-]+__[a-zA-Z0-9_.\-]+$/;
+
+function isValidNamespacedMCPToolName(name: string): boolean {
+    return typeof name === 'string' && NAMESPACED_MCP_TOOL_NAME_REGEX.test(name);
+}
+
+// Note: this helper is intentionally NOT exported. Next.js's App Router
+// type-checker rejects any top-level export from a `route.ts` file that
+// isn't a recognised HTTP-method handler or a route config (`dynamic`,
+// `runtime`, etc.). Keeping `parseDecision` private keeps the build
+// green while still allowing the `POST` handler to use it.
 function parseDecision(body: ApproveBody): ApprovalDecision | null {
     // New shape: { decision: { approved, grantedTools? } }
     if (isPlainObject(body.decision)) {
         const d = body.decision as { approved?: unknown; grantedTools?: unknown };
         if (typeof d.approved !== 'boolean') return null;
         const decision: ApprovalDecision = { approved: d.approved };
-        if (Array.isArray(d.grantedTools) && d.grantedTools.every((v) => typeof v === 'string')) {
-            decision.grantedTools = d.grantedTools as string[];
+        if (Array.isArray(d.grantedTools)) {
+            // H1 bug-hunt fix: only accept entries that look like a
+            // namespaced MCP tool name. Without this filter, a client
+            // could POST `{ approved: true, grantedTools: ["run_command"] }`
+            // and (in a future change that wires `grantedTools` into the
+            // per-request approval set) silently bypass the
+            // run_command approval gate. We filter at the boundary so
+            // the chat route can trust the entries.
+            const safe = d.grantedTools.filter(
+                (v): v is string => typeof v === 'string' && isValidNamespacedMCPToolName(v),
+            );
+            if (safe.length > 0) decision.grantedTools = safe;
         }
         return decision;
     }

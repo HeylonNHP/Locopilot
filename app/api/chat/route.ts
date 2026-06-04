@@ -816,8 +816,38 @@ export async function POST(req: NextRequest): Promise<Response> {
                                                 continue;
                                             }
 
-                                            // Record the approval for any future call against
-                                            // the same namespaced target within this request.
+                                            // H1 bug-hunt fix: when the user
+                                            // approves, the decision may carry
+                                            // a `grantedTools` list of
+                                            // additional namespaced targets the
+                                            // user wants to pre-authorise.
+                                            // `/api/approve` already filtered
+                                            // the list to well-formed
+                                            // `mcp__<server>__<tool>` names;
+                                            // here we additionally verify the
+                                            // server is actually configured so a
+                                            // client can't pre-authorise tools
+                                            // for a server that doesn't exist.
+                                            const granted = decision.grantedTools ?? [];
+                                            for (const grantedName of granted) {
+                                                const grantedServer = grantedName.slice(
+                                                    'mcp__'.length,
+                                                    grantedName.lastIndexOf('__'),
+                                                );
+                                                try {
+                                                    const grantedCfg = await getMCPServerConfig(grantedServer);
+                                                    if (grantedCfg) {
+                                                        mcpApprovalsSet.add(grantedName);
+                                                    }
+                                                } catch {
+                                                    // Best-effort: skip namespaced
+                                                    // targets we can't verify.
+                                                }
+                                            }
+
+                                            // Always record the immediate call
+                                            // for any future repeat in this
+                                            // request.
                                             mcpApprovalsSet.add(namespacedTarget);
                                             requestContext.mcpApprovals = Array.from(mcpApprovalsSet);
                                         }

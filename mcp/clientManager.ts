@@ -98,12 +98,12 @@ function buildTransport(config: MCPServerConfig): StdioClientTransport | Streama
         });
     }
 
-    // SSE — the SDK keeps SSEClientTransport around for legacy servers.
-    // We pass `requestInit.headers` for the POST side; the initial SSE
-    // request is opened by the SDK and will not pick up these headers
-    // (the SDK has a separate `eventSourceInit` for that, which we
-    // intentionally leave alone so users don't accidentally break
-    // auth by editing two fields).
+    // SSE — the SDK keeps SSEClientTransport around for legacy servers
+    // that haven't migrated to streamable-HTTP. The SDK's SSE transport
+    // merges `requestInit.headers` into the common headers used by BOTH
+    // the initial EventSource GET and the recurring POST, so the
+    // Authorization / API-key headers set here apply to both sides.
+    // (No separate `eventSourceInit.headers` is needed for auth.)
     return new SSEClientTransport(url, {
         requestInit: { headers },
     });
