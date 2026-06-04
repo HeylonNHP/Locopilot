@@ -48,6 +48,35 @@ export const MCP_CONFIG_FILENAME = 'mcp.json';
  */
 let saveQueue: Promise<void> = Promise.resolve();
 
+/**
+ * Ensure the MCP config file exists at the default path. If it is
+ * already present this is a no-op. If it is missing, the parent
+ * directory is created (recursively) and a minimal `{}` JSON object
+ * is written atomically (tmp + rename).
+ *
+ * Errors are logged and swallowed — this is a convenience init, not
+ * a critical path.
+ */
+export async function ensureMCPConfigFile(): Promise<void> {
+    const configPath = getMCPConfigPath();
+    try {
+        await fsp.access(configPath);
+        return; // already exists
+    } catch {
+        // doesn't exist — fall through to creation
+    }
+
+    try {
+        const dir = path.join(os.homedir(), MCP_CONFIG_DIRNAME);
+        await fsp.mkdir(dir, { recursive: true });
+        const tmpPath = configPath + '.tmp';
+        await fsp.writeFile(tmpPath, '{}', { encoding: 'utf8' });
+        await fsp.rename(tmpPath, configPath);
+    } catch (err) {
+        console.error(`[mcp] failed to create default MCP config: ${(err as Error).message}`);
+    }
+}
+
 export function getMCPConfigPath(): string {
     return path.join(os.homedir(), MCP_CONFIG_DIRNAME, MCP_CONFIG_FILENAME);
 }
@@ -331,6 +360,9 @@ export async function loadMCPConfig(): Promise<MCPRootConfig> {
         const code = (err as NodeJS.ErrnoException | null)?.code;
         if (code === 'ENOENT') {
             // Missing file is the normal Phase 1 state.
+            // Create the default config file so subsequent writes
+            // (e.g. toggling a server) don't fail.
+            await ensureMCPConfigFile();
             return { mcpServers: {} };
         }
         console.error(`[mcp] failed to read ${configPath}: ${(err as Error).message}`);
@@ -425,11 +457,12 @@ export async function saveMCPServerDisabled(name: string, disabled: boolean): Pr
         } catch (err) {
             const code = (err as NodeJS.ErrnoException | null)?.code;
             if (code === 'ENOENT') {
-                throw new MCPConfigError(
-                    `MCP config file does not exist at ${configPath}; create it before toggling servers`,
-                );
+                // File doesn't exist yet — create it, then retry the read.
+                await ensureMCPConfigFile();
+                raw = await fsp.readFile(configPath, 'utf8');
+            } else {
+                throw err;
             }
-            throw err;
         }
 
         // Strip a leading UTF-8 BOM (Notepad on Windows writes one) so

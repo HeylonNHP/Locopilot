@@ -36,7 +36,7 @@ import { existsSync, watch, type FSWatcher } from 'fs';
 import { dirname } from 'path';
 
 import { emitMCPEvent } from './events';
-import { getMCPConfigPath } from './configLoader';
+import { getMCPConfigPath, ensureMCPConfigFile } from './configLoader';
 import { reloadMCP } from './index';
 
 const DEBOUNCE_MS = 150;
@@ -86,6 +86,10 @@ export function startMCPConfigWatcher(): void {
     if (state.started) return;
     state.started = true;
     hookShutdown(state);
+
+    // Convenience: ensure the config file exists before we start watching.
+    // Fire-and-forget — don't block watcher startup on file creation.
+    ensureMCPConfigFile().catch(() => { /* ignore */ });
 
     const target = getMCPConfigPath();
     const dir = dirname(target);
