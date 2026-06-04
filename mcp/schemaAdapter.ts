@@ -201,8 +201,19 @@ export async function dispatchMCPToolCall(
     // Approval gate: the dispatcher enforces a per-call approval
     // requirement unless the caller pre-authorised this tool via the
     // approval registry (e.g. a previous approval_request event for
-    // the same tool was resolved positively).
-    const approvedByAutoApprove = handle.config.autoApprove?.includes(toolName) ?? false;
+    // the same tool was resolved positively) or the tool matches an
+    // `autoApprove` glob pattern in the server config.
+    //
+    // The pattern check supports BOTH long-form patterns
+    // (`mcp__github__*`, which matches by full namespaced name) and
+    // short-form patterns (`*`, `list_*`, which match by bare tool
+    // name). This mirrors the `mcp__<server>__<tool>` convention users
+    // see in the model prompt — copy-pasting the namespace from the
+    // tool list into `autoApprove` works as you'd expect.
+    const approvedByAutoApprove = handle.config.autoApprove?.some((pattern) =>
+        matchesAutoApprovePattern(pattern, namespacedName) ||
+        matchesAutoApprovePattern(pattern, toolName),
+    ) ?? false;
     const approvedByToken = options.approvedTools?.has(namespacedName) ?? false;
     if (!approvedByAutoApprove && !approvedByToken) {
         return {
@@ -347,6 +358,89 @@ function formatMCPResult(
         content: joined || '(empty result)',
         ...(images.length > 0 ? { images } : {}),
     };
+}
+
+/**
+ * Test whether `toolName` matches a single `autoApprove` glob `pattern`.
+ *
+ * Matching rules:
+ * - `*` matches any sequence of characters except `/`. (We don't accept
+ *   `/` in `toolName` for MCP tool names anyway — the namespace separator
+ *   is `__` — so the restriction is purely defensive.)
+ * - `?` matches exactly one character (except `/`).
+ * - All other characters match literally. Matching is case-sensitive.
+ * - If the pattern contains no wildcard characters (`*` or `?`), it is
+ *   treated as a literal exact match. This preserves backwards
+ *   compatibility with existing `autoApprove: ["run_command"]`-style
+ *   configs that pre-date wildcard support.
+ *
+ * The pattern is matched against `toolName` directly. The function does
+ * NOT know about the `mcp__<server>__` namespace — callers must pass the
+ * segment they want to match against (e.g. the bare `toolName` from a
+ * parsed namespaced call, or a fully-qualified `mcp__github__*` form).
+ * For the common MCP case, callers pass the short tool name and a
+ * short-form pattern like `list_*` or `*`, which works exactly as users
+ * would expect. A long-form pattern like `mcp__github__*` will not match
+ * a short tool name like `list_issues` — the caller is expected to
+ * supply a pattern in the form that matches the value being compared.
+ *
+ * The implementation is a small state machine (linear, single pass) and
+ * does not pull in a glob library.
+ */
+export function matchesAutoApprovePattern(pattern: string, toolName: string): boolean {
+    // Fast path: no wildcards → literal equality. This keeps the
+    // existing exact-match behaviour for backwards compatibility and
+    // skips the loop entirely for the (very common) non-wildcard case.
+    if (!pattern.includes('*') && !pattern.includes('?')) {
+        return pattern === toolName;
+    }
+
+    let pi = 0; // pattern index
+    let ti = 0; // tool name index
+    let starPi = -1; // last `*` position in the pattern (for backtracking)
+    let starTi = -1; // tool name position when the last `*` was crossed
+
+    while (ti < toolName.length) {
+        if (pi < pattern.length) {
+            const pc = pattern[pi];
+            if (pc === '*') {
+                // Record the backtrack anchor and advance past the `*`.
+                starPi = pi;
+                starTi = ti;
+                pi++;
+                continue;
+            }
+            if (pc === '?') {
+                // `?` matches any single non-`/` character.
+                if (toolName[ti] === '/') return false;
+                pi++;
+                ti++;
+                continue;
+            }
+            if (pc === toolName[ti]) {
+                pi++;
+                ti++;
+                continue;
+            }
+        }
+        // Mismatch: if we've seen a `*`, backtrack and let it consume
+        // one more character. This is the classic wildcard matcher.
+        if (starPi !== -1) {
+            if (toolName[starTi] === '/') return false; // `*` does not cross `/`
+            pi = starPi + 1;
+            starTi++;
+            ti = starTi;
+            continue;
+        }
+        return false;
+    }
+
+    // Tool name exhausted. The rest of the pattern must be all `*`s
+    // (e.g. `foo*` matching `foo`, or `**` matching ``).
+    while (pi < pattern.length && pattern[pi] === '*') {
+        pi++;
+    }
+    return pi === pattern.length;
 }
 
 /**
