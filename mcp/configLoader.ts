@@ -1,15 +1,20 @@
 /**
  * Loads MCP server configuration from `~/.locopilot/mcp.json`.
  *
- * Phase 1 policy:
+ * Phase 2 policy:
  * - Missing file → return an empty config (no error).
  * - Malformed JSON → log to stderr and return an empty config; the
  *   application continues to run, just without MCP.
  * - Top-level `servers` (VS Code) is normalised to `mcpServers`.
- * - Phase 1 only accepts `type: "stdio"`; other transport types are
- *   rejected with a logged warning per server.
+ * - All three SDK transports are accepted: `stdio`, `http`, `sse`.
+ *   Type-specific validation lives in `validateStdioConfig` and
+ *   `validateHttpConfig`, both dispatched by `validateTransportConfig`.
  * - All server names are validated against `/^[a-z0-9_-]+$/i` to
  *   prevent them from leaking into filesystem paths unsafely.
+ * - `${env.X}` placeholders in stdio `env` and HTTP `headers` are
+ *   expanded at load time. A blocklist (`DANGEROUS_ENV_KEYS`) refuses
+ *   to expand or set any key that could lead to code injection
+ *   (PATH, LD_PRELOAD, NODE_OPTIONS, IFS, BASH_FUNC_*, etc.).
  */
 
 import { promises as fsp } from 'fs';
@@ -22,41 +27,11 @@ import {
     type MCPServerConfig,
 } from './types';
 import { MCP_FORBIDDEN_SERVER_NAMES } from './schemaAdapter';
+import { isDangerousEnvKey } from './dangerousEnv';
+import { expandEnvRefs, expandEnvRefsInRecord } from './envExpansion';
 
 const VALID_NAME_REGEX = /^[a-z0-9_-]+$/i;
 const MAX_NAME_LENGTH = 64;
-
-/**
- * Environment variables that must never be overridden via mcp.json.
- * See B1 in the bug report: PATH / LD_PRELOAD / NODE_OPTIONS / IFS
- * / BASH_FUNC_* can be used by an attacker (or a careless user) to
- * pivot into arbitrary code execution inside the spawned MCP child.
- * The wildcard catch-all for BASH_FUNC_* covers exported bash
- * functions, which bash implements as env vars named
- * `BASH_FUNC_<name>%%`.
- */
-const DANGEROUS_ENV_KEYS: ReadonlySet<string> = new Set([
-    'PATH',
-    'LD_PRELOAD',
-    'LD_LIBRARY_PATH',
-    'DYLD_INSERT_LIBRARIES',
-    'DYLD_LIBRARY_PATH',
-    'NODE_OPTIONS',
-    'NODE_PATH',
-    'PYTHONPATH',
-    'IFS',
-    'SHELLOPTS',
-    'BASH_ENV',
-    'ENV',
-]);
-
-function isDangerousEnvKey(key: string): boolean {
-    if (DANGEROUS_ENV_KEYS.has(key)) return true;
-    // bash function exports are exposed as `BASH_FUNC_name%%`. We refuse
-    // the whole namespace rather than try to enumerate every name.
-    if (key.startsWith('BASH_FUNC_') && key.endsWith('%%')) return true;
-    return false;
-}
 
 export const MCP_CONFIG_DIRNAME = '.locopilot';
 export const MCP_CONFIG_FILENAME = 'mcp.json';
@@ -99,11 +74,69 @@ function validateServerName(name: string, key: string): void {
     }
 }
 
+function validateHttpConfig(server: MCPServerConfig, key: string): void {
+    const transport = server.transport;
+    if (transport.type === 'stdio') {
+        throw new MCPConfigError(
+            `MCP server "${key}": validateHttpConfig called on a stdio server (internal error)`,
+        );
+    }
+    if (typeof transport.url !== 'string' || transport.url.trim().length === 0) {
+        throw new MCPConfigError(`MCP server "${key}": ${transport.type} transport requires a non-empty "url"`);
+    }
+    // Light URL-shape check. We don't validate the scheme strictly (some
+    // users run local servers on `http://localhost:...`); a runtime
+    // connection error will surface a real config issue more clearly.
+    let parsed: URL;
+    try {
+        parsed = new URL(transport.url);
+    } catch {
+        throw new MCPConfigError(
+            `MCP server "${key}": "${transport.url}" is not a valid URL`,
+        );
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new MCPConfigError(
+            `MCP server "${key}": URL scheme must be http(s); got "${parsed.protocol}"`,
+        );
+    }
+    if (transport.headers !== undefined) {
+        if (!isPlainObject(transport.headers) ||
+            !Object.values(transport.headers).every((value) => typeof value === 'string')) {
+            throw new MCPConfigError(`MCP server "${key}": ${transport.type} "headers" must be a string→string object`);
+        }
+        for (const headerKey of Object.keys(transport.headers)) {
+            // Header names are case-insensitive per RFC 7230, but we keep
+            // the user's original casing in the config. Just sanity-check
+            // the shape.
+            if (headerKey.trim().length === 0 || /[\r\n]/.test(headerKey)) {
+                throw new MCPConfigError(
+                    `MCP server "${key}": header name ${JSON.stringify(headerKey)} is invalid`,
+                );
+            }
+            if (/[\r\n]/.test(transport.headers[headerKey] ?? '')) {
+                throw new MCPConfigError(
+                    `MCP server "${key}": header "${headerKey}" contains a CR/LF (header-injection attempt)`,
+                );
+            }
+        }
+    }
+}
+
+function validateTransportConfig(server: MCPServerConfig, key: string): void {
+    const transport = server.transport;
+    if (transport.type === 'stdio') {
+        validateStdioConfig(server, key);
+    } else {
+        validateHttpConfig(server, key);
+    }
+}
+
 function validateStdioConfig(server: MCPServerConfig, key: string): void {
     const transport = server.transport;
     if (transport.type !== 'stdio') {
         throw new MCPConfigError(
-            `MCP server "${key}": transport type "${transport.type}" is not supported in Phase 1 (only "stdio" is implemented)`,
+            `MCP server "${key}": validateStdioConfig called on a non-stdio server (internal error)`,
         );
     }
     if (typeof transport.command !== 'string' || transport.command.trim().length === 0) {
@@ -186,6 +219,37 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
         );
     }
 
+    // Expand `${env.X}` placeholders in stdio env and HTTP headers.
+    // Done in `normaliseServer` so the expanded form is what the runtime
+    // sees — the user can leave the raw `${env.X}` form in their config
+    // and it'll be evaluated at load time.
+    let expandedStdioEnv: Record<string, string> | undefined;
+    if (transportType === 'stdio' && transportRaw.env !== undefined) {
+        const envResult = expandEnvRefsInRecord(
+            isPlainObject(transportRaw.env)
+                ? Object.fromEntries(Object.entries(transportRaw.env).map(([k, v]) => [k, String(v)]))
+                : undefined,
+            `MCP server "${key}" stdio env`,
+        );
+        if (envResult.warnings.length > 0) {
+            for (const w of envResult.warnings) console.warn(`[mcp] ${w}`);
+        }
+        expandedStdioEnv = envResult.expanded;
+    }
+    let expandedHttpHeaders: Record<string, string> | undefined;
+    if (transportType !== 'stdio' && transportRaw.headers !== undefined) {
+        const headersResult = expandEnvRefsInRecord(
+            isPlainObject(transportRaw.headers)
+                ? Object.fromEntries(Object.entries(transportRaw.headers).map(([k, v]) => [k, String(v)]))
+                : undefined,
+            `MCP server "${key}" ${transportType} headers`,
+        );
+        if (headersResult.warnings.length > 0) {
+            for (const w of headersResult.warnings) console.warn(`[mcp] ${w}`);
+        }
+        expandedHttpHeaders = headersResult.expanded;
+    }
+
     const transport: MCPServerConfig['transport'] = transportType === 'stdio'
         ? {
             type: 'stdio',
@@ -193,21 +257,13 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
             args: Array.isArray(transportRaw.args)
                 ? transportRaw.args.map((arg) => String(arg))
                 : undefined,
-            env: isPlainObject(transportRaw.env)
-                ? Object.fromEntries(
-                    Object.entries(transportRaw.env).map(([k, v]) => [k, String(v)]),
-                )
-                : undefined,
+            env: expandedStdioEnv,
             cwd: typeof transportRaw.cwd === 'string' ? transportRaw.cwd : undefined,
         }
         : {
             type: transportType as 'http' | 'sse',
             url: String(transportRaw.url ?? ''),
-            headers: isPlainObject(transportRaw.headers)
-                ? Object.fromEntries(
-                    Object.entries(transportRaw.headers).map(([k, v]) => [k, String(v)]),
-                )
-                : undefined,
+            headers: expandedHttpHeaders,
         };
 
     const server: MCPServerConfig = {
@@ -230,7 +286,7 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
         server.disabled = raw.disabled;
     }
 
-    validateStdioConfig(server, key);
+    validateTransportConfig(server, key);
     return server;
 }
 

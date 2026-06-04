@@ -1,11 +1,18 @@
 /**
  * Type definitions for MCP (Model Context Protocol) server support.
  *
- * Phase 1 (MVP) supports stdio transport only. The transport-typed
- * configuration here is the on-disk shape written by users into
- * `~/.locopilot/mcp.json`; only the stdio branch is implemented in
- * Phase 1, but the types are forward-compatible with the Phase 2
- * (streamable-http / sse) additions.
+ * Phase 2 (standardisation):
+ * - All three SDK transports are supported: `stdio`, `http`
+ *   (streamable-http), and `sse`.
+ * - The on-disk shape (`MCPServerConfig`) was already forward-compatible
+ *   with HTTP/SSE in Phase 1; Phase 2 fills in the runtime support.
+ * - Per-server `autoApprove` and per-tool `disabledTools` continue to
+ *   be enforced; Phase 2 also adds a generalised approval registry
+ *   (see `app/lib/approvalRegistry.ts`) that can issue per-tool,
+ *   per-call approval tokens.
+ * - `notifications/tools/list_changed` is handled via the SDK's
+ *   `listChanged.handlers.tools.onChanged` option (see
+ *   `mcp/clientManager.ts`).
  */
 
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -24,8 +31,9 @@ export interface MCPStdioServerConfig {
     args?: string[] | undefined;
     /**
      * Extra environment variables to add to the child process environment.
-     * Phase 1 does not perform `${VAR}` expansion (planned for Phase 2);
-     * env values are passed through literally.
+     * Values may use the `${env.X}` form (added in Phase 2) to reference
+     * the process's environment at load time. The DANGEROUS_ENV_KEYS
+     * blocklist is applied — see `mcp/dangerousEnv.ts`.
      */
     env?: Record<string, string> | undefined;
     /** Optional working directory for the spawned process. */
@@ -33,13 +41,23 @@ export interface MCPStdioServerConfig {
 }
 
 /**
- * Reserved for Phase 2. Not implemented in Phase 1, but defined so that
- * `mcp.json` files authored against the Phase 2 schema fail validation
- * with a clear error rather than silently misbehaving.
+ * HTTP-based MCP server. The SDK uses a `StreamableHTTPClientTransport`
+ * which sends JSON-RPC over HTTP POST and may receive responses via
+ * SSE on the same connection (the modern MCP transport).
+ *
+ * Phase 2 also keeps the legacy SSE transport (`type: "sse"`) for
+ * compatibility with servers that haven't migrated yet; both types
+ * share the same `{ url, headers }` shape.
  */
 export interface MCPHttpServerConfig {
     type: 'http' | 'sse';
     url: string;
+    /**
+     * Optional HTTP headers to send with every JSON-RPC request.
+     * Values may use the `${env.X}` form to reference the process's
+     * environment at load time (the DANGEROUS_ENV_KEYS blocklist is
+     * applied — see `mcp/dangerousEnv.ts`).
+     */
     headers?: Record<string, string> | undefined;
 }
 

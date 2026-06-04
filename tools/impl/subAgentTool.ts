@@ -281,6 +281,48 @@ async function executeNestedToolCall(
         return { content: `[Unknown tool: ${toolName}]` };
     }
 
+    // Phase 2 (sub-agent approval UX): if the sub-agent's parent route
+    // provided an `approvalRequester` hook, surface the request to the
+    // main agent's UI before the tool runs. This keeps sub-agents from
+    // silently executing privileged tools like run_command when the
+    // user is not in YOLO mode.
+    //
+    // YOLO mode is honoured at the request-context level: if the user
+    // enabled YOLO, `context.yoloMode` is true and we skip the prompt.
+    const requester = context?.subAgent?.approvalRequester;
+    const needsApproval =
+        (toolName === 'run_command' || toolName === 'mcp_call') &&
+        !context?.yoloMode &&
+        typeof requester === 'function';
+
+    if (needsApproval && requester) {
+        const risk = toolName === 'run_command' ? 'command' : 'mcp';
+        let displayArgs: unknown = toolCall.function.arguments;
+        if (toolName === 'mcp_call') {
+            // Surface the namespaced target so the user can make an
+            // informed decision (the raw `mcp_call` payload includes
+            // `server` / `tool` / `arguments`).
+            const a = toolCall.function.arguments as { server?: unknown; tool?: unknown; arguments?: unknown };
+            displayArgs = {
+                server: typeof a?.server === 'string' ? a.server : '',
+                tool: typeof a?.tool === 'string' ? a.tool : '',
+                arguments: a?.arguments,
+            };
+        }
+        output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a ${risk === 'command' ? 'command' : 'MCP tool call'}: awaiting approval…`);
+        const decision = await requester({
+            toolName,
+            risk,
+            args: displayArgs,
+        });
+        if (!decision.approved) {
+            const reason = toolName === 'run_command' ? '[Command rejected by user]' : '[MCP call rejected by user]';
+            output.writeLine(`[Sub-agent: ${agentId}] request denied by user.`);
+            return { content: reason };
+        }
+        output.writeLine(`[Sub-agent: ${agentId}] request approved.`);
+    }
+
     if (toolName === 'run_command') {
         output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a command:`);
         return command.execute(

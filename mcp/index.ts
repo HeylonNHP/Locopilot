@@ -6,6 +6,10 @@
  * - `app/api/mcp/route.ts` (status listing, reload)
  * - `tools/impl/mcpTool.ts` (delegate to `dispatchMCPToolCall`)
  * - `app/hooks/useSlashCommands.ts` (use the same status source as the API)
+ *
+ * Phase 2 adds HTTP/SSE transports, `notifications/tools/list_changed`
+ * handling, and a generalised approval registry — all wired through
+ * the same public surface.
  */
 
 import type { ToolDefinition } from '../services/adapters/llmAdapter';
@@ -68,12 +72,9 @@ export interface MCPListResult {
  * eagerly connect to every enabled server (within the per-call
  * timeout) so the returned listing includes the live tool set.
  *
- * Previously this only connected to a single server on demand
- * (via `?connect=<name>`). That meant the chat route's first
- * request never saw MCP tool schemas (see A4 in the bug report)
- * and the `/mcp list` slash command also showed an empty tool
- * list. The shared `connectAllEnabled()` helper used here fixes
- * both: tools are visible by default.
+ * Phase 2: all three transports (stdio, http, sse) are supported.
+ * The shared `connectAllEnabled()` helper is used to warm every
+ * enabled server in parallel with a single overall deadline.
  */
 export async function listMCPServersWithStatus(options: { connect?: string; eagerConnectTimeoutMs?: number } = {}): Promise<MCPListResult> {
     const config = await loadMCPConfig();

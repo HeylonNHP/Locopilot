@@ -22,7 +22,7 @@ import { NextRequest } from 'next/server';
 import { sendLlmChatStream, getLlmApiErrorMessage, fetchLlmModelInfo, getLlmModelVisionSupport } from '../../../services/llm';
 import type { ChatMessage, StreamChatParams } from '../../../services/llm';
 import { TOOLS, handleToolCall, sanitize, type RequestContext, type ToolOutputSink } from '../../../tools/tools';
-import { waitForApproval, resolveApproval } from '../../lib/approvalRegistry';
+import { waitForApproval, resolveApproval, type ApprovalDecision } from '../../lib/approvalRegistry';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
 import { createSession, renameSession, getSessionName } from '../../../history';
@@ -253,6 +253,36 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // Build per-request context from config (no global state setters).
                 let requestContext: RequestContext;
                 let disabledSubAgent: string[] = [];
+
+                // Phase 2 (sub-agent approval UX): build a closure that lets a
+                // sub-agent bubble an approval request up to the main route's
+                // SSE stream. The closure captures the SSE `sendEvent` from
+                // the outer scope and races the user's response against the
+                // parent request's abort signal.
+                const requestSubAgentApproval = async (req2: {
+                    toolName: string;
+                    risk: 'command' | 'network' | 'file' | 'mcp' | 'other';
+                    args: unknown;
+                }): Promise<{ approved: boolean; grantedTools?: string[] }> => {
+                    const subRequestId = randomUUID();
+                    const abortPromise = new Promise<ApprovalDecision>((resolve) => {
+                        if (req.signal.aborted) { resolve({ approved: false }); return; }
+                        req.signal.addEventListener('abort', () => resolve({ approved: false }), { once: true });
+                    });
+                    sendEvent('approval_request', {
+                        requestId: subRequestId,
+                        toolName: req2.toolName,
+                        args: req2.args,
+                        fromSubAgent: true,
+                    });
+                    const decision = await Promise.race([
+                        waitForApproval(subRequestId, req2),
+                        abortPromise,
+                    ]);
+                    resolveApproval(subRequestId, { approved: false });
+                    return decision;
+                };
+
                 try {
                     const config = await loadConfig();
                     if (config) {
@@ -297,6 +327,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             numCtx: effectiveNumCtx,
                             compactionModel: resolveCompactionModel(config?.compactionModel ?? '', model as string),
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
+                            approvalRequester: requestSubAgentApproval,
                         },
                     };
                 } catch {
@@ -322,6 +353,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             numCtx: effectiveNumCtx,
                             compactionModel: model as string,
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
+                            approvalRequester: requestSubAgentApproval,
                         },
                     };
                 }
@@ -665,10 +697,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 const requestId = randomUUID();
 
                                 // Race the user decision against an abort signal so the
-                                // server doesn't hang if the client disconnects.
-                                const abortPromise = new Promise<boolean>((resolve) => {
-                                    if (req.signal.aborted) { resolve(false); return; }
-                                    req.signal.addEventListener('abort', () => resolve(false), { once: true });
+                                // server doesn't hang if the client disconnects. Both
+                                // branches resolve to an `ApprovalDecision` so the race's
+                                // result type stays uniform — the abort path returns
+                                // `{ approved: false }` rather than a bare `false`.
+                                const abortPromise = new Promise<ApprovalDecision>((resolve) => {
+                                    if (req.signal.aborted) { resolve({ approved: false }); return; }
+                                    req.signal.addEventListener('abort', () => resolve({ approved: false }), { once: true });
                                 });
 
                                 sendEvent('approval_request', {
@@ -677,15 +712,15 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     args: toolArgs,
                                 });
 
-                                const approved = await Promise.race([
-                                    waitForApproval(requestId),
+                                const decision = await Promise.race([
+                                    waitForApproval(requestId, { toolName, risk: 'command', args: toolArgs }),
                                     abortPromise,
                                 ]);
 
                                 // Clean up registry entry when the abort path won the race.
-                                resolveApproval(requestId, false);
+                                resolveApproval(requestId, { approved: false });
 
-                                if (!approved) {
+                                if (!decision.approved) {
                                     const rejectedResult = '[Command rejected by user]';
                                     sendEvent('tool_result', {
                                         name: toolName,
@@ -746,9 +781,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         } else {
                                             const requestId = randomUUID();
 
-                                            const abortPromise = new Promise<boolean>((resolve) => {
-                                                if (req.signal.aborted) { resolve(false); return; }
-                                                req.signal.addEventListener('abort', () => resolve(false), { once: true });
+                                            const abortPromise = new Promise<ApprovalDecision>((resolve) => {
+                                                if (req.signal.aborted) { resolve({ approved: false }); return; }
+                                                req.signal.addEventListener('abort', () => resolve({ approved: false }), { once: true });
                                             });
 
                                             sendEvent('approval_request', {
@@ -758,14 +793,18 @@ export async function POST(req: NextRequest): Promise<Response> {
                                                 args: toolArgs,
                                             });
 
-                                            const approved = await Promise.race([
-                                                waitForApproval(requestId),
+                                            const decision = await Promise.race([
+                                                waitForApproval(requestId, {
+                                                    toolName,
+                                                    risk: 'mcp',
+                                                    args: { server: requestedServer, tool: requestedTool, toolArgs },
+                                                }),
                                                 abortPromise,
                                             ]);
 
-                                            resolveApproval(requestId, false);
+                                            resolveApproval(requestId, { approved: false });
 
-                                            if (!approved) {
+                                            if (!decision.approved) {
                                                 const rejectedResult = '[MCP call rejected by user]';
                                                 sendEvent('tool_result', {
                                                     name: toolName,

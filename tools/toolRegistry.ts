@@ -76,6 +76,25 @@ export interface SubAgentConfig {
     numCtx: number;
     compactionModel: string;
     tools: ToolDefinition[];
+    /**
+     * Optional hook for the parent chat route to receive an approval
+     * request from inside a sub-agent. The sub-agent invokes this
+     * when it tries to call a tool that requires user approval (e.g.
+     * `run_command` outside YOLO mode). The chat route is responsible
+     * for surfacing the request to the user (typically by sending an
+     * `approval_request` SSE event on the parent's stream and
+     * awaiting the corresponding /api/approve POST).
+     *
+     * If undefined, sub-agents fall back to the legacy behaviour:
+     * run_command prompts the user via the TUI's confirm prompt (if
+     * any) and proceeds. The web UI always provides this hook, so
+     * the fallback is only hit in tests and the legacy TUI.
+     */
+    approvalRequester?: (request: {
+        toolName: string;
+        risk: 'command' | 'network' | 'file' | 'mcp' | 'other';
+        args: unknown;
+    }) => Promise<{ approved: boolean; grantedTools?: string[] }>;
 }
 
 // --- Shared tool argument and result types ---

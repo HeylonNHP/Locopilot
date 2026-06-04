@@ -1,14 +1,18 @@
 /**
  * Process-global registry of live MCP server connections.
  *
- * Phase 1 policy:
- * - Only stdio transport is supported.
+ * Phase 2 policy:
+ * - All three SDK transports are supported: `stdio`, `http`
+ *   (streamable-http), and `sse`.
  * - Connections are lazy: nothing is spawned until the first call to
  *   `connect()` for a given server, or until a tool call needs the
  *   connection. The full `connectAll()` (eager warmup) is available
- *   but is not invoked at startup in Phase 1.
+ *   but is not invoked at startup.
  * - One `Client` per server name; multiple concurrent tool calls
  *   against the same server share the same client.
+ * - `notifications/tools/list_changed` is handled by the SDK's
+ *   built-in `listChanged.handlers.tools.onChanged` callback (the
+ *   SDK re-fetches the tool list and hands us the updated array).
  * - Per-request state (AbortSignal, approval tokens) is **not** stored
  *   on the handle. It's passed into `callTool()` from the dispatcher.
  * - `shutdown()` is wired to `process.on('SIGTERM')` and the Next.js
@@ -18,6 +22,8 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import {
@@ -27,14 +33,80 @@ import {
     type MCPServerConfig,
     type MCPToolInfo,
 } from './types';
+import { expandEnvRefsInRecord } from './envExpansion';
 
 const CLIENT_NAME = 'locopilot';
 const CLIENT_VERSION = '0.0.1';
 
 const DEFAULT_TIMEOUT_SECONDS = 60;
 
-function isStdioTransport(config: MCPServerConfig): boolean {
-    return config.transport.type === 'stdio';
+/**
+ * Build the appropriate SDK transport for a given server config.
+ *
+ * - stdio  → StdioClientTransport (spawns a subprocess)
+ * - http   → StreamableHTTPClientTransport (HTTP POST + optional SSE)
+ * - sse    → SSEClientTransport (legacy; still common in the wild)
+ *
+ * Env-var expansion (`${env.X}`) is applied to the `headers` field
+ * here (defence in depth — `configLoader` already expands them, but
+ * the runtime also expands in case a server was added via a future
+ * API that bypasses the loader).
+ *
+ * Return type is the union of the three concrete SDK classes rather
+ * than the `Transport` interface because the SDK ships a known type
+ * mismatch: `StreamableHTTPClientTransport.sessionId` is exposed via a
+ * `string | undefined` getter that doesn't satisfy the interface's
+ * `sessionId?: string` declaration. The concrete classes themselves
+ * do satisfy the interface at runtime.
+ */
+function buildTransport(config: MCPServerConfig): StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
+    const transport = config.transport;
+    if (transport.type === 'stdio') {
+        const stdioArgs: {
+            command: string;
+            args?: string[];
+            env?: Record<string, string>;
+            cwd?: string;
+        } = {
+            command: transport.command,
+            args: transport.args ?? [],
+        };
+        if (transport.env !== undefined) stdioArgs.env = transport.env;
+        if (transport.cwd !== undefined) stdioArgs.cwd = transport.cwd;
+        return new StdioClientTransport(stdioArgs);
+    }
+
+    // HTTP / SSE: parse the URL once so malformed configs fail loudly.
+    const url = new URL(transport.url);
+    // Re-expand env vars at runtime (the loader already did this; this
+    // is defence in depth for any config added through a non-loader path).
+    const headersResult = expandEnvRefsInRecord(
+        transport.headers,
+        `MCP server "${config.name}" headers`,
+    );
+    if (headersResult.warnings.length > 0) {
+        for (const w of headersResult.warnings) console.warn(`[mcp] ${w}`);
+    }
+    const headers = headersResult.expanded ?? {};
+
+    if (transport.type === 'http') {
+        // Pass headers via requestInit so the SDK sends them on every POST
+        // (including the initial `initialize` request). We deliberately do
+        // NOT set `authProvider` — OAuth is a Phase 3 concern (see plan).
+        return new StreamableHTTPClientTransport(url, {
+            requestInit: { headers },
+        });
+    }
+
+    // SSE — the SDK keeps SSEClientTransport around for legacy servers.
+    // We pass `requestInit.headers` for the POST side; the initial SSE
+    // request is opened by the SDK and will not pick up these headers
+    // (the SDK has a separate `eventSourceInit` for that, which we
+    // intentionally leave alone so users don't accidentally break
+    // auth by editing two fields).
+    return new SSEClientTransport(url, {
+        requestInit: { headers },
+    });
 }
 
 /**
@@ -47,7 +119,14 @@ interface ConnectingHandle {
     config: MCPServerConfig;
     status: 'connecting';
     client: undefined;
-    transport: Transport;
+    /**
+     * Concrete SDK transport. Typed as the concrete-union return type
+     * of `buildTransport()` rather than the SDK's `Transport` interface
+     * because `StreamableHTTPClientTransport.sessionId` is `string |
+     * undefined` (via a getter) which doesn't satisfy the interface's
+     * `sessionId?: string` declaration under `exactOptionalPropertyTypes`.
+     */
+    transport: StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport;
     abortController: AbortController;
     tools: [];
     /** Resolved when the connecting promise resolves (success or failure). */
@@ -116,12 +195,6 @@ class MCPClientManager {
         if (config.disabled) {
             return Promise.reject(new MCPConnectionError(`MCP server "${serverName}" is disabled in config`, serverName));
         }
-        if (!isStdioTransport(config)) {
-            return Promise.reject(new MCPConnectionError(
-                `MCP server "${serverName}" uses transport "${config.transport.type}" which is not supported in Phase 1`,
-                serverName,
-            ));
-        }
 
         const promise = this.openConnection(serverName, config);
         this.inFlight.set(serverName, promise);
@@ -144,26 +217,60 @@ class MCPClientManager {
      * `handles` immediately so the status query works mid-handshake.
      */
     private async openConnection(serverName: string, config: MCPServerConfig): Promise<MCPClientHandle> {
-        if (config.transport.type !== 'stdio') {
-            // Unreachable in Phase 1 (validated in connect()), but keeps
-            // the type narrowing in scope so we can read stdio-only fields.
-            throw new MCPConnectionError(
-                `MCP server "${serverName}" uses transport "${config.transport.type}" which is not supported in Phase 1`,
-                serverName,
-            );
-        }
-        const stdioTransport = config.transport;
-        const stdioArgs: { command: string; args: string[]; env?: Record<string, string>; cwd?: string } = {
-            command: stdioTransport.command,
-            args: stdioTransport.args ?? [],
+        // Phase 2: build the SDK transport from the config. The transport
+        // is built BEFORE the client so a malformed URL or invalid header
+        // fails fast (synchronously) — no need to start a subprocess.
+        const transport = buildTransport(config);
+
+        // Phase 2 (feature C): wire up the `notifications/tools/list_changed`
+        // handler. The SDK only activates the handler if the server
+        // advertises `capabilities.tools.listChanged: true`, so this is
+        // a no-op for servers that don't support live tool updates. When
+        // a notification arrives, the SDK re-fetches the tool list and
+        // hands us the new array via `onChanged`.
+        const onToolsChanged = (err: Error | null, items: unknown): void => {
+            if (err) {
+                console.error(`[mcp:${serverName}] tools/list_changed failed: ${err.message}`);
+                return;
+            }
+            // The SDK passes the auto-refreshed tool array as `items` (typed
+            // as Tool[] but treated as unknown at the Client constructor
+            // signature). We re-project it into our `MCPToolInfo` shape and
+            // patch the live handle so the next chat request sees the new
+            // tool list immediately.
+            const handle = this.handles.get(serverName);
+            if (!handle || handle.status !== 'connected') return;
+            const newTools: MCPToolInfo[] = Array.isArray(items)
+                ? items.map((t) => {
+                    const tt = t as { name?: unknown; description?: unknown; inputSchema?: unknown };
+                    const inputSchema = (tt.inputSchema && typeof tt.inputSchema === 'object')
+                        ? (tt.inputSchema as MCPToolInfo['inputSchema'])
+                        : { type: 'object' as const };
+                    return {
+                        name: typeof tt.name === 'string' ? tt.name : '',
+                        description: typeof tt.description === 'string' ? tt.description : undefined,
+                        inputSchema,
+                    };
+                }).filter((t) => t.name.length > 0)
+                : [];
+            // Apply per-server `disabledTools` filter so the list matches
+            // what the dispatcher would expose.
+            const blocklist = handle.config.disabledTools ?? [];
+            handle.tools = newTools.filter((t) => !blocklist.includes(t.name));
+            console.log(`[mcp:${serverName}] tool list refreshed: ${handle.tools.length} tool(s)`);
         };
-        if (stdioTransport.env !== undefined) stdioArgs.env = stdioTransport.env;
-        if (stdioTransport.cwd !== undefined) stdioArgs.cwd = stdioTransport.cwd;
-        const transport = new StdioClientTransport(stdioArgs);
 
         const client = new Client(
             { name: CLIENT_NAME, version: CLIENT_VERSION },
-            { capabilities: {} },
+            {
+                capabilities: {},
+                listChanged: {
+                    tools: {
+                        autoRefresh: true,
+                        onChanged: onToolsChanged,
+                    },
+                },
+            },
         );
 
         // Per-connect AbortController — signalled by `disconnect()` so the
@@ -227,7 +334,12 @@ class MCPClientManager {
             // Pass the AbortSignal into client.connect() so the SDK
             // tears down the handshake cleanly if the user aborts /
             // disconnects while we're still initialising.
-            await client.connect(transport, { signal: abortController.signal });
+            // The cast to `Transport` is required because the SDK
+            // ships a known type mismatch on `StreamableHTTPClientTransport.sessionId`
+            // (getter is `string | undefined` but the interface declares
+            // `sessionId?: string`). All three concrete classes do
+            // structurally implement the interface at runtime.
+            await client.connect(transport as unknown as Transport, { signal: abortController.signal });
             if (abortController.signal.aborted) {
                 // disconnect() won the race — close everything and bail.
                 try { await client.close(); } catch { /* ignore */ }
