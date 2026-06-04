@@ -34,6 +34,7 @@ import {
     type MCPToolInfo,
 } from './types';
 import { expandEnvRefsInRecord } from './envExpansion';
+import { emitMCPEvent } from './events';
 
 const CLIENT_NAME = 'locopilot';
 const CLIENT_VERSION = '0.0.1';
@@ -258,6 +259,9 @@ class MCPClientManager {
             const blocklist = handle.config.disabledTools ?? [];
             handle.tools = newTools.filter((t) => !blocklist.includes(t.name));
             console.log(`[mcp:${serverName}] tool list refreshed: ${handle.tools.length} tool(s)`);
+            // Notify the SSE channel — the consumer will re-fetch the
+            // full status listing to pick up the new tool names + counts.
+            emitMCPEvent({ kind: 'tools', serverName });
         };
 
         const client = new Client(
@@ -289,6 +293,7 @@ class MCPClientManager {
             // Route server-side stderr-ish errors to the locopilot stderr
             // so they show up in the dev-server log without crashing anything.
             console.error(`[mcp:${serverName}] client error: ${err.message}`);
+            emitMCPEvent({ kind: 'state', serverName });
         };
 
         client.onclose = () => {
@@ -296,6 +301,7 @@ class MCPClientManager {
             if (handle && handle.status !== 'error') {
                 handle.status = 'disconnected';
             }
+            emitMCPEvent({ kind: 'state', serverName });
         };
 
         // Install the connecting placeholder so `disconnect()` /
@@ -329,6 +335,9 @@ class MCPClientManager {
         // that mutates during the connecting phase, we keep a single
         // union type here for type safety.
         this.handles.set(serverName, placeholder as unknown as MCPClientHandle);
+        // Notify the SSE channel that a 'connecting' placeholder now
+        // exists so the UI can show the "Connecting..." pill.
+        emitMCPEvent({ kind: 'state', serverName });
 
         try {
             // Pass the AbortSignal into client.connect() so the SDK
@@ -366,6 +375,7 @@ class MCPClientManager {
             };
             this.handles.set(serverName, handle);
             placeholder.setHandle(handle);
+            emitMCPEvent({ kind: 'state', serverName });
             return handle;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -383,6 +393,7 @@ class MCPClientManager {
             if (this.handles.get(serverName) === (placeholder as unknown as MCPClientHandle)) {
                 this.handles.set(serverName, failed);
             }
+            emitMCPEvent({ kind: 'state', serverName });
             placeholder.setError(err);
             // Best-effort: tear down the child if the SDK didn't already
             // (the AbortSignal should have done this, but be defensive).
@@ -422,6 +433,9 @@ class MCPClientManager {
         const handle = this.handles.get(serverName);
         if (!handle && !inFlight) return;
         this.handles.delete(serverName);
+        // After delete() the map has no entry for this name; the SSE
+        // consumer will re-render and see the server as removed.
+        emitMCPEvent({ kind: 'state', serverName });
 
         // 3. Signal the AbortController so any in-flight SDK call
         //    (handshake or listTools) rejects cleanly. Do this BEFORE

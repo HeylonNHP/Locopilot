@@ -53,6 +53,17 @@ export {
     type DispatchOptions,
 } from './schemaAdapter';
 
+// Push-based event bus + config file watcher. The SSE route in
+// `app/api/mcp/events/route.ts` subscribes to these so the sidebar
+// can drop its 5s polling loop.
+export { subscribeMCPEvents, emitMCPEvent, type MCPEvent } from './events';
+import { startMCPConfigWatcher } from './configWatcher';
+
+// Start the config file watcher exactly once per process. Calling
+// again from another import site is a no-op (idempotent guard inside
+// the watcher module).
+startMCPConfigWatcher();
+
 export interface MCPStatusEntry {
     name: string;
     description: string | undefined;

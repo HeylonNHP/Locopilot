@@ -64,15 +64,47 @@ export default function MCPTab() {
         fetchConfigPath();
     }, [fetchServers, fetchConfigPath]);
 
-    // Re-poll every 5s so the status pills (connecting → connected,
-    // etc.) stay in sync with the live client manager. Pause the poll
-    // while a toggle is in flight so the response from PUT doesn't
-    // get clobbered by a stale GET.
+    // Push-based refresh via SSE. The backend publishes every MCP
+    // state transition, tool-list change, and mcp.json rewrite on
+    // `/api/mcp/events`; we just call the existing `fetchServers()`
+    // (debounced) on every frame. The 5s `setInterval` it replaces
+    // is gone — no more polling.
+    //
+    // Same `togglingRef` pause applies: while a `PUT /api/mcp` is in
+    // flight we don't want the SSE-triggered refresh to clobber the
+    // optimistic update that will be overwritten by the PUT response
+    // a few hundred ms later.
     useEffect(() => {
-        const interval = setInterval(() => {
-            if (!togglingRef.current) fetchServers();
-        }, 5000);
-        return () => clearInterval(interval);
+        const DEBOUNCE_MS = 150;
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        const scheduleFetch = (): void => {
+            if (togglingRef.current) return;
+            if (debounceTimer !== null) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                debounceTimer = null;
+                void fetchServers();
+            }, DEBOUNCE_MS);
+        };
+
+        const source = new EventSource('/api/mcp/events');
+        source.addEventListener('mcp-state', scheduleFetch);
+        source.onerror = () => {
+            // EventSource auto-reconnects with an exponential backoff,
+            // so we don't need to manually re-open. We DO want to log
+            // so dev sees a transient drop on the console.
+            // (EventSource fires `onerror` on every retry attempt
+            // until the stream comes back — this is expected, not a
+            // bug.)
+        };
+
+        return () => {
+            if (debounceTimer !== null) {
+                clearTimeout(debounceTimer);
+                debounceTimer = null;
+            }
+            source.removeEventListener('mcp-state', scheduleFetch);
+            source.close();
+        };
     }, [fetchServers]);
 
     const toggleServer = useCallback(
