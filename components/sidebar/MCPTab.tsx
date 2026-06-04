@@ -207,17 +207,9 @@ export default function MCPTab() {
                         className="skills-panel-header-btn"
                         onClick={reloadFromDisk}
                         aria-label="Reload MCP config from disk"
-                        title="Reload from disk"
+                        title="Reload config"
                     >
                         ↻
-                    </button>
-                    <button
-                        className="skills-panel-header-btn"
-                        onClick={fetchServers}
-                        aria-label="Refresh MCP servers"
-                        title="Refresh"
-                    >
-                        ⟳
                     </button>
                 </div>
             </div>
