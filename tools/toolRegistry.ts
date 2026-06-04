@@ -78,6 +78,21 @@ export interface SubAgentConfig {
     compactionModel: string;
     tools: ToolDefinition[];
     /**
+     * Sub-agent-local approval ledger for `mcp_call`. The chat route
+     * seeds this with the parent's already-approved namespaced tool
+     * names when the sub-agent's loop starts (Phase 3.4 — closes
+     * the "sub-agent ignores parent pre-approvals" gap documented
+     * in the Phase 1 bug-hunt). The sub-agent's approval-UX hook
+     * ALSO mutates this set on a positive decision (via
+     * `grantedTools`), so a single sub-agent loop that calls the
+     * same MCP tool repeatedly doesn't re-prompt.
+     *
+     * Stored as `string[]` to match the rest of the per-request
+     * context; consumers (notably `runMCPCall`) wrap it in a
+     * `Set` for O(1) membership checks.
+     */
+    mcpApprovals?: string[] | undefined;
+    /**
      * Optional hook for the parent chat route to receive an approval
      * request from inside a sub-agent. The sub-agent invokes this
      * when it tries to call a tool that requires user approval (e.g.

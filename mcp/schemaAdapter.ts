@@ -118,6 +118,14 @@ export async function buildMCPToolDefinitions(): Promise<ToolDefinition[]> {
     for (const handle of manager.list()) {
         if (handle.status !== 'connected') continue;
         for (const tool of handle.tools) {
+            // Per-server `disabledTools` blocklist — the user has
+            // explicitly asked for this tool to be hidden. Honour
+            // the setting here so it never reaches the LLM tool list
+            // (and can't be invoked indirectly through the
+            // `search_mcp_tools` search path either). The dispatcher
+            // (`dispatchMCPToolCall`) also enforces the same check
+            // as defence in depth.
+            if (handle.config.disabledTools?.includes(tool.name)) continue;
             definitions.push(mcpToolToOllamaTool(handle.name, tool));
         }
     }
@@ -159,6 +167,11 @@ export async function buildMCPToolStubs(): Promise<MCPToolStub[]> {
     for (const handle of manager.list()) {
         if (handle.status !== 'connected') continue;
         for (const tool of handle.tools) {
+            // Mirror the blocklist filter in `buildMCPToolDefinitions`:
+            // a user-disabled tool should never appear as a stub
+            // either, so the LLM cannot discover it via
+            // `search_mcp_tools(server=...)` and try to call it.
+            if (handle.config.disabledTools?.includes(tool.name)) continue;
             stubs.push({
                 name: tool.name,
                 server: handle.name,

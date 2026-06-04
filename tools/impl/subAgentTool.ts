@@ -266,6 +266,18 @@ async function executeNestedToolCall(
     onProgress?: (message: string) => void,
     context?: RequestContext,
     signal?: AbortSignal,
+    /**
+     * Phase 3.4 — sub-agent-local mcpApprovals ledger. Seeded from the
+     * parent's `context.mcpApprovals` at the start of `runSingleAgent`
+     * and mutated whenever the sub-agent's approval UX grants a
+     * namespaced tool (via `decision.grantedTools`). Kept separate
+     * from the parent's per-turn set so the sub-agent's pre-approvals
+     * don't leak into the parent's `mcpApprovalsSet` and vice versa
+     * (the parent still has its own per-turn ledger that other
+     * sub-agents running later may pick up via the `RequestContext`
+     * shared on the call to `run_subagents`).
+     */
+    subAgentMcpApprovals?: Set<string>,
 ): Promise<ToolCallResult> {
     const toolName = toolCall.function.name;
     const nestedProgress = onProgress
@@ -321,6 +333,18 @@ async function executeNestedToolCall(
             return { content: reason };
         }
         output.writeLine(`[Sub-agent: ${agentId}] request approved.`);
+        // Phase 3.4: persist any `grantedTools` the user also authorised
+        // for this sub-agent. The dispatcher enforces an explicit
+        // approval per call unless the namespaced target is in the
+        // sub-agent's ledger (or the server's `autoApprove` list, which
+        // is checked inside `dispatchMCPToolCall`). Adding to the
+        // ledger here lets a single sub-agent loop call the same MCP
+        // tool repeatedly without re-prompting.
+        if (toolName === 'mcp_call' && subAgentMcpApprovals && Array.isArray(decision.grantedTools)) {
+            for (const granted of decision.grantedTools) {
+                subAgentMcpApprovals.add(granted);
+            }
+        }
     }
 
     if (toolName === 'run_command') {
@@ -332,6 +356,23 @@ async function executeNestedToolCall(
             context,
             signal,
         );
+    }
+
+    // Phase 3.4: derive a per-call context that exposes the
+    // sub-agent's local mcpApprovals ledger. `runMCPCall` reads
+    // `context.mcpApprovals` to build the dispatcher approval set, so
+    // pointing it at the sub-agent's ledger (rather than the parent's
+    // turn-scoped set) gives the sub-agent a stable, isolated
+    // approval scope for the duration of its loop. We only override
+    // `mcpApprovals` — every other field still points at the parent's
+    // request context, so tool implementations see the same YOLO
+    // mode, allowedTools, etc. they already do.
+    if (toolName === 'mcp_call' && subAgentMcpApprovals) {
+        const derivedContext: RequestContext = {
+            ...(context ?? ({} as RequestContext)),
+            mcpApprovals: Array.from(subAgentMcpApprovals),
+        };
+        return command.execute(toolCall.function.arguments, nestedProgress, output, derivedContext, signal);
     }
 
     return command.execute(toolCall.function.arguments, nestedProgress, output, context, signal);
@@ -353,6 +394,19 @@ async function runSingleAgent(
         { role: 'system', content: buildSubAgentSystemPrompt(skillSummary) },
         orcPrompt,
     ];
+
+    // Phase 3.4: per-sub-agent MCP approval ledger. Seeded from the
+    // sub-agent config's `mcpApprovals` (the chat route copies the
+    // parent's per-turn pre-approvals in here when the sub-agent's
+    // loop starts). This set is passed to `executeNestedToolCall` so
+    // (a) the sub-agent honours pre-approvals the parent collected,
+    // and (b) a positive sub-agent approval that grants additional
+    // namespaced targets (`grantedTools`) persists for the rest of
+    // the sub-agent's loop without re-prompting. The set is local to
+    // this sub-agent and never mutates the parent's per-turn ledger.
+    const subAgentMcpApprovals = new Set<string>(
+        config.mcpApprovals ?? context?.mcpApprovals ?? [],
+    );
 
     let finalContent = '';
     const toolCallFingerprints = new Set<string>();
@@ -438,7 +492,7 @@ async function runSingleAgent(
             }
             toolCallFingerprints.add(fingerprint);
 
-            const toolResult = await executeNestedToolCall(agent.id, toolCall, labeledOutput, onProgress, context, signal);
+            const toolResult = await executeNestedToolCall(agent.id, toolCall, labeledOutput, onProgress, context, signal, subAgentMcpApprovals);
             messages.push(sanitizeChatMessage({
                 role: 'tool',
                 content: toolResult.content,

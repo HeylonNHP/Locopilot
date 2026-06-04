@@ -333,6 +333,15 @@ export async function POST(req: NextRequest): Promise<Response> {
                             numCtx: effectiveNumCtx,
                             compactionModel: resolveCompactionModel(config?.compactionModel ?? '', model as string),
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
+                            // Seed the sub-agent's mcpApprovals ledger with
+                            // whatever the parent route has already approved
+                            // this turn (e.g. an earlier `mcp_call` from the
+                            // main agent on the same target). The route hands
+                            // over a fresh `Array.from(...)` snapshot; the
+                            // sub-agent's loop maintains its OWN local set
+                            // (Phase 3.4) so the parent's per-turn ledger is
+                            // never mutated by the sub-agent's own approvals.
+                            mcpApprovals: Array.from(mcpApprovalsSet),
                             approvalRequester: requestSubAgentApproval,
                         },
                     };
@@ -359,6 +368,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             numCtx: effectiveNumCtx,
                             compactionModel: model as string,
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
+                            mcpApprovals: Array.from(mcpApprovalsSet),
                             approvalRequester: requestSubAgentApproval,
                         },
                     };
@@ -395,6 +405,38 @@ export async function POST(req: NextRequest): Promise<Response> {
                 } catch {
                     // MCP tool discovery is best-effort: fall back to native tools only.
                     mergedTools = [...TOOLS];
+                }
+
+                // Phase 3.4 (sub-agent MCP tool exposure): swap the
+                // sub-agent's `tools` list for the SAME `mergedTools` used
+                // by the main agent, minus the tools a sub-agent should
+                // never see (recursive `run_subagents` is already guarded
+                // inside `runSingleAgent`, and `search_mcp_tools` is a
+                // main-agent helper that has no value to a sub-agent which
+                // already has the full schemas inline). The user-facing
+                // `disabledMain` and `disabledSubAgent` lists still apply
+                // — `disabledMain` because anything the user disabled for
+                // the main agent should stay disabled for sub-agents
+                // unless they explicitly overrode the sub-agent set, and
+                // `disabledSubAgent` because the user may have a separate
+                // per-sub-agent blocklist. We honour both — a tool listed
+                // in EITHER set is removed.
+                //
+                // The previous implementation only had native tools here,
+                // which forced a sub-agent to call `mcp_call` indirectly.
+                // Now a sub-agent can call any `mcp__<server>__<tool>`
+                // directly the same way the main agent can.
+                if (requestContext.subAgent) {
+                    const disabled = new Set<string>([
+                        ...(requestContext.disabledMainTools ?? []),
+                        ...disabledSubAgent,
+                    ]);
+                    requestContext.subAgent.tools = mergedTools.filter(
+                        (tool) =>
+                            tool.function.name !== 'run_subagents' &&
+                            tool.function.name !== 'search_mcp_tools' &&
+                            !disabled.has(tool.function.name),
+                    );
                 }
 
                 // Determine vision support for the selected model so we can strip
