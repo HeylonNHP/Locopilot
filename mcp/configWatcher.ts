@@ -12,69 +12,161 @@
  *   without polling.
  *
  * Implementation notes:
- * - Uses Node's built-in `fs.watch` — no new dependency.
- * - Debounces 150ms so a multi-write editor save (e.g. `vim` writing
- *   + renaming) collapses to a single reload.
- * - Idempotent: calling `startMCPConfigWatcher()` twice is a no-op.
- * - On `process.beforeExit`, we close the watcher so the process can
- *   exit cleanly during dev HMR.
+ * - We watch the *parent directory*, not the file itself, because
+ *   `fs.watch` on a file binds to its inode. An editor's "atomic save"
+ *   (write to `.tmp`, then `rename(.tmp, file)`) replaces the inode
+ *   and breaks a file-level watch on the first save. Directory
+ *   watches are stable across renames. We filter on the target
+ *   filename and ignore everything else.
+ * - The project's own `saveMCPServerDisabled` (and `configManager.ts`)
+ *   use the same atomic-save pattern, so this is the only way to
+ *   keep a watcher alive across PUTs.
+ * - If the config file does not exist yet (first-run), we still watch
+ *   the parent directory and start a file-level watch as soon as the
+ *   file appears.
+ * - Debounces 150ms so a multi-event save collapses to one reload.
+ * - HMR-safe: `watcher`, `started`, `debounceTimer`, and the current
+ *   file-watcher (if any) are pinned to `globalThis` so Next.js's
+ *   dev-mode re-evaluation of `mcp/index.ts` does not leak handles.
+ * - On `process.beforeExit`, `SIGINT`, and `SIGTERM` we close the
+ *   watcher so the process can exit cleanly.
  */
 
-import { watch, type FSWatcher } from 'fs';
+import { existsSync, watch, type FSWatcher } from 'fs';
+import { dirname } from 'path';
 
 import { emitMCPEvent } from './events';
 import { getMCPConfigPath } from './configLoader';
 import { reloadMCP } from './index';
 
 const DEBOUNCE_MS = 150;
+const GLOBAL_KEY = '__mcpConfigWatcher';
 
-let watcher: FSWatcher | null = null;
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let started = false;
+interface WatcherState {
+    dirWatcher: FSWatcher | null;
+    fileWatcher: FSWatcher | null;
+    debounceTimer: ReturnType<typeof setTimeout> | null;
+    started: boolean;
+    shutdownHooked: boolean;
+}
+
+function getState(): WatcherState {
+    const g = globalThis as unknown as Record<string, unknown>;
+    let state = g[GLOBAL_KEY] as WatcherState | undefined;
+    if (!state) {
+        state = {
+            dirWatcher: null,
+            fileWatcher: null,
+            debounceTimer: null,
+            started: false,
+            shutdownHooked: false,
+        };
+        g[GLOBAL_KEY] = state;
+    }
+    return state;
+}
+
+function hookShutdown(state: WatcherState): void {
+    if (state.shutdownHooked) return;
+    state.shutdownHooked = true;
+    const close = (): void => {
+        stopMCPConfigWatcher();
+    };
+    process.once('beforeExit', close);
+    process.once('SIGINT', close);
+    process.once('SIGTERM', close);
+}
 
 /**
  * Start watching `mcp.json`. Safe to call multiple times — subsequent
  * calls are no-ops. Must only be called from server-side code.
  */
 export function startMCPConfigWatcher(): void {
-    if (started) return;
-    started = true;
+    const state = getState();
+    if (state.started) return;
+    state.started = true;
+    hookShutdown(state);
 
     const target = getMCPConfigPath();
-    try {
-        watcher = watch(target, { persistent: false }, (_eventType, _filename) => {
-            // We don't care about the event type or filename — any
-            // change to the target triggers a debounced reload. Using
-            // just the path means the watcher survives an editor's
-            // "atomic save" rename dance as long as the file is back
-            // at the same path within the debounce window.
-            scheduleReload();
-        });
+    const dir = dirname(target);
 
-        watcher.on('error', (err) => {
-            console.error(`[mcp-config-watcher] watch error on ${target}: ${err.message}`);
+    // Step 1: always start a directory watcher. This is the stable
+    // handle — the parent inode does not change on atomic save.
+    try {
+        state.dirWatcher = watch(dir, { persistent: false }, (_eventType, filename) => {
+            // Only react when the event is on our target file. Other
+            // files in `~/.locopilot/` (sessions, etc.) are ignored.
+            if (!filename) return;
+            const name = filename.toString();
+            if (name !== 'mcp.json') return;
+            scheduleReload(state);
+            // If the file is currently absent and just appeared, swap
+            // from a directory-only watch to a file-level watch so
+            // we get per-byte change events as well. (The directory
+            // watcher alone would also fire on `mcp.json` writes, but
+            // a file watcher gives us more reliable events when the
+            // file is heavily edited.)
+            if (!existsSync(target)) return;
+            attachFileWatcher(state, target);
         });
     } catch (err) {
-        // The config file might not exist yet on first run. That's
-        // fine — the user can still create it and we won't notice,
-        // but the manual reload button + the PUT flow cover that
-        // case (PUT goes through `saveMCPServerDisabled` which also
-        // emits a `config` event for the SSE channel).
+        // Fall back to file-level watch if the directory can't be
+        // watched (rare; usually means $HOME is gone). The file-level
+        // watch has the atomic-save limitation described in the
+        // header, but a broken $HOME is already a worse problem.
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[mcp-config-watcher] could not watch ${target}: ${message}`);
-        started = false;
-        return;
+        console.warn(`[mcp-config-watcher] could not watch ${dir}: ${message}`);
+        attachFileWatcher(state, target);
     }
 
-    process.once('beforeExit', () => {
-        stopMCPConfigWatcher();
-    });
+    // Step 2: if the file already exists, also start a file-level
+    // watcher for finer-grained change events. (The directory watcher
+    // is the source of truth — this is an optimization for editors
+    // that fire many in-place `change` events.)
+    if (existsSync(target)) {
+        attachFileWatcher(state, target);
+    }
 }
 
-function scheduleReload(): void {
-    if (debounceTimer !== null) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-        debounceTimer = null;
+function attachFileWatcher(state: WatcherState, target: string): void {
+    if (state.fileWatcher) return;
+    try {
+        state.fileWatcher = watch(target, { persistent: false }, () => {
+            scheduleReload(state);
+        });
+        state.fileWatcher.on('error', (err) => {
+            // The atomic-save dance can cause the file watcher to
+            // become invalid. Tear it down so the next event will
+            // re-attach it.
+            if (state.fileWatcher) {
+                try {
+                    state.fileWatcher.close();
+                } catch {
+                    /* ignore */
+                }
+                state.fileWatcher = null;
+            }
+            // ENOENT means the file was renamed away. The directory
+            // watcher will re-attach the file watcher on the next
+            // appearance, so this is recoverable.
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code !== 'ENOENT') {
+                console.error(`[mcp-config-watcher] watch error on ${target}: ${err.message}`);
+            }
+        });
+    } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        const message = err instanceof Error ? err.message : String(err);
+        if (code !== 'ENOENT') {
+            console.warn(`[mcp-config-watcher] could not watch ${target}: ${message}`);
+        }
+    }
+}
+
+function scheduleReload(state: WatcherState): void {
+    if (state.debounceTimer !== null) clearTimeout(state.debounceTimer);
+    state.debounceTimer = setTimeout(() => {
+        state.debounceTimer = null;
         void doReload();
     }, DEBOUNCE_MS);
 }
@@ -93,22 +185,33 @@ async function doReload(): Promise<void> {
 }
 
 /**
- * Stop the watcher. Used by the `beforeExit` handler and by tests.
+ * Stop the watcher. Used by the shutdown handlers and by tests.
  */
 export function stopMCPConfigWatcher(): void {
-    if (debounceTimer !== null) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
+    const g = globalThis as unknown as Record<string, unknown>;
+    const state = g[GLOBAL_KEY] as WatcherState | undefined;
+    if (!state) return;
+    if (state.debounceTimer !== null) {
+        clearTimeout(state.debounceTimer);
+        state.debounceTimer = null;
     }
-    if (watcher) {
+    if (state.fileWatcher) {
         try {
-            watcher.close();
+            state.fileWatcher.close();
         } catch {
             // Ignore — closing a closed watcher is fine.
         }
-        watcher = null;
+        state.fileWatcher = null;
     }
-    started = false;
+    if (state.dirWatcher) {
+        try {
+            state.dirWatcher.close();
+        } catch {
+            // Ignore.
+        }
+        state.dirWatcher = null;
+    }
+    state.started = false;
 }
 
 /**
@@ -117,4 +220,6 @@ export function stopMCPConfigWatcher(): void {
  */
 export function __resetMCPConfigWatcherForTests(): void {
     stopMCPConfigWatcher();
+    const g = globalThis as unknown as Record<string, unknown>;
+    delete g[GLOBAL_KEY];
 }

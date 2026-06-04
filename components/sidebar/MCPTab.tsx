@@ -86,24 +86,63 @@ export default function MCPTab() {
             }, DEBOUNCE_MS);
         };
 
-        const source = new EventSource('/api/mcp/events');
-        source.addEventListener('mcp-state', scheduleFetch);
-        source.onerror = () => {
-            // EventSource auto-reconnects with an exponential backoff,
-            // so we don't need to manually re-open. We DO want to log
-            // so dev sees a transient drop on the console.
-            // (EventSource fires `onerror` on every retry attempt
-            // until the stream comes back — this is expected, not a
-            // bug.)
+        // Manual reconnect logic. EventSource auto-reconnects only for
+        // transient network errors (readyState === CONNECTING). If the
+        // server returns a non-2xx status, the stream is closed and
+        // the browser will NOT retry — the whole point of this SSE
+        // migration is silently lost on a single server hiccup. We
+        // detect CLOSED and reopen with exponential backoff capped
+        // at 30s.
+        let source: EventSource | null = null;
+        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+        let backoffMs = 1000;
+        const MAX_BACKOFF_MS = 30_000;
+        let disposed = false;
+
+        const open = (): void => {
+            if (disposed) return;
+            source = new EventSource('/api/mcp/events');
+            source.addEventListener('mcp-state', scheduleFetch);
+            source.onopen = () => {
+                // Successful (re)connect — reset backoff.
+                backoffMs = 1000;
+            };
+            source.onerror = () => {
+                if (!source) return;
+                if (source.readyState === EventSource.CLOSED) {
+                    // Permanent failure (server returned non-2xx, etc.).
+                    // Close the dead handle and schedule a manual
+                    // reconnect with exponential backoff.
+                    source.close();
+                    source = null;
+                    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(() => {
+                        reconnectTimer = null;
+                        backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+                        open();
+                    }, backoffMs);
+                }
+                // else: readyState === CONNECTING — the browser is
+                // already retrying on its own. Nothing to do.
+            };
         };
+        open();
 
         return () => {
+            disposed = true;
             if (debounceTimer !== null) {
                 clearTimeout(debounceTimer);
                 debounceTimer = null;
             }
-            source.removeEventListener('mcp-state', scheduleFetch);
-            source.close();
+            if (reconnectTimer !== null) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            if (source) {
+                source.removeEventListener('mcp-state', scheduleFetch);
+                source.close();
+                source = null;
+            }
         };
     }, [fetchServers]);
 
