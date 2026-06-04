@@ -32,6 +32,7 @@ export {
     loadMCPConfig,
     listMCPServers,
     getMCPConfigPath,
+    saveMCPServerDisabled,
 } from './configLoader';
 export {
     getClientManager,

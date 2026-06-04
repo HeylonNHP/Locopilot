@@ -61,6 +61,18 @@ function isDangerousEnvKey(key: string): boolean {
 export const MCP_CONFIG_DIRNAME = '.locopilot';
 export const MCP_CONFIG_FILENAME = 'mcp.json';
 
+/**
+ * Module-level queue for serialising writes to `mcp.json`. Mirrors the
+ * `configWriteQueue` pattern in `services/configManager.ts` so that
+ * concurrent PUTs from the UI don't race against each other and lose
+ * data (e.g. two toggles clicked within the same tick).
+ *
+ * Always chain onto the previous promise: `.then(task, task)` (both
+ * success and failure branches run `task`) so an earlier failure
+ * doesn't poison the queue.
+ */
+let saveQueue: Promise<void> = Promise.resolve();
+
 export function getMCPConfigPath(): string {
     return path.join(os.homedir(), MCP_CONFIG_DIRNAME, MCP_CONFIG_FILENAME);
 }
@@ -110,7 +122,7 @@ function validateStdioConfig(server: MCPServerConfig, key: string): void {
         for (const envKey of Object.keys(transport.env)) {
             if (isDangerousEnvKey(envKey)) {
                 throw new MCPConfigError(
-                    `MCP config error: server "${name}" sets env key "${envKey}" which can lead to code injection. ` +
+                    `MCP config error: server "${key}" sets env key "${envKey}" which can lead to code injection. ` +
                     `Remove it or rename it (e.g. MY_SERVER_PATH).`,
                 );
             }
@@ -298,4 +310,144 @@ export function listMCPServers(config: MCPRootConfig): MCPServerConfig[] {
     return Object.values(config.mcpServers)
         .slice()
         .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Atomically set the `disabled` flag on a single MCP server in
+ * `~/.locopilot/mcp.json`. All other server entries, and every other
+ * field of the touched server, are preserved verbatim.
+ *
+ * The write is serialised behind a module-level promise queue so two
+ * concurrent saves can't race (last-write-wins is fine for now, but at
+ * least we don't lose data on a no-op race). The file is written via
+ * the standard `tmp + rename` pattern used by `services/configManager.ts`
+ * so a crash mid-write can never leave a half-written `mcp.json` on disk.
+ *
+ * The on-disk JSON is always written with explicit `'utf8'` encoding
+ * and without a BOM, so a save followed by a load never trips the
+ * BOM-stripping branch in `loadMCPConfig()`. The `disabled` field is
+ * written explicitly as a boolean (even when `false`) for clarity in
+ * the on-disk file.
+ *
+ * Throws `MCPConfigError` if the server name is not present in the
+ * current config (or is invalid per the loader's naming rules).
+ * Re-throws lower-level I/O errors unchanged so the API layer can
+ * surface a useful 500.
+ *
+ * NB: this function does NOT use `loadMCPConfig()` internally —
+ * `loadMCPConfig()` deliberately swallows parse/validation errors and
+ * returns an empty config (so the chat route keeps working when the
+ * file is broken). That swallowing policy is wrong for a write path:
+ * a save that falls back to an empty config would silently destroy
+ * the user's existing servers. We therefore read + parse the file
+ * directly here and surface errors to the caller.
+ */
+export async function saveMCPServerDisabled(name: string, disabled: boolean): Promise<void> {
+    // Defense in depth: the API layer also validates, but a direct
+    // caller could pass anything. The regex is the same one used by
+    // the loader to validate server keys.
+    if (typeof name !== 'string' || !VALID_NAME_REGEX.test(name) || name.length > MAX_NAME_LENGTH) {
+        throw new MCPConfigError(`MCP server name "${name}" is invalid`);
+    }
+    if (MCP_FORBIDDEN_SERVER_NAMES.has(name)) {
+        throw new MCPConfigError(
+            `MCP server "${name}" conflicts with a native Locopilot tool name`,
+        );
+    }
+
+    const task = async (): Promise<void> => {
+        const configPath = getMCPConfigPath();
+        const tmpPath = configPath + '.tmp';
+
+        // Read + parse the raw file. We do NOT go through `loadMCPConfig`
+        // because that swallows errors and would mask a broken file as
+        // "no servers configured" — a save in that state would overwrite
+        // the user's existing config with an empty one.
+        let raw: string;
+        try {
+            raw = await fsp.readFile(configPath, 'utf8');
+        } catch (err) {
+            const code = (err as NodeJS.ErrnoException | null)?.code;
+            if (code === 'ENOENT') {
+                throw new MCPConfigError(
+                    `MCP config file does not exist at ${configPath}; create it before toggling servers`,
+                );
+            }
+            throw err;
+        }
+
+        // Strip a leading UTF-8 BOM (Notepad on Windows writes one) so
+        // `JSON.parse` doesn't reject the file. We do NOT write a BOM on
+        // the way out (see `writeFile` call below), so the on-disk file
+        // stays clean after a save.
+        const stripped = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(stripped);
+        } catch (err) {
+            throw new MCPConfigError(
+                `${configPath} is not valid JSON: ${(err as Error).message}`,
+            );
+        }
+
+        if (!isPlainObject(parsed)) {
+            throw new MCPConfigError(`${configPath} root must be a JSON object`);
+        }
+        // Re-validate the file before mutating it. If the current
+        // state would be rejected by `parseMCPConfig` (e.g. a
+        // malformed server entry, a `name` field that doesn't match
+        // the key, an unknown transport type), the next read would
+        // silently drop the whole file's servers — data loss.
+        // Force the user to fix their config file before they can
+        // toggle servers.
+        try {
+            parseMCPConfig(parsed);
+        } catch (err) {
+            throw new MCPConfigError(
+                `MCP config is invalid and cannot be edited safely: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
+        const serversField = (parsed.mcpServers ?? parsed.servers) as unknown;
+        if (!isPlainObject(serversField)) {
+            throw new MCPConfigError(`${configPath} has no "mcpServers" object`);
+        }
+        if (!(name in serversField)) {
+            throw new MCPConfigError(`MCP server "${name}" is not configured`);
+        }
+
+        // Re-shape the parent object so we preserve the original key
+        // order and the original `mcpServers` vs `servers` spelling
+        // (some users follow the VS Code `servers` convention). We
+        // also preserve any other top-level fields (e.g. `$schema`).
+        const nextServers: Record<string, unknown> = { ...serversField };
+        const target = nextServers[name];
+        if (!isPlainObject(target)) {
+            throw new MCPConfigError(
+                `MCP server "${name}" is malformed (not a JSON object)`,
+            );
+        }
+        // Always write `disabled` explicitly (even when `false`) for
+        // round-trip stability: the on-disk shape is then unambiguous
+        // and we don't have to worry about `exactOptionalPropertyTypes`.
+        nextServers[name] = { ...target, disabled };
+
+        const nextRoot: Record<string, unknown> = { ...parsed };
+        if ('mcpServers' in parsed) {
+            nextRoot.mcpServers = nextServers;
+        } else {
+            nextRoot.servers = nextServers;
+        }
+
+        // Explicit `'utf8'` encoding — never the platform default — so
+        // we never accidentally write a UTF-8 BOM on Windows.
+        const json = JSON.stringify(nextRoot, null, 2);
+        await fsp.writeFile(tmpPath, json, { encoding: 'utf8' });
+        await fsp.rename(tmpPath, configPath);
+    };
+
+    // Chain on both success and failure so a single failed save can't
+    // poison the queue for the next caller. `.then(task, task)` mirrors
+    // the pattern in `services/configManager.ts`.
+    saveQueue = saveQueue.then(task, task);
+    return saveQueue;
 }

@@ -4,12 +4,13 @@ import './SkillsPanel.scss';
 import { useState } from 'react';
 import SkillsTab from './SkillsTab';
 import ToolsTab from './ToolsTab';
+import MCPTab from './MCPTab';
 
 interface Props {
     onPromptAI?: (message: string) => void;
 }
 
-type TabId = 'skills' | 'tools';
+type TabId = 'skills' | 'tools' | 'mcp';
 
 export default function SkillsPanel({ onPromptAI }: Props) {
     const [isExpanded, setIsExpanded] = useState(false);
@@ -43,6 +44,16 @@ export default function SkillsPanel({ onPromptAI }: Props) {
                         <span className="skills-panel-collapsed-btn-icon">⚙</span>
                         <span className="skills-panel-collapsed-btn-label">Tools</span>
                     </button>
+                    <div className="skills-panel-collapsed-divider" />
+                    <button
+                        className="skills-panel-collapsed-btn"
+                        onClick={() => openToTab('mcp')}
+                        aria-label="Open MCP tab"
+                        title="MCP"
+                    >
+                        <span className="skills-panel-collapsed-btn-icon">🔌</span>
+                        <span className="skills-panel-collapsed-btn-label">MCP</span>
+                    </button>
                 </div>
             )}
 
@@ -61,6 +72,12 @@ export default function SkillsPanel({ onPromptAI }: Props) {
                         >
                             ⚙ Tools
                         </button>
+                        <button
+                            className={`skills-panel-tab${activeTab === 'mcp' ? ' skills-panel-tab--active' : ''}`}
+                            onClick={() => setActiveTab('mcp')}
+                        >
+                            🔌 MCP
+                        </button>
                         <div className="skills-panel-tabs-spacer" />
                         <button
                             className="skills-panel-header-btn"
@@ -74,6 +91,7 @@ export default function SkillsPanel({ onPromptAI }: Props) {
 
                     {activeTab === 'skills' && <SkillsTab onPromptAI={onPromptAI} />}
                     {activeTab === 'tools' && <ToolsTab />}
+                    {activeTab === 'mcp' && <MCPTab />}
                 </div>
             )}
         </div>
