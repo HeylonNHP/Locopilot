@@ -22,6 +22,16 @@ export interface Config {
         disabledMain: string[];
         disabledSubAgent: string[];
     };
+    /**
+     * Phase 3 (MCP Tool Search). When true, the chat route surfaces
+     * MCP tools to the LLM as stubs (name + truncated description
+     * only); the model must call `search_mcp_tools` to retrieve the
+     * full JSON Schema before invoking the tool. Saves a lot of
+     * tokens when many MCP servers are connected. Also auto-enabled
+     * when the total connected MCP tool count exceeds
+     * `MCP_TOOL_SEARCH_THRESHOLD` in `constants.ts`.
+     */
+    mcpToolSearch?: boolean;
 }
 
 export interface ChatContext {

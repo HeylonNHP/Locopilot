@@ -124,6 +124,86 @@ export async function buildMCPToolDefinitions(): Promise<ToolDefinition[]> {
     return definitions;
 }
 
+/**
+ * Phase 3 (MCP Tool Search): a "stub" representation of a single MCP
+ * tool. The chat route uses stubs instead of full tool definitions
+ * when Tool Search is enabled — see `buildMCPToolDefinitionsForSearch`
+ * and `mcp/index.ts#getMergedMCPToolDefinitionsForSearch`. The stub
+ * keeps the namespaced name and a short description (so the model
+ * still sees provenance + a hint) but drops the full `inputSchema`
+ * (which is the expensive part of an MCP tool definition). To get
+ * the full schema the model calls the `search_mcp_tools` meta-tool.
+ */
+export interface MCPToolStub {
+    /** Bare tool name (e.g. `list_issues`). */
+    name: string;
+    /** Owning MCP server name (e.g. `github`). */
+    server: string;
+    /** Original description, if the server provided one. */
+    description: string | undefined;
+    /** Fully-qualified `mcp__<server>__<tool>` name. */
+    namespacedName: string;
+}
+
+/**
+ * Walk every connected MCP server and return a flat list of stubs.
+ *
+ * No I/O, no auto-connect — the same as `buildMCPToolDefinitions`.
+ * Used both by the chat route (to decide whether Tool Search should
+ * be enabled) and by the `search_mcp_tools` meta-tool (to find a
+ * specific tool's full schema).
+ */
+export async function buildMCPToolStubs(): Promise<MCPToolStub[]> {
+    const manager = getClientManager();
+    const stubs: MCPToolStub[] = [];
+    for (const handle of manager.list()) {
+        if (handle.status !== 'connected') continue;
+        for (const tool of handle.tools) {
+            stubs.push({
+                name: tool.name,
+                server: handle.name,
+                description: tool.description,
+                namespacedName: buildNamespacedName(handle.name, tool.name),
+            });
+        }
+    }
+    return stubs;
+}
+
+/**
+ * Convert an `MCPToolStub` into an Ollama `ToolDefinition` whose
+ * `parameters` map is empty. The model can see the namespaced name
+ * and a short description (with a hint on how to fetch the full
+ * schema) but cannot call the stub directly — calling it with any
+ * arguments would lose them. The `search_mcp_tools` meta-tool is the
+ * path to the real schema.
+ */
+export function mcpToolStubToOllamaTool(stub: MCPToolStub): ToolDefinition {
+    const description = (stub.description ?? '').slice(0, MAX_STUB_DESCRIPTION_CHARS);
+    return {
+        type: 'function',
+        function: {
+            name: stub.namespacedName,
+            description: `[MCP:${stub.server}] ${description} — call search_mcp_tools(name="${stub.namespacedName}") for full schema.`,
+            parameters: { type: 'object', properties: {}, required: [] },
+        },
+    };
+}
+
+/**
+ * Phase 3 (MCP Tool Search): build the "stub" tool list for the chat
+ * route when Tool Search is enabled. Stubs are cheap (~50-80 tokens
+ * each) and let the LLM defer paying the full-schema cost until it
+ * knows it actually needs a given tool.
+ */
+export async function buildMCPToolDefinitionsForSearch(): Promise<ToolDefinition[]> {
+    const stubs = await buildMCPToolStubs();
+    return stubs.map(mcpToolStubToOllamaTool);
+}
+
+/** Maximum description length preserved on a stub. */
+export const MAX_STUB_DESCRIPTION_CHARS = 100;
+
 export interface DispatchContext {
     /** Aborts the MCP call when the parent request is aborted. */
     signal?: AbortSignal;

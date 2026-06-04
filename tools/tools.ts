@@ -33,6 +33,7 @@ import { getToolPrompt as getCreateSkillPrompt } from './impl/createSkillTool';
 import { readPdfToolSchema } from './impl/readPdfTool';
 import { getToolPrompt as getReadPdfPrompt } from './impl/readPdfTool';
 import { mcpCallToolSchema, getToolPrompt as getMCPCallPrompt } from './impl/mcpTool';
+import { searchMcpToolsToolSchema, getToolPrompt as getSearchMcpToolsPrompt } from './impl/searchMcpToolsTool';
 
 // Keep defaultShell export (used in runCommandToolSchema via defaultShell() call)
 export { defaultShell } from './impl/runCommandTool';
@@ -153,6 +154,10 @@ export const TOOLS: OllamaTool[] = [
         type: 'function',
         function: mcpCallToolSchema,
     },
+    {
+        type: 'function',
+        function: searchMcpToolsToolSchema,
+    },
 ];
 
 /**
@@ -175,6 +180,7 @@ export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean
         getCreateSkillPrompt() +
         getReadPdfPrompt() +
         getMCPCallPrompt() +
+        getSearchMcpToolsPrompt() +
         'Tool-use policy:\n' +
         '- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n' +
         '- Use sub-agents aggressively for any information-heavy or multi-step work — they absorb intermediate results into isolated contexts, preserving your own context window for high-level reasoning. You do NOT need the user to request them.\n' +

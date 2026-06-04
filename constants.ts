@@ -14,3 +14,12 @@ export const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 2;
 export const READ_FILE_TOKEN_WARN_PCT = 25;
 export const READ_FILE_TOKEN_CRITICAL_PCT = 50;
 export const READ_FILE_CHAR_WARN_THRESHOLD = 100_000; // ~25,000 tokens — warns when model/context size unknown
+
+/**
+ * Phase 3 (MCP Tool Search). If the total number of connected MCP
+ * tools exceeds this threshold, the chat route automatically flips to
+ * the lazy "stub" tool-definitions path even if the user hasn't
+ * explicitly enabled `config.mcpToolSearch`. Keeps the per-turn tool
+ * token cost bounded as the user connects more servers.
+ */
+export const MCP_TOOL_SEARCH_THRESHOLD = 20;

@@ -22,6 +22,7 @@ import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool';
 import { ReadPdfTool, type ReadPdfToolArgs } from './impl/readPdfTool';
 import { runCommand, checkProcessOutput, DEFAULT_TIMEOUT_MS } from './impl/runCommandTool';
 import { runMCPCall } from './impl/mcpTool';
+import { runSearchMCPTools } from './impl/searchMcpToolsTool';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT } from '../constants';
 import { parsePositiveTimeoutMs, parsePositiveInteger, parseQueriesInput } from './commandHelpers';
 import { noopToolOutputSink, type ToolOutputSink } from './toolOutput';
@@ -622,6 +623,20 @@ export const toolRegistry = new Map<string, IToolCommand>([
                 const permErr = checkToolAllowed('mcp_call', context);
                 if (permErr) return { content: permErr };
                 return runMCPCall(args, context, signal);
+            },
+        },
+    ],
+    [
+        // Phase 3 (MCP Tool Search). Meta-tool: reads tool schema
+        // metadata from the client manager, never invokes anything
+        // dangerous, so it has no approval gate and no skill /
+        // disabled-tool check. (It's the LLM's way of asking
+        // "what's the shape of mcp__github__list_issues?" — the
+        // answer is a JSON Schema, not a real call.)
+        'search_mcp_tools',
+        {
+            async execute(args, _onProgress, _output, _context, _signal) {
+                return runSearchMCPTools(args);
             },
         },
     ],

@@ -36,7 +36,8 @@ import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textU
 import { createSystemPrompt } from '../../../services/chatSession';
 import { discoverSkills, loadSkillState, getEnabledSkills, getAllowedToolsFromSkills } from '../../../services/skillManager';
 import { enterRequestScope } from '../../../tools/impl/runCommandTool';
-import { getMergedMCPToolDefinitions, getMCPServerConfig } from '../../../mcp';
+import { getMergedMCPToolDefinitions, getMergedMCPToolDefinitionsForSearch, getMCPServerConfig, getMCPToolCount } from '../../../mcp';
+import { MCP_TOOL_SEARCH_THRESHOLD } from '../../../constants';
 
 // Prevent static generation – this route must always run on the server.
 export const dynamic = 'force-dynamic';
@@ -283,8 +284,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                     return decision;
                 };
 
+                // Hoisted config so the merged-tool-list decision below
+                // can read `config.mcpToolSearch` even when loadConfig()
+                // throws. The inner try/catch owns the user-config
+                // derivation; the outer build path is independent.
+                let config: import('../../../types/chatConfig').Config | null = null;
                 try {
-                    const config = await loadConfig();
+                    config = await loadConfig();
                     if (config) {
                         if (typeof config.yolo === 'boolean') {
                             effectiveYolo = config.yolo;
@@ -362,13 +368,30 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // tool defs from already-connected servers). Computed once per
                 // request — tool additions/removals only take effect on the
                 // next request (matches Phase 1's "no hot-reload" decision).
+                //
+                // Phase 3 (MCP Tool Search): when enabled — either explicitly
+                // via `config.mcpToolSearch` or implicitly when the total
+                // connected MCP tool count exceeds `MCP_TOOL_SEARCH_THRESHOLD`
+                // — the chat route uses the lazy "stub" path. The LLM sees
+                // the namespaced names + a short description for every MCP
+                // tool (cheap, ~50-80 tokens per tool) and must call
+                // `search_mcp_tools` to retrieve the full JSON Schema before
+                // invoking. The `mcp_call` tool is still in the merged list
+                // unchanged.
                 // Type is the union of OllamaTool (native) and ToolDefinition
                 // (MCP dynamic) — both shapes are accepted by the LLM adapter.
                 type AnyTool = (typeof TOOLS)[number] | import('../../../services/adapters/llmAdapter').ToolDefinition;
                 let mergedTools: AnyTool[];
                 try {
-                    const mcpToolDefs = await getMergedMCPToolDefinitions();
-                    mergedTools = [...TOOLS, ...mcpToolDefs];
+                    const totalMCPToolCount = await getMCPToolCount();
+                    const enableSearch = config?.mcpToolSearch === true || totalMCPToolCount > MCP_TOOL_SEARCH_THRESHOLD;
+                    if (enableSearch) {
+                        const mcpStubs = await getMergedMCPToolDefinitionsForSearch();
+                        mergedTools = [...TOOLS, ...mcpStubs];
+                    } else {
+                        const mcpToolDefs = await getMergedMCPToolDefinitions();
+                        mergedTools = [...TOOLS, ...mcpToolDefs];
+                    }
                 } catch {
                     // MCP tool discovery is best-effort: fall back to native tools only.
                     mergedTools = [...TOOLS];

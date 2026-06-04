@@ -17,7 +17,10 @@ import { getClientManager } from './clientManager';
 import { loadMCPConfig, listMCPServers } from './configLoader';
 import {
     buildMCPToolDefinitions,
+    buildMCPToolDefinitionsForSearch,
+    buildMCPToolStubs,
     dispatchMCPToolCall,
+    mcpToolStubToOllamaTool,
     parseMCPToolName,
     buildNamespacedName,
 } from './schemaAdapter';
@@ -44,13 +47,17 @@ export {
 } from './clientManager';
 export {
     buildMCPToolDefinitions,
+    buildMCPToolDefinitionsForSearch,
+    buildMCPToolStubs,
     dispatchMCPToolCall,
+    mcpToolStubToOllamaTool,
     parseMCPToolName,
     buildNamespacedName,
     MCP_TOOL_NAMESPACE_PREFIX,
     MCP_TOOL_NAMESPACE_SEPARATOR,
     type DispatchContext,
     type DispatchOptions,
+    type MCPToolStub,
 } from './schemaAdapter';
 
 // Push-based event bus + config file watcher. The SSE route in
@@ -227,6 +234,37 @@ export async function reloadMCP(): Promise<MCPListResult> {
 export async function getMergedMCPToolDefinitions(): Promise<ToolDefinition[]> {
     await connectAllEnabled(5000);
     return buildMCPToolDefinitions();
+}
+
+/**
+ * Phase 3 (MCP Tool Search): the lazy-schema variant of
+ * `getMergedMCPToolDefinitions`. Returns stub tool definitions
+ * (namespaced name + truncated description + empty `properties`)
+ * for every connected MCP tool, instead of the full JSON Schema.
+ *
+ * The chat route picks one of the two flavours based on
+ * `config.mcpToolSearch` and the total MCP tool count. No difference
+ * in connection behaviour — the eager `connectAllEnabled` still runs
+ * so the stub list reflects whatever would have been sent in the
+ * non-search path.
+ */
+export async function getMergedMCPToolDefinitionsForSearch(): Promise<ToolDefinition[]> {
+    await connectAllEnabled(5000);
+    return buildMCPToolDefinitionsForSearch();
+}
+
+/**
+ * Total number of MCP tools currently available (i.e. connected +
+ * healthy). Cheap — walks the client manager's handles and counts
+ * their `tools` arrays without building any full schemas.
+ *
+ * Used by the chat route to decide whether to enable Tool Search
+ * automatically (the threshold lives in `MCP_TOOL_SEARCH_THRESHOLD`
+ * in `constants.ts`).
+ */
+export async function getMCPToolCount(): Promise<number> {
+    await connectAllEnabled(5000);
+    return (await buildMCPToolStubs()).length;
 }
 
 /**
