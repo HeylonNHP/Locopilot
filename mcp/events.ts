@@ -26,8 +26,9 @@ export type MCPStatusEntry = {
     name: string;
     description: string | undefined;
     transport: 'stdio' | 'http' | 'sse';
-    status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'not_loaded';
+    status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'not_loaded' | 'auth_required';
     lastError?: string | undefined;
+    authUrl?: string | undefined;
     tools: Array<{ name: string; description: string | undefined; fullName: string }>;
     toolCount: number;
 };
@@ -39,6 +40,16 @@ export type MCPEvent =
     | { kind: 'tools'; serverName: string }
     /** The on-disk mcp.json was modified externally (or by `PUT /api/mcp`). */
     | { kind: 'config' }
+    /**
+     * A server hit a 401 / unauthorized response. The UI should
+     * surface a "needs auth" pill and offer a click-to-authenticate
+     * action. The actual IdP authorization URL is printed to the
+     * dev-server stderr; the loopback listener handles the
+     * callback internally so the UI never has to display the
+     * URL (bug #18: there used to be an `authUrl` field here
+     * that the client never read).
+     */
+    | { kind: 'auth-required'; serverName: string }
     /** Initial full-state payload sent by the SSE route right after subscribing. */
     | { kind: 'snapshot'; entries: MCPStatusEntry[] };
 

@@ -9,6 +9,7 @@ const STATUS_LABEL: Record<MCPStatusEntry['status'], string> = {
     disconnected: 'Disconnected',
     error: 'Error',
     not_loaded: 'Disabled',
+    auth_required: 'Needs auth',
 };
 
 function toolCountLabel(n: number): string {
@@ -29,6 +30,13 @@ export default function MCPTab() {
     const [configPath, setConfigPath] = useState<string>('~/.locopilot/mcp.json');
 
     const togglingRef = useRef(false);
+    // Bug #10 fix: track in-flight Authenticate POSTs so a
+    // double-click doesn't fire two parallel requests. The ref
+    // is the source of truth; the version state is just a
+    // tick to re-render the button's `disabled` prop when the
+    // set changes.
+    const inFlightAuthsRef = useRef<Set<string>>(new Set());
+    const [, setInFlightAuthsVersion] = useState(0);
 
     const fetchServers = useCallback(async () => {
         try {
@@ -198,6 +206,49 @@ export default function MCPTab() {
         }
     }, [fetchServers]);
 
+    const authenticateServer = useCallback(async (name: string) => {
+        // Bug #10 fix: in-flight guard. The Authenticate button
+        // fires a POST to /api/mcp/auth; a double-click would
+        // send two parallel requests and could double-trigger
+        // the loopback listener / token-exchange path. Track
+        // the set of names currently in flight and disable
+        // re-entry until the response lands (success OR error).
+        if (inFlightAuthsRef.current.has(name)) {
+            return;
+        }
+        inFlightAuthsRef.current.add(name);
+        setInFlightAuthsVersion((v) => v + 1);
+        try {
+            setError(null);
+            const res = await fetch('/api/mcp/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ server: name }),
+            });
+            const data = (await res.json().catch(() => ({}))) as {
+                ok?: boolean;
+                error?: string;
+                connected?: boolean;
+            };
+            if (!res.ok || data.ok !== true) {
+                throw new Error(data.error ?? `HTTP ${res.status}`);
+            }
+            // The auth URL is printed to the dev-server stderr. We
+            // can't show it inline (the SDK doesn't hand it back to
+            // the browser for security), but a fresh connect
+            // attempt will surface it via the chat route's
+            // auth-required handling and via the server log.
+            // Eagerly re-fetch the server list so the pill flips
+            // from "needs auth" to "connecting" / "connected".
+            await fetchServers();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : `Failed to authenticate ${name}`);
+        } finally {
+            inFlightAuthsRef.current.delete(name);
+            setInFlightAuthsVersion((v) => v + 1);
+        }
+    }, [fetchServers]);
+
     return (
         <>
             <div className="skills-panel-header">
@@ -237,6 +288,7 @@ export default function MCPTab() {
                     {servers.map((server) => {
                         const isDisabled = server.status === 'not_loaded';
                         const showError = server.status === 'error' && server.lastError;
+                        const showAuth = server.status === 'auth_required';
                         return (
                             <div key={server.name} className="skills-panel-mcp-item">
                                 <div className="skills-panel-mcp-item-row">
@@ -262,21 +314,43 @@ export default function MCPTab() {
                                             </span>
                                         </div>
                                     </div>
-                                    <label
-                                        className="skills-panel-toggle-switch"
-                                        htmlFor={`mcp-toggle-${server.name}`}
-                                        aria-label={`${isDisabled ? 'Enable' : 'Disable'} ${server.name}`}
-                                    >
-                                        <input
-                                            id={`mcp-toggle-${server.name}`}
-                                            type="checkbox"
-                                            checked={!isDisabled}
-                                            disabled={server.status === 'connecting'}
-                                            aria-disabled={server.status === 'connecting'}
-                                            onChange={() => toggleServer(server.name, isDisabled)}
-                                        />
-                                        <span className="skills-panel-toggle-switch-slider" />
-                                    </label>
+                                    {showAuth ? (
+                                        // Phase 3.5: an OAuth-protected
+                                        // server whose 401 we have not
+                                        // yet satisfied. The button
+                                        // calls /api/mcp/auth which
+                                        // drops the saved tokens and
+                                        // re-triggers the connect; the
+                                        // SDK prints the auth URL to
+                                        // the dev-server stderr and
+                                        // starts the loopback listener.
+                                        // Bug #10 fix: disabled while
+                                        // a request is in flight.
+                                        <button
+                                            className="skills-panel-mcp-auth-btn"
+                                            onClick={() => authenticateServer(server.name)}
+                                            disabled={inFlightAuthsRef.current.has(server.name)}
+                                            title="Open the OAuth authorization URL printed to the dev-server stderr"
+                                        >
+                                            {inFlightAuthsRef.current.has(server.name) ? 'Authenticating…' : 'Authenticate'}
+                                        </button>
+                                    ) : (
+                                        <label
+                                            className="skills-panel-toggle-switch"
+                                            htmlFor={`mcp-toggle-${server.name}`}
+                                            aria-label={`${isDisabled ? 'Enable' : 'Disable'} ${server.name}`}
+                                        >
+                                            <input
+                                                id={`mcp-toggle-${server.name}`}
+                                                type="checkbox"
+                                                checked={!isDisabled}
+                                                disabled={server.status === 'connecting'}
+                                                aria-disabled={server.status === 'connecting'}
+                                                onChange={() => toggleServer(server.name, isDisabled)}
+                                            />
+                                            <span className="skills-panel-toggle-switch-slider" />
+                                        </label>
+                                    )}
                                 </div>
                                 {server.description && (
                                     <div className="skills-panel-mcp-item-desc">{server.description}</div>
@@ -287,6 +361,11 @@ export default function MCPTab() {
                                         title={server.lastError}
                                     >
                                         {truncate(server.lastError ?? '', 200)}
+                                    </div>
+                                )}
+                                {showAuth && (
+                                    <div className="skills-panel-mcp-item-error" title={server.lastError ?? ''}>
+                                        {truncate(server.lastError ?? 'OAuth 2.1 + PKCE required.', 200)}
                                     </div>
                                 )}
                             </div>

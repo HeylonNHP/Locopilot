@@ -51,8 +51,10 @@ let saveQueue: Promise<void> = Promise.resolve();
 /**
  * Ensure the MCP config file exists at the default path. If it is
  * already present this is a no-op. If it is missing, the parent
- * directory is created (recursively) and a minimal `{}` JSON object
- * is written atomically (tmp + rename).
+ * directory is created (recursively, with mode 0o700 \u2014 see
+ * bug #21) and a minimal `{}` JSON object is written atomically
+ * (tmp + rename, with an explicit `fh.sync()` between the write
+ * and the rename for crash safety \u2014 see bug #5).
  *
  * Errors are logged and swallowed — this is a convenience init, not
  * a critical path.
@@ -68,9 +70,24 @@ export async function ensureMCPConfigFile(): Promise<void> {
 
     try {
         const dir = path.join(os.homedir(), MCP_CONFIG_DIRNAME);
-        await fsp.mkdir(dir, { recursive: true });
+        await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
         const tmpPath = configPath + '.tmp';
-        await fsp.writeFile(tmpPath, '{}', { encoding: 'utf8' });
+        // Open with mode 0o600 BEFORE writing so the file is
+        // never briefly world-readable (bug #21). The previous
+        // implementation used `fsp.writeFile` with a mode
+        // option, which on some platforms creates the file
+        // with the process umask first and chmods after.
+        const fh = await fsp.open(tmpPath, 'w', 0o600);
+        try {
+            await fh.writeFile('{}', { encoding: 'utf8' });
+            // Crash-safety: force the write to disk before the
+            // rename. Without this a power loss between rename
+            // and the OS writeback could leave a zero-length
+            // mcp.json on disk (bug #5).
+            await fh.sync();
+        } finally {
+            await fh.close();
+        }
         await fsp.rename(tmpPath, configPath);
     } catch (err) {
         console.error(`[mcp] failed to create default MCP config: ${(err as Error).message}`);
@@ -314,9 +331,99 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
     if (typeof raw.disabled === 'boolean') {
         server.disabled = raw.disabled;
     }
+    if (isPlainObject(raw.oauth)) {
+        server.oauth = normaliseOAuthConfig(raw.oauth, name);
+    }
 
     validateTransportConfig(server, key);
     return server;
+}
+
+/**
+ * Validate and shape the `oauth` block from raw config. We accept
+ * the documented subset (clientId / clientSecret / scopes /
+ * authorizationServerUrl) and silently drop anything else — keeps
+ * the loader forward-compatible with future SDK fields without
+ * forcing a config bump.
+ *
+ * `${env.X}` expansion is applied to the secret (the only field
+ * expected to carry a credential) so a user can keep the
+ * `clientSecret` out of `mcp.json`.
+ *
+ * Bug #8 fix: an unresolved `${env.X}` reference in `clientSecret`
+ * used to silently fall through to the empty string, leaving the
+ * SDK to send an empty `client_secret` and the user with a
+ * confusing "unauthorized client" error. We now scan the original
+ * input for any `${env.X}` token whose `expandEnvRefs` reported
+ * it as "not set" and reject the whole server config with a
+ * clear `MCPConfigError`. (The other OAuth fields are
+ * `clientId` and `scopes` — `clientId` is also expanded and we
+ * apply the same check for symmetry, since a blank `client_id`
+ * is just as broken as a blank `client_secret`.)
+ */
+function normaliseOAuthConfig(raw: Record<string, unknown>, key: string): import('./types').MCPOAuthConfig {
+    const result: import('./types').MCPOAuthConfig = {};
+    if (typeof raw.clientId === 'string' && raw.clientId.length > 0) {
+        const expanded = expandEnvRefs(raw.clientId, `MCP server "${key}" oauth.clientId`);
+        if (expanded.warnings.length > 0) {
+            for (const w of expanded.warnings) console.warn(`[mcp] ${w}`);
+        }
+        assertNoUnresolvedEnvRefs(raw.clientId, expanded.warnings, `MCP server "${key}" oauth.clientId`);
+        result.clientId = expanded.value;
+    }
+    if (typeof raw.clientSecret === 'string' && raw.clientSecret.length > 0) {
+        const expanded = expandEnvRefs(raw.clientSecret, `MCP server "${key}" oauth.clientSecret`);
+        if (expanded.warnings.length > 0) {
+            for (const w of expanded.warnings) console.warn(`[mcp] ${w}`);
+        }
+        assertNoUnresolvedEnvRefs(raw.clientSecret, expanded.warnings, `MCP server "${key}" oauth.clientSecret`);
+        result.clientSecret = expanded.value;
+    }
+    if (Array.isArray(raw.scopes)) {
+        const scopes: string[] = [];
+        for (const entry of raw.scopes) {
+            if (typeof entry === 'string' && entry.trim().length > 0) {
+                scopes.push(entry.trim());
+            }
+        }
+        if (scopes.length > 0) result.scopes = scopes;
+    }
+    if (typeof raw.authorizationServerUrl === 'string' && raw.authorizationServerUrl.length > 0) {
+        result.authorizationServerUrl = raw.authorizationServerUrl;
+    }
+    return result;
+}
+
+/**
+ * Inspect the warnings returned by `expandEnvRefs` and throw a
+ * `MCPConfigError` if any of them indicate an unresolved
+ * `${env.X}` reference in the original input. Used by
+ * `normaliseOAuthConfig` to surface typos / missing env vars in
+ * the OAuth credentials at config-load time (bug #8) instead of
+ * failing the actual connect with a confusing "Unauthorized
+ * client" error from the IdP.
+ *
+ * We match the warning text rather than the original input
+ * directly because `expandEnvRefs` already has the canonical
+ * warning format (`<context>: env var "<name>" is not set`).
+ * "Refused to expand dangerous env var" warnings are NOT
+ * treated as unresolved — the expansion was intentionally
+ * blocked for security reasons, and the empty-string result
+ * is the right answer (the upstream code logs the warning).
+ */
+function assertNoUnresolvedEnvRefs(
+    _original: string,
+    warnings: readonly string[],
+    context: string,
+): void {
+    for (const w of warnings) {
+        if (w.includes('is not set')) {
+            throw new MCPConfigError(
+                `${context} contains an unresolved env var: ${w}. ` +
+                `Set the env var in your shell before starting Locopilot, or remove the \${env.X} reference.`,
+            );
+        }
+    }
 }
 
 /**
@@ -445,7 +552,6 @@ export async function saveMCPServerDisabled(name: string, disabled: boolean): Pr
 
     const task = async (): Promise<void> => {
         const configPath = getMCPConfigPath();
-        const tmpPath = configPath + '.tmp';
 
         // Read + parse the raw file. We do NOT go through `loadMCPConfig`
         // because that swallows errors and would mask a broken file as
@@ -527,10 +633,24 @@ export async function saveMCPServerDisabled(name: string, disabled: boolean): Pr
             nextRoot.servers = nextServers;
         }
 
-        // Explicit `'utf8'` encoding — never the platform default — so
-        // we never accidentally write a UTF-8 BOM on Windows.
+        // Crash-safety + mode (bugs #5 + #21): open the tmp
+        // file with mode 0o600 BEFORE writing the JSON, force
+        // the write to disk with `fh.sync()` before the
+        // rename, and close in `finally`. The previous
+        // implementation skipped the `fsync`, which meant a
+        // power loss between the rename and the kernel's
+        // writeback could leave a zero-length `mcp.json` on
+        // disk. The mode is set at `open` time so the file is
+        // never briefly world-readable on a multi-user host.
+        const tmpPath = configPath + '.tmp';
         const json = JSON.stringify(nextRoot, null, 2);
-        await fsp.writeFile(tmpPath, json, { encoding: 'utf8' });
+        const fh = await fsp.open(tmpPath, 'w', 0o600);
+        try {
+            await fh.writeFile(json, { encoding: 'utf8' });
+            await fh.sync();
+        } finally {
+            await fh.close();
+        }
         await fsp.rename(tmpPath, configPath);
     };
 

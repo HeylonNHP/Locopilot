@@ -725,6 +725,37 @@
       background: rgba(234, 179, 8, 0.12);
       color: var(--status-warning);
     }
+    &--auth_required {
+      border-color: rgba(168, 85, 247, 0.35);
+      background: rgba(168, 85, 247, 0.12);
+      color: rgb(168, 85, 247);
+    }
+  }
+
+  // ── Authenticate button (Phase 3.5) ───────────────────
+  &-mcp-auth-btn {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(168, 85, 247, 0.40);
+    background: rgba(168, 85, 247, 0.18);
+    color: rgb(168, 85, 247);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: background 0.15s ease;
+
+    &:hover {
+      background: rgba(168, 85, 247, 0.28);
+    }
+    &:active {
+      background: rgba(168, 85, 247, 0.40);
+    }
+    &:focus-visible {
+      outline: 2px solid rgba(168, 85, 247, 0.6);
+      outline-offset: 2px;
+    }
   }
 
   // ── Tool count label (MCP) ─────────────────────────────────

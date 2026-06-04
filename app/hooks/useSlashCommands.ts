@@ -103,7 +103,7 @@ export function useSlashCommands({
             '/help      - Show all available commands\n' +
             '/clear     - Clear messages\n' +
             '/clear-images - Remove image attachments to free context\n' +
-            '/mcp       - List MCP servers and their tools, or /mcp reload\n' +
+            '/mcp       - List MCP servers, /mcp reload, or /mcp auth <server>\n' +
             '/model [name] - Switch LLM model\n' +
             '/compact   - Summarise conversation history\n' +
             '/title     - Generate a title for current session\n' +
@@ -477,8 +477,47 @@ export function useSlashCommands({
             }
             return;
           }
+          if (subCommand === 'auth') {
+            const target = args.split(' ').slice(1).join(' ').trim();
+            if (!target) {
+              addSystem('Usage: /mcp auth <server>\n\nRe-authenticates the named MCP server with OAuth 2.1 + PKCE. The auth URL is printed to the locopilot dev-server stderr; if you are running the chat UI, the "needs auth" pill in the MCP tab is also a click-to-authenticate shortcut.');
+              return;
+            }
+            // Bug #11 fix: client-side server-name validation
+            // mirrors the API route's `VALID_NAME_REGEX` so a
+            // typo gives an immediate, in-context error rather
+            // than a 400 round-trip. The API also validates,
+            // so this is belt-and-suspenders.
+            if (!/^[a-z0-9_-]+$/i.test(target)) {
+              addSystem(`MCP auth failed: server name "${target}" is invalid (must match /^[a-z0-9_-]+$/i).`);
+              return;
+            }
+            try {
+              const response = await fetch('/api/mcp/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ server: target }),
+              });
+              const data = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string; connected?: boolean };
+              if (!response.ok || data.ok !== true) {
+                throw new Error(data.error ?? `HTTP ${response.status}`);
+              }
+              if (data.connected === true) {
+                addSystem(`✅ MCP server "${target}" authenticated and connected.`);
+              } else {
+                addSystem(
+                  `🔐 MCP server "${target}" requires authorization.\n` +
+                  `Open the URL printed in the locopilot dev-server stderr in your browser, then come back here. The connection will retry automatically once you approve.\n` +
+                  `(You can also paste the captured "code" parameter back via: /mcp auth-code)`,
+                );
+              }
+            } catch (error) {
+              addSystem(`MCP auth failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+            return;
+          }
           if (subCommand && subCommand !== 'list') {
-            addSystem('Usage: /mcp [list|reload]\n\n/mcp list   - show configured servers and their tools\n/mcp reload - close all clients and re-read mcp.json');
+            addSystem('Usage: /mcp [list|reload|auth <server>]\n\n/mcp list   - show configured servers and their tools\n/mcp reload - close all clients and re-read mcp.json\n/mcp auth <server> - re-authenticate an OAuth-protected server');
             return;
           }
           try {
@@ -494,6 +533,7 @@ export function useSlashCommands({
               lastError?: string;
               toolCount: number;
               tools: Array<{ name: string; description?: string; fullName: string }>;
+              authUrl?: string;
             }> };
             const servers = data.servers ?? [];
             if (servers.length === 0) {
@@ -506,11 +546,15 @@ export function useSlashCommands({
                 server.status === 'connected' ? '🟢' :
                 server.status === 'connecting' ? '🟡' :
                 server.status === 'error' ? '🔴' :
+                server.status === 'auth_required' ? '🔐' :
                 server.status === 'not_loaded' ? '⚪' : '⚪';
               const desc = server.description ? ` — ${server.description}` : '';
               lines.push(`  ${statusEmoji} ${server.name} [${server.transport}] (${server.status}, ${server.toolCount} tool${server.toolCount === 1 ? '' : 's'})${desc}`);
               if (server.lastError) {
                 lines.push(`      last error: ${server.lastError}`);
+              }
+              if (server.status === 'auth_required') {
+                lines.push(`      run /mcp auth ${server.name} to re-authenticate`);
               }
               for (const tool of server.tools) {
                 const toolDesc = tool.description ? ` — ${tool.description}` : '';
@@ -518,6 +562,7 @@ export function useSlashCommands({
               }
             }
             lines.push('\nUse /mcp reload after editing mcp.json to apply changes.');
+            lines.push('Use /mcp auth <server> to re-authenticate an OAuth-protected server.');
             addSystem(lines.join('\n'));
           } catch (error) {
             addSystem(`MCP list failed: ${error instanceof Error ? error.message : 'Unknown error'}`);

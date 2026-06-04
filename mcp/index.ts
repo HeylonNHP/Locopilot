@@ -45,6 +45,28 @@ export {
     getClientManager,
     type MCPClientManager,
 } from './clientManager';
+// Phase 3.5: the OAuth-related symbols are re-exported so API
+// routes can import them from a single facade. The underlying
+// implementation lives in `mcp/oauthProvider.ts`; we deliberately
+// keep the public surface narrow so tests and consumers don't
+// reach into the SDK auth types unless they need to.
+export {
+    buildOAuthProvider,
+    consumeAuthorizationCode,
+    getLoopbackRedirectUrl,
+} from './oauthProvider';
+export {
+    clearOAuthState,
+    loadOAuthState,
+    saveOAuthState,
+    MCP_OAUTH_TOKENS_FILENAME,
+} from './oauthTokenStore';
+export type {
+    MCPSavedClientInformation,
+    MCPSavedOAuthState,
+    MCPSavedOAuthTokens,
+    MCPOAuthTokenStoreFile,
+} from './types';
 export {
     buildMCPToolDefinitions,
     buildMCPToolDefinitionsForSearch,
@@ -75,8 +97,9 @@ export interface MCPStatusEntry {
     name: string;
     description: string | undefined;
     transport: 'stdio' | 'http' | 'sse';
-    status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'not_loaded';
+    status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'not_loaded' | 'auth_required';
     lastError?: string | undefined;
+    authUrl?: string | undefined;
     tools: Array<{ name: string; description: string | undefined; fullName: string }>;
     toolCount: number;
 }
@@ -121,31 +144,42 @@ export async function listMCPServersWithStatus(options: { connect?: string; eage
 
     for (const server of servers) {
         if (server.disabled) {
-            out.push({
+            const entry: MCPStatusEntry = {
                 name: server.name,
                 description: server.description,
                 transport: server.transport.type,
                 status: 'not_loaded',
                 tools: [],
                 toolCount: 0,
-            });
+            };
+            out.push(entry);
             continue;
         }
 
         const handle = manager.get(server.name);
         if (!handle) {
-            out.push({
+            const entry: MCPStatusEntry = {
                 name: server.name,
                 description: server.description,
                 transport: server.transport.type,
                 status: 'disconnected',
                 tools: [],
                 toolCount: 0,
-            });
+            };
+            // Phase 3.5: hint the UI that OAuth is the reason
+            // the server can't auto-connect. The `authUrl` field
+            // is the loopback redirect URL the user will be sent
+            // back to; the chat UI combines this with the
+            // `lastError` text to render the "Authenticate"
+            // button.
+            if (server.oauth !== undefined) {
+                entry.authUrl = 'http://127.0.0.1:0/oauth/callback';
+            }
+            out.push(entry);
             continue;
         }
 
-        out.push({
+        const entry: MCPStatusEntry = {
             name: server.name,
             description: server.description,
             transport: server.transport.type,
@@ -157,7 +191,17 @@ export async function listMCPServersWithStatus(options: { connect?: string; eage
                 fullName: buildNamespacedName(server.name, t.name),
             })),
             toolCount: handle.tools.length,
-        });
+        };
+        // Phase 3.5: when the handle is in `auth_required` we
+        // also include a placeholder `authUrl` field so the UI
+        // can render the static loopback redirect hint. The
+        // actual IdP authorization URL is printed to the
+        // dev-server stderr (the SDK does not hand it back to
+        // the browser for security).
+        if (handle.status === 'auth_required') {
+            entry.authUrl = 'http://127.0.0.1:0/oauth/callback';
+        }
+        out.push(entry);
     }
 
     return { servers: out };
@@ -275,6 +319,36 @@ export async function getMCPToolCount(): Promise<number> {
 export async function getMCPServerConfig(name: string): Promise<MCPServerConfig | null> {
     const config = await loadMCPConfig();
     return config.mcpServers[name] ?? null;
+}
+
+/**
+ * Phase 3.5: re-authenticate a server with OAuth 2.1 + PKCE.
+ *
+ * Drops any saved tokens and triggers a fresh connection attempt
+ * so the SDK builds a new authorization URL. The handle is
+ * flipped to `auth_required` (with the URL printed to stderr)
+ * and the chat UI's "needs auth" pill is updated via the
+ * `auth-required` event on the MCP event bus.
+ *
+ * Used by `POST /api/mcp/auth`.
+ */
+export async function reauthenticateMCPServer(serverName: string): Promise<{ ok: boolean; reason?: string }> {
+    const manager = getClientManager();
+    const config = await loadMCPConfig();
+    manager.setRootConfig(config);
+    if (!config.mcpServers[serverName]) {
+        return { ok: false, reason: `unknown MCP server "${serverName}"` };
+    }
+    if (config.mcpServers[serverName]?.oauth === undefined) {
+        return { ok: false, reason: `MCP server "${serverName}" has no OAuth config` };
+    }
+    try {
+        await manager.reauthenticate(serverName);
+        return { ok: true };
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { ok: false, reason: message };
+    }
 }
 
 /**

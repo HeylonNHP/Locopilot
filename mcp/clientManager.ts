@@ -24,6 +24,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import {
@@ -35,6 +36,8 @@ import {
 } from './types';
 import { expandEnvRefsInRecord } from './envExpansion';
 import { emitMCPEvent } from './events';
+import { buildOAuthProvider, consumeAuthorizationCode } from './oauthProvider';
+import { clearOAuthState } from './oauthTokenStore';
 
 const CLIENT_NAME = 'locopilot';
 const CLIENT_VERSION = '0.0.1';
@@ -60,7 +63,10 @@ const DEFAULT_TIMEOUT_SECONDS = 60;
  * `sessionId?: string` declaration. The concrete classes themselves
  * do satisfy the interface at runtime.
  */
-function buildTransport(config: MCPServerConfig): StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
+function buildTransport(
+    config: MCPServerConfig,
+    authProvider: { provider: ReturnType<typeof buildOAuthProvider> extends Promise<infer T> ? T : never },
+): StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
     const transport = config.transport;
     if (transport.type === 'stdio') {
         const stdioArgs: {
@@ -91,12 +97,20 @@ function buildTransport(config: MCPServerConfig): StdioClientTransport | Streama
     const headers = headersResult.expanded ?? {};
 
     if (transport.type === 'http') {
-        // Pass headers via requestInit so the SDK sends them on every POST
-        // (including the initial `initialize` request). We deliberately do
-        // NOT set `authProvider` — OAuth is a Phase 3 concern (see plan).
-        return new StreamableHTTPClientTransport(url, {
+        // Build the transport options conditionally so we don't
+        // pass `authProvider: undefined` to a field typed as
+        // `authProvider?: OAuthClientProvider` under
+        // `exactOptionalPropertyTypes: true`. The `requestInit`
+        // header bag is always present (even when empty) so
+        // the SDK sends the same shape on every POST including
+        // the `initialize` handshake.
+        const httpOpts: ConstructorParameters<typeof StreamableHTTPClientTransport>[1] = {
             requestInit: { headers },
-        });
+        };
+        if (authProvider.provider !== undefined) {
+            httpOpts.authProvider = authProvider.provider;
+        }
+        return new StreamableHTTPClientTransport(url, httpOpts);
     }
 
     // SSE — the SDK keeps SSEClientTransport around for legacy servers
@@ -105,9 +119,13 @@ function buildTransport(config: MCPServerConfig): StdioClientTransport | Streama
     // the initial EventSource GET and the recurring POST, so the
     // Authorization / API-key headers set here apply to both sides.
     // (No separate `eventSourceInit.headers` is needed for auth.)
-    return new SSEClientTransport(url, {
+    const sseOpts: ConstructorParameters<typeof SSEClientTransport>[1] = {
         requestInit: { headers },
-    });
+    };
+    if (authProvider.provider !== undefined) {
+        sseOpts.authProvider = authProvider.provider;
+    }
+    return new SSEClientTransport(url, sseOpts);
 }
 
 /**
@@ -218,10 +236,17 @@ class MCPClientManager {
      * `handles` immediately so the status query works mid-handshake.
      */
     private async openConnection(serverName: string, config: MCPServerConfig): Promise<MCPClientHandle> {
+        // Phase 3.5: build the OAuth provider BEFORE the transport
+        // so the transport can attach it via the `authProvider`
+        // option. The provider is async because it allocates a
+        // loopback port for the OAuth callback. Returns
+        // `undefined` for stdio servers or for HTTP/SSE servers
+        // without an `oauth` config block.
+        const provider = await buildOAuthProvider(config);
         // Phase 2: build the SDK transport from the config. The transport
         // is built BEFORE the client so a malformed URL or invalid header
         // fails fast (synchronously) — no need to start a subprocess.
-        const transport = buildTransport(config);
+        const transport = buildTransport(config, { provider });
 
         // Phase 2 (feature C): wire up the `notifications/tools/list_changed`
         // handler. The SDK only activates the handler if the server
@@ -352,6 +377,7 @@ class MCPClientManager {
             if (abortController.signal.aborted) {
                 // disconnect() won the race — close everything and bail.
                 try { await client.close(); } catch { /* ignore */ }
+                try { await transport.close(); } catch { /* ignore */ }
                 throw new MCPConnectionError(`MCP server "${serverName}" connection was aborted before completion`, serverName);
             }
 
@@ -379,25 +405,82 @@ class MCPClientManager {
             return handle;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            // Phase 3.5: a 401 from the MCP server surfaces as
+            // an `UnauthorizedError` thrown by the SDK's OAuth
+            // middleware. We translate that into an `auth_required`
+            // status so the UI can show a "needs auth" pill, and
+            // emit a dedicated `auth-required` event so the chat
+            // route can also display the auth URL inline.
+            //
+            // Bug #16 fix: on auth failure the transport is
+            // STILL ALIVE (the SDK's `_authThenStart()` runs
+            // `auth()` synchronously from inside the transport,
+            // throws, and the abort controller is set but the
+            // listener ports etc. are still bound). We deliberately
+            // DO NOT close the transport here — `finishAuthAndRetry`
+            // will need it to perform the token exchange. Closing
+            // it would make the retry path unreachable.
+            const isAuthRequired = err instanceof UnauthorizedError;
             const failed: MCPClientHandle = {
                 name: serverName,
                 config,
                 client,
-                status: 'error',
+                status: isAuthRequired ? 'auth_required' : 'error',
                 tools: [],
-                lastError: message,
+                // The SDK's `UnauthorizedError` swallows the
+                // original error message (just sets
+                // `message = 'Unauthorized'`), so the user
+                // can't tell from this text alone whether the
+                // flow timed out, the IdP rejected the request,
+                // or the user simply hasn't authorised yet. The
+                // appended hint covers the two most common
+                // post-`auth_required` states: a hung listener
+                // (5-minute timeout) and a still-pending first
+                // handshake. Bug #2 asks us to surface the
+                // timeout specifically; we do so in the hint.
+                lastError: isAuthRequired
+                    ? `OAuth required: open the chat or click "Authenticate" in the MCP panel to grant access. (Underlying SDK error: ${message}. If the URL was printed but no callback arrived, the flow timed out after 5 minutes \u2014 re-run /mcp auth <server> to try again.)`
+                    : message,
             };
+            // failed handle so `finishAuthAndRetry` can call
+            // `transport.finishAuth(code)`. For other failures
+            // we drop the transport reference so any future
+            // `disconnect` knows there's nothing extra to close.
+            if (isAuthRequired) {
+                (failed as unknown as { transport: typeof transport }).transport = transport;
+            } else {
+                // Non-auth failures: tear down the child if the
+                // SDK didn't already (the AbortSignal should have
+                // done this, but be defensive).
+                try { await transport.close(); } catch { /* ignore */ }
+            }
             // Only overwrite the placeholder with a failed handle if
             // nobody else has already replaced it (e.g. disconnect()
             // ran and cleared the entry).
             if (this.handles.get(serverName) === (placeholder as unknown as MCPClientHandle)) {
                 this.handles.set(serverName, failed);
             }
+            // Always emit a state change so the UI reflects the
+            // new pill. For auth_required we ALSO emit the
+            // dedicated event with the auth URL hint; the
+            // regular `state` event keeps the existing UI in
+            // sync without a special case.
             emitMCPEvent({ kind: 'state', serverName });
+            if (isAuthRequired) {
+                emitMCPEvent({ kind: 'auth-required', serverName });
+            }
             placeholder.setError(err);
-            // Best-effort: tear down the child if the SDK didn't already
-            // (the AbortSignal should have done this, but be defensive).
-            try { await transport.close(); } catch { /* ignore */ }
+            // For non-auth failures, surface a connection error so
+            // the caller's promise chain can branch. For
+            // `auth_required` we surface a specialised error so
+            // the API route can render a 401 with a different
+            // shape (`{ authRequired: true, authUrl?: string }`).
+            if (isAuthRequired) {
+                throw new MCPConnectionError(
+                    `MCP server "${serverName}" requires OAuth 2.1 authentication`,
+                    serverName,
+                );
+            }
             throw new MCPConnectionError(message, serverName);
         }
     }
@@ -483,6 +566,191 @@ class MCPClientManager {
     async closeAll(): Promise<void> {
         const names = Array.from(new Set([...this.handles.keys(), ...this.inFlight.keys()]));
         await Promise.allSettled(names.map((name) => this.disconnect(name)));
+    }
+
+    /**
+     * Phase 3.5: re-authenticate a server with OAuth 2.1 + PKCE.
+     *
+     * The flow:
+     *   1) Wipe the saved token / client-info state for the server
+     *      so the SDK starts from a clean slate.
+     *   2) Tear down any existing handle (with the AbortSignal
+     *      synchronisation handled inside `disconnect`).
+     *   3) If a code is already pending in the loopback-listener
+     *      global stash (i.e. the user has just completed the
+     *      consent flow and the browser has hit the loopback
+     *      listener while the prior `redirectToAuthorization`
+     *      call was still resolving), consume it and call
+     *      `transport.finishAuth(code)` to perform the token
+     *      exchange. Otherwise drop into step 4.
+     *   4) Call `connect()` again. The SDK will see no tokens,
+     *      build an authorization URL, call our provider's
+     *      `redirectToAuthorization` (which prints the URL and
+     *      starts the loopback listener), and throw
+     *      `UnauthorizedError`. The catch in `openConnection`
+     *      flips the handle to `auth_required` and emits the
+     *      `auth-required` event.
+     *
+     * Bug #12 fix: `disconnect()` is called first so any
+     * in-flight connect (e.g. a chat request that triggered
+     * the auth flow) is settled before we start a new one. The
+     * shared `inFlight` promise is cleared inside `disconnect`
+     * so the next `connect()` doesn't reuse it.
+     *
+     * Bug #4 fix: errors from `connect()` that are NOT
+     * `auth_required` (e.g. server crashed mid-handshake) are
+     * recorded on the handle's `lastError` and a `state` event
+     * is emitted, so the UI sees the real reason instead of
+     * the misleading "needs auth" pill.
+     *
+     * Bug #15 fix: the error message in the catch now points
+     * the user at the dev-server log (where the auth URL was
+     * printed) and the `/mcp auth <server>` retry path.
+     */
+    async reauthenticate(serverName: string): Promise<{ authUrl?: string | undefined }> {
+        const config = this.rootConfig.mcpServers[serverName];
+        if (!config) {
+            throw new MCPConnectionError(`unknown MCP server "${serverName}"`, serverName);
+        }
+        if (config.oauth === undefined) {
+            throw new MCPConnectionError(`MCP server "${serverName}" has no OAuth config`, serverName);
+        }
+        // Check for a code already captured by the loopback
+        // listener (from a prior `redirectToAuthorization`
+        // call). If present, do the token exchange against the
+        // current transport (still alive in the failed
+        // `auth_required` handle) and reconnect.
+        const pendingCode = consumeAuthorizationCode(serverName);
+        if (pendingCode !== undefined) {
+            const result = await this.finishAuthAndRetry(serverName, pendingCode);
+            if (result.ok && result.connected) {
+                return {};
+            }
+            // Token exchange failed — fall through to the
+            // fresh-flow path below so the user can retry.
+            // (We don't clear the handle here; the next
+            // `connect()` will overwrite it.)
+        }
+        // Drop any cached state so the SDK starts from scratch.
+        await clearOAuthState(serverName);
+        // Tear down any existing handle. `disconnect` is
+        // idempotent so this is safe even when nothing is
+        // open. Bug #12: this also awaits any in-flight
+        // connect from a parallel caller.
+        await this.disconnect(serverName);
+        // The next `connect()` will throw on the SDK's 401; we
+        // catch and branch on the actual cause.
+        try {
+            await this.connect(serverName);
+        } catch (err) {
+            const isAuthRequired = err instanceof MCPConnectionError
+                && this.handles.get(serverName)?.status === 'auth_required';
+            if (isAuthRequired) {
+                // Expected for the first handshake; the handle
+                // is now in `auth_required` and the URL has
+                // been printed / emitted. The chat UI can
+                // render the click-to-authenticate button.
+                return {};
+            }
+            // Bug #4: a non-auth failure (e.g. server crashed,
+            // bad URL, TLS error) was silently being collapsed
+            // into a misleading "needs auth" pill. Update the
+            // handle's `lastError` with the actual cause and
+            // re-emit a `state` event so the UI shows the
+            // truthful error.
+            const message = err instanceof Error ? err.message : String(err);
+            const handle = this.handles.get(serverName);
+            if (handle !== undefined) {
+                handle.lastError = `OAuth flow did not complete. Check the dev-server log for the auth URL and complete the flow in your browser. If the URL doesn't appear, run /mcp auth ${serverName} again. (Underlying error: ${message})`;
+                handle.status = 'error';
+                emitMCPEvent({ kind: 'state', serverName });
+            }
+            return {};
+        }
+        // Connected (likely the user had a previous valid
+        // token cached that just needed a refresh). Nothing
+        // more to do.
+        return {};
+    }
+
+    /**
+     * Finish an in-flight OAuth flow by calling the SDK's
+     * `transport.finishAuth(code)` and reconnecting with a fresh
+     * transport.
+     *
+     * Called by:
+     * - The loopback HTTP listener (via the
+     *   `consumeAuthorizationCode` global stash) — when the
+     *   user completes the consent flow in their browser.
+     * - The `/api/mcp/auth` POST route — when the user pastes
+     *   the code manually (serverless / port-collision
+     *   fallback).
+     * - `reauthenticate`, when a code is already pending.
+     *
+     * Bug #16 fix: the SDK's `transport.finishAuth(code)` does
+     * the token exchange (via `auth()` with `authorizationCode`
+     * set) and writes the new tokens via `saveTokens()`. After
+     * the exchange the existing transport is still "started" —
+     * we cannot call `client.connect(transport)` on it again
+     * because the SDK throws `'already started'`. So we close
+     * the failed handle (transport + client) and let
+     * `connect()` build a fresh transport. The fresh transport
+     * will see the saved tokens and complete the handshake
+     * without re-running the OAuth dance.
+     *
+     * The transport reference lives on the `auth_required`
+     * handle (set in the catch block of `openConnection`); we
+     * duck-type to support all three SDK transports (only
+     * `http` and `sse` actually have a `finishAuth` method,
+     * but the type is open).
+     *
+     * If no code is stashed and no code is provided, this is a
+     * no-op (returns `{ ok: false, reason: 'no code' }`). The
+     * caller can then surface a useful error to the user.
+     */
+    async finishAuthAndRetry(
+        serverName: string,
+        providedCode: string | undefined,
+    ): Promise<{ ok: boolean; connected: boolean; reason?: string }> {
+        const code = providedCode ?? consumeAuthorizationCode(serverName);
+        if (code === undefined || code.length === 0) {
+            return { ok: false, connected: false, reason: 'no authorization code available' };
+        }
+        const handle = this.handles.get(serverName);
+        if (handle === undefined) {
+            return { ok: false, connected: false, reason: 'no in-flight connection' };
+        }
+        const transport = (handle as unknown as { transport?: unknown }).transport;
+        if (transport === undefined) {
+            return { ok: false, connected: false, reason: 'no transport on handle' };
+        }
+        // The SDK's transports both expose `finishAuth(code)`.
+        // StreamableHTTPClientTransport and SSEClientTransport
+        // declare it explicitly. We duck-type to keep this
+        // method portable across the two.
+        const finishAuth = (transport as { finishAuth?: (c: string) => Promise<void> }).finishAuth;
+        if (typeof finishAuth !== 'function') {
+            return { ok: false, connected: false, reason: 'transport does not support finishAuth' };
+        }
+        try {
+            await finishAuth.call(transport, code);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return { ok: false, connected: false, reason: `finishAuth failed: ${message}` };
+        }
+        // `finishAuth` did the token exchange; the saved tokens
+        // are now in `oauthTokenStore`. Tear down the failed
+        // handle (its transport is "started" and can't be
+        // reused) and start a fresh connect that will see the
+        // saved tokens and complete the handshake.
+        await this.disconnect(serverName);
+        try {
+            await this.connect(serverName);
+            return { ok: true, connected: true };
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return { ok: false, connected: false, reason: `reconnect after auth failed: ${message}` };
+        }
     }
 
     /**

@@ -61,6 +61,47 @@ export interface MCPHttpServerConfig {
     headers?: Record<string, string> | undefined;
 }
 
+/**
+ * OAuth 2.1 client configuration for an HTTP/SSE MCP server.
+ *
+ * The MCP spec mandates OAuth 2.1 + PKCE for remote servers. The
+ * Locopilot implementation is intentionally minimal: it persists
+ * the (deregistered) client ID, the configured scopes, and an
+ * optional authorization-server URL override; everything else
+ * (tokens, code verifier, dynamically-registered client info) is
+ * kept in `~/.locopilot/mcp-oauth-tokens.json` so secrets never
+ * land in `mcp.json`.
+ */
+export interface MCPOAuthConfig {
+    /**
+     * OAuth 2.1 client ID. If absent, the SDK falls back to Dynamic
+     * Client Registration (RFC 7591) if the server advertises a
+     * `registration_endpoint`. Most public MCP servers accept this.
+     */
+    clientId?: string | undefined;
+    /**
+     * OAuth 2.1 client secret. Most MCP servers don't use one
+     * (public clients with PKCE are the recommended pattern), so
+     * this is rare. Values may use `${env.X}` expansion at load time
+     * (the DANGEROUS_ENV_KEYS blocklist is applied).
+     */
+    clientSecret?: string | undefined;
+    /**
+     * OAuth 2.1 scopes to request, as an array of scope strings.
+     * The provider joins them with a single space before sending
+     * the request, per RFC 6749 §3.3.
+     */
+    scopes?: string[] | undefined;
+    /**
+     * Optional override for the authorization server base URL.
+     * When set, the SDK skips the RFC 9728 / 8414 well-known
+     * discovery dance and uses this URL directly. Useful for
+     * private deployments that don't publish the well-known
+     * document.
+     */
+    authorizationServerUrl?: string | undefined;
+}
+
 export type MCPTransportConfig = MCPStdioServerConfig | MCPHttpServerConfig;
 
 export interface MCPServerConfig {
@@ -87,6 +128,14 @@ export interface MCPServerConfig {
     disabledTools?: string[] | undefined;
     /** Manual override: server is loaded but never connected. */
     disabled?: boolean | undefined;
+    /**
+     * OAuth 2.1 client configuration. Only meaningful for `http` and
+     * `sse` transports. When set, the client manager builds an
+     * `OAuthClientProvider` and wires it into the SDK transport so
+     * the MCP `initialize` handshake can complete on a 401-protected
+     * server. See `mcp/oauthProvider.ts` for the implementation.
+     */
+    oauth?: MCPOAuthConfig | undefined;
 }
 
 /**
@@ -101,9 +150,80 @@ export interface MCPRootConfig {
     $schema?: string;
 }
 
+// --- OAuth 2.1 + PKCE types (Phase 3.5) ---
+
+/**
+ * Subset of the SDK's `OAuthClientInformation` that's safe to
+ * round-trip through `mcp.json` (it has no secrets). Tokens and
+ * the PKCE code verifier are NEVER written here — they live in
+ * `~/.locopilot/mcp-oauth-tokens.json` (see `mcp/oauthTokenStore.ts`).
+ */
+export interface MCPSavedClientInformation {
+    client_id: string;
+    client_secret?: string | undefined;
+    client_id_issued_at?: number | undefined;
+    client_secret_expires_at?: number | undefined;
+}
+
+/**
+ * Subset of the SDK's `OAuthTokens` that we persist. We deliberately
+ * keep the field names identical to the SDK so the JSON file is
+ * round-trippable with no transformation.
+ */
+export interface MCPSavedOAuthTokens {
+    access_token: string;
+    id_token?: string | undefined;
+    token_type: string;
+    expires_in?: number | undefined;
+    scope?: string | undefined;
+    refresh_token?: string | undefined;
+}
+
+/**
+ * Persisted state for a single OAuth-enabled MCP server. Kept on
+ * disk so the user does not have to re-authenticate on every
+ * server restart. The file is `~/.locopilot/mcp-oauth-tokens.json`.
+ */
+export interface MCPSavedOAuthState {
+    /**
+     * The dynamically-registered or statically-configured OAuth
+     * client information. Empty when DCR hasn't been performed yet
+     * (e.g. the user is still on the pre-auth handshake).
+     */
+    clientInformation?: MCPSavedClientInformation | undefined;
+    /**
+     * The most recently issued token set. The SDK uses this on the
+     * next connect; on a 401 it falls back to refresh-token flow.
+     */
+    tokens?: MCPSavedOAuthTokens | undefined;
+    /**
+     * The PKCE code verifier for an in-flight authorization flow.
+     * Cleared once the code is exchanged. Only present for the
+     * brief window between the user opening the auth URL and the
+     * callback hitting our loopback server.
+     */
+    codeVerifier?: string | undefined;
+    /**
+     * Last known authorization server URL (from RFC 9728 / 8414
+     * discovery, or the static override). Persisted so subsequent
+     * auth attempts can skip the well-known round-trip.
+     */
+    authorizationServerUrl?: string | undefined;
+}
+
+/**
+ * The on-disk shape of `~/.locopilot/mcp-oauth-tokens.json`.
+ * Top-level `version` is reserved for forward-compat schema
+ * migrations (we currently use `1`).
+ */
+export interface MCPOAuthTokenStoreFile {
+    version: 1;
+    servers: Record<string, MCPSavedOAuthState>;
+}
+
 // --- Runtime / process-global types ---
 
-export type MCPConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type MCPConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'auth_required';
 
 export interface MCPToolInfo {
     name: string;
