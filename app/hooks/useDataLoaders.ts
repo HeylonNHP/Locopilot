@@ -142,6 +142,8 @@ export function useDataLoaders(refs: StableRefs) {
             compactionModel: config.compactionModel ?? state.compactionModel,
             chatTimeoutMs: config.chatTimeoutMs ?? state.chatTimeoutMs,
             webSearch: config.webSearch ?? state.webSearch,
+            completionMode: config.completionMode ?? state.completionMode,
+            maxPromptLoopIterations: config.maxPromptLoopIterations ?? state.maxPromptLoopIterations,
           },
         });
         // Fetch and apply model context limit after config is loaded

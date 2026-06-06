@@ -2,7 +2,8 @@
  * POST /api/chat – Streaming AI chat route with tool-calling loop.
  *
  * The client sends:
- *   { messages, model, numCtx?, sessionId?, baseUrl?, think? }
+ *   { messages, model, numCtx?, sessionId?, baseUrl?, think?,
+ *     completionMode?, maxPromptLoopIterations? }
  *
  * The server runs the full AI agent loop (LLM → tools → LLM → …) and
  * streams back Server-Sent Events (SSE) for every incremental update.
@@ -12,8 +13,8 @@
  *   event: chunk\ndata: <string>\n\n
  *   event: tool_call\ndata: {"name":"…","arguments":{…}}\n\n
  *   event: tool_result\ndata: {"name":"…","result":"…","duration":123}\n\n
- *   event: status\ndata: {"phase":"thinking"|"responding"|"tools","tokensUsed":N,"tokenLimit":N}\n\n
- *   event: done\ndata: {"content":"…","thinking":"…","sessionId":N,"tokenStats":{…}}\n\n
+ *   event: status\ndata: {"phase":"thinking"|"responding"|"tools"|"truncated"|"completeness-check","tokensUsed":N,"tokenLimit":N}\n\n
+ *   event: done\ndata: {"content":"…","thinking":"…","sessionId":N,"tokenStats":{…},"doneReason":"stop"|"length"}\n\n
  *   event: error\ndata: {"message":"…"}\n\n
  */
 
@@ -34,6 +35,7 @@ import { countMessagesTokens, countTextTokens } from '../../../services/tokenize
 import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
 import { createSystemPrompt } from '../../../services/chatSession';
+import { checkCompleteness } from '../../../services/promptLoop';
 import { discoverSkills, loadSkillState, getEnabledSkills, getAllowedToolsFromSkills } from '../../../services/skillManager';
 import { enterRequestScope } from '../../../tools/impl/runCommandTool';
 import { getMergedMCPToolDefinitions, getMergedMCPToolDefinitionsForSearch, getMCPServerConfig, getMCPToolCount } from '../../../mcp';
@@ -81,6 +83,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     const baseUrl: unknown = body.baseUrl;
     const think: unknown = body.think;
     const chatTimeoutMs: unknown = body.chatTimeoutMs;
+    const completionMode: unknown = body.completionMode;
+    const maxPromptLoopIterations: unknown = body.maxPromptLoopIterations;
 
     // -- Validation ------------------------------------------------
     if (typeof model !== 'string' || !model.trim()) {
@@ -118,6 +122,27 @@ export async function POST(req: NextRequest): Promise<Response> {
     const parsedSessionId = typeof sessionId === 'number'
         ? sessionId
         : undefined;
+
+    const effectiveCompletionMode = typeof completionMode === 'string' && completionMode === 'prompt-loop'
+        ? 'prompt-loop'
+        : 'normal';
+
+    const effectiveMaxPromptLoopIterations = typeof maxPromptLoopIterations === 'number'
+        && Number.isFinite(maxPromptLoopIterations)
+        ? Math.max(0, Math.floor(maxPromptLoopIterations))
+        : 4;
+
+    // Capture the last user-role message from the incoming request as the
+    // "original user request" for the prompt-loop judge.
+    let originalUserRequest: string | null = null;
+    // messages is already validated as non-empty array above.
+    for (let i = (messages as unknown[]).length - 1; i >= 0; i--) {
+        const m = (messages as unknown[])[i] as Record<string, unknown> | null | undefined;
+        if (m && m.role === 'user' && typeof m.content === 'string') {
+            originalUserRequest = m.content;
+            break;
+        }
+    }
 
     const thinkEnabled = typeof think === 'boolean' ? think : undefined;
 
@@ -457,7 +482,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 };
 
                 // ── Main tool-calling loop ──────────────────────────────────
-                while (true) {
+                outer: while (true) {
 
                     // Auto-compact when approaching the context limit, mirroring the
                     // server-side autoCompactIfNeeded() logic in services/chatSession.ts.
@@ -1023,7 +1048,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         await flushSessionState();
 
                         // Continue the loop so the LLM can process the tool results.
-                        continue;
+                        continue outer;
                     }
 
                     // -- No tool calls – this is the final response -----------
@@ -1040,20 +1065,76 @@ export async function POST(req: NextRequest): Promise<Response> {
                         console.warn(
                             `[chat] Ignoring terminal chunk with done_reason=${lastDoneReason}`,
                         );
-                        continue;
+                        continue outer;
                     }
 
                     if (lastDoneReason === 'length') {
                         // Response was cut off by num_predict. Surface this to
                         // the client so the UI can display a truncation hint
-                        // (when one is implemented) and so the (future)
-                        // Prompt-loop feature can tailor its continuation
-                        // nudge.
+                        // (when one is implemented) and so the Prompt-loop
+                        // feature can tailor its continuation nudge.
                         sendEvent('status', {
                             phase: 'truncated',
                             tokensUsed: promptEvalCount + evalCount,
                             tokenLimit: effectiveNumCtx,
                         });
+                    }
+
+                    // -- Prompt-loop completeness check ────────────────────────
+                    // When prompt-loop mode is active and the model produced a
+                    // non-truncated final response, ask the judge whether the
+                    // original user request was really satisfied. If not,
+                    // inject a continuation nudge and re-enter the outer LLM
+                    // loop. Capped at effectiveMaxPromptLoopIterations (0 = unlimited).
+                    if (
+                        effectiveCompletionMode === 'prompt-loop'
+                        && lastDoneReason !== 'load'
+                        && lastDoneReason !== 'unload'
+                        && originalUserRequest
+                        && content.trim()
+                    ) {
+                        const cap = effectiveMaxPromptLoopIterations === 0
+                            ? Infinity
+                            : effectiveMaxPromptLoopIterations;
+                        let loopIterations = 0;
+                        while (loopIterations < cap) {
+                            loopIterations++;
+                            sendEvent('status', {
+                                phase: 'completeness-check',
+                                iteration: loopIterations,
+                                maxIterations: effectiveMaxPromptLoopIterations,
+                                tokensUsed: promptEvalCount + evalCount,
+                                tokenLimit: effectiveNumCtx,
+                            });
+
+                            const satisfied = await checkCompleteness(
+                                effectiveBaseUrl,
+                                model as string,
+                                effectiveNumCtx,
+                                originalUserRequest,
+                                content,
+                                req.signal,
+                            );
+
+                            if (satisfied) break;
+
+                            // Not satisfied — inject a continuation nudge and
+                            // re-enter the outer streaming loop.
+                            const nudgeText =
+                                `Continue working on my original request. ` +
+                                `It is not yet complete.\n\n` +
+                                `Original request: ${originalUserRequest}`;
+                            currentMessages.push({
+                                role: 'user',
+                                content: nudgeText,
+                            });
+                            serverMessagesAccumulator.push({
+                                role: 'user',
+                                content: nudgeText,
+                            });
+                            await flushSessionState();
+                            continue outer;
+                        }
                     }
 
                     finalContent = content;

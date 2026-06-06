@@ -38,6 +38,8 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
                 resultsPerQuery: 3,
                 perPageCharLimit: 5000,
             },
+            completionMode: 'normal',
+            maxPromptLoopIterations: 4,
             ...(currentConfig ?? {}),
         };
 

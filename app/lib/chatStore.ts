@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useReducer, type ReactNode } from 'react';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+import type { CompletionMode } from '@/types/chatConfig';
 
 export interface ChatMessage {
   /** Stable client-only identity used as React list key. Never sent to the server. */
@@ -97,6 +98,10 @@ interface ChatState {
   compactionModel: string;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
+  /** Completion mode: 'normal' (default) or 'prompt-loop' (auto-continue). */
+  completionMode: CompletionMode;
+  /** Max prompt-loop iterations; 0 = unlimited. */
+  maxPromptLoopIterations: number;
   /**
    * Why the most recently completed turn's LLM stream ended. Mirrors
    * `SessionState.lastDoneReason` for the active session. See that field
@@ -631,6 +636,8 @@ const initialState: ChatState = {
     resultsPerQuery: 3,
     perPageCharLimit: 5000,
   },
+  completionMode: 'normal',
+  maxPromptLoopIterations: 4,
   tokenStats: null,
   currentTps: null,
   compactingPhases: [],

@@ -2,6 +2,7 @@
 
 import { useRef, useEffect } from 'react';
 import type { ChatMessage, LLmModel, Session, WebSearchConfig } from '@/app/lib/chatStore';
+import type { CompletionMode } from '@/types/chatConfig';
 
 /** A mutable ref container (the writable counterpart to React 19's read-only RefObject). */
 export type WritableRef<T> = { current: T };
@@ -23,6 +24,8 @@ export interface StableRefs {
   compactionModelRef: WritableRef<string>;
   chatTimeoutMsRef: WritableRef<number>;
   webSearchRef: WritableRef<WebSearchConfig>;
+  completionModeRef: WritableRef<CompletionMode>;
+  maxPromptLoopIterationsRef: WritableRef<number>;
 }
 
 interface StableRefsInput {
@@ -38,6 +41,8 @@ interface StableRefsInput {
   compactionModel: string;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
+  completionMode: CompletionMode;
+  maxPromptLoopIterations: number;
 }
 
 /**
@@ -58,6 +63,9 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const compactionModelRef = useRef(state.compactionModel);
   const chatTimeoutMsRef = useRef(state.chatTimeoutMs);
   const webSearchRef = useRef(state.webSearch);
+  const completionModeRef = useRef(state.completionMode);
+  const maxPromptLoopIterationsRef = useRef(state.maxPromptLoopIterations);
+
 
   // sessionIdRef must be updated synchronously during render (not in a useEffect)
   // so the buffer guard in useChatStream.ts sees the new session immediately after
@@ -77,6 +85,9 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   useEffect(() => { compactionModelRef.current = state.compactionModel; }, [state.compactionModel]);
   useEffect(() => { chatTimeoutMsRef.current = state.chatTimeoutMs; }, [state.chatTimeoutMs]);
   useEffect(() => { webSearchRef.current = state.webSearch; }, [state.webSearch]);
+  useEffect(() => { completionModeRef.current = state.completionMode; }, [state.completionMode]);
+  useEffect(() => { maxPromptLoopIterationsRef.current = state.maxPromptLoopIterations; }, [state.maxPromptLoopIterations]);
+
 
   // Return a stable container so the same object identity is returned every render.
   // Individual ref objects (created by useRef above) are already stable; only the
@@ -96,6 +107,8 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       compactionModelRef,
       chatTimeoutMsRef,
       webSearchRef,
+      completionModeRef,
+      maxPromptLoopIterationsRef,
     };
   }
   return containerRef.current;

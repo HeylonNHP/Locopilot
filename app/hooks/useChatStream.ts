@@ -561,6 +561,8 @@ export function useChatStream(
         compactionModel: refs.compactionModelRef.current,
         chatTimeoutMs: refs.chatTimeoutMsRef.current,
         webSearch: refs.webSearchRef.current,
+        completionMode: refs.completionModeRef.current,
+        maxPromptLoopIterations: refs.maxPromptLoopIterationsRef.current,
       };
       retryPayloadRef.current = { body: JSON.stringify(bodyObj) };
       requestFailedMapRef.current.set(requestId, false);

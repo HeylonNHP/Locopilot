@@ -1,6 +1,8 @@
 import type { ChatMessage } from '../services/llm';
 import type { SessionTokenStats } from '../history';
 
+export type CompletionMode = 'normal' | 'prompt-loop';
+
 export interface Config {
     baseUrl: string;
     lastModel?: string;
@@ -32,6 +34,10 @@ export interface Config {
      * `MCP_TOOL_SEARCH_THRESHOLD` in `constants.ts`.
      */
     mcpToolSearch?: boolean;
+    /** Completion mode: 'normal' (default) or 'prompt-loop' (auto-continue). */
+    completionMode?: CompletionMode;
+    /** Max prompt-loop iterations before giving up; 0 = unlimited. */
+    maxPromptLoopIterations?: number;
 }
 
 export interface ChatContext {

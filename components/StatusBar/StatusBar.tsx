@@ -4,6 +4,7 @@ import './StatusBar.scss';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useChat } from '@/app/lib/chatStore';
 import ModelSelector from '../ModelSelector';
+import CompletionModeSelector from '../CompletionModeSelector';
 
 export default function StatusBar() {
   const { state } = useChat();
@@ -11,6 +12,8 @@ export default function StatusBar() {
   const [showSelector, setShowSelector] = useState(false);
   const [isDark, setIsDark] = useState(false);
   const modelRef = useRef<HTMLSpanElement>(null);
+  const modeRef = useRef<HTMLSpanElement>(null);
+  const [showModeSelector, setShowModeSelector] = useState(false);
 
   // Sync isDark with the current data-theme attribute (set by FOUC script or toggle)
   useEffect(() => {
@@ -25,6 +28,14 @@ export default function StatusBar() {
 
   const handleCloseSelector = useCallback(() => {
     setShowSelector(false);
+  }, []);
+
+  const handleOpenModeSelector = useCallback(() => {
+    setShowModeSelector(true);
+  }, []);
+
+  const handleCloseModeSelector = useCallback(() => {
+    setShowModeSelector(false);
   }, []);
 
   const handleThemeToggle = useCallback(() => {
@@ -56,6 +67,13 @@ export default function StatusBar() {
   const tpsValue = state.currentTps ?? tokenStats?.evalTps ?? tokenStats?.promptTps;
   const tpsLabel = tpsValue != null ? `${tpsValue} t/s` : null;
 
+  const completionMode = (state.completionMode || 'normal') as string;
+  const maxIterations = state.maxPromptLoopIterations ?? 4;
+  const maxLabel = maxIterations === 0 ? '∞' : String(maxIterations);
+  const modeLabel = completionMode === 'prompt-loop'
+    ? `Prompt loop (${maxLabel})`
+    : 'Normal';
+
   return (
     <div className="statusbar">
       {state.currentSessionId !== null && state.streamingSessions.has(state.currentSessionId) && (
@@ -84,11 +102,33 @@ export default function StatusBar() {
         )}
       </span>
       <span>{messages.length} messages</span>
+      <span ref={modeRef}>
+        <span
+          className="statusbar-mode"
+          onClick={handleOpenModeSelector}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleOpenModeSelector();
+            }
+          }}
+        >
+          Mode: {modeLabel}
+        </span>
+      </span>
 
       <ModelSelector
         anchorRef={modelRef}
         isOpen={showSelector}
         onClose={handleCloseSelector}
+      />
+
+      <CompletionModeSelector
+        anchorRef={modeRef}
+        isOpen={showModeSelector}
+        onClose={handleCloseModeSelector}
       />
 
       <button
