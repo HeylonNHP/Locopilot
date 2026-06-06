@@ -61,7 +61,6 @@ export async function checkCompleteness(
             messages,
             tools: [] as import('./adapters/llmAdapter').ToolDefinition[],
             numCtx,
-            think: false,
             options: { temperature: 0 },
             ...(signal ? { signal } : {}),
         });
@@ -69,7 +68,7 @@ export async function checkCompleteness(
         const answer = (response.message.content ?? '').trim().toUpperCase();
         if (response.message.thinking) {
             console.log(
-                `[prompt-loop] Judge thinking: "${response.message.thinking.slice(0, 200)}"`,
+                `[prompt-loop] Judge thinking: "${response.message.thinking.slice(0, 300)}"`,
             );
         }
         if (!answer) {
