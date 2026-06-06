@@ -29,8 +29,12 @@ const JUDGE_SYSTEM_PROMPT =
  * @param userRequest    - The user's original prompt for this turn
  * @param assistantReply - The assistant's (presumed) final response
  * @param signal         - AbortSignal from the HTTP request
- * @returns true if the task is satisfied, false otherwise. Defaults to true
- *          on any error (fail-open — transient judge failures don't loop).
+ * @returns true if the task is satisfied, false otherwise. Returns true only
+ *          when the judge's answer explicitly starts with 'YES'; everything
+ *          else (including 'NO', ambiguous text, or empty responses) is
+ *          treated as NOT satisfied so the prompt loop continues. On a
+ *          thrown exception (network/model failure) returns true to prevent
+ *          an infinite loop.
  */
 export async function checkCompleteness(
     baseUrl: string,
@@ -62,9 +66,17 @@ export async function checkCompleteness(
         });
 
         const answer = (response.message.content ?? '').trim().toUpperCase();
-        return answer.startsWith('YES') || !answer.startsWith('NO');
-    } catch {
-        // Fail open — a transient judge error shouldn't cause an infinite loop.
+        const satisfied = answer.startsWith('YES');
+        console.log(
+            `[prompt-loop] Judge answer: "${answer.slice(0, 80)}" → ${satisfied ? 'satisfied' : 'NOT satisfied'}`,
+        );
+        return satisfied;
+    } catch (err) {
+        // Judge call failed (network, model crash, etc.). Log and treat as
+        // satisfied so a transient infrastructure error doesn't infinite-loop.
+        console.error(
+            `[prompt-loop] Judge call failed: ${err instanceof Error ? err.message : String(err)} — treating as satisfied to avoid infinite loop`,
+        );
         return true;
     }
 }

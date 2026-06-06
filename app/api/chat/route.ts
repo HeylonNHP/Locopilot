@@ -1097,6 +1097,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                             ? Infinity
                             : effectiveMaxPromptLoopIterations;
                         let loopIterations = 0;
+                        console.log(
+                            `[chat] Prompt-loop active (cap=${cap === Infinity ? '∞' : cap}, ` +
+                            `doneReason=${lastDoneReason ?? 'undefined'})`,
+                        );
                         while (loopIterations < cap) {
                             loopIterations++;
                             sendEvent('status', {
@@ -1116,10 +1120,14 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 req.signal,
                             );
 
-                            if (satisfied) break;
+                            if (satisfied) {
+                                console.log(`[chat] Prompt-loop: satisfied after ${loopIterations} check(s)`);
+                                break;
+                            }
 
                             // Not satisfied — inject a continuation nudge and
                             // re-enter the outer streaming loop.
+                            console.log(`[chat] Prompt-loop: not satisfied, injecting nudge (iteration ${loopIterations})`);
                             const nudgeText =
                                 `Continue working on my original request. ` +
                                 `It is not yet complete.\n\n` +
