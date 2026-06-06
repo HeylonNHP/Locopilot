@@ -144,6 +144,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
     }
 
+    // Total judge checks across all outer-loop iterations (prevents counter
+    // reset on continue outer).
+    let promptLoopIterations = 0;
+
     const thinkEnabled = typeof think === 'boolean' ? think : undefined;
 
     // ── SSE streaming setup ───────────────────────────────────────────
@@ -1096,16 +1100,18 @@ export async function POST(req: NextRequest): Promise<Response> {
                         const cap = effectiveMaxPromptLoopIterations === 0
                             ? Infinity
                             : effectiveMaxPromptLoopIterations;
-                        let loopIterations = 0;
+                        const HARD_CEILING = 20;
+                        const effectiveCap = Math.min(cap, HARD_CEILING);
                         console.log(
                             `[chat] Prompt-loop active (cap=${cap === Infinity ? '∞' : cap}, ` +
+                            `effectiveCap=${effectiveCap}, ` +
                             `doneReason=${lastDoneReason ?? 'undefined'})`,
                         );
-                        while (loopIterations < cap) {
-                            loopIterations++;
+                        while (promptLoopIterations < effectiveCap) {
+                            promptLoopIterations++;
                             sendEvent('status', {
                                 phase: 'completeness-check',
-                                iteration: loopIterations,
+                                iteration: promptLoopIterations,
                                 maxIterations: effectiveMaxPromptLoopIterations,
                                 tokensUsed: promptEvalCount + evalCount,
                                 tokenLimit: effectiveNumCtx,
@@ -1121,13 +1127,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                             );
 
                             if (satisfied) {
-                                console.log(`[chat] Prompt-loop: satisfied after ${loopIterations} check(s)`);
+                                console.log(`[chat] Prompt-loop: satisfied after ${promptLoopIterations} check(s)`);
                                 break;
                             }
 
                             // Not satisfied — inject a continuation nudge and
                             // re-enter the outer streaming loop.
-                            console.log(`[chat] Prompt-loop: not satisfied, injecting nudge (iteration ${loopIterations})`);
+                            console.log(`[chat] Prompt-loop: not satisfied, injecting nudge (iteration ${promptLoopIterations})`);
                             const nudgeText =
                                 `Continue working on my original request. ` +
                                 `It is not yet complete.\n\n` +

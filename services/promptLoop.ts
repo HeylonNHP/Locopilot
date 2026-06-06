@@ -61,11 +61,20 @@ export async function checkCompleteness(
             messages,
             tools: [] as import('./adapters/llmAdapter').ToolDefinition[],
             numCtx,
-            options: { num_predict: 32 },
+            think: false,
+            options: { temperature: 0 },
             ...(signal ? { signal } : {}),
         });
 
         const answer = (response.message.content ?? '').trim().toUpperCase();
+        if (response.message.thinking) {
+            console.log(
+                `[prompt-loop] Judge thinking: "${response.message.thinking.slice(0, 200)}"`,
+            );
+        }
+        if (!answer) {
+            console.warn('[prompt-loop] Judge returned empty content — treating as NOT satisfied');
+        }
         const satisfied = answer.startsWith('YES');
         console.log(
             `[prompt-loop] Judge answer: "${answer.slice(0, 80)}" → ${satisfied ? 'satisfied' : 'NOT satisfied'}`,
