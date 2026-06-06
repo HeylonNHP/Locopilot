@@ -26,6 +26,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const baseUrl = body.baseUrl;
     const compactionModel = body.compactionModel;
     const sessionId = body.sessionId;
+    const think: unknown = body.think;
 
     if (typeof model !== 'string' || !model.trim()) {
         return NextResponse.json(
@@ -82,6 +83,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             effectiveCompactionModel,
             conversationMessages,
             effectiveNumCtx,
+            undefined,
+            typeof think === 'boolean' ? think : undefined,
         );
 
         await enqueueSessionRename(parsedSessionId, title);

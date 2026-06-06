@@ -93,6 +93,7 @@ export async function generateSessionTitle(
     messages: ChatMessage[],
     numCtx: number,
     onProgress?: (message: string) => void,
+    think?: boolean,
 ): Promise<string> {
     if (messages.length <= 1) {
         throw new Error('Not enough conversation history to generate a session title.');
@@ -198,10 +199,10 @@ export async function generateSessionTitle(
                 ],
                 tools: [],
                 numCtx: cappedNumCtx,
+                ...(think !== undefined ? { think } : {}),
                 ...(strategy.format ? { format: strategy.format } : {}),
                 options: {
                     temperature: 0.2,
-                    num_predict: 128,
                 },
             });
 

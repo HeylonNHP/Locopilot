@@ -390,6 +390,7 @@ export function useSlashCommands({
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
                 sessionId: refs.sessionIdRef.current,
+                think: refs.thinkingEnabledRef.current,
               }),
             });
 
