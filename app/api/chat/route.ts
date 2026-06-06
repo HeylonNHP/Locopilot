@@ -575,6 +575,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                     let streamStartMs = 0;
                     let roughTokens = 0;
                     let lastTpsStatusMs = 0;
+                    // Captured on the chunk with `done: true`. Distinguishes a natural
+                    // end-of-sequence (`stop`) from a token-cap truncation (`length`)
+                    // and from server heartbeats (`load` / `unload`). The chat route
+                    // never previously consulted this field.
+                    let lastDoneReason: string | undefined;
 
                     // ── Retry transient LLM errors (503, 502, 504, 429, network) ──
                     const MAX_LLM_RETRIES = 3;
@@ -636,6 +641,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     evalCount = chunk.eval_count ?? 0;
                                     promptEvalDuration = (chunk as any).prompt_eval_duration ?? 0;
                                     evalDuration = (chunk as any).eval_duration ?? 0;
+                                    lastDoneReason = chunk.done_reason;
                                 }
                             }
 
@@ -681,6 +687,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             streamStartMs = 0;
                             roughTokens = 0;
                             lastTpsStatusMs = 0;
+                            lastDoneReason = undefined;
 
                             // Exponential backoff with abort-signal awareness
                             const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1);
@@ -1020,6 +1027,35 @@ export async function POST(req: NextRequest): Promise<Response> {
                     }
 
                     // -- No tool calls – this is the final response -----------
+                    // Inspect the terminal chunk's `done_reason` to distinguish a
+                    // natural end-of-sequence from a token-cap truncation or a
+                    // server heartbeat. The reason field augments the existing
+                    // content-based "no tool calls = final" check; it never
+                    // replaces it (some local providers can return
+                    // done_reason="stop" even when tool_calls is populated).
+                    if (lastDoneReason === 'load' || lastDoneReason === 'unload') {
+                        // Server heartbeat with `done: true` — not a real turn.
+                        // Skip it and let the outer loop continue; the stream
+                        // will end naturally on the next iteration.
+                        console.warn(
+                            `[chat] Ignoring terminal chunk with done_reason=${lastDoneReason}`,
+                        );
+                        continue;
+                    }
+
+                    if (lastDoneReason === 'length') {
+                        // Response was cut off by num_predict. Surface this to
+                        // the client so the UI can display a truncation hint
+                        // (when one is implemented) and so the (future)
+                        // Prompt-loop feature can tailor its continuation
+                        // nudge.
+                        sendEvent('status', {
+                            phase: 'truncated',
+                            tokensUsed: promptEvalCount + evalCount,
+                            tokenLimit: effectiveNumCtx,
+                        });
+                    }
+
                     finalContent = content;
                     finalThinking = thinking;
 
@@ -1067,6 +1103,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             promptTps,
                             evalTps: effectiveEvalTps,
                         },
+                        doneReason: lastDoneReason ?? 'stop',
                     });
 
                     controller.close();

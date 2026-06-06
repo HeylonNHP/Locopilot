@@ -43,6 +43,8 @@ export interface WebSearchConfig {
   perPageCharLimit: number;
 }
 
+export type DoneReason = 'stop' | 'length' | 'load' | 'unload' | 'unknown';
+
 export interface SessionState {
     messages: ChatMessage[];
     error: string | null;
@@ -57,6 +59,16 @@ export interface SessionState {
     } | null;
     currentTps: number | null;
     compactingPhases: string[];
+    /**
+     * Why the most recently completed turn's LLM stream ended. Populated from
+     * the `done` SSE event's `doneReason` field (Ollama values: `stop`,
+     * `length`, `load`, `unload`). `undefined` until a turn completes;
+     * `unknown` is the fallback for older Ollama versions that omit the
+     * field. `length` indicates the model hit `num_predict` and the response
+     * was truncated; `stop` is a natural end-of-sequence. The client UI can
+     * read this to surface a truncation hint (not yet implemented in v1).
+     */
+    lastDoneReason?: DoneReason | undefined;
     pendingApproval: {
         command: { name: string; args: any } | null;
         requestId: string | null;
@@ -85,6 +97,12 @@ interface ChatState {
   compactionModel: string;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
+  /**
+   * Why the most recently completed turn's LLM stream ended. Mirrors
+   * `SessionState.lastDoneReason` for the active session. See that field
+   * for the full description of the value space.
+   */
+  lastDoneReason?: DoneReason | undefined;
   tokenStats: {
     promptEvalCount: number;
     evalCount: number;
@@ -121,6 +139,7 @@ type ChatAction =
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'REMOVE_LAST_ASSISTANT' }
   | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats']; targetSessionId?: number }
+  | { type: 'SET_DONE_REASON'; reason: DoneReason | undefined; targetSessionId?: number }
   | { type: 'SET_CURRENT_TPS'; tps: number | null }
   | { type: 'CLEAR_TOKEN_STATS' }
   | { type: 'COMPACT_PROGRESS'; message: string }
@@ -286,6 +305,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tokenStats: state.tokenStats,
         currentTps: state.currentTps,
         compactingPhases: state.compactingPhases,
+        lastDoneReason: state.lastDoneReason,
         pendingApproval: state.pendingCommand ? {
           command: state.pendingCommand,
           requestId: state.pendingApprovalId,
@@ -318,7 +338,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           nextState = {
             ...nextState,
             sessionStates: newMap,
-            newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null },
+            newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null, lastDoneReason: undefined },
           };
           session = promoted;
         }
@@ -330,6 +350,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             tokenStats: session.tokenStats,
             currentTps: session.currentTps,
             compactingPhases: session.compactingPhases,
+            lastDoneReason: session.lastDoneReason,
           };
         } else {
           // Session not yet initialised — start fresh (don't auto-create slot)
@@ -350,6 +371,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           tokenStats: nextState.newSessionState.tokenStats,
           currentTps: nextState.newSessionState.currentTps,
           compactingPhases: nextState.newSessionState.compactingPhases,
+          lastDoneReason: nextState.newSessionState.lastDoneReason,
         };
       }
 
@@ -426,6 +448,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             currentTps: null,
             compactingPhases: [],
             pendingApproval: null,
+            lastDoneReason: undefined,
           };
           newMap.set(state.currentSessionId, session);
           nextState = { ...nextState, sessionStates: newMap };
@@ -474,6 +497,12 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       }
       return { ...state, tokenStats: action.stats };
     }
+    case 'SET_DONE_REASON': {
+      if (action.targetSessionId !== undefined && action.targetSessionId !== state.currentSessionId) {
+        return state;
+      }
+      return { ...state, lastDoneReason: action.reason };
+    }
     case 'SET_CURRENT_TPS':
       return { ...state, currentTps: action.tps };
     case 'CLEAR_TOKEN_STATS':
@@ -490,6 +519,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         currentTps: null,
         compactingPhases: [],
         pendingApproval: null,
+        lastDoneReason: undefined,
       });
       return { ...state, sessionStates: newMap };
     }
@@ -500,6 +530,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tokenStats: state.tokenStats,
         currentTps: state.currentTps,
         compactingPhases: state.compactingPhases,
+        lastDoneReason: state.lastDoneReason,
         pendingApproval: state.pendingCommand ? {
           command: state.pendingCommand,
           requestId: state.pendingApprovalId,
@@ -523,6 +554,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             tokenStats: session.tokenStats,
             currentTps: session.currentTps,
             compactingPhases: session.compactingPhases,
+            lastDoneReason: session.lastDoneReason,
             pendingCommand: session.pendingApproval?.command ?? null,
             showApproval: session.pendingApproval ? session.pendingApproval.command !== null : false,
             pendingApprovalId: session.pendingApproval?.requestId ?? null,
@@ -547,6 +579,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tokenStats: state.newSessionState.tokenStats,
         currentTps: state.newSessionState.currentTps,
         compactingPhases: state.newSessionState.compactingPhases,
+        lastDoneReason: state.newSessionState.lastDoneReason,
         pendingCommand: state.newSessionState.pendingApproval?.command ?? null,
         showApproval: state.newSessionState.pendingApproval ? state.newSessionState.pendingApproval.command !== null : false,
         pendingApprovalId: state.newSessionState.pendingApproval?.requestId ?? null,
@@ -602,7 +635,7 @@ const initialState: ChatState = {
   currentTps: null,
   compactingPhases: [],
   sessionStates: new Map<number, SessionState>(),
-  newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null },
+  newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null, lastDoneReason: undefined },
   streamingSessions: new Set<number>(),
 };
 
@@ -622,7 +655,7 @@ export function useChat() {
 
 export function getActiveSessionState(state: ChatState): SessionState {
     if (state.currentSessionId !== null) {
-        return state.sessionStates.get(state.currentSessionId) ?? { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null };
+        return state.sessionStates.get(state.currentSessionId) ?? { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null, lastDoneReason: undefined };
     }
     return state.newSessionState;
 }
