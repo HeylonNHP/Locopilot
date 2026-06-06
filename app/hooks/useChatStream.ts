@@ -245,6 +245,17 @@ export function useChatStream(
           // This event is in DELTA_EVENTS so it is buffered when the user is away
           // and replayed (applying the final tokenStats) when they return.
           if (data.tokenStats) dispatch({ type: 'SET_TOKEN_STATS', stats: data.tokenStats });
+          if (typeof data.doneReason === 'string') {
+            // Normalize the server-side value to our DoneReason union. The server
+            // coerces missing values to 'stop' and is the source of truth for
+            // valid values; this is purely defensive.
+            const reason = (['stop', 'length', 'load', 'unload', 'unknown'] as const).includes(
+              data.doneReason as any,
+            )
+              ? (data.doneReason as 'stop' | 'length' | 'load' | 'unload' | 'unknown')
+              : 'unknown';
+            dispatch({ type: 'SET_DONE_REASON', reason });
+          }
           dispatch({ type: 'SET_CURRENT_TPS', tps: null });
           break;
         }
