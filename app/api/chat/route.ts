@@ -628,36 +628,42 @@ export async function POST(req: NextRequest): Promise<Response> {
                             for await (const chunk of llmStream) {
                                 const msg = chunk.message;
 
-                                // Stream thinking token chunks (e.g. for deep-thinking models).
-                                if (msg?.thinking) {
-                                    const thinkingChunk = sanitizeAssistantTextFragment(msg.thinking);
-                                    if (thinkingChunk) {
-                                        thinking += thinkingChunk;
-                                        sendEvent('thinking', thinkingChunk);
-                                    }
+                            // Stream thinking token chunks (e.g. for deep-thinking models).
+                            if (msg?.thinking) {
+                                const thinkingChunk = sanitizeAssistantTextFragment(msg.thinking);
+                                if (thinkingChunk) {
+                                    thinking += thinkingChunk;
+                                    sendEvent('thinking', thinkingChunk);
+                                    // Count thinking tokens toward live throughput so the TPS
+                                    // badge stays visible during long reasoning chains.
+                                    roughTokens += countTextTokens(thinkingChunk, model as string);
                                 }
+                            }
 
-                                // Stream regular content chunks.
-                                if (msg?.content) {
-                                    const contentChunk = sanitizeAssistantTextFragment(msg.content);
-                                    if (contentChunk) {
-                                        content += contentChunk;
-                                        sendEvent('chunk', contentChunk);
-                                        // Live token count for t/s display.
-                                        roughTokens += countTextTokens(contentChunk, model as string);
-                                        const now = Date.now();
-                                        if (now - lastTpsStatusMs > 800) {
-                                            const elapsedSec = (now - streamStartMs) / 1000;
-                                            if (elapsedSec > 0) {
-                                                sendEvent('status', {
-                                                    phase: 'responding',
-                                                    tps: +(roughTokens / elapsedSec).toFixed(2),
-                                                });
-                                            }
-                                            lastTpsStatusMs = now;
-                                        }
-                                    }
+                            // Stream regular content chunks.
+                            if (msg?.content) {
+                                const contentChunk = sanitizeAssistantTextFragment(msg.content);
+                                if (contentChunk) {
+                                    content += contentChunk;
+                                    sendEvent('chunk', contentChunk);
+                                    roughTokens += countTextTokens(contentChunk, model as string);
                                 }
+                            }
+
+                            // Live token count for t/s display — emit at most once every 800 ms.
+                            if (roughTokens > 0) {
+                                const now = Date.now();
+                                if (now - lastTpsStatusMs > 800) {
+                                    const elapsedSec = (now - streamStartMs) / 1000;
+                                    if (elapsedSec > 0) {
+                                        sendEvent('status', {
+                                            phase: 'responding',
+                                            tps: +(roughTokens / elapsedSec).toFixed(2),
+                                        });
+                                    }
+                                    lastTpsStatusMs = now;
+                                }
+                            }
 
                                 // Capture tool calls from the final (or any) chunk.
                                 if (msg?.tool_calls && msg.tool_calls.length > 0) {
@@ -776,7 +782,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                             phase: 'tools',
                             tokensUsed: promptEvalCount + evalCount,
                             tokenLimit: effectiveNumCtx,
-                            tps: null,
                         });
 
                         const tokensUsedSoFar = promptEvalCount + evalCount;

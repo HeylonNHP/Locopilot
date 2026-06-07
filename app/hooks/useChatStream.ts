@@ -287,6 +287,7 @@ export function useChatStream(
 
       const { body } = retryPayloadRef.current;
       dispatch({ type: 'SET_ERROR', error: null });
+      dispatch({ type: 'SET_CURRENT_TPS', tps: null });
 
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
@@ -393,6 +394,7 @@ export function useChatStream(
           retryPayloadRef.current = null;
         }
         requestFailedMapRef.current.delete(requestId);
+        dispatch({ type: 'SET_CURRENT_TPS', tps: null });
       }
     },
     [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions],
@@ -684,6 +686,7 @@ export function useChatStream(
           retryPayloadRef.current = null;
         }
         requestFailedMapRef.current.delete(requestId);
+        dispatch({ type: 'SET_CURRENT_TPS', tps: null });
       }
     },
     [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions],

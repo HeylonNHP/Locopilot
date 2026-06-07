@@ -500,7 +500,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (action.targetSessionId !== undefined && action.targetSessionId !== state.currentSessionId) {
         return state;
       }
-      return { ...state, tokenStats: action.stats };
+      // Merge with existing stats so that durable fields like evalTps /
+      // promptTps (sent once on the `done` event) survive transient
+      // `status` updates that only carry tokensUsed / tokenLimit.
+      const base = state.tokenStats ?? { promptEvalCount: 0, evalCount: 0, totalTokens: 0, tokenLimit: 0 };
+      return { ...state, tokenStats: { ...base, ...action.stats } };
     }
     case 'SET_DONE_REASON': {
       if (action.targetSessionId !== undefined && action.targetSessionId !== state.currentSessionId) {
