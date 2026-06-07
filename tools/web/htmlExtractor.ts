@@ -291,6 +291,14 @@ export function extractLinks(html: string, baseUrl: string): ExtractedLink[] {
 
 export interface FetchAndExtractOptions {
     usePlaywright?: boolean;
+    /**
+     * When true, skip per-page character-limit compaction and return the
+     * full extracted text. Used by the fetch_url tool's `full_content`
+     * option to let the LLM opt out of compaction for a specific URL
+     * (e.g. large code snippets or documentation pages where the full
+     * content is needed).
+     */
+    fullContent?: boolean;
     signal?: AbortSignal;
 }
 
@@ -359,7 +367,7 @@ export async function fetchAndExtract(
     const title = extractTitle(extractionHtml, extractionUrl);
     const links = extractLinks(extractionHtml, extractionUrl);
 
-    if (settings.perPageCharLimit <= 0) {
+    if (options.fullContent || settings.perPageCharLimit <= 0) {
         return { title, text, finalUrl: extractionUrl, links };
     }
 

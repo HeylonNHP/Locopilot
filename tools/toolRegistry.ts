@@ -126,6 +126,7 @@ export interface ToolCallArguments {
     queries?: string[] | string;
     max_queries?: number;
     use_playwright?: boolean;
+    full_content?: boolean;
     url?: string;
     source?: string;
     path?: string;
@@ -222,6 +223,8 @@ async function runFetchUrl(
     settings: WebSearchSettings,
     onProgress?: (message: string) => void,
     output: ToolOutputSink = noopToolOutputSink,
+    model?: string,
+    numCtx?: number,
     signal?: AbortSignal,
 ): Promise<string> {
     const tool = new FetchUrlTool({
@@ -229,6 +232,8 @@ async function runFetchUrl(
             ...settings,
             output,
         },
+        model,
+        numCtx,
         onProgress: (message: string) => {
             output.writeLine(message);
             onProgress?.(message);
@@ -409,6 +414,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         {
                             url: args.url,
                             use_playwright: args.use_playwright === true,
+                            full_content: args.full_content === true,
                         },
                         context?.webSearch ?? {
                             maxQueries: 3,
@@ -420,6 +426,8 @@ export const toolRegistry = new Map<string, IToolCommand>([
                         },
                         onProgress,
                         output,
+                        context?.subAgent?.model ?? context?.model,
+                        context?.subAgent?.numCtx ?? context?.numCtx,
                         signal,
                     ),
                 };
