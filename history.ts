@@ -204,10 +204,26 @@ export function updateSessionMessages(
     const persistableMessages = messages.filter((m) => m.role !== 'system');
 
     const run = db.transaction(() => {
-        stmtDeleteMessages.run(sessionId);
+        // Insert new messages into a temp staging table first, so the
+        // original data survives if the process crashes mid-write.
+        db.exec(
+            'CREATE TABLE IF NOT EXISTS messages_staging ' +
+            '(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, ' +
+            'role TEXT NOT NULL, content TEXT NOT NULL DEFAULT \'\', ' +
+            'thinking TEXT NOT NULL DEFAULT \'\', tool_calls TEXT NOT NULL DEFAULT \'[]\', ' +
+            'images TEXT NOT NULL DEFAULT \'[]\', subagent_id TEXT NOT NULL DEFAULT \'\')',
+        );
+        const stmtDeleteStaging = db.prepare<[number]>(
+            'DELETE FROM messages_staging WHERE session_id = ?',
+        );
+        stmtDeleteStaging.run(sessionId);
+
+        const stmtInsertStaging = db.prepare<[number, string, string, string, string, string, string]>(
+            'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        );
         for (const msg of persistableMessages) {
             const sanitizedMessage = sanitizeChatMessage(msg);
-            stmtInsertMessage.run(
+            stmtInsertStaging.run(
                 sessionId,
                 sanitizedMessage.role,
                 sanitizedMessage.content ?? '',
@@ -217,6 +233,18 @@ export function updateSessionMessages(
                 (msg as any).subagentId ?? '',
             );
         }
+
+        // Atomic swap: delete originals only after staging is complete,
+        // then move staged rows into the real table.
+        stmtDeleteMessages.run(sessionId);
+        const stmtCopyStaging = db.prepare<[number]>(
+            'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id) ' +
+            'SELECT session_id, role, content, thinking, tool_calls, images, subagent_id ' +
+            'FROM messages_staging WHERE session_id = ?',
+        );
+        stmtCopyStaging.run(sessionId);
+        stmtDeleteStaging.run(sessionId);
+
         if (tokenStats) {
             const totalTokens = tokenStats.promptEvalCount + tokenStats.evalCount;
             stmtUpdateSessionTokenStats.run(

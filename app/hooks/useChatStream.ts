@@ -254,7 +254,8 @@ export function useChatStream(
             )
               ? (data.doneReason as 'stop' | 'length' | 'load' | 'unload' | 'unknown')
               : 'unknown';
-            dispatch({ type: 'SET_DONE_REASON', reason });
+            const doneOwnerSessionId = requestId != null ? bufferOwnerMapRef.current.get(requestId) : undefined;
+            dispatch({ type: 'SET_DONE_REASON', reason, ...(doneOwnerSessionId !== undefined ? { targetSessionId: doneOwnerSessionId } : {}) });
           }
           dispatch({ type: 'SET_CURRENT_TPS', tps: null });
           break;
@@ -288,6 +289,7 @@ export function useChatStream(
       const { body } = retryPayloadRef.current;
       dispatch({ type: 'SET_ERROR', error: null });
       dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+      dispatch({ type: 'SET_DONE_REASON', reason: undefined });
 
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);

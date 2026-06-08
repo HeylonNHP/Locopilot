@@ -76,6 +76,7 @@ export function useSessionActions({
   const handleSelectSession = useCallback(
     async (sessionId: number) => {
       sessionSwitchIdRef.current = sessionId;
+      sessionIdRef.current = sessionId;
       dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
       await loadSessionMessages(sessionId);
       // Bail out if the user switched to a different session while this was loading

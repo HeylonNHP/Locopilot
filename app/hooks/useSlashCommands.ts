@@ -4,6 +4,7 @@ import { useCallback } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { useChat, type ChatMessage } from '@/app/lib/chatStore';
 import { buildToolUseNudge } from '@/services/toolUseNudge';
+import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
 import type { StableRefs, WritableRef } from './useStableRefs';
 
 interface SlashCommandDeps {
@@ -123,10 +124,15 @@ export function useSlashCommands({
         }
 
         case 'clear-images': {
+          if (isCurrentSessionStreaming) {
+            addSystem('Stop the current response before running /clear-images.');
+            return;
+          }
+
           const currentMessages = refs.messagesRef.current;
           const sessionId = refs.sessionIdRef.current;
 
-          // Count what we're about to remove so we can report it
+          // Count images to report
           let removedImages = 0;
           let removedMessages = 0;
           for (const m of currentMessages) {
@@ -141,18 +147,8 @@ export function useSlashCommands({
             return;
           }
 
-          // Update client state immediately so the UI re-renders without images
-          const stripped = currentMessages.map((m) => {
-            if (m.images && m.images.length > 0) {
-              const { images: _images, ...rest } = m;
-              return rest as ChatMessage;
-            }
-            return m;
-          });
-          dispatch({ type: 'SET_MESSAGES', messages: stripped });
-
-          // Persist in the background — failure is non-fatal
           if (sessionId) {
+            // Server-first: call API, then apply the server's cleaned messages
             try {
               const response = await fetch('/api/clear-images', {
                 method: 'POST',
@@ -160,16 +156,43 @@ export function useSlashCommands({
                 body: JSON.stringify({ sessionId }),
               });
               if (!response.ok) {
-                addSystem(`Cleared from view, but server save failed: HTTP ${response.status}`);
+                const errText = await response.text().catch(() => `HTTP ${response.status}`);
+                addSystem(`Failed to clear images on server: ${errText}`);
                 return;
               }
+              const data = await response.json().catch(() => null) as { messages?: ChatMessage[]; removedImages?: number; removedMessages?: number } | null;
+              if (data && Array.isArray(data.messages)) {
+                removedImages = data.removedImages ?? removedImages;
+                removedMessages = data.removedMessages ?? removedMessages;
+                dispatch({ type: 'SET_MESSAGES', messages: data.messages });
+              } else {
+                // Fallback: server didn't return messages, strip client-side
+                const stripped = currentMessages.map((m) => {
+                  if (m.images && m.images.length > 0) {
+                    const { images: _images, ...rest } = m;
+                    return rest as ChatMessage;
+                  }
+                  return m;
+                });
+                dispatch({ type: 'SET_MESSAGES', messages: stripped });
+              }
             } catch (error) {
-              addSystem(`Cleared from view, but server save failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+              addSystem(`Failed to clear images: ${error instanceof Error ? error.message : 'Unknown error'}`);
               return;
             }
+          } else {
+            // No session ID (unsaved session) — strip client-side only
+            const stripped = currentMessages.map((m) => {
+              if (m.images && m.images.length > 0) {
+                const { images: _images, ...rest } = m;
+                return rest as ChatMessage;
+              }
+              return m;
+            });
+            dispatch({ type: 'SET_MESSAGES', messages: stripped });
           }
 
-          const freedTokens = removedImages * 1024;
+          const freedTokens = removedImages * IMAGE_TOKEN_ESTIMATE;
           addSystem(
             `🖼️ **Cleared image attachments:** ${removedImages} image${removedImages === 1 ? '' : 's'} ` +
             `from ${removedMessages} message${removedMessages === 1 ? '' : 's'}. ` +

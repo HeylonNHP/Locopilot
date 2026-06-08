@@ -46,6 +46,7 @@ export const dynamic = 'force-dynamic';
 
 const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 3;
 const CHANNEL_LABEL_ONLY_PATTERN = /^\s*(?:thought|analysis|final|commentary)\s*$/i;
+const VALID_DONE_REASONS = new Set(['stop', 'length', 'load', 'unload']);
 
 function sanitizeAssistantTextFragment(text: string): string {
     const cleaned = stripSpecialTokens(text ?? '');
@@ -676,7 +677,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     evalCount = chunk.eval_count ?? 0;
                                     promptEvalDuration = (chunk as any).prompt_eval_duration ?? 0;
                                     evalDuration = (chunk as any).eval_duration ?? 0;
-                                    lastDoneReason = chunk.done_reason;
+                                    lastDoneReason = (typeof chunk.done_reason === 'string' && VALID_DONE_REASONS.has(chunk.done_reason))
+                                    ? chunk.done_reason
+                                    : undefined;
                                 }
                             }
 

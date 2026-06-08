@@ -3,12 +3,28 @@ import './ChatMessageBubble.scss';
 
 import dynamic from 'next/dynamic';
 import { type ChatMessage } from '@/app/lib/chatStore';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 const MarkdownMessage = dynamic(() => import('../MarkdownMessage'), {
   ssr: false,
   loading: () => null,
 });
+
+class MarkdownErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state: { hasError: boolean } = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) {
+      return <div className="bubble-ai-msg" style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>Failed to render markdown</div>;
+    }
+    return this.props.children;
+  }
+}
 
 interface Props {
   message: ChatMessage;
@@ -87,7 +103,7 @@ export default function ChatMessageBubble({ message }: Props) {
     const text = message.content ?? '';
     if (!text) return;
 
-    const fallbackCopy = () => {
+    const fallbackCopy = (): boolean => {
       const textarea = document.createElement('textarea');
       textarea.value = text;
       textarea.style.position = 'fixed';
@@ -95,20 +111,26 @@ export default function ChatMessageBubble({ message }: Props) {
       document.body.appendChild(textarea);
       textarea.select();
       try {
-        document.execCommand('copy');
+        return document.execCommand('copy');
       } catch {
-        // silently fail — no clipboard available
+        return false;
+      } finally {
+        document.body.removeChild(textarea);
       }
-      document.body.removeChild(textarea);
     };
 
+    let succeeded = false;
     if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).catch(fallbackCopy);
+      navigator.clipboard.writeText(text)
+        .then(() => { setCopied(true); })
+        .catch(() => {
+          succeeded = fallbackCopy();
+          if (succeeded) setCopied(true);
+        });
     } else {
-      fallbackCopy();
+      succeeded = fallbackCopy();
+      if (succeeded) setCopied(true);
     }
-
-    setCopied(true);
   }, [message.content]);
 
   if (message.role === 'user') {
@@ -182,7 +204,6 @@ export default function ChatMessageBubble({ message }: Props) {
         onClick={handleCopyMarkdown}
         disabled={!hasContent}
         aria-label={copied ? 'Markdown copied to clipboard' : 'Copy message as markdown'}
-        title={copied ? 'Copied!' : 'Copy raw markdown'}
         className={
           'bubble-copy-md' + (copied ? ' bubble-copy-md--copied' : '')
         }
@@ -229,7 +250,7 @@ export default function ChatMessageBubble({ message }: Props) {
           </button>
           {showThinking && (
             <div className="bubble-thinking-box">
-              <MarkdownMessage source={message.thinking ?? ''} className="markdown-message--thinking" />
+              <MarkdownErrorBoundary><MarkdownMessage source={message.thinking ?? ''} className="markdown-message--thinking" /></MarkdownErrorBoundary>
             </div>
           )}
         </div>
@@ -251,9 +272,10 @@ export default function ChatMessageBubble({ message }: Props) {
           tabIndex={hasThinking && !hasContent ? 0 : undefined}
           title={hasThinking && !hasContent ? (showThinking ? 'Hide reasoning' : 'Show reasoning') : undefined}
           className={`bubble-ai-msg${hasThinking && !hasContent ? ' cursor-pointer' : ''}`}
+          suppressHydrationWarning
         >
           {hasContent || message.role !== 'assistant' ? (
-            <MarkdownMessage source={message.content} />
+            <MarkdownErrorBoundary><MarkdownMessage source={message.content} /></MarkdownErrorBoundary>
           ) : (
             '...'
           )}
