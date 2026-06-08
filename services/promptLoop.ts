@@ -22,7 +22,7 @@ const JUDGE_SYSTEM_PROMPT =
 const CRITIC_SYSTEM_PROMPT =
     'You are a quality assurance reviewer. A completeness check determined that an AI assistant\'s reply did NOT fully satisfy the user\'s original request.\n\n' +
     'Explain specifically what is missing, incomplete, or incorrect in the assistant\'s reply. Be precise and actionable — your explanation will be shown to the assistant so it can improve its next attempt.\n\n' +
-    'Focus on concrete deficiencies (e.g., "the reply omitted error handling", "the code does not handle the edge case where X is empty", "the explanation did not cover Y"). Avoid vague statements like "not thorough enough" — say what is actually absent.';
+    'Focus on concrete deficiencies (e.g., "the reply omitted error handling", "the code does not handle the edge case where X is empty", "the explanation did not cover Y"). Avoid vague statements like "not thorough enough" — say what is actually absent. Keep your critique concise — roughly 1-3 sentences, or about 1000 characters at most. A short, targeted explanation helps the assistant fix the issue faster than a lengthy review. Focus on what\'s missing, not what\'s present.';
 
 /**
  * Asks the LLM to explain what is missing or incomplete in the assistant's
@@ -70,15 +70,6 @@ export async function generateJudgeFeedback(
             console.log(
                 `[prompt-loop] Critic thinking: "${response.message.thinking.slice(0, 300)}"`,
             );
-        }
-        if (!feedback) {
-            console.warn('[prompt-loop] Critic returned empty content');
-        }
-        // Cap at 600 characters, cutting at the last word boundary to avoid
-        // mid-sentence truncation.
-        if (feedback.length > 600) {
-            const lastSpace = feedback.lastIndexOf(' ', 600);
-            feedback = feedback.slice(0, lastSpace > 0 ? lastSpace : 600) + '…';
         }
         console.log(
             `[prompt-loop] Critic feedback: "${feedback.slice(0, 80)}${feedback.length > 80 ? '...' : ''}"`,
