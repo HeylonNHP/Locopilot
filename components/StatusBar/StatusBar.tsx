@@ -13,6 +13,7 @@ export default function StatusBar() {
   const [isDark, setIsDark] = useState(false);
   const modelRef = useRef<HTMLSpanElement>(null);
   const modeRef = useRef<HTMLSpanElement>(null);
+  const lastClickRef = useRef<{ x: number; y: number } | null>(null);
   const [showModeSelector, setShowModeSelector] = useState(false);
 
   // Sync isDark with the current data-theme attribute (set by FOUC script or toggle)
@@ -20,8 +21,11 @@ export default function StatusBar() {
     setIsDark(document.documentElement.getAttribute('data-theme') === 'dark');
   }, []);
 
-  const handleOpenSelector = useCallback(() => {
+  const handleOpenSelector = useCallback((e: { clientX: number; clientY: number }) => {
     if (state.models.length > 0 && model) {
+      // Snapshot the click coordinates so the dropdown can anchor to the
+      // exact point the user clicked, even if the anchor ref re-renders.
+      lastClickRef.current = { x: e.clientX, y: e.clientY };
       setShowSelector(true);
     }
   }, [state.models.length, model]);
@@ -30,7 +34,8 @@ export default function StatusBar() {
     setShowSelector(false);
   }, []);
 
-  const handleOpenModeSelector = useCallback(() => {
+  const handleOpenModeSelector = useCallback((e: { clientX: number; clientY: number }) => {
+    lastClickRef.current = { x: e.clientX, y: e.clientY };
     setShowModeSelector(true);
   }, []);
 
@@ -83,9 +88,10 @@ export default function StatusBar() {
         {totalTokens}/{tokenLimit} tokens ({pct}%) {sourceLabel}
       </span>
       {tpsLabel && <span>{tpsLabel}</span>}
-      <span ref={modelRef}>
+      <span>
         {model && (
           <span
+            ref={modelRef}
             className="statusbar-model"
             onClick={handleOpenSelector}
             role="button"
@@ -93,7 +99,17 @@ export default function StatusBar() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                handleOpenSelector();
+                // Keyboard activation: pass the anchor element's centre
+                // as the click point so the dropdown anchors sensibly.
+                if (modelRef.current) {
+                  const rect = modelRef.current.getBoundingClientRect();
+                  handleOpenSelector({
+                    clientX: rect.left + rect.width / 2,
+                    clientY: rect.top,
+                  });
+                } else {
+                  handleOpenSelector({ clientX: 0, clientY: 0 });
+                }
               }
             }}
           >
@@ -102,18 +118,29 @@ export default function StatusBar() {
         )}
       </span>
       <span>{messages.length} messages</span>
-      <span ref={modeRef}>
+      <span>
         <span
+          ref={modeRef}
           className="statusbar-mode"
-          onClick={handleOpenModeSelector}
+            onClick={handleOpenModeSelector}
           role="button"
           tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              handleOpenModeSelector();
-            }
-          }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                // Keyboard activation: pass the anchor element's centre
+                // as the click point so the dropdown anchors sensibly.
+                if (modeRef.current) {
+                  const rect = modeRef.current.getBoundingClientRect();
+                  handleOpenModeSelector({
+                    clientX: rect.left + rect.width / 2,
+                    clientY: rect.top,
+                  });
+                } else {
+                  handleOpenModeSelector({ clientX: 0, clientY: 0 });
+                }
+              }
+            }}
         >
           Mode: {modeLabel}
         </span>
@@ -121,12 +148,14 @@ export default function StatusBar() {
 
       <ModelSelector
         anchorRef={modelRef}
+        lastClickRef={lastClickRef}
         isOpen={showSelector}
         onClose={handleCloseSelector}
       />
 
       <CompletionModeSelector
         anchorRef={modeRef}
+        lastClickRef={lastClickRef}
         isOpen={showModeSelector}
         onClose={handleCloseModeSelector}
       />

@@ -1,7 +1,8 @@
 'use client';
 import './ModelSelector.scss';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useChat } from '@/app/lib/chatStore';
 
 const CAPABILITY_LABELS: Record<string, string> = {
@@ -40,39 +41,72 @@ function getCapabilityBadges(capabilities?: string[]): string[] {
 
 interface ModelSelectorProps {
   anchorRef: React.RefObject<HTMLElement | null>;
+  lastClickRef: React.MutableRefObject<{ x: number; y: number } | null>;
   isOpen: boolean;
   onClose: () => void;
 }
 
-export default function ModelSelector({ anchorRef, isOpen, onClose }: ModelSelectorProps) {
+export default function ModelSelector({ anchorRef, lastClickRef, isOpen, onClose }: ModelSelectorProps) {
   const { state, dispatch } = useChat();
   const [search, setSearch] = useState('');
-  const [position, setPosition] = useState({ left: 0, bottom: 0 });
+  const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 420 });
   const panelRef = useRef<HTMLDivElement>(null);
 
   const filteredModels = state.models.filter((m) =>
     m.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  // Position the dropdown above the anchor when opened, centred horizontally
-  useEffect(() => {
-    if (isOpen && anchorRef.current) {
-      const rect = anchorRef.current.getBoundingClientRect();
+  // Position the dropdown above the anchor when opened, centred horizontally.
+  // We measure in a layout effect to avoid a flash of wrong position, and
+  // re-measure on window resize so it stays aligned.
+  //
+  // Primary positioning source is the recorded mouse click coordinates
+  // (lastClickRef), which always reflects the exact point the user clicked.
+  // The anchor ref is used as a fallback for keyboard activation (Enter/Space)
+  // where no click coordinates exist.
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+
+    const updatePosition = () => {
+      const click = lastClickRef.current;
+      const anchor = anchorRef.current;
       const dropdownWidth = 320;
-      // Centre the popup over the anchor button
-      let left = rect.left + rect.width / 2 - dropdownWidth / 2;
-      // Keep dropdown within viewport
-      if (left < 16) {
-        left = 16;
-      } else if (left + dropdownWidth > window.innerWidth - 16) {
-        left = window.innerWidth - dropdownWidth - 16;
+      const panelPadding = 8;
+      const margin = 16;
+
+      // Determine the anchor point: prefer click coordinates (X), fall back
+      // to the anchor ref's centre (for keyboard activation).
+      const anchorX = click?.x ?? (anchor ? anchor.getBoundingClientRect().left + anchor.getBoundingClientRect().width / 2 : window.innerWidth / 2);
+      const anchorTopY = click?.y ?? (anchor ? anchor.getBoundingClientRect().top : window.innerHeight);
+      const anchorHeight = anchor ? anchor.getBoundingClientRect().height : 0;
+
+      let left = anchorX - dropdownWidth / 2;
+      if (left < margin) {
+        left = margin;
+      } else if (left + dropdownWidth > window.innerWidth - margin) {
+        left = window.innerWidth - dropdownWidth - margin;
       }
-      setPosition({
-        left,
-        bottom: window.innerHeight - rect.top + 8,
-      });
-    }
-  }, [isOpen, anchorRef]);
+
+      // Anchor the dropdown's bottom just above the click point so the panel
+      // visually emerges from where the user clicked.
+      const bottom = window.innerHeight - anchorTopY + panelPadding;
+
+      // Cap the dropdown height so it never extends above the viewport top.
+      // Leave 16px margin at the top for breathing room.
+      const availableHeight = anchorTopY - margin;
+      const maxHeight = Math.min(420, Math.max(200, availableHeight));
+
+      setPosition({ left, bottom, maxHeight });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen, anchorRef, lastClickRef]);
 
   // Reset search when opened
   useEffect(() => {
@@ -156,7 +190,7 @@ export default function ModelSelector({ anchorRef, isOpen, onClose }: ModelSelec
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div
       ref={panelRef}
       className="model-selector"
@@ -164,6 +198,7 @@ export default function ModelSelector({ anchorRef, isOpen, onClose }: ModelSelec
         position: 'fixed',
         left: position.left,
         bottom: position.bottom,
+        maxHeight: position.maxHeight,
       }}
     >
       <div className="model-selector-header">
@@ -220,6 +255,7 @@ export default function ModelSelector({ anchorRef, isOpen, onClose }: ModelSelec
           })
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

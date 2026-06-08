@@ -1,11 +1,13 @@
 'use client';
 import './CompletionModeSelector.scss';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useChat } from '@/app/lib/chatStore';
 
 interface CompletionModeSelectorProps {
   anchorRef: React.RefObject<HTMLElement | null>;
+  lastClickRef: React.MutableRefObject<{ x: number; y: number } | null>;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -17,11 +19,12 @@ const MODES = [
 
 export default function CompletionModeSelector({
   anchorRef,
+  lastClickRef,
   isOpen,
   onClose,
 }: CompletionModeSelectorProps) {
   const { state, dispatch } = useChat();
-  const [position, setPosition] = useState({ left: 0, bottom: 0 });
+  const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 420 });
   const [iterationsInput, setIterationsInput] = useState('');
   const panelRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -29,18 +32,43 @@ export default function CompletionModeSelector({
   const completionMode = (state.completionMode || 'normal') as string;
   const maxIterations = state.maxPromptLoopIterations ?? 4;
 
-  // Position the dropdown above the anchor
-  useEffect(() => {
-    if (isOpen && anchorRef.current) {
-      const rect = anchorRef.current.getBoundingClientRect();
+  // Position the dropdown above the anchor when opened. Prefer the recorded
+  // click coordinates (which always reflect the exact point the user clicked)
+  // and fall back to the anchor ref's rect for keyboard activation.
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+
+    const updatePosition = () => {
+      const click = lastClickRef.current;
+      const anchor = anchorRef.current;
       const dropdownWidth = 320;
-      let left = rect.left + rect.width / 2 - dropdownWidth / 2;
-      if (left < 16) left = 16;
-      else if (left + dropdownWidth > window.innerWidth - 16)
-        left = window.innerWidth - dropdownWidth - 16;
-      setPosition({ left, bottom: window.innerHeight - rect.top + 8 });
-    }
-  }, [isOpen, anchorRef]);
+      const margin = 16;
+
+      const anchorX = click?.x ?? (anchor ? anchor.getBoundingClientRect().left + anchor.getBoundingClientRect().width / 2 : window.innerWidth / 2);
+      const anchorTopY = click?.y ?? (anchor ? anchor.getBoundingClientRect().top : window.innerHeight);
+
+      let left = anchorX - dropdownWidth / 2;
+      if (left < margin) left = margin;
+      else if (left + dropdownWidth > window.innerWidth - margin)
+        left = window.innerWidth - dropdownWidth - margin;
+
+      const bottom = window.innerHeight - anchorTopY + 8;
+
+      // Cap height so it never extends above the viewport top
+      const availableHeight = anchorTopY - margin;
+      const maxHeight = Math.min(420, Math.max(200, availableHeight));
+
+      setPosition({ left, bottom, maxHeight });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen, anchorRef, lastClickRef]);
 
   // Reset iterations input when opened
   useEffect(() => {
@@ -132,7 +160,7 @@ export default function CompletionModeSelector({
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div
       ref={panelRef}
       className="completion-mode-selector"
@@ -140,6 +168,7 @@ export default function CompletionModeSelector({
         position: 'fixed',
         left: position.left,
         bottom: position.bottom,
+        maxHeight: position.maxHeight,
       }}
     >
       <div className="completion-mode-selector-header">
@@ -190,6 +219,7 @@ export default function CompletionModeSelector({
           </span>
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
