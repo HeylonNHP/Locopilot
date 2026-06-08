@@ -1125,7 +1125,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 tokenLimit: effectiveNumCtx,
                             });
 
-                            const satisfied = await checkCompleteness(
+                            const { satisfied, feedback } = await checkCompleteness(
                                 effectiveBaseUrl,
                                 model as string,
                                 effectiveNumCtx,
@@ -1142,10 +1142,21 @@ export async function POST(req: NextRequest): Promise<Response> {
                             // Not satisfied — inject a continuation nudge and
                             // re-enter the outer streaming loop.
                             console.log(`[chat] Prompt-loop: not satisfied, injecting nudge (iteration ${promptLoopIterations})`);
-                            const nudgeText =
-                                `Continue working on my original request. ` +
-                                `It is not yet complete.\n\n` +
-                                `Original request: ${originalUserRequest}`;
+                            const nudgeLines = [
+                                `Continue working on my original request. It is not yet complete.`,
+                            ];
+                            if (feedback) {
+                                nudgeLines.push(
+                                    '',
+                                    `The completeness reviewer noted these specific deficiencies:`,
+                                    feedback,
+                                );
+                            }
+                            nudgeLines.push(
+                                '',
+                                `Original request: ${originalUserRequest}`,
+                            );
+                            const nudgeText = nudgeLines.join('\n');
                             currentMessages.push({
                                 role: 'user',
                                 content: nudgeText,
@@ -1154,6 +1165,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 role: 'user',
                                 content: nudgeText,
                             });
+                            // Nudge messages added to history — reset the
+                            // authoritative token anchor so the next iteration
+                            // uses the fallback estimator for auto-compaction.
+                            lastAuthoritativeTokens = 0;
                             await flushSessionState();
                             continue outer;
                         }
