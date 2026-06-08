@@ -99,6 +99,14 @@ export default function ChatMessageBubble({ message }: Props) {
     return () => window.clearTimeout(id);
   }, [copied]);
 
+  // Two-pass rendering: server and initial client render both output the
+  // same placeholder (null), so React hydration never sees a mismatch.
+  // After mount the client swaps in the real MarkdownMessage.
+  const [markdownMounted, setMarkdownMounted] = useState(false);
+  useEffect(() => {
+    setMarkdownMounted(true);
+  }, []);
+
   const handleCopyMarkdown = useCallback(() => {
     const text = message.content ?? '';
     if (!text) return;
@@ -250,7 +258,11 @@ export default function ChatMessageBubble({ message }: Props) {
           </button>
           {showThinking && (
             <div className="bubble-thinking-box">
-              <MarkdownErrorBoundary><MarkdownMessage source={message.thinking ?? ''} className="markdown-message--thinking" /></MarkdownErrorBoundary>
+              {markdownMounted ? (
+                <MarkdownErrorBoundary><MarkdownMessage source={message.thinking ?? ''} className="markdown-message--thinking" /></MarkdownErrorBoundary>
+              ) : (
+                <div className="markdown-message--thinking" style={{ minHeight: '1.5em' }} />
+              )}
             </div>
           )}
         </div>
@@ -272,10 +284,13 @@ export default function ChatMessageBubble({ message }: Props) {
           tabIndex={hasThinking && !hasContent ? 0 : undefined}
           title={hasThinking && !hasContent ? (showThinking ? 'Hide reasoning' : 'Show reasoning') : undefined}
           className={`bubble-ai-msg${hasThinking && !hasContent ? ' cursor-pointer' : ''}`}
-          suppressHydrationWarning
         >
           {hasContent || message.role !== 'assistant' ? (
-            <MarkdownErrorBoundary><MarkdownMessage source={message.content} /></MarkdownErrorBoundary>
+            markdownMounted ? (
+              <MarkdownErrorBoundary><MarkdownMessage source={message.content} /></MarkdownErrorBoundary>
+            ) : (
+              <div style={{ minHeight: '1.5em' }} />
+            )
           ) : (
             '...'
           )}
