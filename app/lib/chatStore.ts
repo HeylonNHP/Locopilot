@@ -133,6 +133,7 @@ type ChatAction =
   | { type: 'SUBAGENT_OUTPUT'; agentId: string; message: string }
   | { type: 'SUBAGENT_CHUNK'; agentId: string; text: string }
   | { type: 'SET_SESSIONS'; sessions: Session[] }
+  | { type: 'ADD_SESSION'; session: Session }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
   | { type: 'SET_MODELS'; models: LLmModel[] }
   | { type: 'SET_MODEL'; model: string }
@@ -302,6 +303,12 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
     case 'SET_SESSIONS':
       return { ...state, sessions: action.sessions };
+    case 'ADD_SESSION': {
+      // Prepend the new session so it appears at the top of the sidebar
+      const exists = state.sessions.some((s) => s.id === action.session.id);
+      if (exists) return state;
+      return { ...state, sessions: [action.session, ...state.sessions] };
+    }
     case 'SET_CURRENT_SESSION': {
       // 1. Save current active session into its slot
       const snapshot: SessionState = {

@@ -72,6 +72,7 @@ function HomeInner() {
     loadSessions,
     loadSessionMessages,
     replayBufferedEvents,
+    model: state.model,
   });
 
   const { handleSlashCommand } = useSlashCommands({

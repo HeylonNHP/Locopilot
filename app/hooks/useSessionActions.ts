@@ -7,6 +7,7 @@ import type { WritableRef } from './useStableRefs';
 // Minimal set of action shapes consumed here
 type SessionAction =
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
+  | { type: 'ADD_SESSION'; session: { id: number; name: string; model: string; created_at: string; updated_at: string } }
   | { type: 'DISCARD_SESSION'; sessionId: number }
   | { type: 'CLEAR_MESSAGES' };
 
@@ -16,6 +17,7 @@ interface UseSessionActionsOptions {
   loadSessions: (query?: string) => Promise<void>;
   loadSessionMessages: (id: number) => Promise<void>;
   replayBufferedEvents: (id: number) => void;
+  model: string;
 }
 
 interface UseSessionActionsResult {
@@ -37,6 +39,7 @@ export function useSessionActions({
   loadSessions,
   loadSessionMessages,
   replayBufferedEvents,
+  model,
 }: UseSessionActionsOptions): UseSessionActionsResult {
   const sessionSwitchIdRef = useRef<number | null>(null);
   const currentSearchQueryRef = useRef('');
@@ -50,9 +53,25 @@ export function useSessionActions({
   );
 
   const handleNewSession = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'New chat', model }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { session: { id: number; name: string; model: string; created_at: string; updated_at: string } };
+        dispatch({ type: 'ADD_SESSION', session: data.session });
+        dispatch({ type: 'SET_CURRENT_SESSION', id: data.session.id });
+        await loadSessions();
+        return;
+      }
+    } catch {
+      // Fallback to in-memory new session if the backend is unreachable
+    }
     dispatch({ type: 'SET_CURRENT_SESSION', id: null });
     await loadSessions();
-  }, [dispatch, loadSessions]);
+  }, [dispatch, loadSessions, model]);
 
   const handleSelectSession = useCallback(
     async (sessionId: number) => {
