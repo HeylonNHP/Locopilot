@@ -54,7 +54,18 @@ export function useDataLoaders(refs: StableRefs) {
 
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
-      if (!res.ok || sessionLoadRequestIdRef.current !== requestId) return;
+      if (!res.ok) {
+        if (res.status === 404 && sessionLoadRequestIdRef.current === requestId) {
+          // Session was deleted (e.g. in another tab). Clear state immediately
+          // so the UI doesn't stay stuck on a ghost session, and so subsequent
+          // chat sends won't reuse the stale session ID.
+          refs.sessionIdRef.current = null;
+          dispatch({ type: 'SET_CURRENT_SESSION', id: null });
+          dispatch({ type: 'CLEAR_MESSAGES' });
+        }
+        return;
+      }
+      if (sessionLoadRequestIdRef.current !== requestId) return;
       const data = await res.json();
       if (sessionLoadRequestIdRef.current !== requestId) return;
       if (data.messages?.length > 0) {

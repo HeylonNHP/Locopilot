@@ -26,7 +26,7 @@ import { TOOLS, handleToolCall, sanitize, type RequestContext, type ToolOutputSi
 import { waitForApproval, resolveApproval, type ApprovalDecision } from '../../lib/approvalRegistry';
 import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
-import { createSession, renameSession, getSessionName } from '../../../history';
+import { createSession, renameSession, getSessionName, sessionExists } from '../../../history';
 import { compactHistory } from '../../../services/compact';
 import { sanitizeContentForTitle } from '../../../services/titleGeneration';
 import { generateFallbackTitle } from '../../../services/titleUtils';
@@ -233,6 +233,8 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             async function flushSessionState(): Promise<void> {
                 if (activeSessionId == null) return;
+                // Race: session may have been deleted mid-stream by another tab.
+                if (!sessionExists(activeSessionId)) return;
                 // Replace all DB messages with the full in-memory array.
                 // updateSessionMessages does DELETE+INSERT, so this is safe to call repeatedly.
                 await enqueueSessionWrite(
@@ -269,6 +271,15 @@ export async function POST(req: NextRequest): Promise<Response> {
             let activeSessionId: number | undefined = parsedSessionId;
             let promptEvalCount = 0;
             let evalCount = 0;
+
+            // Fail fast if the client is trying to resume a session that was
+            // deleted in another tab. Without this guard the server burns LLM
+            // tokens and silently drops the result at the write stage.
+            if (activeSessionId != null && !sessionExists(activeSessionId)) {
+                sendEvent('error', { message: 'Session not found. It may have been deleted in another tab.' });
+                controller.close();
+                return;
+            }
 
             try {
                 if (!activeSessionId) {
@@ -1232,7 +1243,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             } catch (err: unknown) {
                 if (err instanceof DOMException && err.name === 'AbortError') {
                     // Save whatever we have so far before closing.
-                    if (activeSessionId != null) {
+                    if (activeSessionId != null && sessionExists(activeSessionId)) {
                         await enqueueSessionWrite(
                             activeSessionId,
                             () => currentMessages,
