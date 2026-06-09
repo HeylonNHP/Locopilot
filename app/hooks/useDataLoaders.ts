@@ -26,8 +26,8 @@ export function useDataLoaders(refs: StableRefs) {
       const data = await res.json();
       if (sessionSearchRequestIdRef.current !== requestId) return;
       dispatch({ type: 'SET_SESSIONS', sessions: data.sessions ?? [] });
-    } catch {
-      // Silently ignore – sessions will be empty
+    } catch (err) {
+      console.error('Failed to load sessions:', err);
     }
   }, [dispatch]);
 

@@ -2,7 +2,7 @@
  * Per-session write queue — serializes updateSessionMessages calls for the
  * same session ID so concurrent HTTP requests don't overwrite each other.
  */
-import { updateSessionMessages, loadSessionMessages, renameSession } from '../../history';
+import { updateSessionMessages, loadSessionMessages, renameSession, sessionExists } from '../../history';
 import type { SessionTokenStats } from '../../history';
 import type { ChatMessage } from '../../services/llm';
 
@@ -30,6 +30,10 @@ export async function enqueueSessionWrite(
     // Serialize: wait for the previous write, then read fresh DB state,
     // let the caller produce the new list, and persist it.
     const next = prev.then(async () => {
+        if (!sessionExists(sessionId)) {
+            console.warn(`[sessionWriteQueue] Skipping write for deleted session ${sessionId}`);
+            return;
+        }
         const currentMessages = loadSessionMessages(sessionId);
         const newMessages = await buildMessages(currentMessages);
         updateSessionMessages(sessionId, newMessages, tokenStats);

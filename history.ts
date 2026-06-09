@@ -137,9 +137,21 @@ const stmtGetSessionName = db.prepare<[number]>(
     'SELECT name FROM sessions WHERE id = ?',
 );
 
+const stmtSessionExists = db.prepare<[number]>(
+    'SELECT 1 FROM sessions WHERE id = ?',
+);
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Returns true if a session with the given id exists.
+ */
+export function sessionExists(sessionId: number): boolean {
+    const row = stmtSessionExists.get(sessionId) as { 1: number } | undefined;
+    return row !== undefined;
+}
 
 /**
  * Creates a new session and returns its id.

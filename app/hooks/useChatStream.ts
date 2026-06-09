@@ -76,7 +76,16 @@ export function useChatStream(
         }
         refs.sessionIdRef.current = realId;
         dispatch({ type: 'SET_CURRENT_SESSION', id: realId });
-        loadSessions();
+        dispatch({
+          type: 'ADD_SESSION',
+          session: {
+            id: realId,
+            name: 'New chat',
+            model: refs.modelRef.current,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        });
         return;
       }
 
@@ -275,7 +284,7 @@ export function useChatStream(
           break;
       }
     },
-    [dispatch, loadSessions],
+    [dispatch],
   );
 
   /**
