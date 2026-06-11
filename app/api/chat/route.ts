@@ -1136,12 +1136,41 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 tokenLimit: effectiveNumCtx,
                             });
 
+                            // Build trace: all messages between the original user request
+                            // and the final assistant response — tool calls, thinking,
+                            // and tool results that the judge currently cannot see.
+                            const traceMessages: ChatMessage[] = [];
+                            let capturing = false;
+                            for (const msg of currentMessages) {
+                                if (
+                                    !capturing
+                                    && msg.role === 'user'
+                                    && msg.content === originalUserRequest
+                                ) {
+                                    capturing = true;
+                                    continue;
+                                }
+                                if (capturing) {
+                                    // Stop before the final assistant response — that's
+                                    // already passed as `content` to the judge.
+                                    if (
+                                        msg.role === 'assistant'
+                                        && !msg.tool_calls
+                                        && msg.content === content
+                                    ) {
+                                        break;
+                                    }
+                                    traceMessages.push(msg);
+                                }
+                            }
+
                             const { satisfied, feedback } = await checkCompleteness(
                                 effectiveBaseUrl,
                                 model as string,
                                 effectiveNumCtx,
                                 originalUserRequest,
                                 content,
+                                traceMessages,
                                 req.signal,
                             );
 
