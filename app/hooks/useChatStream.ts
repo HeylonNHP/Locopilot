@@ -6,6 +6,7 @@ import type { StableRefs, WritableRef } from './useStableRefs';
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import type { Attachment } from '@/components/ChatInput';
 import { langFromFilename } from '@/components/ChatInput';
+import { DEFAULT_SESSION_NAME } from '@/constants';
 
 /**
  * Owns the SSE event dispatcher and the sendChatMessage driver that runs a
@@ -80,7 +81,7 @@ export function useChatStream(
           type: 'ADD_SESSION',
           session: {
             id: realId,
-            name: 'New chat',
+            name: DEFAULT_SESSION_NAME,
             model: refs.modelRef.current,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -401,6 +402,8 @@ export function useChatStream(
           bufferedEventsRef.current.delete(ownerId);
         }
         loadSessions();
+        // Delayed refresh to pick up auto-generated title from background task
+        setTimeout(() => loadSessions(), 2000);
         if (!requestFailedMapRef.current.get(requestId)) {
           retryPayloadRef.current = null;
         }

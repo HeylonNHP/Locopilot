@@ -3,6 +3,7 @@
 import { useCallback, useRef } from 'react';
 import type { Dispatch } from 'react';
 import type { WritableRef } from './useStableRefs';
+import { DEFAULT_SESSION_NAME } from '@/constants';
 
 // Minimal set of action shapes consumed here
 type SessionAction =
@@ -57,7 +58,7 @@ export function useSessionActions({
       const res = await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'New chat', model }),
+        body: JSON.stringify({ name: DEFAULT_SESSION_NAME, model }),
       });
       if (res.ok) {
         const data = (await res.json()) as { session: { id: number; name: string; model: string; created_at: string; updated_at: string } };

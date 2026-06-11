@@ -28,11 +28,11 @@ import { loadConfig } from '../../../services/configManager';
 import { resolveCompactionModel } from '../../../services/modelManager';
 import { createSession, renameSession, getSessionName, sessionExists } from '../../../history';
 import { compactHistory } from '../../../services/compact';
-import { sanitizeContentForTitle } from '../../../services/titleGeneration';
+import { generateSessionTitle, sanitizeContentForTitle } from '../../../services/titleGeneration';
 import { generateFallbackTitle } from '../../../services/titleUtils';
-import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
+import { enqueueSessionWrite, enqueueSessionRename } from '../../lib/sessionWriteQueue';
 import { countMessagesTokens, countTextTokens } from '../../../services/tokenizer';
-import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
+import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_SESSION_NAME } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
 import { createSystemPrompt } from '../../../services/chatSession';
 import { checkCompleteness } from '../../../services/promptLoop';
@@ -283,7 +283,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             try {
                 if (!activeSessionId) {
-                    activeSessionId = createSession('New chat', model as string);
+                    activeSessionId = createSession(DEFAULT_SESSION_NAME, model as string);
                     sendEvent('session_created', { sessionId: activeSessionId });
                 }
                 // Per-request MCP approval set. Mutated in place when the user
@@ -1191,14 +1191,28 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // Rename the session from the placeholder to a content-derived title,
                     // but only if the user hasn't already renamed it (e.g. via /title).
                     const currentSessionId = activeSessionId!;
-                    if (!parsedSessionId) {
-                        const currentName = getSessionName(currentSessionId);
-                        if (currentName === null || currentName === undefined || currentName === 'New chat') {
-                            const titleContent = firstContent || content;
-                            const titleThinking = firstThinking || thinking;
-                            const titleText = titleThinking ? `${titleContent}\n${titleThinking}` : titleContent;
-                            renameSession(currentSessionId, generateFallbackTitle(sanitizeContentForTitle(titleText)));
-                        }
+                    const currentName = getSessionName(currentSessionId);
+                    if (currentName === null || currentName === undefined || currentName === DEFAULT_SESSION_NAME) {
+                        const titleContent = firstContent || content;
+                        const titleThinking = firstThinking || thinking;
+                        const titleText = titleThinking ? `${titleContent}\n${titleThinking}` : titleContent;
+                        renameSession(currentSessionId, generateFallbackTitle(sanitizeContentForTitle(titleText)));
+
+                        // Fire-and-forget background task to generate a proper LLM-based title.
+                        // The fallback title is already set above, so this is purely an upgrade.
+                        generateSessionTitle(
+                            effectiveBaseUrl,
+                            effectiveCompactionModel,
+                            currentMessages,
+                            effectiveNumCtx,
+                            undefined, // no onProgress (SSE stream is closing)
+                            undefined, // no think override
+                        )
+                            .then((title) => enqueueSessionRename(currentSessionId, title))
+                            .catch(() => {
+                                // Background title generation failed — the fallback title is already set.
+                                // Silently ignore — the user can still use /title manually.
+                            });
                     }
 
                     // Persist final state.

@@ -23,3 +23,6 @@ export const READ_FILE_CHAR_WARN_THRESHOLD = 100_000; // ~25,000 tokens — warn
  * token cost bounded as the user connects more servers.
  */
 export const MCP_TOOL_SEARCH_THRESHOLD = 20;
+
+/** Default name for newly created sessions before a title is generated. */
+export const DEFAULT_SESSION_NAME = 'New chat';

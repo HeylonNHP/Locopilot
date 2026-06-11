@@ -3,6 +3,7 @@ import './SessionSidebar.scss';
 
 import { useChat } from '@/app/lib/chatStore';
 import { useState, useEffect, useRef, type KeyboardEvent } from 'react';
+import { DEFAULT_SESSION_NAME } from '@/constants';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
 interface Props {
@@ -61,7 +62,7 @@ export default function SessionSidebar({
             onClick={onNewSession}
             className="sidebar-btn-new"
           >
-            + New chat
+            + {DEFAULT_SESSION_NAME}
           </button>
           <button
             onClick={onSettings}
