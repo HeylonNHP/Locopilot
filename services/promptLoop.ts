@@ -21,6 +21,12 @@ const JUDGE_SYSTEM_PROMPT =
     'If the assistant performed the requested work through tool calls, code edits, ' +
     'or other actions visible in the trace, consider the request satisfied even if ' +
     'the final reply is brief.\n\n' +
+    'However, be alert for cases where the final reply is clearly unfinished — ' +
+    'for example, ending mid-sentence, trailing off with \"Let me...\" or \"I will...\" ' +
+    'without actually completing the action, or making a plan but never executing it. ' +
+    'This often happens when a small model stops early: the thinking traces and tool calls ' +
+    'show progress but the final reply makes it obvious the task was abandoned partway through. ' +
+    'In these cases the reply is NOT satisfactory, even if some work was done.\n\n' +
     'Reply with ONLY the word YES or NO on the first line.\n\n' +
     'YES — the user\'s original request was fully satisfied. Nothing is missing.\n' +
     'NO  — something is missing, incomplete, or the assistant stopped early.';
