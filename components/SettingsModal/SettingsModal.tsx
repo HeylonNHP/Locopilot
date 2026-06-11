@@ -116,33 +116,51 @@ export default function SettingsModal({ onClose }: Props) {
             </div>
           )}
 
-          <div className="settings-row">
-            <label className="settings-label">Model</label>
-            <select
-              value={model}
-              onChange={async (e) => {
-                const newModel = e.target.value;
-                setModel(newModel);
-                // Fetch the model's actual context limit from Ollama
-                try {
-                  const res = await fetch(`/api/models/${encodeURIComponent(newModel)}/info`);
-                  if (res.ok) {
-                    const data = await res.json();
-                    setModelContextLimit(data.contextLimit ?? null);
+          <div className="settings-grid">
+            <div className="settings-row">
+              <label className="settings-label">Model</label>
+              <select
+                value={model}
+                onChange={async (e) => {
+                  const newModel = e.target.value;
+                  setModel(newModel);
+                  // Fetch the model's actual context limit from Ollama
+                  try {
+                    const res = await fetch(`/api/models/${encodeURIComponent(newModel)}/info`);
+                    if (res.ok) {
+                      const data = await res.json();
+                      setModelContextLimit(data.contextLimit ?? null);
+                    }
+                  } catch {
+                    // Silently ignore
                   }
-                } catch {
-                  // Silently ignore
-                }
-              }}
-              className="settings-input"
-            >
-              <option value="">Select a model...</option>
-              {(state.models ?? []).map((m) => (
-                <option key={m.name} value={m.name}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+                }}
+                className="settings-input"
+              >
+                <option value="">Select a model...</option>
+                {(state.models ?? []).map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="settings-row">
+              <label className="settings-label">Compaction Model</label>
+              <select
+                value={compactionModel}
+                onChange={(e) => setCompactionModel(e.target.value)}
+                className="settings-input"
+              >
+                <option value="">Same as main model</option>
+                {(state.models ?? []).map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="settings-row">
@@ -155,52 +173,58 @@ export default function SettingsModal({ onClose }: Props) {
             />
           </div>
 
-          <div className="settings-row">
-            <label className="settings-label">Context Size</label>
-            <input
-              type="number"
-              value={numCtx}
-              onChange={(e) => setNumCtx(e.target.value)}
-              className="settings-input"
-            />
-          </div>
-
-          {state.numCtx !== state.requestedNumCtx && (
+          <div className="settings-grid">
             <div className="settings-row">
-              <label className="settings-label">Effective Context Size</label>
-              <span className="settings-input text-secondary" style={{ display: 'inline-flex', alignItems: 'center' }}>
-                {state.numCtx.toLocaleString()} (capped by model limit)
-              </span>
-            </div>
-          )}
-
-          <div className="settings-row">
-            <label className="settings-label">Execution Mode</label>
-            <div className="flex items-center gap-12">
+              <label className="settings-label">Context Size</label>
               <input
-                id="yolo-toggle"
-                type="checkbox"
-                checked={yolo}
-                onChange={(e) => setYolo(e.target.checked)}
+                type="number"
+                value={numCtx}
+                onChange={(e) => setNumCtx(e.target.value)}
+                className="settings-input"
               />
-              <label htmlFor="yolo-toggle" className="font-14 text-primary">
-                {yolo ? 'YOLO (Automatic execution)' : 'Standard (Confirm commands)'}
-              </label>
             </div>
+
+            {state.numCtx !== state.requestedNumCtx ? (
+              <div className="settings-row">
+                <label className="settings-label">Effective Context Size</label>
+                <span className="settings-input text-secondary" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  {state.numCtx.toLocaleString()} (capped by model limit)
+                </span>
+              </div>
+            ) : (
+              <div />
+            )}
           </div>
 
-          <div className="settings-row">
-            <label className="settings-label">Thinking</label>
-            <div className="flex items-center gap-12">
-              <input
-                id="thinking-toggle"
-                type="checkbox"
-                checked={thinkingEnabled}
-                onChange={(e) => setThinkingEnabled(e.target.checked)}
-              />
-              <label htmlFor="thinking-toggle" className="font-14 text-primary">
-                {thinkingEnabled ? 'Enabled' : 'Disabled'}
-              </label>
+          <div className="settings-grid">
+            <div className="settings-row">
+              <label className="settings-label">Execution Mode</label>
+              <div className="flex items-center gap-12">
+                <input
+                  id="yolo-toggle"
+                  type="checkbox"
+                  checked={yolo}
+                  onChange={(e) => setYolo(e.target.checked)}
+                />
+                <label htmlFor="yolo-toggle" className="font-14 text-primary">
+                  {yolo ? 'YOLO (Automatic execution)' : 'Standard (Confirm commands)'}
+                </label>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <label className="settings-label">Thinking</label>
+              <div className="flex items-center gap-12">
+                <input
+                  id="thinking-toggle"
+                  type="checkbox"
+                  checked={thinkingEnabled}
+                  onChange={(e) => setThinkingEnabled(e.target.checked)}
+                />
+                <label htmlFor="thinking-toggle" className="font-14 text-primary">
+                  {thinkingEnabled ? 'Enabled' : 'Disabled'}
+                </label>
+              </div>
             </div>
           </div>
 
@@ -239,40 +263,26 @@ export default function SettingsModal({ onClose }: Props) {
             </div>
           </div>
 
-          <div className="settings-row">
-            <label className="settings-label">Compaction Model</label>
-            <select
-              value={compactionModel}
-              onChange={(e) => setCompactionModel(e.target.value)}
-              className="settings-input"
-            >
-              <option value="">Same as main model</option>
-              {(state.models ?? []).map((m) => (
-                <option key={m.name} value={m.name}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <div className="settings-grid">
+            <div className="settings-row">
+              <label className="settings-label">Web Search: Max Queries</label>
+              <input
+                type="number"
+                value={webMaxQueries}
+                onChange={(e) => setWebMaxQueries(e.target.value)}
+                className="settings-input"
+              />
+            </div>
 
-          <div className="settings-row">
-            <label className="settings-label">Web Search: Max Queries</label>
-            <input
-              type="number"
-              value={webMaxQueries}
-              onChange={(e) => setWebMaxQueries(e.target.value)}
-              className="settings-input"
-            />
-          </div>
-
-          <div className="settings-row">
-            <label className="settings-label">Web Search: Results Per Query</label>
-            <input
-              type="number"
-              value={webResultsPerQuery}
-              onChange={(e) => setWebResultsPerQuery(e.target.value)}
-              className="settings-input"
-            />
+            <div className="settings-row">
+              <label className="settings-label">Web Search: Results Per Query</label>
+              <input
+                type="number"
+                value={webResultsPerQuery}
+                onChange={(e) => setWebResultsPerQuery(e.target.value)}
+                className="settings-input"
+              />
+            </div>
           </div>
 
           <div className="settings-row">

@@ -20,7 +20,7 @@
   &-panel {
     background: var(--glass-panel);
     border-radius: 24px;
-    width: 480px;
+    width: 640px;
     max-width: 90%;
     max-height: 90vh;
     border: 1px solid var(--glass-border);
@@ -61,6 +61,12 @@
 
   &-row {
     margin-bottom: 16px;
+  }
+
+  &-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 24px;
   }
 
   &-label {
