@@ -11,6 +11,7 @@
 
 import { sendLlmChat } from './llm';
 import type { ChatMessage } from './llm';
+import { logger } from '../app/lib/logger';
 
 const JUDGE_SYSTEM_PROMPT =
     'You are a completeness checker. Your only job is to determine whether ' +
@@ -193,7 +194,7 @@ export async function checkCompleteness(
             );
         }
         if (!answer) {
-            console.warn('[prompt-loop] Judge returned empty content — treating as NOT satisfied');
+            logger.warn('prompt-loop', 'Judge returned empty content — treating as NOT satisfied');
         }
         const satisfied = answer.startsWith('YES');
         console.log(
@@ -221,8 +222,10 @@ export async function checkCompleteness(
         }
         // Judge call failed (network, model crash, etc.). Log and treat as
         // satisfied so a transient infrastructure error doesn't infinite-loop.
-        console.error(
-            `[prompt-loop] Judge call failed: ${err instanceof Error ? err.message : String(err)} — treating as satisfied to avoid infinite loop`,
+        logger.error(
+            'prompt-loop',
+            'checkCompleteness error',
+            { error: err instanceof Error ? err.message : String(err) },
         );
         return { satisfied: true };
     }

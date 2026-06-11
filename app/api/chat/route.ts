@@ -31,6 +31,7 @@ import { compactHistory } from '../../../services/compact';
 import { generateSessionTitle, sanitizeContentForTitle } from '../../../services/titleGeneration';
 import { generateFallbackTitle } from '../../../services/titleUtils';
 import { enqueueSessionWrite, enqueueSessionRename } from '../../lib/sessionWriteQueue';
+import { logger } from '../../lib/logger';
 import { countMessagesTokens, countTextTokens } from '../../../services/tokenizer';
 import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_SESSION_NAME } from '../../../constants';
 import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
@@ -1121,10 +1122,14 @@ export async function POST(req: NextRequest): Promise<Response> {
                             : effectiveMaxPromptLoopIterations;
                         const HARD_CEILING = 20;
                         const effectiveCap = Math.min(cap, HARD_CEILING);
-                        console.log(
-                            `[chat] Prompt-loop active (cap=${cap === Infinity ? '∞' : cap}, ` +
-                            `effectiveCap=${effectiveCap}, ` +
-                            `doneReason=${lastDoneReason ?? 'undefined'})`,
+                        logger.info(
+                            'chat',
+                            'Prompt-loop active',
+                            {
+                                cap: cap === Infinity ? '∞' : cap,
+                                effectiveCap,
+                                doneReason: lastDoneReason ?? 'undefined',
+                            },
                         );
                         while (promptLoopIterations < effectiveCap) {
                             promptLoopIterations++;
@@ -1175,13 +1180,21 @@ export async function POST(req: NextRequest): Promise<Response> {
                             );
 
                             if (satisfied) {
-                                console.log(`[chat] Prompt-loop: satisfied after ${promptLoopIterations} check(s)`);
+                                logger.info(
+                                    'chat',
+                                    'Prompt-loop: satisfied',
+                                    { iterations: promptLoopIterations },
+                                );
                                 break;
                             }
 
                             // Not satisfied — inject a continuation nudge and
                             // re-enter the outer streaming loop.
-                            console.log(`[chat] Prompt-loop: not satisfied, injecting nudge (iteration ${promptLoopIterations})`);
+                            logger.info(
+                                'chat',
+                                'Prompt-loop: not satisfied, injecting nudge',
+                                { iteration: promptLoopIterations },
+                            );
                             const nudgeLines = [
                                 `Continue working on my original request. It is not yet complete.`,
                             ];
@@ -1292,7 +1305,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             () => currentMessages,
                             { promptEvalCount, evalCount },
                         ).catch((e) => {
-                            console.error('[chat] Abort flush failed:', e instanceof Error ? e.message : String(e));
+                            logger.error('chat', 'Abort flush failed', { error: e instanceof Error ? e.message : String(e) });
                         });
                     }
                     try { controller.close(); } catch { /* ignore */ }
