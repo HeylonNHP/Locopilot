@@ -711,15 +711,19 @@ export async function POST(req: NextRequest): Promise<Response> {
                             break; // success — exit retry loop
                         } catch (err) {
                             if (retryAttempt >= MAX_LLM_RETRIES - 1 || !isRetryableError(err)) {
-                                console.error(
-                                    `[Ollama] Request failed permanently (attempt ${retryAttempt + 1}/${MAX_LLM_RETRIES}): ${err instanceof Error ? err.message : String(err)}`,
+                                logger.error(
+                                    'ollama',
+                                    `Request failed permanently (attempt ${retryAttempt + 1}/${MAX_LLM_RETRIES})`,
+                                    { error: err },
                                 );
                                 throw err; // propagate to outer catch
                             }
                             retryAttempt++;
 
-                            console.warn(
-                                `[Ollama] Request failed, retrying (attempt ${retryAttempt}/${MAX_LLM_RETRIES}): ${err instanceof Error ? err.message : String(err)}`,
+                            logger.warn(
+                                'ollama',
+                                `Request failed, retrying (attempt ${retryAttempt}/${MAX_LLM_RETRIES})`,
+                                { error: err },
                             );
 
                             sendEvent('status', { phase: 'retrying', attempt: retryAttempt, maxRetries: MAX_LLM_RETRIES });
@@ -1086,8 +1090,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                         // Server heartbeat with `done: true` — not a real turn.
                         // Skip it and let the outer loop continue; the stream
                         // will end naturally on the next iteration.
-                        console.warn(
-                            `[chat] Ignoring terminal chunk with done_reason=${lastDoneReason}`,
+                        logger.warn(
+                            'chat',
+                            `Ignoring terminal chunk with done_reason=${lastDoneReason}`,
                         );
                         continue outer;
                     }
@@ -1144,26 +1149,33 @@ export async function POST(req: NextRequest): Promise<Response> {
                             // Build trace: all messages between the original user request
                             // and the final assistant response — tool calls, thinking,
                             // and tool results that the judge currently cannot see.
-                            const traceMessages: ChatMessage[] = [];
-                            let capturing = false;
-                            for (const msg of currentMessages) {
-                                if (
-                                    !capturing
-                                    && msg.role === 'user'
-                                    && msg.content === originalUserRequest
-                                ) {
-                                    capturing = true;
-                                    continue;
+                            //
+                            // For a resumed session where the user re-asks the same
+                            // question ("fix the bug" today vs yesterday), the same
+                            // user request may appear multiple times in `currentMessages`.
+                            // We anchor on the LAST occurrence so we don't pull in
+                            // tool-call history from a previous turn.
+                            const lastUserIndex = (() => {
+                                for (let i = currentMessages.length - 1; i >= 0; i--) {
+                                    const m = currentMessages[i];
+                                    if (m && m.role === 'user' && m.content === originalUserRequest) {
+                                        return i;
+                                    }
                                 }
-                                if (capturing) {
+                                return -1;
+                            })();
+                            const traceMessages: ChatMessage[] = [];
+                            if (lastUserIndex >= 0) {
+                                for (let i = lastUserIndex + 1; i < currentMessages.length; i++) {
+                                    const msg = currentMessages[i];
+                                    if (!msg) continue;
                                     // Stop before the final assistant response — that's
                                     // already passed as `content` to the judge.
-                                    if (
-                                        msg.role === 'assistant'
-                                        && !msg.tool_calls
-                                        && msg.content === content
-                                    ) {
-                                        break;
+                                    if (msg.role === 'assistant' && !msg.tool_calls?.length) {
+                                        const msgContent = (msg.content ?? '').trim();
+                                        if (msgContent === content.trim() && msgContent.length > 0) {
+                                            break;
+                                        }
                                     }
                                     traceMessages.push(msg);
                                 }
@@ -1305,7 +1317,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             () => currentMessages,
                             { promptEvalCount, evalCount },
                         ).catch((e) => {
-                            logger.error('chat', 'Abort flush failed', { error: e instanceof Error ? e.message : String(e) });
+                            logger.error('chat', 'Abort flush failed', { error: e });
                         });
                     }
                     try { controller.close(); } catch { /* ignore */ }
@@ -1313,7 +1325,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 }
 
                 const message = await getLlmApiErrorMessage(err);
-                console.error(`[Ollama] ${message}`);
+                logger.error('ollama', message, { error: err });
 
                 try {
                     sendEvent('error', { message });

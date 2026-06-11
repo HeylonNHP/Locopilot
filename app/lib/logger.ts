@@ -12,6 +12,19 @@ const TIMESTAMP_WIDTH = 8; // "HH:MM:SS"
 const SEP = '  ';          // column separator (matches the literal used in emit())
 const FIELDS_MAX_LENGTH = 200;
 
+// ANSI escape sequence pattern: matches CSI (ESC[) and OSC (ESC]) forms,
+// including the 7-bit ESC introducer and the parameter / intermediate /
+// final bytes that follow. Covers both SGR (color) and cursor-control
+// sequences — enough to strip chalk's color codes for length measurement.
+const ANSI_ESCAPE_PATTERN = /\x1B\[(?:\d{1,3}(?:;\d{1,3})*)?[A-Za-z]|\x1B\][^\x1B]*(?:\x1B(?:\\|\x07)|.)/g;
+
+function stripAnsi(input: string): string {
+    return input.replace(ANSI_ESCAPE_PATTERN, '');
+}
+
+// Shared Date instance — avoids one `new Date()` allocation per log call.
+const sharedDate = new Date();
+
 type Level = 'debug' | 'info' | 'warn' | 'error';
 
 const LEVEL_COLOR: Record<Level, (s: string) => string> = {
@@ -29,15 +42,21 @@ const LEVEL_CONSOLE: Record<Level, 'log' | 'warn' | 'error'> = {
 };
 
 function timestamp(): string {
-    return new Date().toISOString().slice(11, 19); // HH:MM:SS
+    sharedDate.setTime(Date.now());
+    return sharedDate.toISOString().slice(11, 19); // HH:MM:SS
 }
 
 function formatFields(fields?: Record<string, unknown>): string {
     if (!fields) return '';
     const inspected = inspect(fields, { colors: true, breakLength: Infinity, depth: 0 });
     if (!inspected || inspected === '{}') return '';
-    if (inspected.length > FIELDS_MAX_LENGTH) {
-        return inspected.slice(0, FIELDS_MAX_LENGTH - 1) + '\u2026';
+    const visible = stripAnsi(inspected);
+    if (visible.length > FIELDS_MAX_LENGTH) {
+        // Slice the *visible* string so we never cut a multi-byte ANSI escape
+        // mid-sequence (which would leave the trailing log lines mis-colored).
+        // The plain ellipsis is appended after stripping, so it does not get
+        // mangled by chalk's color-codes and renders consistently.
+        return visible.slice(0, FIELDS_MAX_LENGTH - 1) + '…';
     }
     return inspected;
 }

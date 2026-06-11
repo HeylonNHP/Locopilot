@@ -45,7 +45,7 @@ const CRITIC_SYSTEM_PROMPT =
  * No truncation — full fidelity is preferred over token savings.
  */
 function formatTraceSection(traceMessages: ChatMessage[]): string {
-    if (!traceMessages || traceMessages.length === 0) return '';
+    if (traceMessages.length === 0) return '';
     const lines: string[] = [];
     for (const msg of traceMessages) {
         if (msg.role === 'assistant') {
@@ -54,9 +54,19 @@ function formatTraceSection(traceMessages: ChatMessage[]): string {
             }
             if (msg.tool_calls && msg.tool_calls.length > 0) {
                 for (const tc of msg.tool_calls) {
-                    const argsStr = typeof tc.function.arguments === 'string'
-                        ? tc.function.arguments
-                        : JSON.stringify(tc.function.arguments, null, 2);
+                    let argsStr: string;
+                    if (typeof tc.function.arguments === 'string') {
+                        argsStr = tc.function.arguments;
+                    } else {
+                        // Guard against circular structures / BigInt / etc.
+                        // that would otherwise throw and (silently) be
+                        // treated as a satisfied reply by the caller.
+                        try {
+                            argsStr = JSON.stringify(tc.function.arguments, null, 2);
+                        } catch {
+                            argsStr = '[unserializable arguments]';
+                        }
+                    }
                     lines.push(`🔧 Tool call: ${tc.function.name}(${argsStr})`);
                 }
             }
@@ -65,7 +75,8 @@ function formatTraceSection(traceMessages: ChatMessage[]): string {
                 lines.push(`💬 Assistant: ${msg.content}`);
             }
         } else if (msg.role === 'tool') {
-            lines.push(`📋 Tool result: ${msg.content}`);
+            const content = msg.content ?? '<empty>';
+            lines.push(`📋 Tool result: ${content}`);
         }
         // Skip 'system' and 'user' messages in the trace
     }
@@ -121,17 +132,27 @@ export async function generateJudgeFeedback(
 
         let feedback = (response.message.content ?? '').trim();
         if (response.message.thinking) {
-            console.log(
-                `[prompt-loop] Critic thinking: "${response.message.thinking.slice(0, 300)}"`,
+            logger.info(
+                'prompt-loop',
+                'Critic thinking',
+                { thinking: response.message.thinking.slice(0, 300) },
             );
         }
-        console.log(
-            `[prompt-loop] Critic feedback: "${feedback.slice(0, 80)}${feedback.length > 80 ? '...' : ''}"`,
+        logger.info(
+            'prompt-loop',
+            'Critic feedback',
+            {
+                preview: feedback.slice(0, 80),
+                truncated: feedback.length > 80,
+                length: feedback.length,
+            },
         );
         return { feedback };
     } catch (err) {
-        console.error(
-            `[prompt-loop] Critic call failed: ${err instanceof Error ? err.message : String(err)} — returning empty feedback`,
+        logger.error(
+            'prompt-loop',
+            'Critic call failed — returning empty feedback',
+            { error: err },
         );
         return { feedback: '' };
     }
@@ -189,16 +210,20 @@ export async function checkCompleteness(
 
         const answer = (response.message.content ?? '').trim().toUpperCase();
         if (response.message.thinking) {
-            console.log(
-                `[prompt-loop] Judge thinking: "${response.message.thinking.slice(0, 300)}"`,
+            logger.info(
+                'prompt-loop',
+                'Judge thinking',
+                { thinking: response.message.thinking.slice(0, 300) },
             );
         }
         if (!answer) {
             logger.warn('prompt-loop', 'Judge returned empty content — treating as NOT satisfied');
         }
         const satisfied = answer.startsWith('YES');
-        console.log(
-            `[prompt-loop] Judge answer: "${answer.slice(0, 80)}" → ${satisfied ? 'satisfied' : 'NOT satisfied'}`,
+        logger.info(
+            'prompt-loop',
+            'Judge answer',
+            { answer: answer.slice(0, 80), satisfied },
         );
 
         if (!satisfied) {
@@ -225,7 +250,7 @@ export async function checkCompleteness(
         logger.error(
             'prompt-loop',
             'checkCompleteness error',
-            { error: err instanceof Error ? err.message : String(err) },
+            { error: err },
         );
         return { satisfied: true };
     }
