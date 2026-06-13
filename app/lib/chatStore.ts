@@ -3,6 +3,8 @@
 import React, { createContext, useContext, useReducer, type ReactNode } from 'react';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import type { CompletionMode } from '@/types/chatConfig';
+import type { ToolCall } from '@/services/llm';
+import type { ToolCallArguments } from '@/tools/tools';
 
 export interface ChatMessage {
   /** Stable client-only identity used as React list key. Never sent to the server. */
@@ -10,7 +12,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'tool' | 'system' | 'subagent_log';
   content: string;
   thinking?: string;
-  tool_calls?: any[];
+  tool_calls?: [ToolCall, ...ToolCall[]];
   name?: string;
   /** Set on subagent_log messages to identify which sub-agent produced the output. */
   subagentId?: string;
@@ -71,7 +73,7 @@ export interface SessionState {
      */
     lastDoneReason?: DoneReason | undefined;
     pendingApproval: {
-        command: { name: string; args: any } | null;
+        command: { name: string; args: ToolCallArguments } | null;
         requestId: string | null;
     } | null;
 }
@@ -89,7 +91,7 @@ interface ChatState {
   modelContextLimit: number | null;
   error: string | null;
   // Approval dialog
-  pendingCommand: { name: string; args: any; toolCallName?: string } | null;
+  pendingCommand: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
   showApproval: boolean;
   pendingApprovalId: string | null;
   // Additional persisted config fields
@@ -141,7 +143,7 @@ type ChatAction =
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
   | { type: 'SET_MODEL_CONTEXT_LIMIT'; limit: number | null }
-  | { type: 'SHOW_APPROVAL'; command: { name: string; args: any; toolCallName?: string } | null; requestId?: string }
+  | { type: 'SHOW_APPROVAL'; command: { name: string; args: ToolCallArguments; toolCallName?: string } | null; requestId?: string }
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'REMOVE_LAST_ASSISTANT' }
   | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats']; targetSessionId?: number }
