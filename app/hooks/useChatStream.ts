@@ -1,12 +1,17 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { useChat, type ChatMessage } from '@/app/lib/chatStore';
+import { useChat, type ChatMessage, type DoneReason } from '@/app/lib/chatStore';
 import type { StableRefs, WritableRef } from './useStableRefs';
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import type { Attachment } from '@/components/ChatInput';
 import { langFromFilename } from '@/components/ChatInput';
 import { DEFAULT_SESSION_NAME } from '@/constants';
+
+const DONE_REASONS = ['stop', 'length', 'load', 'unload', 'unknown'] as const;
+function isDoneReason(s: string): s is DoneReason {
+  return (DONE_REASONS as readonly string[]).includes(s);
+}
 
 /**
  * Owns the SSE event dispatcher and the sendChatMessage driver that runs a
@@ -259,11 +264,7 @@ export function useChatStream(
             // Normalize the server-side value to our DoneReason union. The server
             // coerces missing values to 'stop' and is the source of truth for
             // valid values; this is purely defensive.
-            const reason = (['stop', 'length', 'load', 'unload', 'unknown'] as const).includes(
-              data.doneReason as any,
-            )
-              ? (data.doneReason as 'stop' | 'length' | 'load' | 'unload' | 'unknown')
-              : 'unknown';
+            const reason: DoneReason = isDoneReason(data.doneReason) ? data.doneReason : 'unknown';
             const doneOwnerSessionId = requestId != null ? bufferOwnerMapRef.current.get(requestId) : undefined;
             dispatch({ type: 'SET_DONE_REASON', reason, ...(doneOwnerSessionId !== undefined ? { targetSessionId: doneOwnerSessionId } : {}) });
           }
@@ -363,20 +364,25 @@ export function useChatStream(
             handleEvent(value.event || 'message', value.data, requestId);
           }
         }
-      } catch (err: any) {
-        if (err.name === 'AbortError') {
-          // User clicked Stop — silently ignore
-        } else if (
-          err.message?.includes('input stream') ||
-          err.message?.includes('network') ||
-          err.message?.includes('fetch') ||
-          err.name === 'TypeError'
-        ) {
-          requestFailedMapRef.current.set(requestId, true);
-          dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          if (err.name === 'AbortError') {
+            // User clicked Stop — silently ignore
+          } else if (
+            err.message.includes('input stream') ||
+            err.message.includes('network') ||
+            err.message.includes('fetch') ||
+            err.name === 'TypeError'
+          ) {
+            requestFailedMapRef.current.set(requestId, true);
+            dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
+          } else {
+            requestFailedMapRef.current.set(requestId, true);
+            dispatch({ type: 'SET_ERROR', error: err.message });
+          }
         } else {
           requestFailedMapRef.current.set(requestId, true);
-          dispatch({ type: 'SET_ERROR', error: err.message });
+          dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
         }
       } finally {
         const ownerId = bufferOwnerMapRef.current.get(requestId);
@@ -657,20 +663,25 @@ export function useChatStream(
             handleEvent(value.event || 'message', value.data, requestId);
           }
         }
-      } catch (err: any) {
-        if (err.name === 'AbortError') {
-          // User clicked Stop — silently ignore
-        } else if (
-          err.message?.includes('input stream') ||
-          err.message?.includes('network') ||
-          err.message?.includes('fetch') ||
-          err.name === 'TypeError'
-        ) {
-          requestFailedMapRef.current.set(requestId, true);
-          dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          if (err.name === 'AbortError') {
+            // User clicked Stop — silently ignore
+          } else if (
+            err.message.includes('input stream') ||
+            err.message.includes('network') ||
+            err.message.includes('fetch') ||
+            err.name === 'TypeError'
+          ) {
+            requestFailedMapRef.current.set(requestId, true);
+            dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
+          } else {
+            requestFailedMapRef.current.set(requestId, true);
+            dispatch({ type: 'SET_ERROR', error: err.message });
+          }
         } else {
           requestFailedMapRef.current.set(requestId, true);
-          dispatch({ type: 'SET_ERROR', error: err.message });
+          dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
         }
       } finally {
         const ownerId = bufferOwnerMapRef.current.get(requestId);

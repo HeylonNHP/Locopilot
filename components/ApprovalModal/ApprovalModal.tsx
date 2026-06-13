@@ -1,14 +1,20 @@
 'use client';
+import type { ToolCallArguments } from '@/tools/tools';
 import './ApprovalModal.scss';
 
 interface Props {
-  command: { name: string; args: any; toolCallName?: string };
+  command: { name: string; args: ToolCallArguments; toolCallName?: string };
   onApprove: () => void;
   onReject: () => void;
 }
 
-function formatArgs(args: any, commandName?: string, toolCallName?: string): React.ReactNode {
+function formatArgs(args: ToolCallArguments, commandName?: string, toolCallName?: string): React.ReactNode {
   if (commandName === 'mcp_call') {
+    // Render the namespaced MCP tool as a friendly header, then a
+    // key/value list of the arguments (not raw JSON).  Cast to a
+    // generic record so we can iterate arbitrary key/value pairs
+    // regardless of the ToolCallArguments field layout.
+    const argsRecord = args as unknown as Record<string, unknown>;
     // Render the namespaced MCP tool as a friendly header, then a
     // key/value list of the arguments (not raw JSON).
     return (
@@ -19,8 +25,8 @@ function formatArgs(args: any, commandName?: string, toolCallName?: string): Rea
           </div>
         ) : null}
         <div className="modal-args-list">
-          {args && typeof args === 'object' ? (
-            Object.entries(args).map(([key, value]) => (
+          {argsRecord && typeof argsRecord === 'object' ? (
+            Object.entries(argsRecord).map(([key, value]) => (
               <div key={key} className="modal-args-row">
                 <span className="modal-args-key">{key}:</span>
                 <span className="modal-args-value">
@@ -30,7 +36,7 @@ function formatArgs(args: any, commandName?: string, toolCallName?: string): Rea
             ))
           ) : (
             <div className="modal-args-row">
-              <span className="modal-args-value">{(args ?? '').toString()}</span>
+              <span className="modal-args-value">{String(argsRecord ?? '')}</span>
             </div>
           )}
         </div>

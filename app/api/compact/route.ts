@@ -58,8 +58,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         // Strip system and subagent_log messages before compacting — system prompt
         // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.
-        const subagentLogMessages = (messages as any[]).filter(
-            (m: any) => m && typeof m === 'object' && m.role === 'subagent_log'
+        // Strip subagent_log messages (a client-only UI role unknown to Ollama) so the
+        // compaction call doesn't see them. conversationMessages is then typed as ChatMessage[]
+        // for the downstream compactHistory call.
+        const subagentLogMessages: unknown[] = (messages as unknown[]).filter(
+            (m): m is { role: string; content: string } =>
+                typeof m === 'object' && m !== null &&
+                'role' in m && (m as { role: unknown }).role === 'subagent_log',
         );
 
         const conversationMessages: ChatMessage[] = (messages as unknown[]).filter(
@@ -89,9 +94,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (parsedSessionId) {
             // Use a reducer so the queue reads current DB state inside the
             // critical section.  Compaction replaces the conversation with
-            // the summarised result plus any subagent_log entries.
+            // the summarised result plus any subagent_log entries.  The DB
+            // writer expects ChatMessage[]; subagent_log is a client-only
+            // shape, so we cast through unknown at the boundary.
             await enqueueSessionWrite(parsedSessionId,
-                (_currentMessages) => [...result.newMessages, ...subagentLogMessages],
+                (_currentMessages) => [...result.newMessages, ...(subagentLogMessages as unknown as ChatMessage[])],
                 {
                     promptEvalCount: result.stats.newTokenCount,
                     evalCount: 0,

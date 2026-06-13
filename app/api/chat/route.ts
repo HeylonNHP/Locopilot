@@ -260,9 +260,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             );
 
             // Build the LLM working array: system prompt + client messages excluding subagent_log.
+            // originalClientMessages is typed as ChatMessage[] (the LLM-protocol type), which
+            // does not include the 'subagent_log' role — the filter below is a no-op, so just
+            // spread as-is.
             const currentMessages: ChatMessage[] = [
                 systemMessage,
-                ...originalClientMessages.filter(m => (m as any).role !== 'subagent_log'),
+                ...originalClientMessages,
             ];
 
             // ── Eagerly create the session so it appears in the sidebar immediately ──
@@ -687,8 +690,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 if (chunk.done) {
                                     promptEvalCount = chunk.prompt_eval_count ?? 0;
                                     evalCount = chunk.eval_count ?? 0;
-                                    promptEvalDuration = (chunk as any).prompt_eval_duration ?? 0;
-                                    evalDuration = (chunk as any).eval_duration ?? 0;
+                                    promptEvalDuration = chunk.prompt_eval_duration ?? 0;
+                                    evalDuration = chunk.eval_duration ?? 0;
                                     lastDoneReason = (typeof chunk.done_reason === 'string' && VALID_DONE_REASONS.has(chunk.done_reason))
                                     ? chunk.done_reason
                                     : undefined;
