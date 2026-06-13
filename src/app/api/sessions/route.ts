@@ -2,7 +2,7 @@
 // POST /api/sessions - create a new session
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { createSession, listSessions, searchSessions } from '../../../history';
+import { createSession, listSessions, searchSessions } from '@/history';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {

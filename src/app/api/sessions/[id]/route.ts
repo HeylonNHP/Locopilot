@@ -2,8 +2,8 @@
 // DELETE /api/sessions/[id] - delete a session
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { deleteSession, listSessions, loadSessionMessages } from '../../../../history';
-import { countMessagesTokens } from '../../../../services/tokenizer';
+import { deleteSession, listSessions, loadSessionMessages } from '@/history';
+import { countMessagesTokens } from '@/services/tokenizer';
 
 export async function GET(
   _request: NextRequest,

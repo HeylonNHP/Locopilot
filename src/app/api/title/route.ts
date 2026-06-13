@@ -1,12 +1,13 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { enqueueSessionRename } from '../../../app/lib/sessionWriteQueue';
-import { DEFAULT_NUM_CTX } from '../../../constants';
-import { listSessions, loadSessionMessages } from '../../../history';
-import { loadConfig } from '../../../services/configManager';
+import { enqueueSessionRename } from '@/app/lib/sessionWriteQueue';
+import { DEFAULT_NUM_CTX } from '@/constants';
+import { listSessions, loadSessionMessages } from '@/history';
+import { loadConfig } from '@/services/configManager';
+import { resolveCompactionModel } from '@/services/modelManager';
+import { generateSessionTitle } from '@/services/titleGeneration';
+
 import { type ChatMessage, getLlmApiErrorMessage } from '../../../services/llm';
-import { resolveCompactionModel } from '../../../services/modelManager';
-import { generateSessionTitle } from '../../../services/titleGeneration';
 
 export const dynamic = 'force-dynamic';
 

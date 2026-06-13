@@ -9,7 +9,7 @@ import {
   enableSkill,
   getEnabledSkills,
   loadSkillState,
-} from '../../../services/skillManager';
+} from '@/services/skillManager';
 
 export interface SkillApiItem {
   name: string;

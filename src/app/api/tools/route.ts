@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { loadConfig, saveConfig } from '../../../services/configManager';
-import { TOOLS } from '../../../tools/tools';
+import { loadConfig, saveConfig } from '@/services/configManager';
+import { TOOLS } from '@/tools/tools';
 
 export interface ToolApiItem {
   name: string;
