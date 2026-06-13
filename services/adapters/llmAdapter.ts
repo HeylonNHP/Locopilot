@@ -46,6 +46,14 @@ export interface ChatApiResponse {
     eval_duration?: number;
 }
 
+export interface SubagentLogMessage {
+    role: 'subagent_log';
+    content: string;
+    subagentId?: string;
+}
+
+export type PersistedChatMessage = ChatMessage | SubagentLogMessage;
+
 export interface ChatParams {
     model: string;
     messages: ChatMessage[];

@@ -7,7 +7,9 @@ import type {
     LlmModel,
     LlmModelInfo,
     LlmTurnStats,
+    PersistedChatMessage,
     StreamChatParams,
+    SubagentLogMessage,
     ToolCall,
     ToolDefinition,
 } from './adapters/llmAdapter';
@@ -100,7 +102,9 @@ export type {
     LlmModel,
     LlmModelInfo,
     LlmTurnStats,
+    PersistedChatMessage,
     StreamChatParams,
+    SubagentLogMessage,
     ToolCall,
     ToolDefinition,
 };

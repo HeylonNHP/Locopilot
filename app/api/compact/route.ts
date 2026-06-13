@@ -4,10 +4,20 @@ import { DEFAULT_NUM_CTX } from '../../../constants';
 import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 import { compactHistory } from '../../../services/compact';
 import { loadConfig } from '../../../services/configManager';
-import { getLlmApiErrorMessage, type ChatMessage } from '../../../services/llm';
+import { getLlmApiErrorMessage, type ChatMessage, type PersistedChatMessage, type SubagentLogMessage } from '../../../services/llm';
 import { resolveCompactionModel } from '../../../services/modelManager';
 
 export const dynamic = 'force-dynamic';
+
+function isPersistedChatMessage(value: unknown): value is PersistedChatMessage {
+    if (typeof value !== 'object' || value === null) return false;
+    const msg = value as Record<string, unknown>;
+    if (typeof msg.role !== 'string' || typeof msg.content !== 'string') return false;
+    if (msg.role === 'subagent_log') {
+        return msg.subagentId === undefined || typeof msg.subagentId === 'string';
+    }
+    return msg.role === 'system' || msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool';
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
     let body: Record<string, unknown>;
@@ -34,12 +44,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
     }
 
-    if (!Array.isArray(messages) || messages.length <= 1) {
+    if (!Array.isArray(messages) || messages.length <= 1 || !messages.every(isPersistedChatMessage)) {
         return NextResponse.json(
             { error: 'Nothing to compact yet. Continue the conversation and try again.' },
             { status: 400 },
         );
     }
+
+    const typedMessages: PersistedChatMessage[] = messages;
 
     try {
         const config = await loadConfig();
@@ -58,19 +70,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         // Strip system and subagent_log messages before compacting — system prompt
         // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.
-        // Strip subagent_log messages (a client-only UI role unknown to Ollama) so the
-        // compaction call doesn't see them. conversationMessages is then typed as ChatMessage[]
-        // for the downstream compactHistory call.
-        const subagentLogMessages: unknown[] = (messages as unknown[]).filter(
-            (m): m is { role: string; content: string } =>
-                typeof m === 'object' && m !== null &&
-                'role' in m && (m as { role: unknown }).role === 'subagent_log',
+        const subagentLogMessages: SubagentLogMessage[] = typedMessages.filter(
+            (m): m is SubagentLogMessage => m.role === 'subagent_log',
         );
 
-        const conversationMessages: ChatMessage[] = (messages as unknown[]).filter(
+        const conversationMessages: ChatMessage[] = typedMessages.filter(
             (m): m is ChatMessage =>
-                typeof m === 'object' && m !== null &&
-                'role' in m && m.role !== 'system' && m.role !== 'subagent_log',
+                m.role !== 'system' && m.role !== 'subagent_log',
         );
 
         const compactPhases: string[] = [];
@@ -94,11 +100,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (parsedSessionId) {
             // Use a reducer so the queue reads current DB state inside the
             // critical section.  Compaction replaces the conversation with
-            // the summarised result plus any subagent_log entries.  The DB
-            // writer expects ChatMessage[]; subagent_log is a client-only
-            // shape, so we cast through unknown at the boundary.
+            // the summarised result plus any subagent_log entries.
             await enqueueSessionWrite(parsedSessionId,
-                (_currentMessages) => [...result.newMessages, ...(subagentLogMessages as unknown as ChatMessage[])],
+                (_currentMessages) => [...result.newMessages, ...subagentLogMessages],
                 {
                     promptEvalCount: result.stats.newTokenCount,
                     evalCount: 0,

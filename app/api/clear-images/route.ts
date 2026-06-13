@@ -43,7 +43,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         let removedImages = 0;
         let removedMessages = 0;
         const cleaned = messages.map((m) => {
-            if (m.images && m.images.length > 0) {
+            if (m.role !== 'subagent_log' && m.images && m.images.length > 0) {
                 removedImages += m.images.length;
                 removedMessages += 1;
                 const { images: _images, ...rest } = m;

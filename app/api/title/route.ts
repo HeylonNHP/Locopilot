@@ -5,7 +5,7 @@ import { listSessions, loadSessionMessages } from '../../../history';
 import { enqueueSessionRename } from '../../../app/lib/sessionWriteQueue';
 import { generateSessionTitle } from '../../../services/titleGeneration';
 import { loadConfig } from '../../../services/configManager';
-import { getLlmApiErrorMessage } from '../../../services/llm';
+import { getLlmApiErrorMessage, type ChatMessage } from '../../../services/llm';
 import { resolveCompactionModel } from '../../../services/modelManager';
 
 export const dynamic = 'force-dynamic';
@@ -54,7 +54,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Load messages from the database — non-system messages only
-    const conversationMessages = loadSessionMessages(parsedSessionId);
+    const conversationMessages = loadSessionMessages(parsedSessionId).filter(
+        (m): m is ChatMessage => m.role !== 'subagent_log',
+    );
 
     if (conversationMessages.length <= 1) {
         return NextResponse.json(

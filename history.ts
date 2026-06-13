@@ -14,7 +14,7 @@
 
 import Database from 'better-sqlite3';
 import path from 'path';
-import { type ChatMessage } from './services/llm';
+import { type ChatMessage, type PersistedChatMessage, type SubagentLogMessage } from './services/llm';
 import { sanitizeChatMessage } from './services/textUtils';
 
 // ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ export function deleteSession(sessionId: number): void {
  */
 export function updateSessionMessages(
     sessionId: number,
-    messages: ChatMessage[],
+    messages: PersistedChatMessage[],
     tokenStats?: SessionTokenStats | null,
 ): void {
     // Strip system messages before persisting — the system prompt is always
@@ -235,14 +235,26 @@ export function updateSessionMessages(
         );
         for (const msg of persistableMessages) {
             const sanitizedMessage = sanitizeChatMessage(msg);
+            const subagentId =
+                sanitizedMessage.role === 'subagent_log' && sanitizedMessage.subagentId
+                    ? sanitizedMessage.subagentId
+                    : '';
+            const role = sanitizedMessage.role;
+            const content = sanitizedMessage.content ?? '';
+            const thinking =
+                sanitizedMessage.role === 'subagent_log' ? '' : (sanitizedMessage as ChatMessage).thinking ?? '';
+            const toolCalls =
+                sanitizedMessage.role === 'subagent_log' ? '[]' : JSON.stringify((sanitizedMessage as ChatMessage).tool_calls ?? []);
+            const images =
+                sanitizedMessage.role === 'subagent_log' ? '[]' : JSON.stringify((sanitizedMessage as ChatMessage).images ?? []);
             stmtInsertStaging.run(
                 sessionId,
-                sanitizedMessage.role,
-                sanitizedMessage.content ?? '',
-                sanitizedMessage.thinking ?? '',
-                JSON.stringify(sanitizedMessage.tool_calls ?? []),
-                JSON.stringify(sanitizedMessage.images ?? []),
-                (msg as any).subagentId ?? '',
+                role,
+                content,
+                thinking,
+                toolCalls,
+                images,
+                subagentId,
             );
         }
 
@@ -282,7 +294,7 @@ export function updateSessionModel(sessionId: number, model: string): void {
 /**
  * Loads and returns the full message history for a session.
  */
-export function loadSessionMessages(sessionId: number): ChatMessage[] {
+export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     const rows = stmtLoadMessages.all(sessionId) as {
         role: string;
         content: string;
@@ -293,6 +305,17 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
     }[];
 
     return rows.map(row => {
+        if (row.role === 'subagent_log') {
+            const msg: SubagentLogMessage = {
+                role: 'subagent_log',
+                content: row.content,
+            };
+            if (row.subagent_id) {
+                msg.subagentId = row.subagent_id;
+            }
+            return sanitizeChatMessage(msg);
+        }
+
         let toolCalls: ChatMessage['tool_calls'] | undefined = undefined;
         try {
             const parsed = JSON.parse(row.tool_calls);
@@ -312,9 +335,6 @@ export function loadSessionMessages(sessionId: number): ChatMessage[] {
             role: row.role as ChatMessage['role'],
             content: row.content,
         };
-        if (row.subagent_id) {
-            (msg as any).subagentId = row.subagent_id;
-        }
         if (row.thinking) {
             msg.thinking = row.thinking;
         }

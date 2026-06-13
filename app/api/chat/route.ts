@@ -49,6 +49,17 @@ const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 3;
 const CHANNEL_LABEL_ONLY_PATTERN = /^\s*(?:thought|analysis|final|commentary)\s*$/i;
 const VALID_DONE_REASONS = new Set(['stop', 'length', 'load', 'unload']);
 
+/** Client message shape: the LLM-protocol ChatMessage plus the UI-only subagent_log role. */
+type ClientChatMessage = ChatMessage | { role: 'subagent_log'; content: string; subagentId?: string };
+
+function isClientChatMessage(value: unknown): value is ClientChatMessage {
+    if (typeof value !== 'object' || value === null) return false;
+    const msg = value as Record<string, unknown>;
+    if (typeof msg.role !== 'string' || typeof msg.content !== 'string') return false;
+    if (msg.role === 'subagent_log') return true;
+    return msg.role === 'system' || msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool';
+}
+
 function sanitizeAssistantTextFragment(text: string): string {
     const cleaned = stripSpecialTokens(text ?? '');
     return CHANNEL_LABEL_ONLY_PATTERN.test(cleaned.trim()) ? '' : cleaned;
@@ -99,15 +110,17 @@ export async function POST(req: NextRequest): Promise<Response> {
         );
     }
 
-    if (!Array.isArray(messages) || messages.length === 0) {
+    if (!Array.isArray(messages) || messages.length === 0 || !messages.every(isClientChatMessage)) {
         return new Response(
-            `event: error\ndata: ${JSON.stringify({ message: 'Messages array is required and must not be empty' })}\n\n`,
+            `event: error\ndata: ${JSON.stringify({ message: 'Messages array is required and must contain valid message objects' })}\n\n`,
             {
                 status: 400,
                 headers: { 'Content-Type': 'text/event-stream' },
             },
         );
     }
+
+    const typedMessages: ClientChatMessage[] = messages;
 
     const effectiveBaseUrl = typeof baseUrl === 'string' && baseUrl.trim()
         ? baseUrl.trim()
@@ -137,10 +150,10 @@ export async function POST(req: NextRequest): Promise<Response> {
     // Capture the last user-role message from the incoming request as the
     // "original user request" for the prompt-loop judge.
     let originalUserRequest: string | null = null;
-    // messages is already validated as non-empty array above.
-    for (let i = (messages as unknown[]).length - 1; i >= 0; i--) {
-        const m = (messages as unknown[])[i] as Record<string, unknown> | null | undefined;
-        if (m && m.role === 'user' && typeof m.content === 'string') {
+    for (let i = typedMessages.length - 1; i >= 0; i--) {
+        const m = typedMessages[i];
+        if (!m) continue;
+        if (m.role === 'user' && typeof m.content === 'string') {
             originalUserRequest = m.content;
             break;
         }
@@ -214,7 +227,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             // Strip any system messages from the client and inject a fresh system prompt
             // so the model always sees the current date, tool definitions, and policy.
-            const conversationMessages: ChatMessage[] = JSON.parse(JSON.stringify(messages));
+            const conversationMessages: ClientChatMessage[] = JSON.parse(JSON.stringify(typedMessages));
 
             let finalContent = '';
             let finalThinking = '';
@@ -251,21 +264,19 @@ export async function POST(req: NextRequest): Promise<Response> {
             };
 
             // Snapshot the client's original non-system messages in their original order.
-            // These include subagent_log messages which are NOT sent to the LLM but MUST
-            // be preserved in the correct chronological position in the DB.
-            const originalClientMessages: ChatMessage[] = (conversationMessages as unknown[]).filter(
-                (m): m is ChatMessage =>
+            // These include subagent_log messages which are NOT sent to the LLM.
+            const originalClientMessages: ClientChatMessage[] = conversationMessages.filter(
+                (m): m is ClientChatMessage =>
                     typeof m === 'object' && m !== null &&
-                    'role' in m && m.role !== 'system',
+                    'role' in m && typeof (m as { role: unknown }).role === 'string' &&
+                    (m as { role: string }).role !== 'system' &&
+                    typeof (m as { content: unknown }).content === 'string',
             );
 
             // Build the LLM working array: system prompt + client messages excluding subagent_log.
-            // originalClientMessages is typed as ChatMessage[] (the LLM-protocol type), which
-            // does not include the 'subagent_log' role — the filter below is a no-op, so just
-            // spread as-is.
             const currentMessages: ChatMessage[] = [
                 systemMessage,
-                ...originalClientMessages,
+                ...originalClientMessages.filter((m): m is ChatMessage => m.role !== 'subagent_log'),
             ];
 
             // ── Eagerly create the session so it appears in the sidebar immediately ──

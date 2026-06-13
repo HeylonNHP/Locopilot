@@ -4,7 +4,7 @@
  */
 import { updateSessionMessages, loadSessionMessages, renameSession, sessionExists } from '../../history';
 import type { SessionTokenStats } from '../../history';
-import type { ChatMessage } from '../../services/llm';
+import type { PersistedChatMessage } from '../../services/llm';
 
 const sessionWriteQueues = new Map<number, Promise<void>>();
 
@@ -22,7 +22,7 @@ const sessionWriteQueues = new Map<number, Promise<void>>();
  */
 export async function enqueueSessionWrite(
     sessionId: number,
-    buildMessages: (currentMessages: ChatMessage[]) => ChatMessage[] | Promise<ChatMessage[]>,
+    buildMessages: (currentMessages: PersistedChatMessage[]) => PersistedChatMessage[] | Promise<PersistedChatMessage[]>,
     tokenStats?: SessionTokenStats | null,
 ): Promise<void> {
     const prev = sessionWriteQueues.get(sessionId) ?? Promise.resolve();

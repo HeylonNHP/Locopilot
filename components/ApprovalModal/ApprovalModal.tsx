@@ -14,7 +14,7 @@ function formatArgs(args: ToolCallArguments, commandName?: string, toolCallName?
     // key/value list of the arguments (not raw JSON).  Cast to a
     // generic record so we can iterate arbitrary key/value pairs
     // regardless of the ToolCallArguments field layout.
-    const argsRecord = args as unknown as Record<string, unknown>;
+    const argsRecord = args as Record<string, unknown>;
     // Render the namespaced MCP tool as a friendly header, then a
     // key/value list of the arguments (not raw JSON).
     return (

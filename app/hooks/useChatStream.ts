@@ -13,6 +13,15 @@ function isDoneReason(s: string): s is DoneReason {
   return (DONE_REASONS as readonly string[]).includes(s);
 }
 
+interface StreamErrorDetails {
+  name: string;
+  message: string;
+}
+
+function getStreamErrorDetails(err: unknown): StreamErrorDetails | null {
+  return err instanceof Error ? { name: err.name, message: err.message } : null;
+}
+
 /**
  * Owns the SSE event dispatcher and the sendChatMessage driver that runs a
  * full streaming chat turn (fetch → SSE parse → dispatch → finally loadSessions).
@@ -339,7 +348,7 @@ export function useChatStream(
             }
           }
           if (parsedError) {
-            const msg = (parsedError.message ?? parsedError.error) as unknown;
+            const msg = parsedError.message ?? parsedError.error;
             if (typeof msg === 'string' && msg.length > 0) {
               throw new Error(`HTTP ${response.status}: ${msg}`);
             }
@@ -365,24 +374,23 @@ export function useChatStream(
           }
         }
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          if (err.name === 'AbortError') {
-            // User clicked Stop — silently ignore
-          } else if (
-            err.message.includes('input stream') ||
-            err.message.includes('network') ||
-            err.message.includes('fetch') ||
-            err.name === 'TypeError'
-          ) {
-            requestFailedMapRef.current.set(requestId, true);
-            dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
-          } else {
-            requestFailedMapRef.current.set(requestId, true);
-            dispatch({ type: 'SET_ERROR', error: err.message });
-          }
-        } else {
+        const details = getStreamErrorDetails(err);
+        if (!details) {
           requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
+        } else if (details.name === 'AbortError') {
+          // User clicked Stop — silently ignore
+        } else if (
+          details.message.includes('input stream') ||
+          details.message.includes('network') ||
+          details.message.includes('fetch') ||
+          details.name === 'TypeError'
+        ) {
+          requestFailedMapRef.current.set(requestId, true);
+          dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
+        } else {
+          requestFailedMapRef.current.set(requestId, true);
+          dispatch({ type: 'SET_ERROR', error: details.message });
         }
       } finally {
         const ownerId = bufferOwnerMapRef.current.get(requestId);
@@ -631,7 +639,7 @@ export function useChatStream(
               parsedError.status ??
               parsedError.detail ??
               parsedError.title
-            ) as unknown;
+            );
             if (typeof msg === 'string' && msg.length > 0) {
               throw new Error(`HTTP ${response.status}: ${msg}`);
             }
@@ -664,24 +672,23 @@ export function useChatStream(
           }
         }
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          if (err.name === 'AbortError') {
-            // User clicked Stop — silently ignore
-          } else if (
-            err.message.includes('input stream') ||
-            err.message.includes('network') ||
-            err.message.includes('fetch') ||
-            err.name === 'TypeError'
-          ) {
-            requestFailedMapRef.current.set(requestId, true);
-            dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
-          } else {
-            requestFailedMapRef.current.set(requestId, true);
-            dispatch({ type: 'SET_ERROR', error: err.message });
-          }
-        } else {
+        const details = getStreamErrorDetails(err);
+        if (!details) {
           requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
+        } else if (details.name === 'AbortError') {
+          // User clicked Stop — silently ignore
+        } else if (
+          details.message.includes('input stream') ||
+          details.message.includes('network') ||
+          details.message.includes('fetch') ||
+          details.name === 'TypeError'
+        ) {
+          requestFailedMapRef.current.set(requestId, true);
+          dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
+        } else {
+          requestFailedMapRef.current.set(requestId, true);
+          dispatch({ type: 'SET_ERROR', error: details.message });
         }
       } finally {
         const ownerId = bufferOwnerMapRef.current.get(requestId);
