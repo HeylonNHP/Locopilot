@@ -84,7 +84,7 @@ export function useDataLoaders(refs: StableRefs) {
           // don't dispatch token stats for a now-stale session.
           if (sessionLoadRequestIdRef.current !== requestId) return;
         }
-        if (data.estimatedTokens != null) {
+        if (data.estimatedTokens !== null && data.estimatedTokens !== undefined) {
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {

@@ -109,7 +109,7 @@ export function useChatStream(
 
       // If this event belongs to a stream whose session is NOT the visible
       // session, buffer it so it doesn't land in the wrong message list.
-      if (requestId != null) {
+      if (requestId !== undefined) {
         const ownerSessionId = bufferOwnerMapRef.current.get(requestId);
         if (ownerSessionId !== undefined && ownerSessionId !== (refs.sessionIdRef.current ?? -1)) {
           if (!bufferedEventsRef.current.has(ownerSessionId)) {
@@ -190,7 +190,7 @@ export function useChatStream(
           const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
           const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
           const ownerSessionId =
-            requestId == null ? undefined : bufferOwnerMapRef.current.get(requestId);
+            requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
           const buffer = subagentBufferRef.current.get(agentId);
           if (buffer) {
             buffer.text += text;
@@ -245,7 +245,7 @@ export function useChatStream(
           // compaction that completes after the user has switched sessions cannot
           // overwrite the newly-viewed session's message list or token stats.
           const compactOwner =
-            requestId == null ? undefined : bufferOwnerMapRef.current.get(requestId);
+            requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
           if (Array.isArray(data.messages)) {
             dispatch({
               type: 'SET_MESSAGES',
@@ -292,7 +292,7 @@ export function useChatStream(
             // valid values; this is purely defensive.
             const reason: DoneReason = isDoneReason(data.doneReason) ? data.doneReason : 'unknown';
             const doneOwnerSessionId =
-              requestId == null ? undefined : bufferOwnerMapRef.current.get(requestId);
+              requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
             dispatch({
               type: 'SET_DONE_REASON',
               reason,
@@ -304,7 +304,7 @@ export function useChatStream(
         }
 
         case 'error': {
-          if (requestId != null) requestFailedMapRef.current.set(requestId, true);
+          if (requestId !== undefined) requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: data.message ?? 'Unknown error' });
           dispatch({ type: 'SET_CURRENT_TPS', tps: null });
           break;
@@ -368,7 +368,9 @@ export function useChatStream(
           if (dataLines.length > 0) {
             try {
               parsedError = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
-            } catch {}
+            } catch {
+              /* ignore */
+            }
           }
         }
         if (parsedError) {

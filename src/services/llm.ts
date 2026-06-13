@@ -102,19 +102,5 @@ export function fetchLlmRunningModelVram(
   return activeAdapter.fetchRunningModelVram(baseUrl, modelName);
 }
 
-export type {
-  
-  
-  
-  
-  
-  
-  LlmTurnStats,
-  
-  StreamChatParams,
-  
-  
-  
-};
-
+export type { LlmTurnStats, StreamChatParams } from './adapters/llmAdapter';
 export {type ChatApiResponse, type ChatMessage, type ChatParams, type LlmAdapter, type LlmModel, type LlmModelInfo, type PersistedChatMessage, type SubagentLogMessage, type ToolCall, type ToolDefinition} from './adapters/llmAdapter';

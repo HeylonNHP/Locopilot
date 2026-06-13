@@ -352,8 +352,7 @@ export class ReadPdfTool {
         // Reliable per-page split from textResult.pages
         const pageLines: string[] = [];
         for (const p of textPages) {
-          pageLines.push(`=== Page ${p.num} ===`);
-          pageLines.push(p.text.trimEnd());
+          pageLines.push(`=== Page ${p.num} ===`, p.text.trimEnd());
         }
         pageContent = `\n${  pageLines.join('\n')}`;
       } else {

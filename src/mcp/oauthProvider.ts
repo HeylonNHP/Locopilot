@@ -47,7 +47,6 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
-import type * as NodeCrypto from 'node:crypto';
 import http from 'node:http';
 import { URL } from 'node:url';
 
@@ -205,16 +204,12 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     const metadata: OAuthClientMetadata = {
       redirect_uris: [this.redirectUrl],
     };
-    if (this.oauthConfig.clientSecret === undefined) {
-      metadata.token_endpoint_auth_method = 'none';
-    } else {
-      // Confidential client: secret_basic is the most widely
-      // supported method. The SDK's `selectClientAuthMethod`
-      // will downgrade to `none` if the server doesn't
-      // advertise `client_secret_basic`, but setting it
-      // explicitly here documents our intent.
-      metadata.token_endpoint_auth_method = 'client_secret_basic';
-    }
+    // Confidential client: secret_basic is the most widely supported
+    // method. The SDK's `selectClientAuthMethod` will downgrade to `none`
+    // if the server doesn't advertise `client_secret_basic`, but setting
+    // it explicitly here documents our intent.
+    metadata.token_endpoint_auth_method =
+      this.oauthConfig.clientSecret === undefined ? 'none' : 'client_secret_basic';
     if (this.oauthConfig.scopes !== undefined && this.oauthConfig.scopes.length > 0) {
       metadata.scope = this.oauthConfig.scopes.join(' ');
     }
@@ -229,7 +224,7 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     // would make the loopback listener's `state` validation
     // reject the legitimate callback.
     if (this.currentState === null) {
-      this.currentState = randomBase64Url(16);
+      this.currentState = await randomBase64Url(16);
     }
     return this.currentState;
   }
@@ -694,23 +689,24 @@ function sendError(res: http.ServerResponse, code: number, message: string): voi
   res.end(`OAuth callback error: ${message}\n`);
 }
 
-function randomBase64Url(byteLength: number): string {
+async function randomBase64Url(byteLength: number): Promise<string> {
   // Node's `crypto` is built-in. We avoid the `randomBytes` -> base64
   // dance and do the URL-safe encoding inline; this is used as a
   // CSRF nonce on the OAuth flow, not a high-value secret.
   const bytes = new Uint8Array(byteLength);
   // `globalThis.crypto` is available in Node 19+ and is the
-  // standard web-crypto API. Fall back to `node:crypto`'s
-  // `randomFillSync` for older runtimes.
+  // standard web-crypto API. Fall back to a dynamic `node:crypto`
+  // import for older runtimes (conditional so we don't pull it in
+  // when the modern global API is present).
   const cryptoObj = (
     globalThis as { crypto?: { getRandomValues: (buf: Uint8Array) => Uint8Array } }
   ).crypto;
   if (cryptoObj && typeof cryptoObj.getRandomValues === 'function') {
     cryptoObj.getRandomValues(bytes);
   } else {
-    // Synchronous fallback. Only used on ancient Node versions.
-     
-    const nodeCrypto = require('node:crypto') as typeof NodeCrypto;
+    // Fallback for older Node versions. Dynamically imported so
+    // the dependency is only loaded when the global API is absent.
+    const nodeCrypto = await import('node:crypto');
     nodeCrypto.randomFillSync(bytes);
   }
   return base64UrlEncode(bytes);
@@ -722,7 +718,7 @@ function base64UrlEncode(bytes: Uint8Array): string {
     // String concatenation in a tight loop is fine for
     // 16-byte CSRF nonces; a 4KB buffer would warrant a
     // different approach.
-    binary += String.fromCharCode(byte!);
+    binary += String.fromCodePoint(byte!);
   }
   // `btoa` is a global in Node 22+ and works on latin-1 strings.
   // Wrap in try/catch for older runtimes.
@@ -735,9 +731,9 @@ function base64UrlEncode(bytes: Uint8Array): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
   let out = '';
   for (let i = 0; i < binary.length; i += 3) {
-    const b1 = binary.charCodeAt(i);
-    const b2 = i + 1 < binary.length ? binary.charCodeAt(i + 1) : Number.NaN;
-    const b3 = i + 2 < binary.length ? binary.charCodeAt(i + 2) : Number.NaN;
+    const b1 = binary.codePointAt(i)!;
+    const b2 = i + 1 < binary.length ? binary.codePointAt(i + 1)! : Number.NaN;
+    const b3 = i + 2 < binary.length ? binary.codePointAt(i + 2)! : Number.NaN;
     out += chars[b1 >> 2];
     out += chars[((b1 & 3) << 4) | (Number.isNaN(b2) ? 0 : b2 >> 4)];
     out += Number.isNaN(b2) ? '=' : chars[((b2 & 15) << 2) | (Number.isNaN(b3) ? 0 : b3 >> 6)];

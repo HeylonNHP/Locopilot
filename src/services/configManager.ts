@@ -56,9 +56,13 @@ export async function saveConfig(config: Config): Promise<void> {
 export function handleUnexpectedError(err: any): void {
   if (err && err.name === 'ExitPromptError') {
     console.log('\nExiting Locopilot.');
+    // Intentional CLI termination on user interrupting an inquirer prompt.
+    // eslint-disable-next-line unicorn/no-process-exit
     process.exit(0);
   }
   console.error(chalk.red('An unexpected error occurred:'), err);
+  // Intentional fatal CLI termination; this is the top-level error handler.
+  // eslint-disable-next-line unicorn/no-process-exit
   process.exit(1);
 }
 
@@ -103,7 +107,11 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
         ],
       });
 
-      if (action === 'exit' || action === null) process.exit(0);
+      if (action === 'exit' || action === null) {
+        // User chose to quit the interactive setup; terminate the CLI cleanly.
+        // eslint-disable-next-line unicorn/no-process-exit
+        process.exit(0);
+      }
       if (action === 'edit') {
         config = null;
         continue;
@@ -141,7 +149,11 @@ export async function configureModelAndContext(
       pageSize: 10,
     });
 
-    if (selectedModel === null) process.exit(0);
+    if (selectedModel === null) {
+      // User cancelled model selection; terminate the CLI cleanly.
+      // eslint-disable-next-line unicorn/no-process-exit
+      process.exit(0);
+    }
   }
 
   config.lastModel = selectedModel;

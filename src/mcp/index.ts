@@ -309,7 +309,8 @@ export async function getMergedMCPToolDefinitionsForSearch(): Promise<ToolDefini
  */
 export async function getMCPToolCount(): Promise<number> {
   await connectAllEnabled(5000);
-  return (await buildMCPToolStubs()).length;
+  const stubs = await buildMCPToolStubs();
+  return stubs.length;
 }
 
 /**

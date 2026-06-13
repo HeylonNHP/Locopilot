@@ -16,8 +16,12 @@ const FIELDS_MAX_LENGTH = 200;
 // including the 7-bit ESC introducer and the parameter / intermediate /
 // final bytes that follow. Covers both SGR (color) and cursor-control
 // sequences — enough to strip chalk's color codes for length measurement.
-const ANSI_ESCAPE_PATTERN =
-  /\u001B\[(?:\d{1,3}(?:;\d{1,3})*)?[A-Za-z]|\u001B][^\u001B]*(?:\u001B[\u0007\\]|.)/g;
+const ESC = String.fromCodePoint(0x001b);
+const BELL = String.fromCodePoint(0x0007);
+const ANSI_ESCAPE_PATTERN = new RegExp(
+  String.raw`${ESC}\[(?:\d{1,3}(?:;\d{1,3})*)?[A-Za-z]|${ESC}][^${ESC}]*(?:${ESC}[${BELL}\\]|.)`,
+  'g'
+);
 
 function stripAnsi(input: string): string {
   return input.replaceAll(ANSI_ESCAPE_PATTERN, '');

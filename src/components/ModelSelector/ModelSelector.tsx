@@ -70,11 +70,18 @@ export default function ModelSelector({
   onClose,
 }: ModelSelectorProps) {
   const { state, dispatch } = useChat();
+
+  // Destructure only the fields used by this component so callbacks do not
+  // depend on the entire state object (which changes on every render during
+  // streaming, defeating useCallback).
+  const { models, model, baseUrl, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch } =
+    state;
+
   const [search, setSearch] = useState('');
   const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 420 });
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const filteredModels = state.models.filter((m) =>
+  const filteredModels = models.filter((m) =>
     m.name.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -157,12 +164,6 @@ export default function ModelSelector({
       document.removeEventListener('keydown', handleKey);
     };
   }, [isOpen, onClose]);
-
-  // Destructure only the fields used by handleSelect so the callback
-  // does not depend on the entire state object (which changes on every
-  // render during streaming, defeating useCallback).
-  const { model, baseUrl, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch } =
-    state;
 
   const handleSelect = useCallback(
     async (modelName: string) => {
@@ -250,7 +251,7 @@ export default function ModelSelector({
             return (
               <button
                 key={m.name}
-                className={`model-selector-item ${m.name === state.model ? 'model-selector-item-active' : ''}`}
+                className={`model-selector-item ${m.name === model ? 'model-selector-item-active' : ''}`}
                 onClick={() => handleSelect(m.name)}
                 title={
                   capabilityBadges.length > 0
@@ -259,7 +260,7 @@ export default function ModelSelector({
                 }
               >
                 <span className="model-selector-check">
-                  {m.name === state.model && (
+                  {m.name === model && (
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                       <path
                         d="M3 8.5L6.5 12L13 5"

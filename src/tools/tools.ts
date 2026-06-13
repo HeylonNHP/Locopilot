@@ -68,8 +68,7 @@ export function sanitize(text: string): string {
       // Remove remaining lone Carriage Returns that could overwrite text
       .replaceAll('\r', '')
       // Strip ANSI escape codes (colors, cursor moves, screen clears)
-       
-      .replaceAll(/[\u001B\u009B][#();?[]*(?:\d{1,4}(?:;\d{0,4})*)?[\d<=>A-ORZcf-nqry]/g, '')
+      .replaceAll(new RegExp(`[${String.fromCodePoint(0x1b)}${String.fromCodePoint(0x9b)}][#();?[]*(?:\\d{1,4}(?:;\\d{0,4})*)?[\\d<=>A-ORZcf-nqry]`, 'g'), '')
   );
 }
 

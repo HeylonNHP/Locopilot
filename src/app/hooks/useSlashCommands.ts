@@ -244,7 +244,7 @@ export function useSlashCommands({
           }
           if (args) {
             const id = Number.parseInt(args, 10);
-            if (isNaN(id)) {
+            if (Number.isNaN(id)) {
               addSystem('Usage: /delete <session_id>');
             } else {
               try {
@@ -652,7 +652,7 @@ export function useSlashCommands({
 
         case 'ctx': {
           const size = Number.parseInt(args, 10);
-          if (!args || isNaN(size) || size <= 0) {
+          if (!args || Number.isNaN(size) || size <= 0) {
             addSystem('Usage: /ctx <size> (e.g., /ctx 8192)');
           } else {
             dispatch({ type: 'SET_CONFIG', config: { numCtx: size } });

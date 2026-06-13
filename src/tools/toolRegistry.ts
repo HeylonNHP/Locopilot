@@ -635,7 +635,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
             content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]`,
           };
         }
-        if (/[\u0000/\\]/.test(sanitizedName) || sanitizedName.includes('..')) {
+        if (sanitizedName.includes('\0') || /[/\\]/.test(sanitizedName) || sanitizedName.includes('..')) {
           return {
             content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]`,
           };
@@ -667,7 +667,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
 
         try {
           await fsp.mkdir(skillDir, { recursive: true });
-          await fsp.writeFile(skillMdPath, frontmatter, 'utf-8');
+          await fsp.writeFile(skillMdPath, frontmatter, 'utf8');
 
           // Dynamic import to avoid circular deps
           const { invalidateSkillCache } = await import('../services/skillManager');

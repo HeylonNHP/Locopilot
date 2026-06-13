@@ -3,7 +3,7 @@
  *
  * Centralised helpers for rendering AI responses.
  *
- * `streamAIResponse`  – owns the full lifecycle of a single AI turn: creates
+ * `streamAIResponse` – owns the full lifecycle of a single AI turn: creates
  *                       the HTTP stream, manages the interrupt handler, shows
  *                       a live character count on the status line while the
  *                       response arrives, then renders the full response via the
@@ -131,22 +131,19 @@ export async function renderTurn(
     return { assistantMessage: null, interrupted: true, sessionTokenStats: null, finalStats };
   }
 
-  let assistantMessage: ChatMessage;
-  if (toolCalls.length > 0) {
-    assistantMessage = {
-      role: 'assistant',
-      content,
-      ...(thinking ? { thinking } : {}),
-      // Ensure a non-empty tuple type: [first, ...rest]
-      tool_calls: [toolCalls[0]!, ...toolCalls.slice(1)],
-    };
-  } else {
-    assistantMessage = {
-      role: 'assistant',
-      content,
-      ...(thinking ? { thinking } : {}),
-    };
-  }
+  const assistantMessage: ChatMessage = toolCalls.length > 0
+    ? {
+        role: 'assistant',
+        content,
+        ...(thinking ? { thinking } : {}),
+        // Ensure a non-empty tuple type: [first, ...rest]
+        tool_calls: [toolCalls[0]!, ...toolCalls.slice(1)],
+      }
+    : {
+        role: 'assistant',
+        content,
+        ...(thinking ? { thinking } : {}),
+      };
 
   let sessionTokenStats: { promptEvalCount: number; evalCount: number } | null = null;
   if (finalStats) {
@@ -184,7 +181,7 @@ export async function streamAIResponse(
   params: StreamAIResponseParams,
   opts: StreamAIResponseOptions
 ): Promise<StreamAIResponseResult> {
-  const { onStatusUpdate } = opts;
+  const { onStatusUpdate, timeoutMs } = opts;
 
   let content = '';
   let thinking = '';
@@ -212,7 +209,7 @@ export async function streamAIResponse(
       ...(params.visionSupported === undefined ? {} : { visionSupported: params.visionSupported }),
       ...(params.think === undefined ? {} : { think: params.think }),
       signal: abortController.signal,
-      timeoutMs: opts.timeoutMs,
+      timeoutMs,
     });
 
     for await (const chunk of stream) {

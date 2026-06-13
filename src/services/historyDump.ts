@@ -174,17 +174,17 @@ function renderMessageSection(message: ChatMessage, index: number): string {
   }
 
   const extraSuffix = extras.length > 0 ? ` (${extras.join(', ')})` : '';
-  sections.push(`### Message ${index + 1} - ${message.role}${extraSuffix}`, '');
-  sections.push(renderTextSection('Content', message.content));
+  sections.push(`### Message ${index + 1} - ${message.role}${extraSuffix}`, '', renderTextSection('Content', message.content));
 
   if (message.thinking?.trim()) {
-    sections.push('');
-    sections.push(renderTextSection('Thinking', message.thinking, 'text'));
+    sections.push('', renderTextSection('Thinking', message.thinking, 'text'));
   }
 
   if (message.tool_calls?.length) {
-    sections.push('', `### Tool Calls (${message.tool_calls.length})`, '');
     sections.push(
+      '',
+      `### Tool Calls (${message.tool_calls.length})`,
+      '',
       message.tool_calls
         .map((toolCall, callIndex) => renderToolCallSection(toolCall, callIndex))
         .join('\n\n')
@@ -192,8 +192,10 @@ function renderMessageSection(message: ChatMessage, index: number): string {
   }
 
   if (message.images?.length) {
-    sections.push('', `### Images (${message.images.length})`, '');
     sections.push(
+      '',
+      `### Images (${message.images.length})`,
+      '',
       message.images.map((image, imageIndex) => renderImageSection(image, imageIndex)).join('\n\n')
     );
   }

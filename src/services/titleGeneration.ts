@@ -69,7 +69,7 @@ export function sanitizeContentForTitle(content: string): string {
       .replaceAll(/<thinking>[\S\s]*?<\/thinking>/g, '')
       // <think>...</think> tags used by DeepSeek R1 and QwQ models.
       .replaceAll(/<think>[\S\s]*?<\/think>/g, '')
-      .replaceAll(/\u001B\[[\d;]*m/g, '')
+      .replaceAll(new RegExp(String.raw`${String.fromCodePoint(0x001b)}\[\d;]*m`, 'g'), '')
       .replaceAll(/data:image\/[^;]+;base64,[\d+/=A-Za-z]+/g, '[image]')
       .replaceAll(/```[\S\s]*?```/g, '[code]')
       .replaceAll(/{[^{}]*"name"\s*:\s*"[^"]+"[^{}]*}/g, '[tool]')

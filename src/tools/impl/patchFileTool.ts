@@ -89,9 +89,11 @@ function normalizeForMatching(content: string): NormalizedText {
     }
 
     const trimmedLine = content.slice(lineStart, index).trim();
-    for (let offset = 0; offset < trimmedLine.length; offset += 1) {
-      text += trimmedLine[offset];
+    let offset = 0;
+    for (const char of trimmedLine) {
+      text += char;
       map.push(lineStart + offset);
+      offset += 1;
     }
 
     if (index < content.length) {

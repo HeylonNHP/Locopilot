@@ -108,8 +108,7 @@ export default function SkillsTab({ onPromptAI }: Props) {
     if (!onPromptAI || !trimmedName) return;
     pendingCreationNameRef.current = trimmedName;
     setCreating(true);
-    let message: string;
-    message = newGenerateAI ? `Please create a skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.` : `Please create a minimal skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Use a simple placeholder body like "# ${trimmedName}\n\nSkill instructions go here." Use the create_skill tool.`;
+    const message = newGenerateAI ? `Please create a skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.` : `Please create a minimal skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Use a simple placeholder body like "# ${trimmedName}\n\nSkill instructions go here." Use the create_skill tool.`;
     onPromptAI(message);
     setShowCreateForm(false);
     setNewName('');
@@ -130,7 +129,7 @@ export default function SkillsTab({ onPromptAI }: Props) {
       setNameError('Name cannot start with . or -');
     } else if (/[/\\]/.test(trimmed) || trimmed.includes('..')) {
       setNameError('Name cannot contain path separators or ..');
-    } else if (/\u0000/.test(trimmed)) {
+    } else if (trimmed.includes(String.fromCodePoint(0x0000))) {
       setNameError('Name contains invalid characters');
     } else {
       setNameError(null);

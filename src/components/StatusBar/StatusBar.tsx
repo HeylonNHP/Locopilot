@@ -10,7 +10,18 @@ import './StatusBar.scss';
 
 export default function StatusBar() {
   const { state } = useChat();
-  const { tokenStats, model, messages } = state;
+  const {
+    tokenStats,
+    model,
+    messages,
+    numCtx,
+    currentTps,
+    completionMode,
+    maxPromptLoopIterations,
+    currentSessionId,
+    streamingSessions,
+    models,
+  } = state;
   const [showSelector, setShowSelector] = useState(false);
   const [isDark, setIsDark] = useState(false);
   const modelRef = useRef<HTMLSpanElement>(null);
@@ -20,27 +31,28 @@ export default function StatusBar() {
 
   // Sync isDark with the current data-theme attribute (set by FOUC script or toggle)
   useEffect(() => {
-    setIsDark(document.documentElement.dataset.theme === 'dark');
+    const { dataset } = document.documentElement;
+    setIsDark(dataset.theme === 'dark');
   }, []);
 
   const handleOpenSelector = useCallback(
-    (e: { clientX: number; clientY: number }) => {
-      if (state.models.length > 0 && model) {
+    ({ clientX, clientY }: { clientX: number; clientY: number }) => {
+      if (models.length > 0 && model) {
         // Snapshot the click coordinates so the dropdown can anchor to the
         // exact point the user clicked, even if the anchor ref re-renders.
-        lastClickRef.current = { x: e.clientX, y: e.clientY };
+        lastClickRef.current = { x: clientX, y: clientY };
         setShowSelector(true);
       }
     },
-    [state.models.length, model]
+    [models.length, model]
   );
 
   const handleCloseSelector = useCallback(() => {
     setShowSelector(false);
   }, []);
 
-  const handleOpenModeSelector = useCallback((e: { clientX: number; clientY: number }) => {
-    lastClickRef.current = { x: e.clientX, y: e.clientY };
+  const handleOpenModeSelector = useCallback(({ clientX, clientY }: { clientX: number; clientY: number }) => {
+    lastClickRef.current = { x: clientX, y: clientY };
     setShowModeSelector(true);
   }, []);
 
@@ -53,14 +65,14 @@ export default function StatusBar() {
     document.documentElement.dataset.theme = next;
     try {
       localStorage.setItem('locopilot-theme', next);
-    } catch {}
+    } catch { /* ignore */ }
     setIsDark(!isDark);
   }, [isDark]);
 
   // Use the backend-provided token count. If we haven't received one yet
   // (briefly before the first SSE event) show 0 instead of a local guess.
   const totalTokens = tokenStats?.totalTokens ?? 0;
-  const tokenLimit = state.numCtx;
+  const tokenLimit = numCtx;
 
   const pct = tokenLimit > 0 ? Math.round((totalTokens / tokenLimit) * 100) : 0;
 
@@ -76,17 +88,17 @@ export default function StatusBar() {
 
   // Tokens-per-second display: live rough estimate during streaming,
   // accurate Ollama-calculated value after the turn finishes.
-  const tpsValue = state.currentTps ?? tokenStats?.evalTps ?? tokenStats?.promptTps;
-  const tpsLabel = tpsValue == null ? null : `${tpsValue} t/s`;
+  const tpsValue = currentTps ?? tokenStats?.evalTps ?? tokenStats?.promptTps;
+  const tpsLabel = tpsValue === null || tpsValue === undefined ? null : `${tpsValue} t/s`;
 
-  const completionMode = (state.completionMode || 'normal') as string;
-  const maxIterations = state.maxPromptLoopIterations ?? 4;
-  const maxLabel = maxIterations === 0 ? '∞' : String(maxIterations);
-  const modeLabel = completionMode === 'prompt-loop' ? `Prompt loop (${maxLabel})` : 'Normal';
+  const normalizedCompletionMode = (completionMode || 'normal') as string;
+  const iterations = maxPromptLoopIterations ?? 4;
+  const maxLabel = iterations === 0 ? '∞' : String(iterations);
+  const modeLabel = normalizedCompletionMode === 'prompt-loop' ? `Prompt loop (${maxLabel})` : 'Normal';
 
   return (
     <div className="statusbar">
-      {state.currentSessionId !== null && state.streamingSessions.has(state.currentSessionId) && (
+      {currentSessionId !== null && streamingSessions.has(currentSessionId) && (
         <span className="statusbar-streaming">● Streaming</span>
       )}
       <span className={tokenColorClass}>

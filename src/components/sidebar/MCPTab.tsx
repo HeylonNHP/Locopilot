@@ -107,6 +107,7 @@ export default function MCPTab() {
     let backoffMs = 1000;
     const MAX_BACKOFF_MS = 30_000;
     let disposed = false;
+    let handleError: (() => void) | null = null;
 
     const open = (): void => {
       if (disposed) return;
@@ -116,7 +117,8 @@ export default function MCPTab() {
         // Successful (re)connect — reset backoff.
         backoffMs = 1000;
       });
-      source.onerror = () => {
+
+      handleError = (): void => {
         if (!source) return;
         if (source.readyState === EventSource.CLOSED) {
           // Permanent failure (server returned non-2xx, etc.).
@@ -134,6 +136,7 @@ export default function MCPTab() {
         // else: readyState === CONNECTING — the browser is
         // already retrying on its own. Nothing to do.
       };
+      source.addEventListener('error', handleError);
     };
     open();
 
@@ -149,6 +152,9 @@ export default function MCPTab() {
       }
       if (source) {
         source.removeEventListener('mcp-state', scheduleFetch);
+        if (handleError !== null) {
+          source.removeEventListener('error', handleError);
+        }
         source.close();
         source = null;
       }

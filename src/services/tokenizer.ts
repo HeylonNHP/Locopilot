@@ -23,7 +23,11 @@ function estimateHeuristicTextTokens(text: string): number {
 const fallbackEncoder: TiktokenLike = {
   encode(text: string): number[] {
     const estimated = estimateHeuristicTextTokens(text);
-    return new Array(estimated).fill(0);
+    // Pre-allocate an array of `estimated` slots, each representing a token.
+    // Using Array.from avoids the unicorn/no-new-array lint warning while
+    // preserving the original behavior: a sparse/empty array would change
+    // the array's length semantics, so we keep the fill value of 0.
+    return Array.from({ length: estimated }, () => 0);
   },
   estimateTokens(text: string): number {
     return estimateHeuristicTextTokens(text);

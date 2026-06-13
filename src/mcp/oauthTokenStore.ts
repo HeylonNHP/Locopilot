@@ -82,7 +82,7 @@ export async function loadOAuthTokenStore(): Promise<MCPOAuthTokenStoreFile> {
   const storePath = getStorePath();
   try {
     const raw = await fsp.readFile(storePath, 'utf8');
-    const stripped = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+    const stripped = raw.codePointAt(0) === 0xfeff ? raw.slice(1) : raw;
     const parsed: unknown = JSON.parse(stripped);
     if (!isPlainObject(parsed)) {
       return { version: 1, servers: {} };
@@ -201,7 +201,7 @@ export async function saveOAuthState(serverName: string, state: MCPSavedOAuthSta
     const current = await loadOAuthTokenStore();
     // Deep-clone the incoming state to avoid aliasing mutations
     // (the caller might continue to mutate it).
-    const cloned: MCPSavedOAuthState = JSON.parse(JSON.stringify(state));
+    const cloned: MCPSavedOAuthState = structuredClone(state);
     const hasAny = Object.keys(cloned).length > 0;
     if (hasAny) {
       current.servers[serverName] = cloned;

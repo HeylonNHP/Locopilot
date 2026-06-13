@@ -190,7 +190,7 @@ async function saveSkillStateUnqueued(
   await fsp.writeFile(
     statePath,
     JSON.stringify({ enabled: state.enabled, disabled: state.disabled }, null, 2),
-    'utf-8'
+    'utf8'
   );
 }
 

@@ -321,6 +321,10 @@ class MCPClientManager {
     // on `listTools()` / `callTool()`.
     const abortController = new AbortController();
 
+    // The MCP SDK `Client` exposes only `onerror`/`onclose` property
+    // callbacks (see `@modelcontextprotocol/sdk/shared/protocol`), not
+    // an EventTarget / `addEventListener` API, so we attach directly.
+    // eslint-disable-next-line unicorn/prefer-add-event-listener
     client.onerror = (err) => {
       const handle = this.handles.get(serverName);
       if (handle) {
@@ -333,6 +337,7 @@ class MCPClientManager {
       emitMCPEvent({ kind: 'state', serverName });
     };
 
+    // eslint-disable-next-line unicorn/prefer-add-event-listener
     client.onclose = () => {
       const handle = this.handles.get(serverName);
       if (handle && handle.status !== 'error') {

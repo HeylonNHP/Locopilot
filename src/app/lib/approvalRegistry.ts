@@ -75,6 +75,10 @@ interface PendingApproval {
 
 const pendingApprovals = new Map<string, PendingApproval>();
 
+const DEFAULT_APPROVAL_REQUEST: ApprovalRequest = { toolName: 'unknown' };
+
+const DEFAULT_REJECTION: ApprovalDecision = { approved: false };
+
 /**
  * Register a pending approval request.
  * Returns a Promise that resolves to an `ApprovalDecision`. Times out
@@ -83,7 +87,7 @@ const pendingApprovals = new Map<string, PendingApproval>();
  */
 export function waitForApproval(
   requestId: string,
-  request: ApprovalRequest = { toolName: 'unknown' }
+  request: ApprovalRequest = DEFAULT_APPROVAL_REQUEST
 ): Promise<ApprovalDecision> {
   return new Promise<ApprovalDecision>((resolve) => {
     const timer = setTimeout(() => {
@@ -108,7 +112,7 @@ export function waitForApproval(
  */
 export function resolveApproval(
   requestId: string,
-  decision: ApprovalDecision | boolean = { approved: false }
+  decision: ApprovalDecision | boolean = DEFAULT_REJECTION
 ): boolean {
   const pending = pendingApprovals.get(requestId);
   if (!pending) return false;

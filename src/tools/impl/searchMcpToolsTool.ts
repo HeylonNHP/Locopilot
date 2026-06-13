@@ -274,7 +274,8 @@ export async function runSearchMCPTools(
   // tool definitions. Falls back to a per-handle build if the
   // global helper is empty (e.g. tests that bypass the manager
   // singleton).
-  let stubsForServer = (await buildMCPToolStubs()).filter((s) => s.server === server);
+  const allStubs = await buildMCPToolStubs();
+  let stubsForServer = allStubs.filter((s) => s.server === server);
   if (stubsForServer.length === 0) {
     stubsForServer = handle.tools.map((t) => ({
       name: t.name,

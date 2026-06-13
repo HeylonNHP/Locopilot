@@ -156,7 +156,7 @@ export default function CompletionModeSelector({
       setIterationsInput(raw);
 
       const num = Number.parseInt(raw, 10);
-      if (raw === '' || (isNaN(num) && raw !== '')) return;
+      if (raw === '' || (Number.isNaN(num) && raw !== '')) return;
       const value = raw === '' || num === 0 ? 0 : Math.max(0, num);
       persist({ maxPromptLoopIterations: value });
     },

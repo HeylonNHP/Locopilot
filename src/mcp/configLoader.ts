@@ -495,7 +495,7 @@ export async function loadMCPConfig(): Promise<MCPRootConfig> {
     // C5 fix: some editors (Notepad on Windows in particular) write
     // a UTF-8 BOM at the start of the file. `JSON.parse` rejects
     // that as a stray character; strip it explicitly before parsing.
-    const stripped = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+    const stripped = text.codePointAt(0) === 0xfeff ? text.slice(1) : text;
     parsed = JSON.parse(stripped);
   } catch (err) {
     console.error(`[mcp] ${configPath} is not valid JSON: ${(err as Error).message}`);
@@ -586,7 +586,7 @@ export async function saveMCPServerDisabled(name: string, disabled: boolean): Pr
     // `JSON.parse` doesn't reject the file. We do NOT write a BOM on
     // the way out (see `writeFile` call below), so the on-disk file
     // stays clean after a save.
-    const stripped = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+    const stripped = raw.codePointAt(0) === 0xfeff ? raw.slice(1) : raw;
     let parsed: unknown;
     try {
       parsed = JSON.parse(stripped);

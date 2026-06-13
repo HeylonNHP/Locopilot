@@ -240,13 +240,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                     if (status === 429 || status === 502 || status === 503 || status === 504) return true;
                 }
                 // axios network-level codes
-                if (typeof e.code === 'string') {
-                    if (e.code === 'ECONNRESET' || e.code === 'ETIMEDOUT' || e.code === 'EPIPE') return true;
-                }
+                if (typeof e.code === 'string' && (e.code === 'ECONNRESET' || e.code === 'ETIMEDOUT' || e.code === 'EPIPE')) return true;
                 // generic fetch/network failures
-                if (typeof e.message === 'string') {
-                    if (e.message.includes('fetch failed') || e.message.includes('network timeout')) return true;
-                }
+                if (typeof e.message === 'string' && (e.message.includes('fetch failed') || e.message.includes('network timeout'))) return true;
                 return false;
             }
 
@@ -272,7 +268,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             // Strip any system messages from the client and inject a fresh system prompt
             // so the model always sees the current date, tool definitions, and policy.
-            const conversationMessages: ClientChatMessage[] = JSON.parse(JSON.stringify(typedMessages));
+            const conversationMessages: ClientChatMessage[] = structuredClone(typedMessages);
 
             let finalContent = '';
             let finalThinking = '';
@@ -292,22 +288,23 @@ export async function POST(req: NextRequest): Promise<Response> {
             let pendingReplace: PersistedChatMessage[] | null = null;
 
             async function flushSessionState(): Promise<void> {
-                if (activeSessionId == null) return;
+                if (activeSessionId === undefined) return;
+                const sessionId = activeSessionId;
                 // Race: session may have been deleted mid-stream by another tab.
-                if (!sessionExists(activeSessionId)) return;
+                if (!sessionExists(sessionId)) return;
 
                 if (pendingReplace) {
                     const replacement = pendingReplace;
                     pendingReplace = null;
                     await enqueueSessionWrite(
-                        activeSessionId,
+                        sessionId,
                         () => replacement,
                         { promptEvalCount, evalCount },
                     );
                 } else if (pendingAppends.length > 0) {
                     const appends = [...pendingAppends];
                     await enqueueSessionWrite(
-                        activeSessionId,
+                        sessionId,
                         (fresh) => [...fresh, ...appends],
                         { promptEvalCount, evalCount },
                     );
@@ -347,7 +344,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Fail fast if the client is trying to resume a session that was
             // deleted in another tab. Without this guard the server burns LLM
             // tokens and silently drops the result at the write stage.
-            if (activeSessionId != null && !sessionExists(activeSessionId)) {
+            if (activeSessionId !== undefined && !sessionExists(activeSessionId)) {
                 sendEvent('error', { message: 'Session not found. It may have been deleted in another tab.' });
                 controller.close();
                 return;
@@ -437,7 +434,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         yoloMode: config?.yolo ?? false,
                         allowedTools,
                         disabledMainTools: disabledMain,
-                        mcpApprovals: Array.from(mcpApprovalsSet),
+                        mcpApprovals: [...mcpApprovalsSet],
                         model: model as string,
                         numCtx: effectiveNumCtx,
                         webSearch: {
@@ -462,7 +459,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             // sub-agent's loop maintains its OWN local set
                             // (Phase 3.4) so the parent's per-turn ledger is
                             // never mutated by the sub-agent's own approvals.
-                            mcpApprovals: Array.from(mcpApprovalsSet),
+                            mcpApprovals: [...mcpApprovalsSet],
                             approvalRequester: requestSubAgentApproval,
                         },
                     };
@@ -472,7 +469,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         yoloMode: false,
                         allowedTools: undefined,
                         disabledMainTools: [],
-                        mcpApprovals: Array.from(mcpApprovalsSet),
+                        mcpApprovals: [...mcpApprovalsSet],
                         model: model as string,
                         numCtx: effectiveNumCtx,
                         webSearch: {
@@ -489,7 +486,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             numCtx: effectiveNumCtx,
                             compactionModel: model as string,
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
-                            mcpApprovals: Array.from(mcpApprovalsSet),
+                            mcpApprovals: [...mcpApprovalsSet],
                             approvalRequester: requestSubAgentApproval,
                         },
                     };
@@ -608,7 +605,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     (message: string) => {
                                         sendEvent('compact_progress', { message });
                                     },
-                                    1.0,
+                                    1,
                                     2,
                                     undefined,
                                     req.signal,
@@ -883,7 +880,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             const toolName = tc.function.name;
                             let toolArgs = tc.function.arguments;
                             if (typeof toolArgs === 'string') {
-                                try { toolArgs = JSON.parse(toolArgs); } catch {}
+                                try { toolArgs = JSON.parse(toolArgs); } catch { /* keep string as-is on parse failure */ }
                             }
 
                             sendEvent('tool_call', {
@@ -976,7 +973,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                                         if (autoApproved) {
                                             mcpApprovalsSet.add(namespacedTarget);
-                                            requestContext.mcpApprovals = Array.from(mcpApprovalsSet);
+                                            requestContext.mcpApprovals = [...mcpApprovalsSet];
                                         } else {
                                             const requestId = randomUUID();
 
@@ -1048,7 +1045,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                             // for any future repeat in this
                                             // request.
                                             mcpApprovalsSet.add(namespacedTarget);
-                                            requestContext.mcpApprovals = Array.from(mcpApprovalsSet);
+                                            requestContext.mcpApprovals = [...mcpApprovalsSet];
                                         }
                                     }
                                 }
@@ -1084,7 +1081,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             const subagentOutputSink: ToolOutputSink = {
                                 writeLine(message: string): void {
                                     const clean = sanitize(message);
-                                    const match = clean.match(/^\[sub-agent:\s*([^\]]+)\]\s([\s\S]*)$/);
+                                    const match = clean.match(/^\[sub-agent:\s*([^\]]+)]\s([\S\s]*)$/);
                                     const agentId = match ? match[1]!.trim() : '__subagent__';
                                     const text = match ? (match[2] ?? '').trimEnd() : clean.trimEnd();
                                     if (text.trim()) {
@@ -1380,7 +1377,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             } catch (err: unknown) {
                 if (err instanceof DOMException && err.name === 'AbortError') {
                     // Save whatever we have so far before closing.
-                    if (activeSessionId != null && sessionExists(activeSessionId)) {
+                    if (activeSessionId !== undefined && sessionExists(activeSessionId)) {
                         await flushSessionState().catch((err_) => {
                             logger.error('chat', 'Abort flush failed', { error: err_ });
                         });

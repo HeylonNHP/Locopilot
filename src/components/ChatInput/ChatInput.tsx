@@ -97,12 +97,7 @@ function isAccepted(file: File): boolean {
 }
 
 function readFileAsText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener('load', () => resolve(reader.result as string));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(file);
-  });
+  return file.text();
 }
 
 function readFileAsBase64(file: File): Promise<string> {
@@ -114,7 +109,7 @@ function readFileAsBase64(file: File): Promise<string> {
       const comma = result.indexOf(',');
       resolve(comma === -1 ? result : result.slice(comma + 1));
     });
-    reader.onerror = () => reject(reader.error);
+    reader.addEventListener('error', () => reject(reader.error));
     reader.readAsDataURL(file);
   });
 }

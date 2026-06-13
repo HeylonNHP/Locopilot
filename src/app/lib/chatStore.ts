@@ -387,27 +387,25 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           };
           session = promoted;
         }
-        if (session) {
-          nextState = {
-            ...nextState,
-            messages: session.messages,
-            error: session.error,
-            tokenStats: session.tokenStats,
-            currentTps: session.currentTps,
-            compactingPhases: session.compactingPhases,
-            lastDoneReason: session.lastDoneReason,
-          };
-        } else {
-          // Session not yet initialised — start fresh (don't auto-create slot)
-          nextState = {
-            ...nextState,
-            messages: [],
-            error: null,
-            tokenStats: null,
-            currentTps: null,
-            compactingPhases: [],
-          };
-        }
+        nextState = session
+          ? {
+              ...nextState,
+              messages: session.messages,
+              error: session.error,
+              tokenStats: session.tokenStats,
+              currentTps: session.currentTps,
+              compactingPhases: session.compactingPhases,
+              lastDoneReason: session.lastDoneReason,
+            }
+          : // Session not yet initialised — start fresh (don't auto-create slot)
+            {
+              ...nextState,
+              messages: [],
+              error: null,
+              tokenStats: null,
+              currentTps: null,
+              compactingPhases: [],
+            };
       }
 
       // Restore pending approval state
