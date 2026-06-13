@@ -27,13 +27,13 @@ export function InputArea({
 }: InputAreaProps) {
   if (isStreaming) {
     const phase =
-      compactingPhases.length > 0
-        ? compactingPhases[compactingPhases.length - 1]
-        : 'Streaming...';
+      compactingPhases.length > 0 ? compactingPhases.at(-1) : 'Streaming...';
     return (
       <div className="streaming-indicator">
         <span className="text-accent font-14">● {phase}</span>
-        <button onClick={onStop} className="stop-btn">Stop</button>
+        <button onClick={onStop} className="stop-btn">
+          Stop
+        </button>
       </div>
     );
   }
@@ -41,7 +41,7 @@ export function InputArea({
   if (isCompacting) {
     const phase =
       compactingPhases.length > 0
-        ? compactingPhases[compactingPhases.length - 1]
+        ? compactingPhases.at(-1)
         : 'Compacting conversation...';
     return (
       <div className="streaming-indicator">

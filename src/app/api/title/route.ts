@@ -1,107 +1,99 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 
+import { enqueueSessionRename } from '../../../app/lib/sessionWriteQueue';
 import { DEFAULT_NUM_CTX } from '../../../constants';
 import { listSessions, loadSessionMessages } from '../../../history';
-import { enqueueSessionRename } from '../../../app/lib/sessionWriteQueue';
-import { generateSessionTitle } from '../../../services/titleGeneration';
 import { loadConfig } from '../../../services/configManager';
-import { getLlmApiErrorMessage, type ChatMessage } from '../../../services/llm';
+import { type ChatMessage, getLlmApiErrorMessage } from '../../../services/llm';
 import { resolveCompactionModel } from '../../../services/modelManager';
+import { generateSessionTitle } from '../../../services/titleGeneration';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-    let body: Record<string, unknown>;
-    try {
-        body = await request.json() as Record<string, unknown>;
-    } catch {
-        return NextResponse.json(
-            { error: 'Invalid JSON body.' },
-            { status: 400 },
-        );
-    }
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
+  }
 
-    const model = body.model;
-    const numCtx = body.numCtx;
-    const baseUrl = body.baseUrl;
-    const compactionModel = body.compactionModel;
-    const sessionId = body.sessionId;
-    const think: unknown = body.think;
+  const model = body.model;
+  const numCtx = body.numCtx;
+  const baseUrl = body.baseUrl;
+  const compactionModel = body.compactionModel;
+  const sessionId = body.sessionId;
+  const think: unknown = body.think;
 
-    if (typeof model !== 'string' || !model.trim()) {
-        return NextResponse.json(
-            { error: 'Model name is required.' },
-            { status: 400 },
-        );
-    }
+  if (typeof model !== 'string' || !model.trim()) {
+    return NextResponse.json({ error: 'Model name is required.' }, { status: 400 });
+  }
 
-    const parsedSessionId = typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
-        ? sessionId
-        : null;
-    if (!parsedSessionId) {
-        return NextResponse.json(
-            { error: 'This conversation does not have a saved session yet.' },
-            { status: 400 },
-        );
-    }
+  const parsedSessionId =
+    typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0 ? sessionId : null;
+  if (!parsedSessionId) {
+    return NextResponse.json(
+      { error: 'This conversation does not have a saved session yet.' },
+      { status: 400 }
+    );
+  }
 
-    const session = listSessions().find((candidate) => candidate.id === parsedSessionId);
-    if (!session) {
-        return NextResponse.json(
-            { error: `Session with id ${parsedSessionId} not found.` },
-            { status: 404 },
-        );
-    }
+  const session = listSessions().find((candidate) => candidate.id === parsedSessionId);
+  if (!session) {
+    return NextResponse.json(
+      { error: `Session with id ${parsedSessionId} not found.` },
+      { status: 404 }
+    );
+  }
 
-    // Load messages from the database — non-system messages only
-    const conversationMessages = loadSessionMessages(parsedSessionId).filter(
-        (m): m is ChatMessage => m.role !== 'subagent_log',
+  // Load messages from the database — non-system messages only
+  const conversationMessages = loadSessionMessages(parsedSessionId).filter(
+    (m): m is ChatMessage => m.role !== 'subagent_log'
+  );
+
+  if (conversationMessages.length <= 1) {
+    return NextResponse.json(
+      { error: 'Not enough conversation history to generate a title yet.' },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const config = await loadConfig();
+    const effectiveBaseUrl =
+      typeof baseUrl === 'string' && baseUrl.trim().length > 0
+        ? baseUrl.trim()
+        : config?.baseUrl?.trim() || 'http://localhost:11434';
+    const effectiveNumCtx =
+      typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
+        ? Math.floor(numCtx)
+        : config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
+          ? Math.floor(config.numCtx)
+          : DEFAULT_NUM_CTX;
+    const effectiveCompactionModel = resolveCompactionModel(
+      typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
+      model.trim()
     );
 
-    if (conversationMessages.length <= 1) {
-        return NextResponse.json(
-            { error: 'Not enough conversation history to generate a title yet.' },
-            { status: 400 },
-        );
-    }
+    const title = await generateSessionTitle(
+      effectiveBaseUrl,
+      effectiveCompactionModel,
+      conversationMessages,
+      effectiveNumCtx,
+      undefined,
+      typeof think === 'boolean' ? think : undefined
+    );
 
-    try {
-        const config = await loadConfig();
-        const effectiveBaseUrl = typeof baseUrl === 'string' && baseUrl.trim().length > 0
-            ? baseUrl.trim()
-            : config?.baseUrl?.trim() || 'http://localhost:11434';
-        const effectiveNumCtx = typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-            ? Math.floor(numCtx)
-            : config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
-                ? Math.floor(config.numCtx)
-                : DEFAULT_NUM_CTX;
-        const effectiveCompactionModel = resolveCompactionModel(
-            typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
-            model.trim(),
-        );
+    await enqueueSessionRename(parsedSessionId, title);
 
-        const title = await generateSessionTitle(
-            effectiveBaseUrl,
-            effectiveCompactionModel,
-            conversationMessages,
-            effectiveNumCtx,
-            undefined,
-            typeof think === 'boolean' ? think : undefined,
-        );
+    return NextResponse.json({
+      sessionId: parsedSessionId,
+      title,
+    });
+  } catch (err) {
+    const fallbackMessage = err instanceof Error ? err.message : 'Unknown error';
+    const message = await getLlmApiErrorMessage(err).catch(() => fallbackMessage);
 
-        await enqueueSessionRename(parsedSessionId, title);
-
-        return NextResponse.json({
-            sessionId: parsedSessionId,
-            title,
-        });
-    } catch (error) {
-        const fallbackMessage = error instanceof Error ? error.message : 'Unknown error';
-        const message = await getLlmApiErrorMessage(error).catch(() => fallbackMessage);
-
-        return NextResponse.json(
-            { error: message || fallbackMessage },
-            { status: 500 },
-        );
-    }
+    return NextResponse.json({ error: message || fallbackMessage }, { status: 500 });
+  }
 }

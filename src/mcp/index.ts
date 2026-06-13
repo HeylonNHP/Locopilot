@@ -13,79 +13,74 @@
  */
 
 import type { ToolDefinition } from '../services/adapters/llmAdapter';
-import { getClientManager } from './clientManager';
-import { loadMCPConfig, listMCPServers } from './configLoader';
-import {
-    buildMCPToolDefinitions,
-    buildMCPToolDefinitionsForSearch,
-    buildMCPToolStubs,
-    dispatchMCPToolCall,
-    mcpToolStubToOllamaTool,
-    parseMCPToolName,
-    buildNamespacedName,
-} from './schemaAdapter';
-import type { MCPRootConfig, MCPServerConfig } from './types';
+import type { MCPServerConfig } from './types';
 
-export type { MCPRootConfig, MCPServerConfig } from './types';
+import { getClientManager } from './clientManager';
+import { listMCPServers, loadMCPConfig } from './configLoader';
+import {
+  buildMCPToolDefinitions,
+  buildMCPToolDefinitionsForSearch,
+  buildMCPToolStubs,
+  buildNamespacedName,
+} from './schemaAdapter';
+
+export { getClientManager, type MCPClientManager } from './clientManager';
 export {
-    MCPConfigError,
-    MCPConnectionError,
-    MCPProtocolError,
-    type MCPClientHandle,
-    type MCPToolInfo,
-    type MCPConnectionStatus,
-} from './types';
-export {
-    loadMCPConfig,
-    listMCPServers,
-    getMCPConfigPath,
-    saveMCPServerDisabled,
+  getMCPConfigPath,
+  listMCPServers,
+  loadMCPConfig,
+  saveMCPServerDisabled,
 } from './configLoader';
-export {
-    getClientManager,
-    type MCPClientManager,
-} from './clientManager';
+// Push-based event bus + config file watcher. The SSE route in
+// `app/api/mcp/events/route.ts` subscribes to these so the sidebar
+// can drop its 5s polling loop.
+export { emitMCPEvent, type MCPEvent, subscribeMCPEvents } from './events';
 // Phase 3.5: the OAuth-related symbols are re-exported so API
 // routes can import them from a single facade. The underlying
 // implementation lives in `mcp/oauthProvider.ts`; we deliberately
 // keep the public surface narrow so tests and consumers don't
 // reach into the SDK auth types unless they need to.
 export {
-    buildOAuthProvider,
-    consumeAuthorizationCode,
-    getLoopbackRedirectUrl,
+  buildOAuthProvider,
+  consumeAuthorizationCode,
+  getLoopbackRedirectUrl,
 } from './oauthProvider';
 export {
-    clearOAuthState,
-    loadOAuthState,
-    saveOAuthState,
-    MCP_OAUTH_TOKENS_FILENAME,
+  clearOAuthState,
+  loadOAuthState,
+  MCP_OAUTH_TOKENS_FILENAME,
+  saveOAuthState,
 } from './oauthTokenStore';
-export type {
-    MCPSavedClientInformation,
-    MCPSavedOAuthState,
-    MCPSavedOAuthTokens,
-    MCPOAuthTokenStoreFile,
-} from './types';
 export {
-    buildMCPToolDefinitions,
-    buildMCPToolDefinitionsForSearch,
-    buildMCPToolStubs,
-    dispatchMCPToolCall,
-    mcpToolStubToOllamaTool,
-    parseMCPToolName,
-    buildNamespacedName,
-    MCP_TOOL_NAMESPACE_PREFIX,
-    MCP_TOOL_NAMESPACE_SEPARATOR,
-    type DispatchContext,
-    type DispatchOptions,
-    type MCPToolStub,
+  buildMCPToolDefinitions,
+  buildMCPToolDefinitionsForSearch,
+  buildMCPToolStubs,
+  buildNamespacedName,
+  type DispatchContext,
+  dispatchMCPToolCall,
+  type DispatchOptions,
+  MCP_TOOL_NAMESPACE_PREFIX,
+  MCP_TOOL_NAMESPACE_SEPARATOR,
+  type MCPToolStub,
+  mcpToolStubToOllamaTool,
+  parseMCPToolName,
 } from './schemaAdapter';
+export type { MCPRootConfig, MCPServerConfig } from './types';
+export {
+  type MCPClientHandle,
+  MCPConfigError,
+  MCPConnectionError,
+  type MCPConnectionStatus,
+  MCPProtocolError,
+  type MCPToolInfo,
+} from './types';
 
-// Push-based event bus + config file watcher. The SSE route in
-// `app/api/mcp/events/route.ts` subscribes to these so the sidebar
-// can drop its 5s polling loop.
-export { subscribeMCPEvents, emitMCPEvent, type MCPEvent } from './events';
+export type {
+  MCPOAuthTokenStoreFile,
+  MCPSavedClientInformation,
+  MCPSavedOAuthState,
+  MCPSavedOAuthTokens,
+} from './types';
 import { startMCPConfigWatcher } from './configWatcher';
 
 // Start the config file watcher exactly once per process. Calling
@@ -94,18 +89,18 @@ import { startMCPConfigWatcher } from './configWatcher';
 startMCPConfigWatcher();
 
 export interface MCPStatusEntry {
-    name: string;
-    description: string | undefined;
-    transport: 'stdio' | 'http' | 'sse';
-    status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'not_loaded' | 'auth_required';
-    lastError?: string | undefined;
-    authUrl?: string | undefined;
-    tools: Array<{ name: string; description: string | undefined; fullName: string }>;
-    toolCount: number;
+  name: string;
+  description: string | undefined;
+  transport: 'stdio' | 'http' | 'sse';
+  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'not_loaded' | 'auth_required';
+  lastError?: string | undefined;
+  authUrl?: string | undefined;
+  tools: Array<{ name: string; description: string | undefined; fullName: string }>;
+  toolCount: number;
 }
 
 export interface MCPListResult {
-    servers: MCPStatusEntry[];
+  servers: MCPStatusEntry[];
 }
 
 /**
@@ -117,94 +112,98 @@ export interface MCPListResult {
  * The shared `connectAllEnabled()` helper is used to warm every
  * enabled server in parallel with a single overall deadline.
  */
-export async function listMCPServersWithStatus(options: { connect?: string; eagerConnectTimeoutMs?: number } = {}): Promise<MCPListResult> {
-    const config = await loadMCPConfig();
-    const manager = getClientManager();
-    manager.setRootConfig(config);
+export async function listMCPServersWithStatus(
+  options: { connect?: string; eagerConnectTimeoutMs?: number } = {}
+): Promise<MCPListResult> {
+  const config = await loadMCPConfig();
+  const manager = getClientManager();
+  manager.setRootConfig(config);
 
-    // If the caller asked for a single specific server, honour that
-    // (the API still supports `?connect=<name>` for explicit lazy
-    // connects). Otherwise eagerly warm every enabled server.
-    if (options.connect) {
-        const target = config.mcpServers[options.connect];
-        if (target) {
-            try {
-                await manager.connect(target.name);
-            } catch (err) {
-                // Surface the error in the per-server entry below; don't fail the listing.
-                console.error(`[mcp] eager connect to "${options.connect}" failed: ${err instanceof Error ? err.message : String(err)}`);
-            }
-        }
-    } else {
-        await connectAllEnabled(options.eagerConnectTimeoutMs ?? 5000);
+  // If the caller asked for a single specific server, honour that
+  // (the API still supports `?connect=<name>` for explicit lazy
+  // connects). Otherwise eagerly warm every enabled server.
+  if (options.connect) {
+    const target = config.mcpServers[options.connect];
+    if (target) {
+      try {
+        await manager.connect(target.name);
+      } catch (err) {
+        // Surface the error in the per-server entry below; don't fail the listing.
+        console.error(
+          `[mcp] eager connect to "${options.connect}" failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+  } else {
+    await connectAllEnabled(options.eagerConnectTimeoutMs ?? 5000);
+  }
+
+  const servers = listMCPServers(config);
+  const out: MCPStatusEntry[] = [];
+
+  for (const server of servers) {
+    if (server.disabled) {
+      const entry: MCPStatusEntry = {
+        name: server.name,
+        description: server.description,
+        transport: server.transport.type,
+        status: 'not_loaded',
+        tools: [],
+        toolCount: 0,
+      };
+      out.push(entry);
+      continue;
     }
 
-    const servers = listMCPServers(config);
-    const out: MCPStatusEntry[] = [];
-
-    for (const server of servers) {
-        if (server.disabled) {
-            const entry: MCPStatusEntry = {
-                name: server.name,
-                description: server.description,
-                transport: server.transport.type,
-                status: 'not_loaded',
-                tools: [],
-                toolCount: 0,
-            };
-            out.push(entry);
-            continue;
-        }
-
-        const handle = manager.get(server.name);
-        if (!handle) {
-            const entry: MCPStatusEntry = {
-                name: server.name,
-                description: server.description,
-                transport: server.transport.type,
-                status: 'disconnected',
-                tools: [],
-                toolCount: 0,
-            };
-            // Phase 3.5: hint the UI that OAuth is the reason
-            // the server can't auto-connect. The `authUrl` field
-            // is the loopback redirect URL the user will be sent
-            // back to; the chat UI combines this with the
-            // `lastError` text to render the "Authenticate"
-            // button.
-            if (server.oauth !== undefined) {
-                entry.authUrl = 'http://127.0.0.1:0/oauth/callback';
-            }
-            out.push(entry);
-            continue;
-        }
-
-        const entry: MCPStatusEntry = {
-            name: server.name,
-            description: server.description,
-            transport: server.transport.type,
-            status: handle.status,
-            lastError: handle.lastError,
-            tools: handle.tools.map((t) => ({
-                name: t.name,
-                description: t.description,
-                fullName: buildNamespacedName(server.name, t.name),
-            })),
-            toolCount: handle.tools.length,
-        };
-        // Phase 3.5: when the handle is in `auth_required` we
-        // also include a placeholder `authUrl` field so the UI
-        // can render the static loopback redirect hint. The
-        // actual IdP authorization URL is printed to the
-        // dev-server stderr (the SDK does not hand it back to
-        // the browser for security).
-        if (handle.status === 'auth_required') {
-            entry.authUrl = 'http://127.0.0.1:0/oauth/callback';
-        }
-        out.push(entry);
+    const handle = manager.get(server.name);
+    if (!handle) {
+      const entry: MCPStatusEntry = {
+        name: server.name,
+        description: server.description,
+        transport: server.transport.type,
+        status: 'disconnected',
+        tools: [],
+        toolCount: 0,
+      };
+      // Phase 3.5: hint the UI that OAuth is the reason
+      // the server can't auto-connect. The `authUrl` field
+      // is the loopback redirect URL the user will be sent
+      // back to; the chat UI combines this with the
+      // `lastError` text to render the "Authenticate"
+      // button.
+      if (server.oauth !== undefined) {
+        entry.authUrl = 'http://127.0.0.1:0/oauth/callback';
+      }
+      out.push(entry);
+      continue;
     }
 
-    return { servers: out };
+    const entry: MCPStatusEntry = {
+      name: server.name,
+      description: server.description,
+      transport: server.transport.type,
+      status: handle.status,
+      lastError: handle.lastError,
+      tools: handle.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        fullName: buildNamespacedName(server.name, t.name),
+      })),
+      toolCount: handle.tools.length,
+    };
+    // Phase 3.5: when the handle is in `auth_required` we
+    // also include a placeholder `authUrl` field so the UI
+    // can render the static loopback redirect hint. The
+    // actual IdP authorization URL is printed to the
+    // dev-server stderr (the SDK does not hand it back to
+    // the browser for security).
+    if (handle.status === 'auth_required') {
+      entry.authUrl = 'http://127.0.0.1:0/oauth/callback';
+    }
+    out.push(entry);
+  }
+
+  return { servers: out };
 }
 
 /**
@@ -218,40 +217,42 @@ export async function listMCPServersWithStatus(options: { connect?: string; eage
  * (so the `/mcp list` slash command shows tools immediately).
  */
 export async function connectAllEnabled(timeoutMs = 5000): Promise<void> {
-    const config = await loadMCPConfig();
-    const manager = getClientManager();
-    manager.setRootConfig(config);
+  const config = await loadMCPConfig();
+  const manager = getClientManager();
+  manager.setRootConfig(config);
 
-    const enabledServers = Object.values(config.mcpServers).filter((s) => !s.disabled);
-    if (enabledServers.length === 0) return;
+  const enabledServers = Object.values(config.mcpServers).filter((s) => !s.disabled);
+  if (enabledServers.length === 0) return;
 
-    // Race every eager connect against an overall deadline. Each
-    // individual connect has its own AbortController inside the
-    // manager, so the in-flight ones will be torn down when the
-    // caller aborts (e.g. the chat route's req.signal). The deadline
-    // here is just a backstop so a slow / wedged server can't hold
-    // up the chat route's first byte.
-    let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
-    const deadline = new Promise<void>((resolve) => {
-        deadlineTimer = setTimeout(() => resolve(), timeoutMs);
-    });
-    const connectPromise = Promise.allSettled(
-        enabledServers.map((s) => manager.connect(s.name)),
-    );
-    await Promise.race([connectPromise, deadline]);
-    if (deadlineTimer) clearTimeout(deadlineTimer);
+  // Race every eager connect against an overall deadline. Each
+  // individual connect has its own AbortController inside the
+  // manager, so the in-flight ones will be torn down when the
+  // caller aborts (e.g. the chat route's req.signal). The deadline
+  // here is just a backstop so a slow / wedged server can't hold
+  // up the chat route's first byte.
+  let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  const deadline = new Promise<void>((resolve) => {
+    deadlineTimer = setTimeout(() => resolve(), timeoutMs);
+  });
+  const connectPromise = Promise.allSettled(enabledServers.map((s) => manager.connect(s.name)));
+  await Promise.race([connectPromise, deadline]);
+  if (deadlineTimer) clearTimeout(deadlineTimer);
 
-    // Drain rejections on the next tick so we log them without
-    // blocking the caller. `Promise.allSettled` already swallowed
-    // them; we just want visibility.
-    connectPromise.then((results) => {
-        for (const r of results) {
-            if (r.status === 'rejected') {
-                const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
-                console.error(`[mcp] eager connect failed: ${reason}`);
-            }
+  // Drain rejections on the next tick so we log them without
+  // blocking the caller. `Promise.allSettled` already swallowed
+  // them; we just want visibility.
+  connectPromise
+    .then((results) => {
+      for (const r of results) {
+        if (r.status === 'rejected') {
+          const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+          console.error(`[mcp] eager connect failed: ${reason}`);
         }
-    }).catch(() => { /* ignore */ });
+      }
+    })
+    .catch(() => {
+      /* ignore */
+    });
 }
 
 /**
@@ -259,9 +260,9 @@ export async function connectAllEnabled(timeoutMs = 5000): Promise<void> {
  * the new state. Invoked by `POST /api/mcp` with `{ action: "reload" }`.
  */
 export async function reloadMCP(): Promise<MCPListResult> {
-    const manager = getClientManager();
-    await manager.closeAll();
-    return listMCPServersWithStatus();
+  const manager = getClientManager();
+  await manager.closeAll();
+  return listMCPServersWithStatus();
 }
 
 /**
@@ -276,8 +277,8 @@ export async function reloadMCP(): Promise<MCPListResult> {
  * must not break the chat).
  */
 export async function getMergedMCPToolDefinitions(): Promise<ToolDefinition[]> {
-    await connectAllEnabled(5000);
-    return buildMCPToolDefinitions();
+  await connectAllEnabled(5000);
+  return buildMCPToolDefinitions();
 }
 
 /**
@@ -293,8 +294,8 @@ export async function getMergedMCPToolDefinitions(): Promise<ToolDefinition[]> {
  * non-search path.
  */
 export async function getMergedMCPToolDefinitionsForSearch(): Promise<ToolDefinition[]> {
-    await connectAllEnabled(5000);
-    return buildMCPToolDefinitionsForSearch();
+  await connectAllEnabled(5000);
+  return buildMCPToolDefinitionsForSearch();
 }
 
 /**
@@ -307,8 +308,8 @@ export async function getMergedMCPToolDefinitionsForSearch(): Promise<ToolDefini
  * in `constants.ts`).
  */
 export async function getMCPToolCount(): Promise<number> {
-    await connectAllEnabled(5000);
-    return (await buildMCPToolStubs()).length;
+  await connectAllEnabled(5000);
+  return (await buildMCPToolStubs()).length;
 }
 
 /**
@@ -317,8 +318,8 @@ export async function getMCPToolCount(): Promise<number> {
  * `autoApprove` lists in the inline approval gate (see A5).
  */
 export async function getMCPServerConfig(name: string): Promise<MCPServerConfig | null> {
-    const config = await loadMCPConfig();
-    return config.mcpServers[name] ?? null;
+  const config = await loadMCPConfig();
+  return config.mcpServers[name] ?? null;
 }
 
 /**
@@ -332,23 +333,25 @@ export async function getMCPServerConfig(name: string): Promise<MCPServerConfig 
  *
  * Used by `POST /api/mcp/auth`.
  */
-export async function reauthenticateMCPServer(serverName: string): Promise<{ ok: boolean; reason?: string }> {
-    const manager = getClientManager();
-    const config = await loadMCPConfig();
-    manager.setRootConfig(config);
-    if (!config.mcpServers[serverName]) {
-        return { ok: false, reason: `unknown MCP server "${serverName}"` };
-    }
-    if (config.mcpServers[serverName]?.oauth === undefined) {
-        return { ok: false, reason: `MCP server "${serverName}" has no OAuth config` };
-    }
-    try {
-        await manager.reauthenticate(serverName);
-        return { ok: true };
-    } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { ok: false, reason: message };
-    }
+export async function reauthenticateMCPServer(
+  serverName: string
+): Promise<{ ok: boolean; reason?: string }> {
+  const manager = getClientManager();
+  const config = await loadMCPConfig();
+  manager.setRootConfig(config);
+  if (!config.mcpServers[serverName]) {
+    return { ok: false, reason: `unknown MCP server "${serverName}"` };
+  }
+  if (config.mcpServers[serverName]?.oauth === undefined) {
+    return { ok: false, reason: `MCP server "${serverName}" has no OAuth config` };
+  }
+  try {
+    await manager.reauthenticate(serverName);
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: message };
+  }
 }
 
 /**
@@ -357,6 +360,6 @@ export async function reauthenticateMCPServer(serverName: string): Promise<{ ok:
  * tests and the MCP API route can trigger it deterministically.
  */
 export async function shutdownMCP(): Promise<void> {
-    const manager = getClientManager();
-    await manager.closeAll();
+  const manager = getClientManager();
+  await manager.closeAll();
 }

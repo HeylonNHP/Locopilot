@@ -3,12 +3,19 @@
 // ================================================================
 
 // ── Glassmorphism panel ──────────────────────────────────────
-@mixin glass-panel($blur: 16px, $saturate: 180%, $bg: var(--glass-white), $shadow: var(--shadow-soft)) {
+@mixin glass-panel(
+  $blur: 16px,
+  $saturate: 180%,
+  $bg: var(--glass-white),
+  $shadow: var(--shadow-soft)
+) {
   background: $bg;
   backdrop-filter: blur($blur) saturate($saturate);
   -webkit-backdrop-filter: blur($blur) saturate($saturate);
   border: 1px solid var(--glass-border);
-  box-shadow: $shadow, inset 0 1px 0 var(--glass-inset-highlight);
+  box-shadow:
+    $shadow,
+    inset 0 1px 0 var(--glass-inset-highlight);
 }
 
 @mixin glass-panel-heavy {
@@ -16,14 +23,16 @@
   backdrop-filter: blur(20px) saturate(200%);
   -webkit-backdrop-filter: blur(20px) saturate(200%);
   border: 1px solid var(--glass-border);
-  box-shadow: var(--shadow-lift), inset 0 1px 0 var(--glass-inset-highlight);
+  box-shadow:
+    var(--shadow-lift),
+    inset 0 1px 0 var(--glass-inset-highlight);
 }
 
 // ── Gel button (glossy gradient) ─────────────────────────────
 @mixin gel-button(
   $gradient-start: var(--gradient-primary-0),
-  $gradient-mid:   var(--gradient-primary-1),
-  $gradient-end:   var(--gradient-primary-2)
+  $gradient-mid: var(--gradient-primary-1),
+  $gradient-end: var(--gradient-primary-2)
 ) {
   position: relative;
   border-radius: 50px;
@@ -37,14 +46,17 @@
     0 4px 12px rgba(var(--rgb-shadow-blue), 0.3),
     inset 0 1px 0 var(--glass-inset-highlight),
     inset 0 -2px 0 rgba(0, 0, 0, 0.1);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 
   &::before {
     content: '';
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: linear-gradient(180deg,
+    background: linear-gradient(
+      180deg,
       var(--glass-gloss-top) 0%,
       var(--glass-gloss-mid) 40%,
       transparent 40%
@@ -70,7 +82,11 @@
 
 // ── Gel button (disabled variant) ────────────────────────────
 @mixin gel-button-disabled {
-  background: linear-gradient(180deg, var(--gradient-disabled-0) 0%, var(--gradient-disabled-1) 100%);
+  background: linear-gradient(
+    180deg,
+    var(--gradient-disabled-0) 0%,
+    var(--gradient-disabled-1) 100%
+  );
   cursor: not-allowed;
   box-shadow: 0 2px 6px rgba(0, 40, 80, 0.1);
 }

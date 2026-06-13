@@ -39,38 +39,38 @@ const APPROVAL_TIMEOUT_MS = 120_000; // 2 minutes
 export type ApprovalRisk = 'command' | 'network' | 'file' | 'mcp' | 'other';
 
 export interface ApprovalRequest {
-    /**
-     * Display name of the tool being requested (e.g. "run_command",
-     * "mcp_call"). Shown in the modal as the title.
-     */
-    toolName: string;
-    /**
-     * Coarse risk category. Drives the modal's icon + label.
-     * Defaults to 'other' if not provided.
-     */
-    risk?: ApprovalRisk;
-    /**
-     * Free-form hint shown to the user (e.g. the command being run
-     * or the MCP server/tool pair). Rendered verbatim.
-     */
-    args?: unknown;
+  /**
+   * Display name of the tool being requested (e.g. "run_command",
+   * "mcp_call"). Shown in the modal as the title.
+   */
+  toolName: string;
+  /**
+   * Coarse risk category. Drives the modal's icon + label.
+   * Defaults to 'other' if not provided.
+   */
+  risk?: ApprovalRisk;
+  /**
+   * Free-form hint shown to the user (e.g. the command being run
+   * or the MCP server/tool pair). Rendered verbatim.
+   */
+  args?: unknown;
 }
 
 export interface ApprovalDecision {
-    approved: boolean;
-    /**
-     * If approved, the set of namespaced tool names the user granted
-     * permission for. Empty/absent means "approve the immediate call
-     * but don't pre-approve future calls" (the existing Phase 1
-     * behaviour for `run_command`).
-     */
-    grantedTools?: string[];
+  approved: boolean;
+  /**
+   * If approved, the set of namespaced tool names the user granted
+   * permission for. Empty/absent means "approve the immediate call
+   * but don't pre-approve future calls" (the existing Phase 1
+   * behaviour for `run_command`).
+   */
+  grantedTools?: string[];
 }
 
 interface PendingApproval {
-    resolve: (decision: ApprovalDecision) => void;
-    timer: ReturnType<typeof setTimeout>;
-    request: ApprovalRequest;
+  resolve: (decision: ApprovalDecision) => void;
+  timer: ReturnType<typeof setTimeout>;
+  request: ApprovalRequest;
 }
 
 const pendingApprovals = new Map<string, PendingApproval>();
@@ -81,15 +81,18 @@ const pendingApprovals = new Map<string, PendingApproval>();
  * (auto-rejects) after `APPROVAL_TIMEOUT_MS` (2 minutes) — same
  * behaviour as Phase 1.
  */
-export function waitForApproval(requestId: string, request: ApprovalRequest = { toolName: 'unknown' }): Promise<ApprovalDecision> {
-    return new Promise<ApprovalDecision>((resolve) => {
-        const timer = setTimeout(() => {
-            pendingApprovals.delete(requestId);
-            resolve({ approved: false }); // timeout → auto-reject
-        }, APPROVAL_TIMEOUT_MS);
+export function waitForApproval(
+  requestId: string,
+  request: ApprovalRequest = { toolName: 'unknown' }
+): Promise<ApprovalDecision> {
+  return new Promise<ApprovalDecision>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingApprovals.delete(requestId);
+      resolve({ approved: false }); // timeout → auto-reject
+    }, APPROVAL_TIMEOUT_MS);
 
-        pendingApprovals.set(requestId, { resolve, timer, request });
-    });
+    pendingApprovals.set(requestId, { resolve, timer, request });
+  });
 }
 
 /**
@@ -104,19 +107,17 @@ export function waitForApproval(requestId: string, request: ApprovalRequest = { 
  * `approved: true`.
  */
 export function resolveApproval(
-    requestId: string,
-    decision: ApprovalDecision | boolean = { approved: false },
+  requestId: string,
+  decision: ApprovalDecision | boolean = { approved: false }
 ): boolean {
-    const pending = pendingApprovals.get(requestId);
-    if (!pending) return false;
-    clearTimeout(pending.timer);
-    pendingApprovals.delete(requestId);
-    // Backward-compat: accept a bare boolean.
-    const final: ApprovalDecision = typeof decision === 'boolean'
-        ? { approved: decision }
-        : decision;
-    pending.resolve(final);
-    return true;
+  const pending = pendingApprovals.get(requestId);
+  if (!pending) return false;
+  clearTimeout(pending.timer);
+  pendingApprovals.delete(requestId);
+  // Backward-compat: accept a bare boolean.
+  const final: ApprovalDecision = typeof decision === 'boolean' ? { approved: decision } : decision;
+  pending.resolve(final);
+  return true;
 }
 
 /**
@@ -126,6 +127,6 @@ export function resolveApproval(
  * Returns `null` if the requestId is unknown.
  */
 export function getApprovalRequest(requestId: string): ApprovalRequest | null {
-    const pending = pendingApprovals.get(requestId);
-    return pending ? pending.request : null;
+  const pending = pendingApprovals.get(requestId);
+  return pending ? pending.request : null;
 }

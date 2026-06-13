@@ -1,15 +1,21 @@
-import { access, readFile, writeFile, rename } from 'fs/promises';
-import path from 'path';
-
-import chalk from 'chalk';
 import { input, select } from '@inquirer/prompts';
+import chalk from 'chalk';
+import { access, readFile, rename, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
-import { validateLlmConnection } from './llm';
-import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_MAX_QUERIES, DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT, DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY, OLLAMA_CONNECT_TIMEOUT_MS } from '../constants';
 import type { Config } from '../types/chatConfig';
 
+import {
+  DEFAULT_NUM_CTX,
+  DEFAULT_WEB_SEARCH_MAX_QUERIES,
+  DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+  DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+  OLLAMA_CONNECT_TIMEOUT_MS,
+} from '../constants';
+import { validateLlmConnection } from './llm';
+
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
-const CONFIG_TMP_PATH = CONFIG_PATH + '.tmp';
+const CONFIG_TMP_PATH = `${CONFIG_PATH  }.tmp`;
 let configWriteQueue: Promise<void> = Promise.resolve();
 
 /**
@@ -17,16 +23,16 @@ let configWriteQueue: Promise<void> = Promise.resolve();
  * @returns Promise resolving to Config object or null if file doesn't exist
  */
 export async function loadConfig(): Promise<Config | null> {
-    try {
-        await access(CONFIG_PATH);
-        const data = await readFile(CONFIG_PATH, 'utf8');
-        return JSON.parse(data);
-    } catch (e) {
-        if (e && (e as any).code !== 'ENOENT') {
-            console.error(chalk.red('Error reading or parsing config file.'));
-        }
-        return null;
+  try {
+    await access(CONFIG_PATH);
+    const data = await readFile(CONFIG_PATH, 'utf8');
+    return JSON.parse(data);
+  } catch (err) {
+    if (err && (err as any).code !== 'ENOENT') {
+      console.error(chalk.red('Error reading or parsing config file.'));
     }
+    return null;
+  }
 }
 
 /**
@@ -34,13 +40,13 @@ export async function loadConfig(): Promise<Config | null> {
  * with a promise-chain queue so concurrent saves are serialised.
  */
 export async function saveConfig(config: Config): Promise<void> {
-    const task = async () => {
-        await writeFile(CONFIG_TMP_PATH, JSON.stringify(config, null, 2));
-        await rename(CONFIG_TMP_PATH, CONFIG_PATH);
-    };
-    // Chain onto the previous save so concurrent calls are serialised
-    configWriteQueue = configWriteQueue.then(task, task);
-    return configWriteQueue;
+  const task = async () => {
+    await writeFile(CONFIG_TMP_PATH, JSON.stringify(config, null, 2));
+    await rename(CONFIG_TMP_PATH, CONFIG_PATH);
+  };
+  // Chain onto the previous save so concurrent calls are serialised
+  configWriteQueue = configWriteQueue.then(task, task);
+  return configWriteQueue;
 }
 
 /**
@@ -48,12 +54,12 @@ export async function saveConfig(config: Config): Promise<void> {
  * @param err - The error object
  */
 export function handleUnexpectedError(err: any): void {
-    if (err && err.name === 'ExitPromptError') {
-        console.log('\nExiting Locopilot.');
-        process.exit(0);
-    }
-    console.error(chalk.red('An unexpected error occurred:'), err);
-    process.exit(1);
+  if (err && err.name === 'ExitPromptError') {
+    console.log('\nExiting Locopilot.');
+    process.exit(0);
+  }
+  console.error(chalk.red('An unexpected error occurred:'), err);
+  process.exit(1);
 }
 
 /**
@@ -63,43 +69,48 @@ export function handleUnexpectedError(err: any): void {
  * @returns Promise resolving to the final configuration
  */
 export async function setupOllama(initialConfig: Config | null): Promise<Config> {
-    let config = initialConfig;
+  let config = initialConfig;
 
-    while (true) {
-        if (!config) {
-            console.log(chalk.blue('Initial Configuration Required'));
-            const host = await input({ message: 'Enter Ollama host (e.g., localhost):', default: 'localhost' });
-            const port = await input({ message: 'Enter Ollama port:', default: '11434' });
-            config = {
-                baseUrl: `http://${host}:${port}`
-            };
-        }
-
-        try {
-            await validateLlmConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
-            await saveConfig(config);
-            return config;
-        } catch (error) {
-            console.error(chalk.red('\nCould not connect to Ollama at ' + config.baseUrl));
-            console.error(chalk.yellow('Please check if Ollama is running and the address is correct.\n'));
-
-            const action = await select({
-                message: 'What would you like to do?',
-                choices: [
-                    { name: 'Retry connection', value: 'retry' },
-                    { name: 'Edit configuration', value: 'edit' },
-                    { name: 'Exit', value: 'exit' }
-                ]
-            });
-
-            if (action === 'exit' || action === null) process.exit(0);
-            if (action === 'edit') {
-                config = null;
-                continue;
-            }
-            // if retry, loop will continue with existing config
-        }
+  while (true) {
+    if (!config) {
+      console.log(chalk.blue('Initial Configuration Required'));
+      const host = await input({
+        message: 'Enter Ollama host (e.g., localhost):',
+        default: 'localhost',
+      });
+      const port = await input({ message: 'Enter Ollama port:', default: '11434' });
+      config = {
+        baseUrl: `http://${host}:${port}`,
+      };
     }
+
+    try {
+      await validateLlmConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
+      await saveConfig(config);
+      return config;
+    } catch {
+      console.error(chalk.red(`\nCould not connect to Ollama at ${  config.baseUrl}`));
+      console.error(
+        chalk.yellow('Please check if Ollama is running and the address is correct.\n')
+      );
+
+      const action = await select({
+        message: 'What would you like to do?',
+        choices: [
+          { name: 'Retry connection', value: 'retry' },
+          { name: 'Edit configuration', value: 'edit' },
+          { name: 'Exit', value: 'exit' },
+        ],
+      });
+
+      if (action === 'exit' || action === null) process.exit(0);
+      if (action === 'edit') {
+        config = null;
+        continue;
+      }
+      // if retry, loop will continue with existing config
+    }
+  }
 }
 
 /**
@@ -108,33 +119,37 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
  * @param models - Array of available model names
  * @returns Promise resolving to object with model and numCtx
  */
-export async function configureModelAndContext(config: Config, models: string[]): Promise<{ model: string, numCtx: number }> {
-    let selectedModel = config.lastModel && models.includes(config.lastModel)
-        ? config.lastModel
-        : null;
-    const selectedNumCtx = config.numCtx ?? DEFAULT_NUM_CTX;
+export async function configureModelAndContext(
+  config: Config,
+  models: string[]
+): Promise<{ model: string; numCtx: number }> {
+  let selectedModel =
+    config.lastModel && models.includes(config.lastModel) ? config.lastModel : null;
+  const selectedNumCtx = config.numCtx ?? DEFAULT_NUM_CTX;
 
-    const savedWebSearch = config.webSearch;
-    const selectedWebSearchMaxQueries = savedWebSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES;
-    const selectedWebSearchResultsPerQuery = savedWebSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY;
-    const selectedWebSearchPerPageCharLimit = savedWebSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT;
+  const savedWebSearch = config.webSearch;
+  const selectedWebSearchMaxQueries = savedWebSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES;
+  const selectedWebSearchResultsPerQuery =
+    savedWebSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY;
+  const selectedWebSearchPerPageCharLimit =
+    savedWebSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT;
 
-    if (!selectedModel) {
-        selectedModel = await select({
-            message: 'Select a model to chat with:',
-            choices: models.map((m: string) => ({ name: m, value: m })),
-            pageSize: 10
-        });
+  if (!selectedModel) {
+    selectedModel = await select({
+      message: 'Select a model to chat with:',
+      choices: models.map((m: string) => ({ name: m, value: m })),
+      pageSize: 10,
+    });
 
-        if (selectedModel === null) process.exit(0);
-    }
+    if (selectedModel === null) process.exit(0);
+  }
 
-    config.lastModel = selectedModel;
-    config.numCtx = selectedNumCtx;
-    config.webSearch = {
-        maxQueries: selectedWebSearchMaxQueries,
-        resultsPerQuery: selectedWebSearchResultsPerQuery,
-        perPageCharLimit: selectedWebSearchPerPageCharLimit,
-    };
-    return { model: selectedModel as string, numCtx: selectedNumCtx };
+  config.lastModel = selectedModel;
+  config.numCtx = selectedNumCtx;
+  config.webSearch = {
+    maxQueries: selectedWebSearchMaxQueries,
+    resultsPerQuery: selectedWebSearchResultsPerQuery,
+    perPageCharLimit: selectedWebSearchPerPageCharLimit,
+  };
+  return { model: selectedModel as string, numCtx: selectedNumCtx };
 }

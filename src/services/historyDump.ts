@@ -1,277 +1,285 @@
-import { writeFile } from 'fs/promises';
-import path from 'path';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 import type { ChatMessage } from './llm';
 
 export interface ConversationDumpInput {
-    sessionId?: number | null | undefined;
-    sessionName?: string | undefined;
-    currentModel: string;
-    baseUrl: string;
-    runtimeNumCtx: number;
-    savedNumCtx?: number | undefined;
-    systemPrompt: string;
-    messages: ChatMessage[];
-    config?: unknown;
-    webCompactionDebug?: string[];
+  sessionId?: number | null | undefined;
+  sessionName?: string | undefined;
+  currentModel: string;
+  baseUrl: string;
+  runtimeNumCtx: number;
+  savedNumCtx?: number | undefined;
+  systemPrompt: string;
+  messages: ChatMessage[];
+  config?: unknown;
+  webCompactionDebug?: string[];
 }
 
 export interface ConversationDumpResult {
-    filePath: string;
-    fileName: string;
+  filePath: string;
+  fileName: string;
 }
 
 function normalizeLineEndings(text: string): string {
-    return text.replace(/\r\n/g, '\n');
+  return text.replaceAll('\r\n', '\n');
 }
 
 function longestBacktickRun(text: string): number {
-    let maxRun = 0;
-    let currentRun = 0;
+  let maxRun = 0;
+  let currentRun = 0;
 
-    for (const char of text) {
-        if (char === '`') {
-            currentRun += 1;
-            if (currentRun > maxRun) {
-                maxRun = currentRun;
-            }
-        } else {
-            currentRun = 0;
-        }
+  for (const char of text) {
+    if (char === '`') {
+      currentRun += 1;
+      if (currentRun > maxRun) {
+        maxRun = currentRun;
+      }
+    } else {
+      currentRun = 0;
     }
+  }
 
-    return maxRun;
+  return maxRun;
 }
 
 function fencedBlock(text: string, language = 'text'): string {
-    const normalized = normalizeLineEndings(text);
-    const fenceLength = Math.max(3, longestBacktickRun(normalized) + 1);
-    const fence = '`'.repeat(fenceLength);
-    return `${fence}${language}\n${normalized}\n${fence}`;
+  const normalized = normalizeLineEndings(text);
+  const fenceLength = Math.max(3, longestBacktickRun(normalized) + 1);
+  const fence = '`'.repeat(fenceLength);
+  return `${fence}${language}\n${normalized}\n${fence}`;
 }
 
 function safeJsonStringify(value: unknown): string {
-    try {
-        const json = JSON.stringify(value, null, 2);
-        return json ?? 'null';
-    } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        return JSON.stringify(
-            {
-                error: 'Unable to serialize value',
-                reason,
-            },
-            null,
-            2,
-        );
-    }
+  try {
+    const json = JSON.stringify(value, null, 2);
+    return json ?? 'null';
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return JSON.stringify(
+      {
+        error: 'Unable to serialize value',
+        reason,
+      },
+      null,
+      2
+    );
+  }
 }
 
 function sanitizeFileSegment(value: string): string {
-    return value
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .replace(/-{2,}/g, '-')
-        .slice(0, 48);
+  return value
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^\da-z]+/g, '-')
+    .replaceAll(/^-+|-+$/g, '')
+    .replaceAll(/-{2,}/g, '-')
+    .slice(0, 48);
 }
 
 function formatTimestamp(date = new Date()): string {
-    return date.toISOString().replace(/[:.]/g, '-');
+  return date.toISOString().replaceAll(/[.:]/g, '-');
 }
 
 function pluralize(count: number, singular: string): string {
-    return `${count} ${singular}${count === 1 ? '' : 's'}`;
+  return `${count} ${singular}${count === 1 ? '' : 's'}`;
 }
 
 function summarizeRoles(messages: ChatMessage[]): string {
-    const counts = new Map<ChatMessage['role'], number>([
-        ['system', 0],
-        ['user', 0],
-        ['assistant', 0],
-        ['tool', 0],
-    ]);
+  const counts = new Map<ChatMessage['role'], number>([
+    ['system', 0],
+    ['user', 0],
+    ['assistant', 0],
+    ['tool', 0],
+  ]);
 
-    for (const message of messages) {
-        counts.set(message.role, (counts.get(message.role) ?? 0) + 1);
-    }
+  for (const message of messages) {
+    counts.set(message.role, (counts.get(message.role) ?? 0) + 1);
+  }
 
-    return Array.from(counts.entries())
-        .map(([role, count]) => `${role}=${count}`)
-        .join(', ');
+  return [...counts.entries()]
+    .map(([role, count]) => `${role}=${count}`)
+    .join(', ');
 }
 
 function countToolCalls(messages: ChatMessage[]): number {
-    return messages.reduce((total, message) => total + (message.tool_calls?.length ?? 0), 0);
+  return messages.reduce((total, message) => total + (message.tool_calls?.length ?? 0), 0);
 }
 
 function countImages(messages: ChatMessage[]): number {
-    return messages.reduce((total, message) => total + (message.images?.length ?? 0), 0);
+  return messages.reduce((total, message) => total + (message.images?.length ?? 0), 0);
 }
 
 export function buildDumpFileName(input: ConversationDumpInput): string {
-    const timestamp = formatTimestamp();
-    const sessionSlug = input.sessionName ? sanitizeFileSegment(input.sessionName) : '';
-    const sessionIdPart = typeof input.sessionId === 'number' && Number.isFinite(input.sessionId) && input.sessionId > 0
-        ? String(Math.trunc(input.sessionId))
-        : 'unsaved';
-    const sessionPart = sessionSlug ? `session-${sessionIdPart}-${sessionSlug}` : `session-${sessionIdPart}`;
-    return `locopilot-history-${sessionPart}-${timestamp}.md`;
+  const timestamp = formatTimestamp();
+  const sessionSlug = input.sessionName ? sanitizeFileSegment(input.sessionName) : '';
+  const sessionIdPart =
+    typeof input.sessionId === 'number' && Number.isFinite(input.sessionId) && input.sessionId > 0
+      ? String(Math.trunc(input.sessionId))
+      : 'unsaved';
+  const sessionPart = sessionSlug
+    ? `session-${sessionIdPart}-${sessionSlug}`
+    : `session-${sessionIdPart}`;
+  return `locopilot-history-${sessionPart}-${timestamp}.md`;
 }
 
 function renderTextSection(title: string, text: string, language = 'text'): string {
-    const trimmed = text.trim();
-    const body = trimmed.length > 0
-        ? fencedBlock(text, language)
-        : '_No content recorded._';
+  const trimmed = text.trim();
+  const body = trimmed.length > 0 ? fencedBlock(text, language) : '_No content recorded._';
 
-    return [`### ${title}`, '', body].join('\n');
+  return [`### ${title}`, '', body].join('\n');
 }
 
 function renderDebugSection(title: string, lines: string[]): string {
-    return renderTextSection(title, lines.join('\n'));
+  return renderTextSection(title, lines.join('\n'));
 }
 
-function renderToolCallSection(toolCall: NonNullable<ChatMessage['tool_calls']>[number], callIndex: number): string {
-    return [
-        `#### Tool Call ${callIndex + 1}`,
-        '',
-        `- Function: \`${toolCall.function.name}\``,
-        '',
-        fencedBlock(safeJsonStringify(toolCall), 'json'),
-    ].join('\n');
+function renderToolCallSection(
+  toolCall: NonNullable<ChatMessage['tool_calls']>[number],
+  callIndex: number
+): string {
+  return [
+    `#### Tool Call ${callIndex + 1}`,
+    '',
+    `- Function: \`${toolCall.function.name}\``,
+    '',
+    fencedBlock(safeJsonStringify(toolCall), 'json'),
+  ].join('\n');
 }
 
 function renderImageSection(base64: string, imageIndex: number): string {
-    return [
-        `#### Image ${imageIndex + 1}`,
-        '',
-        `- Base64 length: ${base64.length} characters`,
-        '',
-        fencedBlock(base64, 'text'),
-    ].join('\n');
+  return [
+    `#### Image ${imageIndex + 1}`,
+    '',
+    `- Base64 length: ${base64.length} characters`,
+    '',
+    fencedBlock(base64, 'text'),
+  ].join('\n');
 }
 
 function renderMessageSection(message: ChatMessage, index: number): string {
-    const sections: string[] = [];
-    const extras: string[] = [];
+  const sections: string[] = [];
+  const extras: string[] = [];
 
-    if (message.tool_calls?.length) {
-        extras.push(pluralize(message.tool_calls.length, 'tool call'));
-    }
+  if (message.tool_calls?.length) {
+    extras.push(pluralize(message.tool_calls.length, 'tool call'));
+  }
 
-    if (message.images?.length) {
-        extras.push(pluralize(message.images.length, 'image'));
-    }
+  if (message.images?.length) {
+    extras.push(pluralize(message.images.length, 'image'));
+  }
 
-    if (message.thinking?.trim()) {
-        extras.push('thinking');
-    }
+  if (message.thinking?.trim()) {
+    extras.push('thinking');
+  }
 
-    const extraSuffix = extras.length > 0 ? ` (${extras.join(', ')})` : '';
-    sections.push(`### Message ${index + 1} - ${message.role}${extraSuffix}`);
+  const extraSuffix = extras.length > 0 ? ` (${extras.join(', ')})` : '';
+  sections.push(`### Message ${index + 1} - ${message.role}${extraSuffix}`, '');
+  sections.push(renderTextSection('Content', message.content));
+
+  if (message.thinking?.trim()) {
     sections.push('');
-    sections.push(renderTextSection('Content', message.content));
+    sections.push(renderTextSection('Thinking', message.thinking, 'text'));
+  }
 
-    if (message.thinking?.trim()) {
-        sections.push('');
-        sections.push(renderTextSection('Thinking', message.thinking, 'text'));
-    }
+  if (message.tool_calls?.length) {
+    sections.push('', `### Tool Calls (${message.tool_calls.length})`, '');
+    sections.push(
+      message.tool_calls
+        .map((toolCall, callIndex) => renderToolCallSection(toolCall, callIndex))
+        .join('\n\n')
+    );
+  }
 
-    if (message.tool_calls?.length) {
-        sections.push('');
-        sections.push(`### Tool Calls (${message.tool_calls.length})`);
-        sections.push('');
-        sections.push(
-            message.tool_calls
-                .map((toolCall, callIndex) => renderToolCallSection(toolCall, callIndex))
-                .join('\n\n'),
-        );
-    }
+  if (message.images?.length) {
+    sections.push('', `### Images (${message.images.length})`, '');
+    sections.push(
+      message.images.map((image, imageIndex) => renderImageSection(image, imageIndex)).join('\n\n')
+    );
+  }
 
-    if (message.images?.length) {
-        sections.push('');
-        sections.push(`### Images (${message.images.length})`);
-        sections.push('');
-        sections.push(
-            message.images
-                .map((image, imageIndex) => renderImageSection(image, imageIndex))
-                .join('\n\n'),
-        );
-    }
-
-    return sections.join('\n');
+  return sections.join('\n');
 }
 
 function renderTranscript(messages: ChatMessage[]): string {
-    if (messages.length === 0) {
-        return '_No messages recorded in the current conversation._';
-    }
+  if (messages.length === 0) {
+    return '_No messages recorded in the current conversation._';
+  }
 
-    return messages
-        .map((message, index) => renderMessageSection(message, index))
-        .join('\n\n---\n\n');
+  return messages.map((message, index) => renderMessageSection(message, index)).join('\n\n---\n\n');
 }
 
 export function buildConversationDumpMarkdown(input: ConversationDumpInput): string {
-    const trimmedSessionName = input.sessionName?.trim();
-    const systemPrompt = input.systemPrompt.trim().length > 0
-        ? fencedBlock(input.systemPrompt, 'markdown')
-        : '_No system prompt content was recorded._';
+  const trimmedSessionName = input.sessionName?.trim();
+  const systemPrompt =
+    input.systemPrompt.trim().length > 0
+      ? fencedBlock(input.systemPrompt, 'markdown')
+      : '_No system prompt content was recorded._';
 
-    const summaryLines = [
-        `- Generated at: ${new Date().toISOString()}`,
-        `- Session ID: ${typeof input.sessionId === 'number' && Number.isFinite(input.sessionId) && input.sessionId > 0 ? Math.trunc(input.sessionId) : '(unsaved)'}`,
-        `- Session Name: ${trimmedSessionName && trimmedSessionName.length > 0 ? trimmedSessionName : '(unnamed)'}`,
-        `- Current Model: ${input.currentModel}`,
-        `- Base URL: ${input.baseUrl}`,
-        `- Runtime num_ctx: ${input.runtimeNumCtx}`,
-        `- Saved num_ctx: ${input.savedNumCtx ?? '(unset)'}`,
-        `- Message Count: ${input.messages.length}`,
-        `- Role Counts: ${summarizeRoles(input.messages)}`,
-        `- Tool Calls: ${countToolCalls(input.messages)}`,
-        `- Images: ${countImages(input.messages)}`,
-    ];
+  const summaryLines = [
+    `- Generated at: ${new Date().toISOString()}`,
+    `- Session ID: ${typeof input.sessionId === 'number' && Number.isFinite(input.sessionId) && input.sessionId > 0 ? Math.trunc(input.sessionId) : '(unsaved)'}`,
+    `- Session Name: ${trimmedSessionName && trimmedSessionName.length > 0 ? trimmedSessionName : '(unnamed)'}`,
+    `- Current Model: ${input.currentModel}`,
+    `- Base URL: ${input.baseUrl}`,
+    `- Runtime num_ctx: ${input.runtimeNumCtx}`,
+    `- Saved num_ctx: ${input.savedNumCtx ?? '(unset)'}`,
+    `- Message Count: ${input.messages.length}`,
+    `- Role Counts: ${summarizeRoles(input.messages)}`,
+    `- Tool Calls: ${countToolCalls(input.messages)}`,
+    `- Images: ${countImages(input.messages)}`,
+  ];
 
-    const sections = [
-        '# Locopilot Conversation Dump',
-        '',
-        '## Summary',
-        '',
-        ...summaryLines,
-        '',
-        '## System Prompt',
-        '',
-        systemPrompt,
-    ];
+  const sections = [
+    '# Locopilot Conversation Dump',
+    '',
+    '## Summary',
+    '',
+    ...summaryLines,
+    '',
+    '## System Prompt',
+    '',
+    systemPrompt,
+  ];
 
-    if (input.config !== undefined) {
-        sections.push('', '## Runtime Config Snapshot', '', fencedBlock(safeJsonStringify(input.config), 'json'));
-    }
-
-    if (input.webCompactionDebug && input.webCompactionDebug.length > 0) {
-        sections.push('', '## Web Content Compaction Debug', '', renderDebugSection('Web Content Compaction Debug', input.webCompactionDebug));
-    }
-
+  if (input.config !== undefined) {
     sections.push(
-        '',
-        '## Transcript',
-        '',
-        'The transcript below preserves the stored message order. Message content, thinking, tool calls, and tool responses are emitted verbatim in fenced blocks.',
-        '',
-        renderTranscript(input.messages),
+      '',
+      '## Runtime Config Snapshot',
+      '',
+      fencedBlock(safeJsonStringify(input.config), 'json')
     );
+  }
 
-    return sections.join('\n');
+  if (input.webCompactionDebug && input.webCompactionDebug.length > 0) {
+    sections.push(
+      '',
+      '## Web Content Compaction Debug',
+      '',
+      renderDebugSection('Web Content Compaction Debug', input.webCompactionDebug)
+    );
+  }
+
+  sections.push(
+    '',
+    '## Transcript',
+    '',
+    'The transcript below preserves the stored message order. Message content, thinking, tool calls, and tool responses are emitted verbatim in fenced blocks.',
+    '',
+    renderTranscript(input.messages)
+  );
+
+  return sections.join('\n');
 }
 
-export async function writeConversationHistoryDump(input: ConversationDumpInput): Promise<ConversationDumpResult> {
-    const fileName = buildDumpFileName(input);
-    const filePath = path.join(process.cwd(), fileName);
-    const markdown = buildConversationDumpMarkdown(input);
+export async function writeConversationHistoryDump(
+  input: ConversationDumpInput
+): Promise<ConversationDumpResult> {
+  const fileName = buildDumpFileName(input);
+  const filePath = path.join(process.cwd(), fileName);
+  const markdown = buildConversationDumpMarkdown(input);
 
-    await writeFile(filePath, markdown, 'utf8');
+  await writeFile(filePath, markdown, 'utf8');
 
-    return { filePath, fileName };
+  return { filePath, fileName };
 }

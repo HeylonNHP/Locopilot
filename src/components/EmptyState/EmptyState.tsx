@@ -11,7 +11,7 @@ export function EmptyState({ modelCount }: EmptyStateProps) {
       <p className="m-0">Local, Private, Safe AI Assistant</p>
       {modelCount > 0 && (
         <p className="font-13 m-0">
-          {modelCount} model{modelCount !== 1 ? 's' : ''} available
+          {modelCount} model{modelCount === 1 ? '' : 's'} available
         </p>
       )}
     </div>

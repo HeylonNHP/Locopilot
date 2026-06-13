@@ -1,9 +1,9 @@
 'use client';
-import './MarkdownMessage.scss';
-
 import DOMPurify from 'isomorphic-dompurify';
 import { marked } from 'marked';
-import { useMemo, useRef, useEffect } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+
+import './MarkdownMessage.scss';
 
 interface Props {
   source: string;
@@ -39,16 +39,74 @@ function renderMarkdownHtml(source: string): string {
   // while stripping <script>, event handlers, and other XSS vectors.
   return DOMPurify.sanitize(rawHtml, {
     ALLOWED_TAGS: [
-      'a', 'abbr', 'b', 'blockquote', 'br', 'caption', 'code', 'col', 'colgroup',
-      'dd', 'del', 'details', 'div', 'dl', 'dt', 'em', 'figcaption', 'figure',
-      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'ins', 'kbd',
-      'li', 'mark', 'ol', 'p', 'pre', 'q', 's', 'samp', 'small', 'span',
-      'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'tfoot',
-      'th', 'thead', 'tr', 'u', 'ul',
+      'a',
+      'abbr',
+      'b',
+      'blockquote',
+      'br',
+      'caption',
+      'code',
+      'col',
+      'colgroup',
+      'dd',
+      'del',
+      'details',
+      'div',
+      'dl',
+      'dt',
+      'em',
+      'figcaption',
+      'figure',
+      'h1',
+      'h2',
+      'h3',
+      'h4',
+      'h5',
+      'h6',
+      'hr',
+      'i',
+      'img',
+      'ins',
+      'kbd',
+      'li',
+      'mark',
+      'ol',
+      'p',
+      'pre',
+      'q',
+      's',
+      'samp',
+      'small',
+      'span',
+      'strong',
+      'sub',
+      'summary',
+      'sup',
+      'table',
+      'tbody',
+      'td',
+      'tfoot',
+      'th',
+      'thead',
+      'tr',
+      'u',
+      'ul',
     ],
     ALLOWED_ATTR: [
-      'href', 'target', 'rel', 'src', 'alt', 'title', 'width', 'height',
-      'colspan', 'rowspan', 'scope', 'align', 'class', 'id',
+      'href',
+      'target',
+      'rel',
+      'src',
+      'alt',
+      'title',
+      'width',
+      'height',
+      'colspan',
+      'rowspan',
+      'scope',
+      'align',
+      'class',
+      'id',
     ],
     ALLOW_DATA_ATTR: false,
   });
@@ -73,7 +131,7 @@ export default function MarkdownMessage({ source, className }: Props) {
         if (pre.querySelector('.code-copy-btn')) return;
 
         // Ensure pre is positioned so the absolute button anchors correctly
-        const computedPosition = window.getComputedStyle(pre).position;
+        const computedPosition = globalThis.getComputedStyle(pre).position;
         if (computedPosition === 'static') {
           (pre as HTMLElement).style.position = 'relative';
         }
@@ -110,14 +168,14 @@ export default function MarkdownMessage({ source, className }: Props) {
             textarea.value = text;
             textarea.style.position = 'fixed';
             textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
+            document.body.append(textarea);
             textarea.select();
             try {
               document.execCommand('copy');
             } catch {
               // silently fail
             }
-            document.body.removeChild(textarea);
+            textarea.remove();
           };
 
           if (navigator.clipboard) {
@@ -136,7 +194,7 @@ export default function MarkdownMessage({ source, className }: Props) {
           }, 1500);
         });
 
-        pre.appendChild(btn);
+        pre.append(btn);
       });
     };
 

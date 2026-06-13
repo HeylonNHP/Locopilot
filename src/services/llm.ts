@@ -1,18 +1,19 @@
-import { ollamaAdapter } from './adapters/ollamaAdapter';
 import type {
-    ChatApiResponse,
-    ChatMessage,
-    ChatParams,
-    LlmAdapter,
-    LlmModel,
-    LlmModelInfo,
-    LlmTurnStats,
-    PersistedChatMessage,
-    StreamChatParams,
-    SubagentLogMessage,
-    ToolCall,
-    ToolDefinition,
+  ChatApiResponse,
+  
+  ChatParams,
+  LlmAdapter,
+  LlmModel,
+  LlmModelInfo,
+  LlmTurnStats,
+  
+  StreamChatParams,
+  
+  
+  
 } from './adapters/llmAdapter';
+
+import { ollamaAdapter } from './adapters/ollamaAdapter';
 
 /**
  * The active adapter is a module-level singleton. Changing it at runtime
@@ -24,7 +25,7 @@ import type {
 let activeAdapter: LlmAdapter = ollamaAdapter;
 
 export function getLlmAdapter(): LlmAdapter {
-    return activeAdapter;
+  return activeAdapter;
 }
 
 /**
@@ -35,76 +36,85 @@ export function getLlmAdapter(): LlmAdapter {
  * only called once at startup.
  */
 export function setLlmAdapter(adapter: LlmAdapter): void {
-    activeAdapter = adapter;
+  activeAdapter = adapter;
 }
 
 export function validateLlmConnection(baseUrl: string, timeoutMs?: number): Promise<void> {
-    return activeAdapter.validateConnection(baseUrl, timeoutMs);
+  return activeAdapter.validateConnection(baseUrl, timeoutMs);
 }
 
 export function fetchLlmModels(baseUrl: string): Promise<LlmModel[]> {
-    return activeAdapter.fetchModels(baseUrl);
+  return activeAdapter.fetchModels(baseUrl);
 }
 
 export function fetchLlmModelInfo(baseUrl: string, modelName: string): Promise<LlmModelInfo> {
-    return activeAdapter.fetchModelInfo(baseUrl, modelName);
+  return activeAdapter.fetchModelInfo(baseUrl, modelName);
 }
 
 export function getLlmModelContextLimit(modelInfo: LlmModelInfo): number | null {
-    return activeAdapter.getModelContextLimit(modelInfo);
+  return activeAdapter.getModelContextLimit(modelInfo);
 }
 
 export function getLlmModelVisionSupport(info: LlmModelInfo): boolean {
-    if (Array.isArray(info.capabilities)) {
-        const capabilities = info.capabilities.map(String);
-        return capabilities.includes('vision') || capabilities.includes('multimodal') || capabilities.includes('image');
-    }
-    return false;
+  if (Array.isArray(info.capabilities)) {
+    const capabilities = new Set(info.capabilities.map(String));
+    return (
+      capabilities.has('vision') ||
+      capabilities.has('multimodal') ||
+      capabilities.has('image')
+    );
+  }
+  return false;
 }
 
 export function sendLlmChat(
-    baseUrl: string,
-    params: ChatParams,
-    onChunk?: (chunk: ChatApiResponse) => void,
-    timeoutMs?: number,
-    signal?: AbortSignal,
+  baseUrl: string,
+  params: ChatParams,
+  onChunk?: (chunk: ChatApiResponse) => void,
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<ChatApiResponse> {
-    return activeAdapter.sendChat(baseUrl, params, onChunk, timeoutMs, signal);
+  return activeAdapter.sendChat(baseUrl, params, onChunk, timeoutMs, signal);
 }
 
 export function sendLlmChatStream(
-    baseUrl: string,
-    params: StreamChatParams,
+  baseUrl: string,
+  params: StreamChatParams
 ): AsyncGenerator<ChatApiResponse> {
-    return activeAdapter.sendChatStream(baseUrl, params);
+  return activeAdapter.sendChatStream(baseUrl, params);
 }
 
 export function getLlmApiErrorMessage(error: unknown): Promise<string> {
-    return activeAdapter.getApiErrorMessage(error);
+  return activeAdapter.getApiErrorMessage(error);
 }
 
 export function getLlmTurnStats(response: ChatApiResponse): LlmTurnStats | null {
-    return activeAdapter.getTurnStats(response);
+  return activeAdapter.getTurnStats(response);
 }
 
-export function fetchLlmRunningModelVram(baseUrl: string, modelName: string): Promise<number | null> {
-    if (!activeAdapter.fetchRunningModelVram) {
-        return Promise.resolve(null);
-    }
-    return activeAdapter.fetchRunningModelVram(baseUrl, modelName);
+export function fetchLlmRunningModelVram(
+  baseUrl: string,
+  modelName: string
+): Promise<number | null> {
+  if (!activeAdapter.fetchRunningModelVram) {
+    return Promise.resolve(null);
+  }
+  return activeAdapter.fetchRunningModelVram(baseUrl, modelName);
 }
 
 export type {
-    ChatApiResponse,
-    ChatMessage,
-    ChatParams,
-    LlmAdapter,
-    LlmModel,
-    LlmModelInfo,
-    LlmTurnStats,
-    PersistedChatMessage,
-    StreamChatParams,
-    SubagentLogMessage,
-    ToolCall,
-    ToolDefinition,
+  
+  
+  
+  
+  
+  
+  LlmTurnStats,
+  
+  StreamChatParams,
+  
+  
+  
 };
+
+export {type ChatApiResponse, type ChatMessage, type ChatParams, type LlmAdapter, type LlmModel, type LlmModelInfo, type PersistedChatMessage, type SubagentLogMessage, type ToolCall, type ToolDefinition} from './adapters/llmAdapter';

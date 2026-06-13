@@ -11,15 +11,15 @@
  */
 
 type StatusSnapshot = {
-    phase: string;
-    tokensUsed: number;
-    tokenLimit: number;
-    model?: string;
-    tokenSource?: 'estimated' | 'ollama';
-    vramUsed?: number | undefined;
-    cachedTokens?: number | undefined;
-    cachedMessagesLen?: number | undefined;
-    cachedModel?: string | undefined;
+  phase: string;
+  tokensUsed: number;
+  tokenLimit: number;
+  model?: string;
+  tokenSource?: 'estimated' | 'ollama';
+  vramUsed?: number | undefined;
+  cachedTokens?: number | undefined;
+  cachedMessagesLen?: number | undefined;
+  cachedModel?: string | undefined;
 };
 
 let state: StatusSnapshot | null = null;
@@ -29,13 +29,13 @@ let state: StatusSnapshot | null = null;
 // -------------------------------------------------------------------------
 
 export interface StatusLineBackend {
-    update(snapshot: StatusSnapshot): void;
-    clear(): void;
+  update(snapshot: StatusSnapshot): void;
+  clear(): void;
 }
 
 const noopBackend: StatusLineBackend = {
-    update() {},
-    clear() {},
+  update() {},
+  clear() {},
 };
 
 let activeBackend: StatusLineBackend = noopBackend;
@@ -45,7 +45,7 @@ let activeBackend: StatusLineBackend = noopBackend;
  * Pass a custom backend to intercept status updates (e.g., for the web UI).
  */
 export function setStatusLineBackend(backend: StatusLineBackend): void {
-    activeBackend = backend;
+  activeBackend = backend;
 }
 
 // -------------------------------------------------------------------------
@@ -53,30 +53,31 @@ export function setStatusLineBackend(backend: StatusLineBackend): void {
 // -------------------------------------------------------------------------
 
 export function updateLiveStatus(next: StatusSnapshot) {
-    activeBackend.update(next);
+  activeBackend.update(next);
 }
 
 export function updatePhase(phase: string, stats?: Partial<Omit<StatusSnapshot, 'phase'>>) {
-    state = {
-        phase,
-        tokensUsed: stats?.tokensUsed ?? state?.tokensUsed ?? 0,
-        tokenLimit: stats?.tokenLimit ?? state?.tokenLimit ?? 0,
-        model: stats?.model ?? state?.model ?? '',
-        tokenSource: stats?.tokenSource ?? state?.tokenSource ?? 'estimated',
-        vramUsed: stats?.vramUsed ?? (state?.vramUsed ?? undefined) as number | undefined,
-        cachedTokens: stats?.cachedTokens ?? (state?.cachedTokens ?? undefined) as number | undefined,
-        cachedMessagesLen: stats?.cachedMessagesLen ?? (state?.cachedMessagesLen ?? undefined) as number | undefined,
-        cachedModel: stats?.cachedModel ?? (state?.cachedModel ?? undefined) as string | undefined,
-    };
-    activeBackend.update(state);
+  state = {
+    phase,
+    tokensUsed: stats?.tokensUsed ?? state?.tokensUsed ?? 0,
+    tokenLimit: stats?.tokenLimit ?? state?.tokenLimit ?? 0,
+    model: stats?.model ?? state?.model ?? '',
+    tokenSource: stats?.tokenSource ?? state?.tokenSource ?? 'estimated',
+    vramUsed: stats?.vramUsed ?? ((state?.vramUsed ?? undefined) as number | undefined),
+    cachedTokens: stats?.cachedTokens ?? ((state?.cachedTokens ?? undefined) as number | undefined),
+    cachedMessagesLen:
+      stats?.cachedMessagesLen ?? ((state?.cachedMessagesLen ?? undefined) as number | undefined),
+    cachedModel: stats?.cachedModel ?? ((state?.cachedModel ?? undefined) as string | undefined),
+  };
+  activeBackend.update(state);
 }
 
 export function updateVram(usedBytes?: number) {
-    if (!state) return;
-    state.vramUsed = usedBytes;
-    activeBackend.update(state);
+  if (!state) return;
+  state.vramUsed = usedBytes;
+  activeBackend.update(state);
 }
 
 export function clearLiveStatus() {
-    activeBackend.clear();
+  activeBackend.clear();
 }

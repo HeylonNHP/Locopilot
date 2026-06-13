@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useRef } from 'react';
+
 import { useChat } from '@/app/lib/chatStore';
 
 interface UseSessionUrlParamOptions {
@@ -50,7 +51,7 @@ export function useSessionUrlParam({ onLoadSessionMessages }: UseSessionUrlParam
     const current = currentSessionIdRef.current;
 
     if (urlParam) {
-      const id = parseInt(urlParam, 10);
+      const id = Number.parseInt(urlParam, 10);
       if (id > 0 && id !== current) {
         dispatch({ type: 'SET_CURRENT_SESSION', id });
         onLoadSessionMessages(id);
@@ -78,14 +79,14 @@ export function useSessionUrlParam({ onLoadSessionMessages }: UseSessionUrlParam
       // is about to restore.
       if (urlParam !== null && !isInitialMountRef.current) {
         isPushingRef.current = true;
-        const url = new URL(window.location.href);
+        const url = new URL(globalThis.location.href);
         url.searchParams.delete('session');
         router.replace(url.pathname + url.search);
       }
     } else if (String(current) !== urlParam) {
       // Session changed — write ?session=<id> to the URL.
       isPushingRef.current = true;
-      const url = new URL(window.location.href);
+      const url = new URL(globalThis.location.href);
       url.searchParams.set('session', String(current));
       router.replace(url.pathname + url.search);
     }

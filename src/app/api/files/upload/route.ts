@@ -1,9 +1,9 @@
-import { createRequire } from 'node:module';
-import { writeFile, mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { type NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
-import { NextRequest, NextResponse } from 'next/server';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { PDFParse } = require('pdf-parse');
@@ -26,13 +26,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Missing "file" field' }, { status: 400 });
   }
 
-  const filename = typeof filenameEntry === 'string' && filenameEntry.trim().length > 0
-    ? filenameEntry.trim()
-    : fileEntry.name;
+  const filename =
+    typeof filenameEntry === 'string' && filenameEntry.trim().length > 0
+      ? filenameEntry.trim()
+      : fileEntry.name;
 
   // Sanitize filename: allow only safe characters to prevent path traversal.
   // Replace anything that isn't alphanumeric, dot, hyphen, or underscore.
-  const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '_');
+  const safeFilename = filename.replaceAll(/[^\w.-]/g, '_').replace(/^\.+/, '_');
 
   // Enforce a reasonable server-side size limit (500 MB) to avoid OOM.
   const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
@@ -43,13 +44,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const buffer = Buffer.from(await fileEntry.arrayBuffer());
 
   // Save to a UUID-keyed temp directory so the LLM can reference the path later
-  const tempDir = join(tmpdir(), `locopilot-${randomUUID()}`);
+  const tempDir = path.join(tmpdir(), `locopilot-${randomUUID()}`);
   await mkdir(tempDir, { recursive: true });
-  const tempPath = join(tempDir, safeFilename);
+  const tempPath = path.join(tempDir, safeFilename);
   await writeFile(tempPath, buffer);
 
-  const isPdf = fileEntry.type === 'application/pdf'
-    || safeFilename.toLowerCase().endsWith('.pdf');
+  const isPdf = fileEntry.type === 'application/pdf' || safeFilename.toLowerCase().endsWith('.pdf');
 
   if (isPdf) {
     return handlePdf(buffer, tempPath);
@@ -76,11 +76,15 @@ async function handlePdf(buffer: Buffer, tempPath: string): Promise<NextResponse
     totalPages = typeof info?.total === 'number' && Number.isFinite(info.total) ? info.total : 0;
   } catch (err) {
     if (parser) {
-      try { await parser.destroy(); } catch { /* ignore */ }
+      try {
+        await parser.destroy();
+      } catch {
+        /* ignore */
+      }
     }
     return NextResponse.json(
       { error: `Failed to parse PDF: ${err instanceof Error ? err.message : String(err)}` },
-      { status: 422 },
+      { status: 422 }
     );
   }
 
@@ -95,24 +99,35 @@ async function handlePdf(buffer: Buffer, tempPath: string): Promise<NextResponse
     // If per-page data is available, format with page markers (mirrors readPdfTool)
     if (textResult.pages && Array.isArray(textResult.pages) && textResult.pages.length > 0) {
       const lines: string[] = [];
-      for (const page of textResult.pages as Array<{ num?: number; pageIndex?: number; text: string }>) {
-        const pageNum = page.num ?? (page.pageIndex !== undefined ? page.pageIndex + 1 : '?');
-        lines.push(`=== Page ${pageNum} ===`);
-        lines.push(page.text ?? '');
+      for (const page of textResult.pages as Array<{
+        num?: number;
+        pageIndex?: number;
+        text: string;
+      }>) {
+        const pageNum = page.num ?? (page.pageIndex === undefined ? '?' : page.pageIndex + 1);
+        lines.push(`=== Page ${pageNum} ===`, page.text ?? '');
       }
       text = lines.join('\n');
     } else {
       text = rawText;
     }
   } catch (err) {
-    try { await parser.destroy(); } catch { /* ignore */ }
+    try {
+      await parser.destroy();
+    } catch {
+      /* ignore */
+    }
     return NextResponse.json(
       { error: `Failed to extract PDF text: ${err instanceof Error ? err.message : String(err)}` },
-      { status: 422 },
+      { status: 422 }
     );
   }
 
-  try { await parser.destroy(); } catch { /* ignore */ }
+  try {
+    await parser.destroy();
+  } catch {
+    /* ignore */
+  }
 
   return NextResponse.json({ text, pageCount: totalPages, tempPath, truncated });
 }

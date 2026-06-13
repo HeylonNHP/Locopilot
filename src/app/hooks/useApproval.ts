@@ -1,11 +1,9 @@
 'use client';
 
-import { useCallback } from 'react';
-import type { Dispatch } from 'react';
+import { type Dispatch, useCallback } from 'react';
 
 // Minimal shape of actions consumed by this hook
-type ApprovalAction =
-  | { type: 'SHOW_APPROVAL'; command: null }
+type ApprovalAction = { type: 'SHOW_APPROVAL'; command: null };
 
 interface UseApprovalOptions {
   dispatch: Dispatch<ApprovalAction>;
@@ -41,7 +39,7 @@ export function useApproval({
       }
       dispatch({ type: 'SHOW_APPROVAL', command: null });
     },
-    [dispatch, pendingApprovalId],
+    [dispatch, pendingApprovalId]
   );
 
   const handleApprove = useCallback(() => postApproval(true), [postApproval]);

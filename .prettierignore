@@ -1,0 +1,16 @@
+node_modules
+.next
+dist
+build
+coverage
+*.min.js
+*.min.css
+*.db
+*.db-shm
+*.db-wal
+*.wasm
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+.env
+.env.local

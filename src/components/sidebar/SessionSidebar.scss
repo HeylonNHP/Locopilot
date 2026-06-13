@@ -122,7 +122,10 @@
   display: flex;
   align-items: center;
   overflow: hidden;
-  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 
@@ -135,7 +138,9 @@
   &[data-selected='true'] {
     background: rgba(var(--rgb-accent), 0.15);
     border-color: rgba(var(--rgb-accent), 0.35);
-    box-shadow: 0 2px 12px rgba(var(--rgb-accent), 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    box-shadow:
+      0 2px 12px rgba(var(--rgb-accent), 0.15),
+      inset 0 1px 0 rgba(255, 255, 255, 0.3);
   }
 
   &__action {

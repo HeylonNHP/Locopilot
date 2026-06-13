@@ -23,52 +23,52 @@
  */
 
 export type MCPStatusEntry = {
-    name: string;
-    description: string | undefined;
-    transport: 'stdio' | 'http' | 'sse';
-    status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'not_loaded' | 'auth_required';
-    lastError?: string | undefined;
-    authUrl?: string | undefined;
-    tools: Array<{ name: string; description: string | undefined; fullName: string }>;
-    toolCount: number;
+  name: string;
+  description: string | undefined;
+  transport: 'stdio' | 'http' | 'sse';
+  status: 'disconnected' | 'connecting' | 'connected' | 'error' | 'not_loaded' | 'auth_required';
+  lastError?: string | undefined;
+  authUrl?: string | undefined;
+  tools: Array<{ name: string; description: string | undefined; fullName: string }>;
+  toolCount: number;
 };
 
 export type MCPEvent =
-    /** A single server transitioned state (connecting/connected/error/disconnected). */
-    | { kind: 'state'; serverName: string }
-    /** A server's tool list was refreshed (notifications/tools/list_changed). */
-    | { kind: 'tools'; serverName: string }
-    /** The on-disk mcp.json was modified externally (or by `PUT /api/mcp`). */
-    | { kind: 'config' }
-    /**
-     * A server hit a 401 / unauthorized response. The UI should
-     * surface a "needs auth" pill and offer a click-to-authenticate
-     * action. The actual IdP authorization URL is printed to the
-     * dev-server stderr; the loopback listener handles the
-     * callback internally so the UI never has to display the
-     * URL (bug #18: there used to be an `authUrl` field here
-     * that the client never read).
-     */
-    | { kind: 'auth-required'; serverName: string }
-    /** Initial full-state payload sent by the SSE route right after subscribing. */
-    | { kind: 'snapshot'; entries: MCPStatusEntry[] };
+  /** A single server transitioned state (connecting/connected/error/disconnected). */
+  | { kind: 'state'; serverName: string }
+  /** A server's tool list was refreshed (notifications/tools/list_changed). */
+  | { kind: 'tools'; serverName: string }
+  /** The on-disk mcp.json was modified externally (or by `PUT /api/mcp`). */
+  | { kind: 'config' }
+  /**
+   * A server hit a 401 / unauthorized response. The UI should
+   * surface a "needs auth" pill and offer a click-to-authenticate
+   * action. The actual IdP authorization URL is printed to the
+   * dev-server stderr; the loopback listener handles the
+   * callback internally so the UI never has to display the
+   * URL (bug #18: there used to be an `authUrl` field here
+   * that the client never read).
+   */
+  | { kind: 'auth-required'; serverName: string }
+  /** Initial full-state payload sent by the SSE route right after subscribing. */
+  | { kind: 'snapshot'; entries: MCPStatusEntry[] };
 
 type Listener = (event: MCPEvent) => void;
 
 interface MCPEventBus {
-    listeners: Set<Listener>;
+  listeners: Set<Listener>;
 }
 
 const GLOBAL_KEY = '__mcpEventBus';
 
 function getBus(): MCPEventBus {
-    const g = globalThis as unknown as Record<string, unknown>;
-    let bus = g[GLOBAL_KEY] as MCPEventBus | undefined;
-    if (!bus) {
-        bus = { listeners: new Set() };
-        g[GLOBAL_KEY] = bus;
-    }
-    return bus;
+  const g = globalThis as unknown as Record<string, unknown>;
+  let bus = g[GLOBAL_KEY] as MCPEventBus | undefined;
+  if (!bus) {
+    bus = { listeners: new Set() };
+    g[GLOBAL_KEY] = bus;
+  }
+  return bus;
 }
 
 /**
@@ -77,11 +77,11 @@ function getBus(): MCPEventBus {
  * imported from client components).
  */
 export function subscribeMCPEvents(fn: Listener): () => void {
-    const bus = getBus();
-    bus.listeners.add(fn);
-    return () => {
-        bus.listeners.delete(fn);
-    };
+  const bus = getBus();
+  bus.listeners.add(fn);
+  return () => {
+    bus.listeners.delete(fn);
+  };
 }
 
 /**
@@ -90,24 +90,24 @@ export function subscribeMCPEvents(fn: Listener): () => void {
  * the rest. Never throws.
  */
 export function emitMCPEvent(event: MCPEvent): void {
-    const bus = getBus();
-    for (const fn of bus.listeners) {
-        try {
-            fn(event);
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            // Use console.error rather than throwing — emit() is called
-            // from deep inside the client manager and the last thing
-            // we want is a bad listener breaking the connect path.
-            console.error(`[mcp-events] listener threw: ${message}`);
-        }
+  const bus = getBus();
+  for (const fn of bus.listeners) {
+    try {
+      fn(event);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Use console.error rather than throwing — emit() is called
+      // from deep inside the client manager and the last thing
+      // we want is a bad listener breaking the connect path.
+      console.error(`[mcp-events] listener threw: ${message}`);
     }
+  }
 }
 
 /**
  * Test-only: wipe the bus. Not exported from `mcp/index.ts`.
  */
 export function __resetMCPEventsForTests(): void {
-    const g = globalThis as unknown as Record<string, unknown>;
-    delete g[GLOBAL_KEY];
+  const g = globalThis as unknown as Record<string, unknown>;
+  delete g[GLOBAL_KEY];
 }

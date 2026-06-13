@@ -1,10 +1,16 @@
 'use client';
-import './SessionSidebar.scss';
+import {
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
-import { useState, useEffect, useRef, type KeyboardEvent } from 'react';
 import { DEFAULT_SESSION_NAME } from '@/constants';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+
+import './SessionSidebar.scss';
 
 interface Props {
   onNewSession: () => void;
@@ -37,10 +43,7 @@ export default function SessionSidebar({
     return () => clearTimeout(timer);
   }, [searchQuery, onSearchSessions]);
 
-  const handleActionKeyDown = (
-    event: KeyboardEvent<HTMLDivElement>,
-    action: () => void,
-  ) => {
+  const handleActionKeyDown = (event: KeyboardEvent<HTMLDivElement>, action: () => void) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       action();
@@ -58,17 +61,10 @@ export default function SessionSidebar({
       <div className="sidebar-header">
         <h2 className="sidebar-title">Locopilot</h2>
         <div className="flex gap-8">
-          <button
-            onClick={onNewSession}
-            className="sidebar-btn-new"
-          >
+          <button onClick={onNewSession} className="sidebar-btn-new">
             + {DEFAULT_SESSION_NAME}
           </button>
-          <button
-            onClick={onSettings}
-            title="Settings"
-            className="sidebar-btn-settings"
-          >
+          <button onClick={onSettings} title="Settings" className="sidebar-btn-settings">
             ⚙
           </button>
         </div>
@@ -115,7 +111,9 @@ export default function SessionSidebar({
                   role="button"
                   tabIndex={0}
                   onClick={() => onSelectSession(session.id)}
-                  onKeyDown={(event) => handleActionKeyDown(event, () => onSelectSession(session.id))}
+                  onKeyDown={(event) =>
+                    handleActionKeyDown(event, () => onSelectSession(session.id))
+                  }
                   onPointerUp={clearPointerFocus}
                   title={session.name || `Session ${session.id}`}
                   className="session-row__action flex-1 min-w-0 px-12 py-10 text-primary cursor-pointer font-13 text-left"
@@ -125,7 +123,9 @@ export default function SessionSidebar({
                       {session.name || `Session ${session.id}`}
                     </span>
                     {state.streamingSessions.has(session.id) && (
-                      <span className="session-streaming-indicator ml-12" aria-label="Streaming">●</span>
+                      <span className="session-streaming-indicator ml-12" aria-label="Streaming">
+                        ●
+                      </span>
                     )}
                   </div>
                 </div>
@@ -133,7 +133,9 @@ export default function SessionSidebar({
                   role="button"
                   tabIndex={0}
                   onClick={() => onDeleteSession(session.id)}
-                  onKeyDown={(event) => handleActionKeyDown(event, () => onDeleteSession(session.id))}
+                  onKeyDown={(event) =>
+                    handleActionKeyDown(event, () => onDeleteSession(session.id))
+                  }
                   onPointerUp={clearPointerFocus}
                   title="Delete session"
                   className="session-row__action text-secondary cursor-pointer font-14 py-10 px-12 flex-shrink-0 opacity-50"
@@ -145,11 +147,7 @@ export default function SessionSidebar({
           })
         )}
       </div>
-      <div
-        onClick={onSettings}
-        className="sidebar-footer"
-        title="Click to open settings"
-      >
+      <div onClick={onSettings} className="sidebar-footer" title="Click to open settings">
         {state.model && <div>Model: {state.model}</div>}
         {!state.model && <div>No model selected</div>}
       </div>

@@ -16,5 +16,5 @@ import { getMCPConfigPath } from '../../../../mcp';
 export const dynamic = 'force-dynamic';
 
 export async function GET(): Promise<NextResponse> {
-    return NextResponse.json({ path: getMCPConfigPath() });
+  return NextResponse.json({ path: getMCPConfigPath() });
 }

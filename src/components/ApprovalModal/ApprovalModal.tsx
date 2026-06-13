@@ -1,5 +1,6 @@
 'use client';
 import type { ToolCallArguments } from '@/tools/tools';
+
 import './ApprovalModal.scss';
 
 interface Props {
@@ -8,7 +9,11 @@ interface Props {
   onReject: () => void;
 }
 
-function formatArgs(args: ToolCallArguments, commandName?: string, toolCallName?: string): React.ReactNode {
+function formatArgs(
+  args: ToolCallArguments,
+  commandName?: string,
+  toolCallName?: string
+): React.ReactNode {
   if (commandName === 'mcp_call') {
     // Render the namespaced MCP tool as a friendly header, then a
     // key/value list of the arguments (not raw JSON).  Cast to a
@@ -62,21 +67,17 @@ export default function ApprovalModal({ command, onApprove, onReject }: Props) {
             formatArgs(command.args, command.name, command.toolCallName)
           ) : (
             <div className="modal-command-text">
-              {typeof command.args === 'string' ? command.args : JSON.stringify(command.args, null, 2)}
+              {typeof command.args === 'string'
+                ? command.args
+                : JSON.stringify(command.args, null, 2)}
             </div>
           )}
         </div>
         <div className="modal-actions">
-          <button
-            className="modal-btn-reject"
-            onClick={onReject}
-          >
+          <button className="modal-btn-reject" onClick={onReject}>
             Reject
           </button>
-          <button
-            className="modal-btn-approve"
-            onClick={onApprove}
-          >
+          <button className="modal-btn-approve" onClick={onApprove}>
             Allow
           </button>
         </div>

@@ -18,29 +18,45 @@
  *   event: error\ndata: {"message":"…"}\n\n
  */
 
-import { randomUUID } from 'crypto';
-import { NextRequest } from 'next/server';
-import { sendLlmChatStream, getLlmApiErrorMessage, fetchLlmModelInfo, getLlmModelVisionSupport } from '../../../services/llm';
-import type { ChatMessage, StreamChatParams, PersistedChatMessage } from '../../../services/llm';
-import { TOOLS, handleToolCall, sanitize, type RequestContext, type ToolOutputSink } from '../../../tools/tools';
-import { waitForApproval, resolveApproval, type ApprovalDecision } from '../../lib/approvalRegistry';
-import { loadConfig } from '../../../services/configManager';
-import { resolveCompactionModel } from '../../../services/modelManager';
-import { createSession, renameSession, getSessionName, sessionExists } from '../../../history';
+import { type NextRequest } from 'next/server';
+import { randomUUID } from 'node:crypto';
+
+import type { ToolDefinition } from '../../../services/adapters/llmAdapter';
+import type { Config } from '../../../types/chatConfig';
+
+import {
+  AUTO_COMPACT_THRESHOLD_PCT,
+  DEFAULT_NUM_CTX,
+  DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+  DEFAULT_SESSION_NAME,
+  MCP_TOOL_SEARCH_THRESHOLD,
+} from '../../../constants';
+import { createSession, getSessionName, renameSession, sessionExists } from '../../../history';
+import { getMCPServerConfig, getMCPToolCount, getMergedMCPToolDefinitions, getMergedMCPToolDefinitionsForSearch } from '../../../mcp';
+import { createSystemPrompt } from '../../../services/chatSession';
 import { compactHistory } from '../../../services/compact';
+import { loadConfig } from '../../../services/configManager';
+import {
+  type ChatMessage,
+  fetchLlmModelInfo,
+  getLlmApiErrorMessage,
+  getLlmModelVisionSupport,
+  type PersistedChatMessage,
+  sendLlmChatStream,
+  type StreamChatParams,
+} from '../../../services/llm';
+import { resolveCompactionModel } from '../../../services/modelManager';
+import { checkCompleteness } from '../../../services/promptLoop';
+import { discoverSkills, getAllowedToolsFromSkills, getEnabledSkills, loadSkillState } from '../../../services/skillManager';
+import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
 import { generateSessionTitle, sanitizeContentForTitle } from '../../../services/titleGeneration';
 import { generateFallbackTitle } from '../../../services/titleUtils';
-import { enqueueSessionWrite, enqueueSessionRename } from '../../lib/sessionWriteQueue';
-import { logger } from '../../lib/logger';
 import { countMessagesTokens, countTextTokens } from '../../../services/tokenizer';
-import { AUTO_COMPACT_THRESHOLD_PCT, DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_SESSION_NAME } from '../../../constants';
-import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
-import { createSystemPrompt } from '../../../services/chatSession';
-import { checkCompleteness } from '../../../services/promptLoop';
-import { discoverSkills, loadSkillState, getEnabledSkills, getAllowedToolsFromSkills } from '../../../services/skillManager';
 import { enterRequestScope } from '../../../tools/impl/runCommandTool';
-import { getMergedMCPToolDefinitions, getMergedMCPToolDefinitionsForSearch, getMCPServerConfig, getMCPToolCount } from '../../../mcp';
-import { MCP_TOOL_SEARCH_THRESHOLD } from '../../../constants';
+import { handleToolCall, type RequestContext, sanitize, type ToolOutputSink, TOOLS } from '../../../tools/tools';
+import { type ApprovalDecision, resolveApproval, waitForApproval } from '../../lib/approvalRegistry';
+import { logger } from '../../lib/logger';
+import { enqueueSessionRename, enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 
 // Prevent static generation – this route must always run on the server.
 export const dynamic = 'force-dynamic';
@@ -392,7 +408,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // can read `config.mcpToolSearch` even when loadConfig()
                 // throws. The inner try/catch owns the user-config
                 // derivation; the outer build path is independent.
-                let config: import('../../../types/chatConfig').Config | null = null;
+                let config: Config | null = null;
                 try {
                     config = await loadConfig();
                     if (config) {
@@ -494,7 +510,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // unchanged.
                 // Type is the union of OllamaTool (native) and ToolDefinition
                 // (MCP dynamic) — both shapes are accepted by the LLM adapter.
-                type AnyTool = (typeof TOOLS)[number] | import('../../../services/adapters/llmAdapter').ToolDefinition;
+                type AnyTool = (typeof TOOLS)[number] | ToolDefinition;
                 let mergedTools: AnyTool[];
                 try {
                     const totalMCPToolCount = await getMCPToolCount();
@@ -627,7 +643,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         tokenLimit: effectiveNumCtx,
                                     });
                                 }
-                            } catch (compactErr) {
+                            } catch {
                                 // Non-fatal — log and continue with existing messages.
                                 sendEvent('status', {
                                     phase: 'compact_failed',
@@ -1364,8 +1380,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                 if (err instanceof DOMException && err.name === 'AbortError') {
                     // Save whatever we have so far before closing.
                     if (activeSessionId != null && sessionExists(activeSessionId)) {
-                        await flushSessionState().catch((e) => {
-                            logger.error('chat', 'Abort flush failed', { error: e });
+                        await flushSessionState().catch((err_) => {
+                            logger.error('chat', 'Abort flush failed', { error: err_ });
                         });
                     }
                     try { controller.close(); } catch { /* ignore */ }

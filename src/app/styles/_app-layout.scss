@@ -78,7 +78,8 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: linear-gradient(180deg,
+    background: linear-gradient(
+      180deg,
       var(--glass-gloss-top) 0%,
       var(--glass-gloss-mid) 40%,
       transparent 40%
@@ -132,7 +133,11 @@
   }
 
   &-retry-btn {
-    @include gel-button(var(--gradient-success-0), var(--gradient-success-1), var(--gradient-success-2));
+    @include gel-button(
+      var(--gradient-success-0),
+      var(--gradient-success-1),
+      var(--gradient-success-2)
+    );
     padding: 4px 12px;
     font-size: 12px;
     border: 1px solid rgba(100, 200, 100, 0.35);
@@ -143,7 +148,8 @@
       position: absolute;
       inset: 0;
       border-radius: inherit;
-      background: linear-gradient(180deg,
+      background: linear-gradient(
+        180deg,
         var(--glass-gloss-top) 0%,
         var(--glass-gloss-mid) 40%,
         transparent 40%

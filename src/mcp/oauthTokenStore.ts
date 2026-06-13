@@ -34,19 +34,18 @@
  * `mcp/configLoader.ts`.
  */
 
-import { promises as fsp } from 'fs';
-import os from 'os';
-import path from 'path';
+import { promises as fsp } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-import {
-    MCP_CONFIG_DIRNAME,
-} from './configLoader';
 import type {
-    MCPSavedClientInformation,
-    MCPSavedOAuthState,
-    MCPSavedOAuthTokens,
-    MCPOAuthTokenStoreFile,
+  MCPOAuthTokenStoreFile,
+  MCPSavedClientInformation,
+  MCPSavedOAuthState,
+  MCPSavedOAuthTokens,
 } from './types';
+
+import { MCP_CONFIG_DIRNAME } from './configLoader';
 
 export const MCP_OAUTH_TOKENS_FILENAME = 'mcp-oauth-tokens.json';
 
@@ -58,15 +57,15 @@ export const MCP_OAUTH_TOKENS_FILENAME = 'mcp-oauth-tokens.json';
 let writeQueue: Promise<void> = Promise.resolve();
 
 function getStorePath(): string {
-    return path.join(os.homedir(), MCP_CONFIG_DIRNAME, MCP_OAUTH_TOKENS_FILENAME);
+  return path.join(os.homedir(), MCP_CONFIG_DIRNAME, MCP_OAUTH_TOKENS_FILENAME);
 }
 
 function emptyState(): MCPSavedOAuthState {
-    return {};
+  return {};
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -80,33 +79,33 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * the file fresh.
  */
 export async function loadOAuthTokenStore(): Promise<MCPOAuthTokenStoreFile> {
-    const storePath = getStorePath();
-    try {
-        const raw = await fsp.readFile(storePath, 'utf8');
-        const stripped = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
-        const parsed: unknown = JSON.parse(stripped);
-        if (!isPlainObject(parsed)) {
-            return { version: 1, servers: {} };
-        }
-        const rawServers = parsed.servers;
-        if (!isPlainObject(rawServers)) {
-            return { version: 1, servers: {} };
-        }
-        const servers: Record<string, MCPSavedOAuthState> = {};
-        for (const [name, value] of Object.entries(rawServers)) {
-            if (!isPlainObject(value)) continue;
-            servers[name] = sanitiseState(value);
-        }
-        return { version: 1, servers };
-    } catch (err) {
-        const code = (err as NodeJS.ErrnoException | null)?.code;
-        if (code === 'ENOENT') {
-            return { version: 1, servers: {} };
-        }
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[mcp-oauth] failed to read ${storePath}: ${message}`);
-        return { version: 1, servers: {} };
+  const storePath = getStorePath();
+  try {
+    const raw = await fsp.readFile(storePath, 'utf8');
+    const stripped = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+    const parsed: unknown = JSON.parse(stripped);
+    if (!isPlainObject(parsed)) {
+      return { version: 1, servers: {} };
     }
+    const rawServers = parsed.servers;
+    if (!isPlainObject(rawServers)) {
+      return { version: 1, servers: {} };
+    }
+    const servers: Record<string, MCPSavedOAuthState> = {};
+    for (const [name, value] of Object.entries(rawServers)) {
+      if (!isPlainObject(value)) continue;
+      servers[name] = sanitiseState(value);
+    }
+    return { version: 1, servers };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | null)?.code;
+    if (code === 'ENOENT') {
+      return { version: 1, servers: {} };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[mcp-oauth] failed to read ${storePath}: ${message}`);
+    return { version: 1, servers: {} };
+  }
 }
 
 /**
@@ -115,34 +114,40 @@ export async function loadOAuthTokenStore(): Promise<MCPOAuthTokenStoreFile> {
  * drift — we accept what we recognise and drop the rest.
  */
 function sanitiseState(raw: Record<string, unknown>): MCPSavedOAuthState {
-    const state: MCPSavedOAuthState = emptyState();
-    const client = raw.clientInformation;
-    if (isPlainObject(client) && typeof client.client_id === 'string') {
-        const info: MCPSavedClientInformation = { client_id: client.client_id };
-        if (typeof client.client_secret === 'string') info.client_secret = client.client_secret;
-        if (typeof client.client_id_issued_at === 'number') info.client_id_issued_at = client.client_id_issued_at;
-        if (typeof client.client_secret_expires_at === 'number') info.client_secret_expires_at = client.client_secret_expires_at;
-        state.clientInformation = info;
-    }
-    const tokens = raw.tokens;
-    if (isPlainObject(tokens) && typeof tokens.access_token === 'string' && typeof tokens.token_type === 'string') {
-        const t: MCPSavedOAuthTokens = {
-            access_token: tokens.access_token,
-            token_type: tokens.token_type,
-        };
-        if (typeof tokens.id_token === 'string') t.id_token = tokens.id_token;
-        if (typeof tokens.expires_in === 'number') t.expires_in = tokens.expires_in;
-        if (typeof tokens.scope === 'string') t.scope = tokens.scope;
-        if (typeof tokens.refresh_token === 'string') t.refresh_token = tokens.refresh_token;
-        state.tokens = t;
-    }
-    if (typeof raw.codeVerifier === 'string' && raw.codeVerifier.length > 0) {
-        state.codeVerifier = raw.codeVerifier;
-    }
-    if (typeof raw.authorizationServerUrl === 'string' && raw.authorizationServerUrl.length > 0) {
-        state.authorizationServerUrl = raw.authorizationServerUrl;
-    }
-    return state;
+  const state: MCPSavedOAuthState = emptyState();
+  const client = raw.clientInformation;
+  if (isPlainObject(client) && typeof client.client_id === 'string') {
+    const info: MCPSavedClientInformation = { client_id: client.client_id };
+    if (typeof client.client_secret === 'string') info.client_secret = client.client_secret;
+    if (typeof client.client_id_issued_at === 'number')
+      info.client_id_issued_at = client.client_id_issued_at;
+    if (typeof client.client_secret_expires_at === 'number')
+      info.client_secret_expires_at = client.client_secret_expires_at;
+    state.clientInformation = info;
+  }
+  const tokens = raw.tokens;
+  if (
+    isPlainObject(tokens) &&
+    typeof tokens.access_token === 'string' &&
+    typeof tokens.token_type === 'string'
+  ) {
+    const t: MCPSavedOAuthTokens = {
+      access_token: tokens.access_token,
+      token_type: tokens.token_type,
+    };
+    if (typeof tokens.id_token === 'string') t.id_token = tokens.id_token;
+    if (typeof tokens.expires_in === 'number') t.expires_in = tokens.expires_in;
+    if (typeof tokens.scope === 'string') t.scope = tokens.scope;
+    if (typeof tokens.refresh_token === 'string') t.refresh_token = tokens.refresh_token;
+    state.tokens = t;
+  }
+  if (typeof raw.codeVerifier === 'string' && raw.codeVerifier.length > 0) {
+    state.codeVerifier = raw.codeVerifier;
+  }
+  if (typeof raw.authorizationServerUrl === 'string' && raw.authorizationServerUrl.length > 0) {
+    state.authorizationServerUrl = raw.authorizationServerUrl;
+  }
+  return state;
 }
 
 /**
@@ -152,8 +157,8 @@ function sanitiseState(raw: Record<string, unknown>): MCPSavedOAuthState {
  * not expected to grow large.
  */
 export async function loadOAuthState(serverName: string): Promise<MCPSavedOAuthState> {
-    const file = await loadOAuthTokenStore();
-    return file.servers[serverName] ?? emptyState();
+  const file = await loadOAuthTokenStore();
+  return file.servers[serverName] ?? emptyState();
 }
 
 /**
@@ -188,48 +193,48 @@ export async function loadOAuthState(serverName: string): Promise<MCPSavedOAuthS
  * loose permissions on first read.
  */
 export async function saveOAuthState(serverName: string, state: MCPSavedOAuthState): Promise<void> {
-    if (typeof serverName !== 'string' || serverName.length === 0) {
-        throw new Error('saveOAuthState: serverName is required');
+  if (typeof serverName !== 'string' || serverName.length === 0) {
+    throw new Error('saveOAuthState: serverName is required');
+  }
+  const task = async (): Promise<void> => {
+    const storePath = getStorePath();
+    const current = await loadOAuthTokenStore();
+    // Deep-clone the incoming state to avoid aliasing mutations
+    // (the caller might continue to mutate it).
+    const cloned: MCPSavedOAuthState = JSON.parse(JSON.stringify(state));
+    const hasAny = Object.keys(cloned).length > 0;
+    if (hasAny) {
+      current.servers[serverName] = cloned;
+    } else {
+      delete current.servers[serverName];
     }
-    const task = async (): Promise<void> => {
-        const storePath = getStorePath();
-        const current = await loadOAuthTokenStore();
-        // Deep-clone the incoming state to avoid aliasing mutations
-        // (the caller might continue to mutate it).
-        const cloned: MCPSavedOAuthState = JSON.parse(JSON.stringify(state));
-        const hasAny = Object.keys(cloned).length > 0;
-        if (hasAny) {
-            current.servers[serverName] = cloned;
-        } else {
-            delete current.servers[serverName];
-        }
-        const tmpPath = storePath + '.tmp';
-        const json = JSON.stringify(current, null, 2);
-        // Best-effort mkdir. `fsp.mkdir` with recursive: true is
-        // idempotent and won't throw on EEXIST.
-        await fsp.mkdir(path.dirname(storePath), { recursive: true, mode: 0o700 });
-        // Open the tmp file with mode 0o600 BEFORE writing the
-        // contents; `fsp.writeFile` is open-then-write, so this
-        // is the only way to set the mode atomically. The
-        // previous implementation used `fsp.writeFile` with a
-        // `mode` option, but that was after the fact on
-        // Windows and the file may have been created with the
-        // process umask first.
-        const fh = await fsp.open(tmpPath, 'w', 0o600);
-        try {
-            await fh.writeFile(json, { encoding: 'utf8' });
-            // Force the data to disk BEFORE the rename. Without
-            // this, a power loss between the rename and the
-            // kernel's writeback could leave a zero-length file
-            // at the final path.
-            await fh.sync();
-        } finally {
-            await fh.close();
-        }
-        await fsp.rename(tmpPath, storePath);
-    };
-    writeQueue = writeQueue.then(task, task);
-    return writeQueue;
+    const tmpPath = `${storePath  }.tmp`;
+    const json = JSON.stringify(current, null, 2);
+    // Best-effort mkdir. `fsp.mkdir` with recursive: true is
+    // idempotent and won't throw on EEXIST.
+    await fsp.mkdir(path.dirname(storePath), { recursive: true, mode: 0o700 });
+    // Open the tmp file with mode 0o600 BEFORE writing the
+    // contents; `fsp.writeFile` is open-then-write, so this
+    // is the only way to set the mode atomically. The
+    // previous implementation used `fsp.writeFile` with a
+    // `mode` option, but that was after the fact on
+    // Windows and the file may have been created with the
+    // process umask first.
+    const fh = await fsp.open(tmpPath, 'w', 0o600);
+    try {
+      await fh.writeFile(json, { encoding: 'utf8' });
+      // Force the data to disk BEFORE the rename. Without
+      // this, a power loss between the rename and the
+      // kernel's writeback could leave a zero-length file
+      // at the final path.
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+    await fsp.rename(tmpPath, storePath);
+  };
+  writeQueue = writeQueue.then(task, task);
+  return writeQueue;
 }
 
 /**
@@ -238,5 +243,5 @@ export async function saveOAuthState(serverName: string, state: MCPSavedOAuthSta
  * slash command when the user explicitly wants to re-authenticate.
  */
 export async function clearOAuthState(serverName: string): Promise<void> {
-    await saveOAuthState(serverName, emptyState());
+  await saveOAuthState(serverName, emptyState());
 }

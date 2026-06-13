@@ -1,9 +1,10 @@
 'use client';
-import './ChatMessageBubble.scss';
-
 import dynamic from 'next/dynamic';
-import { type ChatMessage } from '@/app/lib/chatStore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+
+import { type ChatMessage } from '@/app/lib/chatStore';
+
+import './ChatMessageBubble.scss';
 
 const MarkdownMessage = dynamic(() => import('../MarkdownMessage'), {
   ssr: false,
@@ -20,7 +21,14 @@ class MarkdownErrorBoundary extends React.Component<
   }
   render() {
     if (this.state.hasError) {
-      return <div className="bubble-ai-msg" style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>Failed to render markdown</div>;
+      return (
+        <div
+          className="bubble-ai-msg"
+          style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}
+        >
+          Failed to render markdown
+        </div>
+      );
     }
     return this.props.children;
   }
@@ -95,8 +103,8 @@ export default function ChatMessageBubble({ message }: Props) {
   // Clear the "Copied!" feedback if the bubble unmounts mid-flash.
   useEffect(() => {
     if (!copied) return;
-    const id = window.setTimeout(() => setCopied(false), 1500);
-    return () => window.clearTimeout(id);
+    const id = globalThis.setTimeout(() => setCopied(false), 1500);
+    return () => globalThis.clearTimeout(id);
   }, [copied]);
 
   // Two-pass rendering: server and initial client render both output the
@@ -116,21 +124,24 @@ export default function ChatMessageBubble({ message }: Props) {
       textarea.value = text;
       textarea.style.position = 'fixed';
       textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
+      document.body.append(textarea);
       textarea.select();
       try {
         return document.execCommand('copy');
       } catch {
         return false;
       } finally {
-        document.body.removeChild(textarea);
+        textarea.remove();
       }
     };
 
     let succeeded = false;
     if (navigator.clipboard) {
-      navigator.clipboard.writeText(text)
-        .then(() => { setCopied(true); })
+      navigator.clipboard
+        .writeText(text)
+        .then(() => {
+          setCopied(true);
+        })
         .catch(() => {
           succeeded = fallbackCopy();
           if (succeeded) setCopied(true);
@@ -153,25 +164,21 @@ export default function ChatMessageBubble({ message }: Props) {
       </div>
     );
   }
-  
+
   if (message.role === 'tool') {
     return (
       <div className="bubble-tool-wrap">
         <div className="bubble-tool">
-          <div className="bubble-tool-content">
-            {message.content}
-          </div>
+          <div className="bubble-tool-content">{message.content}</div>
         </div>
       </div>
     );
   }
-  
+
   if (message.role === 'system') {
     return (
       <div className="bubble-system-wrap">
-        <div className="bubble-system">
-          {message.content}
-        </div>
+        <div className="bubble-system">{message.content}</div>
       </div>
     );
   }
@@ -188,14 +195,11 @@ export default function ChatMessageBubble({ message }: Props) {
                 : 'bubble-subagent-toggle bubble-subagent-toggle-open'
             }
           >
-            <span>{subagentCollapsed ? '\u25b6' : '\u25bc'}</span>
+            <span>{subagentCollapsed ? '\u25B6' : '\u25BC'}</span>
             <span>🤖 Sub-agent: {message.subagentId ?? 'unknown'}</span>
           </button>
           {!subagentCollapsed && (
-            <pre
-              ref={subagentLogRef}
-              className="bubble-subagent-log"
-            >
+            <pre ref={subagentLogRef} className="bubble-subagent-log">
               {message.content || 'Waiting...'}
             </pre>
           )}
@@ -212,9 +216,7 @@ export default function ChatMessageBubble({ message }: Props) {
         onClick={handleCopyMarkdown}
         disabled={!hasContent}
         aria-label={copied ? 'Markdown copied to clipboard' : 'Copy message as markdown'}
-        className={
-          'bubble-copy-md' + (copied ? ' bubble-copy-md--copied' : '')
-        }
+        className={`bubble-copy-md${  copied ? ' bubble-copy-md--copied' : ''}`}
       >
         {copied ? (
           <svg
@@ -250,16 +252,18 @@ export default function ChatMessageBubble({ message }: Props) {
       </button>
       {hasThinking && (
         <div className="mb-4">
-          <button
-            onClick={() => setShowThinking(!showThinking)}
-            className="bubble-thinking-btn"
-          >
+          <button onClick={() => setShowThinking(!showThinking)} className="bubble-thinking-btn">
             {showThinking ? 'Hide' : 'Show'} reasoning ({message.thinking?.length ?? 0} chars)
           </button>
           {showThinking && (
             <div className="bubble-thinking-box">
               {markdownMounted ? (
-                <MarkdownErrorBoundary><MarkdownMessage source={message.thinking ?? ''} className="markdown-message--thinking" /></MarkdownErrorBoundary>
+                <MarkdownErrorBoundary>
+                  <MarkdownMessage
+                    source={message.thinking ?? ''}
+                    className="markdown-message--thinking"
+                  />
+                </MarkdownErrorBoundary>
               ) : (
                 <div className="markdown-message--thinking" style={{ minHeight: '1.5em' }} />
               )}
@@ -282,12 +286,20 @@ export default function ChatMessageBubble({ message }: Props) {
           }
           role={hasThinking && !hasContent ? 'button' : undefined}
           tabIndex={hasThinking && !hasContent ? 0 : undefined}
-          title={hasThinking && !hasContent ? (showThinking ? 'Hide reasoning' : 'Show reasoning') : undefined}
+          title={
+            hasThinking && !hasContent
+              ? showThinking
+                ? 'Hide reasoning'
+                : 'Show reasoning'
+              : undefined
+          }
           className={`bubble-ai-msg${hasThinking && !hasContent ? ' cursor-pointer' : ''}`}
         >
           {hasContent || message.role !== 'assistant' ? (
             markdownMounted ? (
-              <MarkdownErrorBoundary><MarkdownMessage source={message.content} /></MarkdownErrorBoundary>
+              <MarkdownErrorBoundary>
+                <MarkdownMessage source={message.content} />
+              </MarkdownErrorBoundary>
             ) : (
               <div style={{ minHeight: '1.5em' }} />
             )

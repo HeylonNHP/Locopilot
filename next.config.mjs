@@ -1,13 +1,19 @@
 import CopyPlugin from 'copy-webpack-plugin';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ['better-sqlite3', 'playwright', 'isomorphic-dompurify', 'jsdom', 'pdf-parse'],
-  webpack: (config, { isServer, webpack }) => {
+  serverExternalPackages: [
+    'better-sqlite3',
+    'playwright',
+    'isomorphic-dompurify',
+    'jsdom',
+    'pdf-parse',
+  ],
+  webpack: (config, { isServer, webpack: _webpack }) => {
     // Allow loading WASM files required by @dqbd/tiktoken
     config.experiments = { ...config.experiments, asyncWebAssembly: true, layers: true };
 
@@ -31,7 +37,7 @@ const nextConfig = {
             to: isServer ? 'app/api/chat/tiktoken_bg.wasm' : 'static/tiktoken_bg.wasm',
           },
         ],
-      }),
+      })
     );
 
     return config;

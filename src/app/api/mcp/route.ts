@@ -15,115 +15,110 @@
  * planned for Phase 2.
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 
-import { listMCPServersWithStatus, reloadMCP, saveMCPServerDisabled } from '../../../mcp';
-import { MCPConfigError } from '../../../mcp';
-import type { MCPListResult } from '../../../mcp';
+import {
+  listMCPServersWithStatus,
+  MCPConfigError,
+  type MCPListResult,
+  reloadMCP,
+  saveMCPServerDisabled,
+} from '../../../mcp';
 
 export const dynamic = 'force-dynamic';
 
 // Same regex as `mcp/configLoader.ts` (re-declared here so the API
 // layer can reject obvious garbage before round-tripping to disk).
-const VALID_NAME_REGEX = /^[a-z0-9_-]+$/i;
+const VALID_NAME_REGEX = /^[\w-]+$/i;
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-    const connectName = request.nextUrl.searchParams.get('connect');
-    try {
-        const result = await listMCPServersWithStatus(connectName ? { connect: connectName } : {});
-        return NextResponse.json(result);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        return NextResponse.json(
-            { error: `Failed to list MCP servers: ${message}` },
-            { status: 500 },
-        );
-    }
+  const connectName = request.nextUrl.searchParams.get('connect');
+  try {
+    const result = await listMCPServersWithStatus(connectName ? { connect: connectName } : {});
+    return NextResponse.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ error: `Failed to list MCP servers: ${message}` }, { status: 500 });
+  }
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-    let body: Record<string, unknown>;
-    try {
-        body = (await request.json()) as Record<string, unknown>;
-    } catch {
-        return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
-    }
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
+  }
 
-    const action = body.action;
-    if (action !== 'reload') {
-        return NextResponse.json(
-            { error: 'Unknown action. Phase 1 supports only { action: "reload" }.' },
-            { status: 400 },
-        );
-    }
+  const action = body.action;
+  if (action !== 'reload') {
+    return NextResponse.json(
+      { error: 'Unknown action. Phase 1 supports only { action: "reload" }.' },
+      { status: 400 }
+    );
+  }
 
-    try {
-        const result = await reloadMCP();
-        return NextResponse.json({ ok: true, ...result });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        return NextResponse.json(
-            { error: `MCP reload failed: ${message}` },
-            { status: 500 },
-        );
-    }
+  try {
+    const result = await reloadMCP();
+    return NextResponse.json({ ok: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ error: `MCP reload failed: ${message}` }, { status: 500 });
+  }
 }
 
 interface PutBody {
-    name: unknown;
-    action: unknown;
+  name: unknown;
+  action: unknown;
 }
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
-    let body: PutBody;
-    try {
-        body = (await request.json()) as PutBody;
-    } catch {
-        return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
-    }
+  let body: PutBody;
+  try {
+    body = (await request.json()) as PutBody;
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
+  }
 
-    const { name, action } = body;
+  const { name, action } = body;
 
-    if (typeof name !== 'string' || !VALID_NAME_REGEX.test(name)) {
-        return NextResponse.json(
-            { error: 'Invalid or missing "name" (must match /^[a-z0-9_-]+$/i).' },
-            { status: 400 },
-        );
-    }
-    if (action !== 'enable' && action !== 'disable') {
-        return NextResponse.json(
-            { error: 'Invalid "action" (must be "enable" or "disable").' },
-            { status: 400 },
-        );
-    }
+  if (typeof name !== 'string' || !VALID_NAME_REGEX.test(name)) {
+    return NextResponse.json(
+      { error: 'Invalid or missing "name" (must match /^[a-z0-9_-]+$/i).' },
+      { status: 400 }
+    );
+  }
+  if (action !== 'enable' && action !== 'disable') {
+    return NextResponse.json(
+      { error: 'Invalid "action" (must be "enable" or "disable").' },
+      { status: 400 }
+    );
+  }
 
-    try {
-        await saveMCPServerDisabled(name, action === 'disable');
-    } catch (error) {
-        if (error instanceof MCPConfigError) {
-            // Unknown server / bad shape / parse error — treat as 400
-            // (the user can fix it by editing mcp.json).
-            return NextResponse.json({ error: error.message }, { status: 400 });
-        }
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        return NextResponse.json(
-            { error: `MCP save failed: ${message}` },
-            { status: 500 },
-        );
+  try {
+    await saveMCPServerDisabled(name, action === 'disable');
+  } catch (err) {
+    if (err instanceof MCPConfigError) {
+      // Unknown server / bad shape / parse error — treat as 400
+      // (the user can fix it by editing mcp.json).
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ error: `MCP save failed: ${message}` }, { status: 500 });
+  }
 
-    // Reload the in-memory client manager so the change takes effect.
-    // Returns the fresh status listing in the same shape as GET.
-    let result: MCPListResult;
-    try {
-        result = await reloadMCP();
-    } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        return NextResponse.json(
-            { error: `MCP reload after save failed: ${message}` },
-            { status: 500 },
-        );
-    }
+  // Reload the in-memory client manager so the change takes effect.
+  // Returns the fresh status listing in the same shape as GET.
+  let result: MCPListResult;
+  try {
+    result = await reloadMCP();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json(
+      { error: `MCP reload after save failed: ${message}` },
+      { status: 500 }
+    );
+  }
 
-    return NextResponse.json({ ok: true, servers: result.servers });
+  return NextResponse.json({ ok: true, servers: result.servers });
 }

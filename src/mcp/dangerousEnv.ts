@@ -28,46 +28,46 @@
  * `MY_SERVER_PATH`) and reference it indirectly.
  */
 export const DANGEROUS_ENV_KEYS: ReadonlySet<string> = new Set([
-    // General: shell/library injection vectors
-    'PATH',
-    'LD_PRELOAD',
-    'LD_LIBRARY_PATH',
-    'DYLD_INSERT_LIBRARIES',
-    'DYLD_LIBRARY_PATH',
-    'NODE_OPTIONS',
-    'NODE_PATH',
-    'IFS',
-    'SHELLOPTS',
-    'BASH_ENV',
-    'ENV',
-    'BASH_XTRACEFD', // hijack file descriptor used for xtrace output
-    'GLOBIGNORE', // can hide injected files from shell globbing
+  // General: shell/library injection vectors
+  'PATH',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'IFS',
+  'SHELLOPTS',
+  'BASH_ENV',
+  'ENV',
+  'BASH_XTRACEFD', // hijack file descriptor used for xtrace output
+  'GLOBIGNORE', // can hide injected files from shell globbing
 
-    // Python: arbitrary code execution at interpreter startup
-    'PYTHONPATH',
-    'PYTHONSTARTUP', // Python reads and EXECUTES this file at startup
-    'PYTHONINSPECT',
+  // Python: arbitrary code execution at interpreter startup
+  'PYTHONPATH',
+  'PYTHONSTARTUP', // Python reads and EXECUTES this file at startup
+  'PYTHONINSPECT',
 
-    // Java / JVM: -javaagent / -cp / arbitrary -D args at startup
-    'JAVA_TOOL_OPTIONS', // JVM reads this on every java invocation
-    '_JAVA_OPTIONS',     // same, but the underscored form takes precedence
-    'JVM_TOOL_OPTIONS',  // HotSpot-specific
-    'CLASSPATH',         // classpath hijack for any `java -cp ...` MCP server
+  // Java / JVM: -javaagent / -cp / arbitrary -D args at startup
+  'JAVA_TOOL_OPTIONS', // JVM reads this on every java invocation
+  '_JAVA_OPTIONS', // same, but the underscored form takes precedence
+  'JVM_TOOL_OPTIONS', // HotSpot-specific
+  'CLASSPATH', // classpath hijack for any `java -cp ...` MCP server
 
-    // Ruby: -r flag enables arbitrary `require`
-    'RUBYOPT',
-    'RUBYLIB',
+  // Ruby: -r flag enables arbitrary `require`
+  'RUBYOPT',
+  'RUBYLIB',
 
-    // Perl: -e / -d flags enable arbitrary code
-    'PERL5OPT',
-    'PERLLIB',
-    'PERL5LIB',
+  // Perl: -e / -d flags enable arbitrary code
+  'PERL5OPT',
+  'PERLLIB',
+  'PERL5LIB',
 ]);
 
 export function isDangerousEnvKey(key: string): boolean {
-    if (DANGEROUS_ENV_KEYS.has(key)) return true;
-    // bash function exports are exposed as `BASH_FUNC_name%%`. We refuse
-    // the whole namespace rather than try to enumerate every name.
-    if (key.startsWith('BASH_FUNC_') && key.endsWith('%%')) return true;
-    return false;
+  if (DANGEROUS_ENV_KEYS.has(key)) return true;
+  // bash function exports are exposed as `BASH_FUNC_name%%`. We refuse
+  // the whole namespace rather than try to enumerate every name.
+  if (key.startsWith('BASH_FUNC_') && key.endsWith('%%')) return true;
+  return false;
 }

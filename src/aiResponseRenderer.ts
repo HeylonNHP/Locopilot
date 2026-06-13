@@ -14,57 +14,62 @@
  */
 
 import {
-    sanitize,
-    isInterruptRequested,
-    registerInterruptHandler,
-    unregisterInterruptHandler,
-} from './tools/tools';
-import { sendLlmChatStream, getLlmTurnStats } from './services/llm';
+  type ChatMessage,
+  getLlmTurnStats,
+  type LlmTurnStats,
+  sendLlmChatStream,
+  type ToolCall,
+  type ToolDefinition,
+} from './services/llm';
 import { stripSpecialTokens } from './services/textUtils';
-import type { ToolCall, ToolDefinition, ChatMessage, LlmTurnStats } from './services/llm';
+import {
+  isInterruptRequested,
+  registerInterruptHandler,
+  unregisterInterruptHandler,
+} from './tools/tools';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Chat parameters forwarded to the active LLM adapter. */
 export interface StreamAIResponseParams {
-    model: string;
-    messages: ChatMessage[];
-    tools: ToolDefinition[];
-    numCtx: number;
-    think?: boolean;
-    visionSupported?: boolean;
+  model: string;
+  messages: ChatMessage[];
+  tools: ToolDefinition[];
+  numCtx: number;
+  think?: boolean;
+  visionSupported?: boolean;
 }
 
 export interface StreamAIResponseOptions {
-    /**
-     * Callback invoked on each status phase change.  Receives a human-readable
-     * string such as `"AI is responding... (342 chars)"`.  Typically wired to
-     * `refreshTokenStatus`.
-     */
-    onStatusUpdate: (status: string) => void;
+  /**
+   * Callback invoked on each status phase change.  Receives a human-readable
+   * string such as `"AI is responding... (342 chars)"`.  Typically wired to
+   * `refreshTokenStatus`.
+   */
+  onStatusUpdate: (status: string) => void;
 
-    /**
-     * Optional timeout in milliseconds for the AI response (per chunk or total).
-     */
-    timeoutMs?: number | undefined;
+  /**
+   * Optional timeout in milliseconds for the AI response (per chunk or total).
+   */
+  timeoutMs?: number | undefined;
 }
 
 export interface StreamAIResponseResult {
-    /** Full accumulated text content from the model. */
-    content: string;
-    /** The accumulated reasoning trace if the model supports thinking. */
-    thinking?: string;
-    /** Any tool calls the model requested. */
-    toolCalls: ToolCall[];
-    /** True if the user interrupted the stream before it completed. */
-    interrupted: boolean;
-    /** Final provider token/duration stats when provided by the API. */
-    finalStats: LlmTurnStats | null;
+  /** Full accumulated text content from the model. */
+  content: string;
+  /** The accumulated reasoning trace if the model supports thinking. */
+  thinking?: string;
+  /** Any tool calls the model requested. */
+  toolCalls: ToolCall[];
+  /** True if the user interrupted the stream before it completed. */
+  interrupted: boolean;
+  /** Final provider token/duration stats when provided by the API. */
+  finalStats: LlmTurnStats | null;
 }
 
 export interface RenderTurnOptions extends StreamAIResponseOptions {
-    /** Called when final authoritative stats arrive from Ollama. */
-    onFinalStats?: (authoritativeTokensUsed: number, finalStats: LlmTurnStats) => void;
+  /** Called when final authoritative stats arrive from Ollama. */
+  onFinalStats?: (authoritativeTokensUsed: number, finalStats: LlmTurnStats) => void;
 }
 
 // ─── Injectable Renderers ─────────────────────────────────────────────────────
@@ -86,14 +91,14 @@ let renderThinkingSummary: ThinkingSummaryRenderer = () => {};
  * Useful for testing, custom UIs, or suppressing output.
  */
 export function setAIResponseRenderer(fn: AIResponseRenderer): void {
-    renderAIResponse = fn;
+  renderAIResponse = fn;
 }
 
 /**
  * Replace the default thinking summary renderer.
  */
 export function setThinkingSummaryRenderer(fn: ThinkingSummaryRenderer): void {
-    renderThinkingSummary = fn;
+  renderThinkingSummary = fn;
 }
 
 /**
@@ -105,55 +110,55 @@ export function setThinkingSummaryRenderer(fn: ThinkingSummaryRenderer): void {
  * authoritative token counts so callers can keep the chat-loop concise.
  */
 export async function renderTurn(
-    baseUrl: string,
-    params: StreamAIResponseParams,
-    opts: RenderTurnOptions,
+  baseUrl: string,
+  params: StreamAIResponseParams,
+  opts: RenderTurnOptions
 ): Promise<{
-    assistantMessage: ChatMessage | null;
-    interrupted: boolean;
-    sessionTokenStats: { promptEvalCount: number; evalCount: number } | null;
-    finalStats: LlmTurnStats | null;
+  assistantMessage: ChatMessage | null;
+  interrupted: boolean;
+  sessionTokenStats: { promptEvalCount: number; evalCount: number } | null;
+  finalStats: LlmTurnStats | null;
 }> {
-    const { onStatusUpdate, onFinalStats, timeoutMs } = opts;
+  const { onStatusUpdate, onFinalStats, timeoutMs } = opts;
 
-    const result = await streamAIResponse(baseUrl, params, {
-        onStatusUpdate,
-        timeoutMs,
-    });
-    const { content, thinking, toolCalls, interrupted, finalStats } = result;
+  const result = await streamAIResponse(baseUrl, params, {
+    onStatusUpdate,
+    timeoutMs,
+  });
+  const { content, thinking, toolCalls, interrupted, finalStats } = result;
 
-    if (interrupted) {
-        return { assistantMessage: null, interrupted: true, sessionTokenStats: null, finalStats };
-    }
+  if (interrupted) {
+    return { assistantMessage: null, interrupted: true, sessionTokenStats: null, finalStats };
+  }
 
-    let assistantMessage: ChatMessage;
-    if (toolCalls.length > 0) {
-        assistantMessage = {
-            role: 'assistant',
-            content,
-            ...(thinking ? { thinking } : {}),
-            // Ensure a non-empty tuple type: [first, ...rest]
-            tool_calls: [toolCalls[0]!, ...toolCalls.slice(1)],
-        };
-    } else {
-        assistantMessage = {
-            role: 'assistant',
-            content,
-            ...(thinking ? { thinking } : {}),
-        };
-    }
+  let assistantMessage: ChatMessage;
+  if (toolCalls.length > 0) {
+    assistantMessage = {
+      role: 'assistant',
+      content,
+      ...(thinking ? { thinking } : {}),
+      // Ensure a non-empty tuple type: [first, ...rest]
+      tool_calls: [toolCalls[0]!, ...toolCalls.slice(1)],
+    };
+  } else {
+    assistantMessage = {
+      role: 'assistant',
+      content,
+      ...(thinking ? { thinking } : {}),
+    };
+  }
 
-    let sessionTokenStats: { promptEvalCount: number; evalCount: number } | null = null;
-    if (finalStats) {
-        const authoritativeTokensUsed = finalStats.promptEvalCount + finalStats.evalCount;
-        sessionTokenStats = {
-            promptEvalCount: finalStats.promptEvalCount,
-            evalCount: finalStats.evalCount,
-        };
-        if (onFinalStats) onFinalStats(authoritativeTokensUsed, finalStats);
-    }
+  let sessionTokenStats: { promptEvalCount: number; evalCount: number } | null = null;
+  if (finalStats) {
+    const authoritativeTokensUsed = finalStats.promptEvalCount + finalStats.evalCount;
+    sessionTokenStats = {
+      promptEvalCount: finalStats.promptEvalCount,
+      evalCount: finalStats.evalCount,
+    };
+    if (onFinalStats) onFinalStats(authoritativeTokensUsed, finalStats);
+  }
 
-    return { assistantMessage, interrupted: false, sessionTokenStats, finalStats };
+  return { assistantMessage, interrupted: false, sessionTokenStats, finalStats };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -175,131 +180,131 @@ export async function renderTurn(
  * @returns Accumulated content, tool calls, and whether the stream was cut short.
  */
 export async function streamAIResponse(
-    baseUrl: string,
-    params: StreamAIResponseParams,
-    opts: StreamAIResponseOptions,
+  baseUrl: string,
+  params: StreamAIResponseParams,
+  opts: StreamAIResponseOptions
 ): Promise<StreamAIResponseResult> {
-    const { onStatusUpdate } = opts;
+  const { onStatusUpdate } = opts;
 
-    let content = '';
-    let thinking = '';
-    const toolCalls: ToolCall[] = [];
-    let toolCallRawArgs = '';
-    let interrupted = false;
-    let finalStats: LlmTurnStats | null = null;
+  let content = '';
+  let thinking = '';
+  const toolCalls: ToolCall[] = [];
+  let toolCallRawArgs = '';
+  let interrupted = false;
+  let finalStats: LlmTurnStats | null = null;
 
-    onStatusUpdate('AI is responding...');
+  onStatusUpdate('AI is responding...');
 
-    const abortController = new AbortController();
+  const abortController = new AbortController();
 
-    const interruptHandlerId = registerInterruptHandler(() => abortController.abort());
+  const interruptHandlerId = registerInterruptHandler(() => abortController.abort());
 
-    const startTime = Date.now();
-    let firstContentTime: number | null = null;
-    let thinkingSummaryPrinted = false;
+  const startTime = Date.now();
+  let firstContentTime: number | null = null;
+  let thinkingSummaryPrinted = false;
 
-    try {
-        const stream = sendLlmChatStream(baseUrl, {
-            model: params.model,
-            messages: params.messages,
-            tools: params.tools,
-            numCtx: params.numCtx,
-            ...(params.visionSupported !== undefined ? { visionSupported: params.visionSupported } : {}),
-            ...(params.think !== undefined ? { think: params.think } : {}),
-            signal: abortController.signal,
-            timeoutMs: opts.timeoutMs,
-        });
+  try {
+    const stream = sendLlmChatStream(baseUrl, {
+      model: params.model,
+      messages: params.messages,
+      tools: params.tools,
+      numCtx: params.numCtx,
+      ...(params.visionSupported === undefined ? {} : { visionSupported: params.visionSupported }),
+      ...(params.think === undefined ? {} : { think: params.think }),
+      signal: abortController.signal,
+      timeoutMs: opts.timeoutMs,
+    });
 
-        for await (const chunk of stream) {
-            if (isInterruptRequested()) {
-                interrupted = true;
-                abortController.abort();
-                break;
-            }
-
-            const chunkThinking = chunk.message?.thinking ?? '';
-            if (chunkThinking.length > 0) {
-                thinking += chunkThinking;
-                onStatusUpdate(`AI is thinking... (${thinking.length} chars)`);
-            }
-
-            const chunkContent = chunk.message?.content ?? '';
-            if (chunkContent.length > 0) {
-                if (firstContentTime === null) {
-                    firstContentTime = Date.now();
-                    if (thinking.length > 0) {
-                        renderThinkingSummary(firstContentTime - startTime, thinking.length);
-                        thinkingSummaryPrinted = true;
-                    }
-                }
-                content += chunkContent;
-                onStatusUpdate(`AI is responding... (${content.length} chars)`);
-            }
-
-            if (chunk.message?.tool_calls) {
-                // If thinking preceded these tool calls, emit the persistent thought
-                // summary now — same timing as for the first content chunk above.
-                if (thinking.length > 0 && !thinkingSummaryPrinted) {
-                    renderThinkingSummary(Date.now() - startTime, thinking.length);
-                    thinkingSummaryPrinted = true;
-                }
-                // Track the latest complete tool-call snapshot for the final
-                // result. Ollama emits tool_calls as a full array in the chunk
-                // that carries them, so replacing avoids duplicate execution if
-                // the same snapshot is repeated.
-                toolCalls.length = 0;
-                toolCalls.push(...chunk.message.tool_calls);
-
-                // Reset the raw-args accumulator so the character count reflects
-                // only the latest snapshot. Ollama sends complete tool-call
-                // snapshots each chunk (see ollama/ollama#11633), not incremental
-                // partials, so accumulating across chunks would inflate the count.
-                toolCallRawArgs = '';
-                for (const tc of chunk.message.tool_calls) {
-                    if (tc.function?.arguments) {
-                        try {
-                            const argsJson = JSON.stringify(tc.function.arguments);
-                            toolCallRawArgs += argsJson;
-                        } catch {
-                            // If it's not stringifiable yet (rare for partials), skip
-                        }
-                    }
-                }
-                onStatusUpdate(`AI is requesting tools... (${toolCallRawArgs.length} chars)`);
-            }
-
-            if (chunk.done) {
-                finalStats = getLlmTurnStats(chunk);
-            }
-        }
-    } catch (error) {
-        if (!isInterruptRequested()) throw error;
+    for await (const chunk of stream) {
+      if (isInterruptRequested()) {
         interrupted = true;
-    } finally {
-        unregisterInterruptHandler(interruptHandlerId);
+        abortController.abort();
+        break;
+      }
+
+      const chunkThinking = chunk.message?.thinking ?? '';
+      if (chunkThinking.length > 0) {
+        thinking += chunkThinking;
+        onStatusUpdate(`AI is thinking... (${thinking.length} chars)`);
+      }
+
+      const chunkContent = chunk.message?.content ?? '';
+      if (chunkContent.length > 0) {
+        if (firstContentTime === null) {
+          firstContentTime = Date.now();
+          if (thinking.length > 0) {
+            renderThinkingSummary(firstContentTime - startTime, thinking.length);
+            thinkingSummaryPrinted = true;
+          }
+        }
+        content += chunkContent;
+        onStatusUpdate(`AI is responding... (${content.length} chars)`);
+      }
+
+      if (chunk.message?.tool_calls) {
+        // If thinking preceded these tool calls, emit the persistent thought
+        // summary now — same timing as for the first content chunk above.
+        if (thinking.length > 0 && !thinkingSummaryPrinted) {
+          renderThinkingSummary(Date.now() - startTime, thinking.length);
+          thinkingSummaryPrinted = true;
+        }
+        // Track the latest complete tool-call snapshot for the final
+        // result. Ollama emits tool_calls as a full array in the chunk
+        // that carries them, so replacing avoids duplicate execution if
+        // the same snapshot is repeated.
+        toolCalls.length = 0;
+        toolCalls.push(...chunk.message.tool_calls);
+
+        // Reset the raw-args accumulator so the character count reflects
+        // only the latest snapshot. Ollama sends complete tool-call
+        // snapshots each chunk (see ollama/ollama#11633), not incremental
+        // partials, so accumulating across chunks would inflate the count.
+        toolCallRawArgs = '';
+        for (const tc of chunk.message.tool_calls) {
+          if (tc.function?.arguments) {
+            try {
+              const argsJson = JSON.stringify(tc.function.arguments);
+              toolCallRawArgs += argsJson;
+            } catch {
+              // If it's not stringifiable yet (rare for partials), skip
+            }
+          }
+        }
+        onStatusUpdate(`AI is requesting tools... (${toolCallRawArgs.length} chars)`);
+      }
+
+      if (chunk.done) {
+        finalStats = getLlmTurnStats(chunk);
+      }
     }
+  } catch (err) {
+    if (!isInterruptRequested()) throw err;
+    interrupted = true;
+  } finally {
+    unregisterInterruptHandler(interruptHandlerId);
+  }
 
-    // Tool-call-only turns may think without emitting assistant content.
-    // Print a final thought summary so the thinking duration/chars are visible.
-    if (!interrupted && thinking.length > 0 && !thinkingSummaryPrinted) {
-        renderThinkingSummary(Date.now() - startTime, thinking.length);
-        thinkingSummaryPrinted = true;
-    }
+  // Tool-call-only turns may think without emitting assistant content.
+  // Print a final thought summary so the thinking duration/chars are visible.
+  if (!interrupted && thinking.length > 0 && !thinkingSummaryPrinted) {
+    renderThinkingSummary(Date.now() - startTime, thinking.length);
+    thinkingSummaryPrinted = true;
+  }
 
-    const cleanedContent = stripSpecialTokens(content);
-    const cleanedThinking = stripSpecialTokens(thinking);
+  const cleanedContent = stripSpecialTokens(content);
+  const cleanedThinking = stripSpecialTokens(thinking);
 
-    if (cleanedContent.trim().length > 0) {
-        renderAIResponse(cleanedContent, { interrupted });
-    }
+  if (cleanedContent.trim().length > 0) {
+    renderAIResponse(cleanedContent, { interrupted });
+  }
 
-    const result: StreamAIResponseResult = { 
-        content: cleanedContent, 
-        toolCalls, 
-        interrupted, 
-        finalStats 
-    };
-    if (cleanedThinking) result.thinking = cleanedThinking;
+  const result: StreamAIResponseResult = {
+    content: cleanedContent,
+    toolCalls,
+    interrupted,
+    finalStats,
+  };
+  if (cleanedThinking) result.thinking = cleanedThinking;
 
-    return result;
+  return result;
 }

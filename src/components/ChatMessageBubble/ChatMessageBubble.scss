@@ -13,7 +13,12 @@
   max-width: 70%;
   padding: 10px 16px;
   border-radius: 20px 20px 4px 20px;
-  background: linear-gradient(180deg, var(--gradient-primary-0) 0%, var(--gradient-primary-1) 60%, var(--gradient-primary-2) 100%);
+  background: linear-gradient(
+    180deg,
+    var(--gradient-primary-0) 0%,
+    var(--gradient-primary-1) 60%,
+    var(--gradient-primary-2) 100%
+  );
   color: white;
   font-size: 14px;
   line-height: 1.5;
@@ -29,7 +34,8 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: linear-gradient(180deg,
+    background: linear-gradient(
+      180deg,
       rgba(255, 255, 255, 0.45) 0%,
       rgba(255, 255, 255, 0.15) 40%,
       transparent 40%
@@ -159,7 +165,9 @@
     white-space: normal;
     backdrop-filter: blur(12px) saturate(140%);
     -webkit-backdrop-filter: blur(12px) saturate(140%);
-    box-shadow: 0 4px 16px rgba(var(--rgb-shadow-deep), 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    box-shadow:
+      0 4px 16px rgba(var(--rgb-shadow-deep), 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35);
     color: var(--text-primary);
   }
 }
@@ -182,7 +190,10 @@
   line-height: 1.2;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    background 0.2s ease,
+    color 0.2s ease;
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 5;

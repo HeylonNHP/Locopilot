@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+
 import type { ChatMessage, LLmModel, Session, WebSearchConfig } from '@/app/lib/chatStore';
 import type { CompletionMode } from '@/types/chatConfig';
 
@@ -66,7 +67,6 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const completionModeRef = useRef(state.completionMode);
   const maxPromptLoopIterationsRef = useRef(state.maxPromptLoopIterations);
 
-
   // sessionIdRef must be updated synchronously during render (not in a useEffect)
   // so the buffer guard in useChatStream.ts sees the new session immediately after
   // a SET_CURRENT_SESSION dispatch. A useEffect update runs after the browser paint,
@@ -74,20 +74,45 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   // guard and contaminate the new session's message list.
   sessionIdRef.current = state.currentSessionId;
 
-  useEffect(() => { messagesRef.current = state.messages; }, [state.messages]);
-  useEffect(() => { modelRef.current = state.model; }, [state.model]);
-  useEffect(() => { numCtxRef.current = state.numCtx; }, [state.numCtx]);
-  useEffect(() => { baseUrlRef.current = state.baseUrl; }, [state.baseUrl]);
-  useEffect(() => { sessionsRef.current = state.sessions; }, [state.sessions]);
-  useEffect(() => { modelsRef.current = state.models; }, [state.models]);
-  useEffect(() => { yoloRef.current = state.yolo; }, [state.yolo]);
-  useEffect(() => { thinkingEnabledRef.current = state.thinkingEnabled; }, [state.thinkingEnabled]);
-  useEffect(() => { compactionModelRef.current = state.compactionModel; }, [state.compactionModel]);
-  useEffect(() => { chatTimeoutMsRef.current = state.chatTimeoutMs; }, [state.chatTimeoutMs]);
-  useEffect(() => { webSearchRef.current = state.webSearch; }, [state.webSearch]);
-  useEffect(() => { completionModeRef.current = state.completionMode; }, [state.completionMode]);
-  useEffect(() => { maxPromptLoopIterationsRef.current = state.maxPromptLoopIterations; }, [state.maxPromptLoopIterations]);
-
+  useEffect(() => {
+    messagesRef.current = state.messages;
+  }, [state.messages]);
+  useEffect(() => {
+    modelRef.current = state.model;
+  }, [state.model]);
+  useEffect(() => {
+    numCtxRef.current = state.numCtx;
+  }, [state.numCtx]);
+  useEffect(() => {
+    baseUrlRef.current = state.baseUrl;
+  }, [state.baseUrl]);
+  useEffect(() => {
+    sessionsRef.current = state.sessions;
+  }, [state.sessions]);
+  useEffect(() => {
+    modelsRef.current = state.models;
+  }, [state.models]);
+  useEffect(() => {
+    yoloRef.current = state.yolo;
+  }, [state.yolo]);
+  useEffect(() => {
+    thinkingEnabledRef.current = state.thinkingEnabled;
+  }, [state.thinkingEnabled]);
+  useEffect(() => {
+    compactionModelRef.current = state.compactionModel;
+  }, [state.compactionModel]);
+  useEffect(() => {
+    chatTimeoutMsRef.current = state.chatTimeoutMs;
+  }, [state.chatTimeoutMs]);
+  useEffect(() => {
+    webSearchRef.current = state.webSearch;
+  }, [state.webSearch]);
+  useEffect(() => {
+    completionModeRef.current = state.completionMode;
+  }, [state.completionMode]);
+  useEffect(() => {
+    maxPromptLoopIterationsRef.current = state.maxPromptLoopIterations;
+  }, [state.maxPromptLoopIterations]);
 
   // Return a stable container so the same object identity is returned every render.
   // Individual ref objects (created by useRef above) are already stable; only the

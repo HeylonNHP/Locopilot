@@ -1,9 +1,10 @@
 'use client';
-import './ModelSelector.scss';
-
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+
 import { useChat } from '@/app/lib/chatStore';
+
+import './ModelSelector.scss';
 
 const CAPABILITY_LABELS: Record<string, string> = {
   tools: 'Tools',
@@ -21,14 +22,30 @@ function getCapabilityBadges(capabilities?: string[]): string[] {
 
   for (const capability of capabilities) {
     const key = capability.toLowerCase().trim();
-    if (key === 'tools') {
+    switch (key) {
+    case 'tools': {
       normalized.add('tools');
-    } else if (key === 'vision' || key === 'multimodal' || key === 'image') {
+    
+    break;
+    }
+    case 'vision': 
+    case 'multimodal': 
+    case 'image': {
       normalized.add('vision');
-    } else if (key === 'thinking') {
+    
+    break;
+    }
+    case 'thinking': {
       normalized.add('thinking');
-    } else if (key === 'audio') {
+    
+    break;
+    }
+    case 'audio': {
       normalized.add('audio');
+    
+    break;
+    }
+    // No default
     }
   }
 
@@ -46,14 +63,19 @@ interface ModelSelectorProps {
   onClose: () => void;
 }
 
-export default function ModelSelector({ anchorRef, lastClickRef, isOpen, onClose }: ModelSelectorProps) {
+export default function ModelSelector({
+  anchorRef,
+  lastClickRef,
+  isOpen,
+  onClose,
+}: ModelSelectorProps) {
   const { state, dispatch } = useChat();
   const [search, setSearch] = useState('');
   const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 420 });
   const panelRef = useRef<HTMLDivElement>(null);
 
   const filteredModels = state.models.filter((m) =>
-    m.name.toLowerCase().includes(search.toLowerCase()),
+    m.name.toLowerCase().includes(search.toLowerCase())
   );
 
   // Position the dropdown above the anchor when opened, centred horizontally.
@@ -76,9 +98,13 @@ export default function ModelSelector({ anchorRef, lastClickRef, isOpen, onClose
 
       // Determine the anchor point: prefer click coordinates (X), fall back
       // to the anchor ref's centre (for keyboard activation).
-      const anchorX = click?.x ?? (anchor ? anchor.getBoundingClientRect().left + anchor.getBoundingClientRect().width / 2 : window.innerWidth / 2);
-      const anchorTopY = click?.y ?? (anchor ? anchor.getBoundingClientRect().top : window.innerHeight);
-      const anchorHeight = anchor ? anchor.getBoundingClientRect().height : 0;
+      const anchorX =
+        click?.x ??
+        (anchor
+          ? anchor.getBoundingClientRect().left + anchor.getBoundingClientRect().width / 2
+          : window.innerWidth / 2);
+      const anchorTopY =
+        click?.y ?? (anchor ? anchor.getBoundingClientRect().top : window.innerHeight);
 
       let left = anchorX - dropdownWidth / 2;
       if (left < margin) {
@@ -135,15 +161,8 @@ export default function ModelSelector({ anchorRef, lastClickRef, isOpen, onClose
   // Destructure only the fields used by handleSelect so the callback
   // does not depend on the entire state object (which changes on every
   // render during streaming, defeating useCallback).
-  const {
-    model,
-    baseUrl,
-    yolo,
-    thinkingEnabled,
-    compactionModel,
-    chatTimeoutMs,
-    webSearch,
-  } = state;
+  const { model, baseUrl, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch } =
+    state;
 
   const handleSelect = useCallback(
     async (modelName: string) => {
@@ -185,7 +204,17 @@ export default function ModelSelector({ anchorRef, lastClickRef, isOpen, onClose
 
       onClose();
     },
-    [dispatch, onClose, model, baseUrl, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch],
+    [
+      dispatch,
+      onClose,
+      model,
+      baseUrl,
+      yolo,
+      thinkingEnabled,
+      compactionModel,
+      chatTimeoutMs,
+      webSearch,
+    ]
   );
 
   if (!isOpen) return null;
@@ -223,7 +252,11 @@ export default function ModelSelector({ anchorRef, lastClickRef, isOpen, onClose
                 key={m.name}
                 className={`model-selector-item ${m.name === state.model ? 'model-selector-item-active' : ''}`}
                 onClick={() => handleSelect(m.name)}
-                title={capabilityBadges.length > 0 ? `${m.name} (${capabilityBadges.join(', ')})` : m.name}
+                title={
+                  capabilityBadges.length > 0
+                    ? `${m.name} (${capabilityBadges.join(', ')})`
+                    : m.name
+                }
               >
                 <span className="model-selector-check">
                   {m.name === state.model && (
@@ -241,7 +274,10 @@ export default function ModelSelector({ anchorRef, lastClickRef, isOpen, onClose
                 <span className="model-selector-content">
                   <span className="model-selector-name">{m.name}</span>
                   {capabilityBadges.length > 0 && (
-                    <span className="model-selector-badges" aria-label={`Capabilities: ${capabilityBadges.join(', ')}`}>
+                    <span
+                      className="model-selector-badges"
+                      aria-label={`Capabilities: ${capabilityBadges.join(', ')}`}
+                    >
                       {capabilityBadges.map((badge) => (
                         <span key={badge} className="model-selector-badge">
                           {badge}
@@ -256,6 +292,6 @@ export default function ModelSelector({ anchorRef, lastClickRef, isOpen, onClose
         )}
       </div>
     </div>,
-    document.body,
+    document.body
   );
 }

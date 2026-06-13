@@ -9,17 +9,18 @@ import { inspect } from 'node:util';
 
 const TAG_WIDTH = 12;
 const TIMESTAMP_WIDTH = 8; // "HH:MM:SS"
-const SEP = '  ';          // column separator (matches the literal used in emit())
+const SEP = '  '; // column separator (matches the literal used in emit())
 const FIELDS_MAX_LENGTH = 200;
 
 // ANSI escape sequence pattern: matches CSI (ESC[) and OSC (ESC]) forms,
 // including the 7-bit ESC introducer and the parameter / intermediate /
 // final bytes that follow. Covers both SGR (color) and cursor-control
 // sequences — enough to strip chalk's color codes for length measurement.
-const ANSI_ESCAPE_PATTERN = /\x1B\[(?:\d{1,3}(?:;\d{1,3})*)?[A-Za-z]|\x1B\][^\x1B]*(?:\x1B(?:\\|\x07)|.)/g;
+const ANSI_ESCAPE_PATTERN =
+  /\u001B\[(?:\d{1,3}(?:;\d{1,3})*)?[A-Za-z]|\u001B][^\u001B]*(?:\u001B[\u0007\\]|.)/g;
 
 function stripAnsi(input: string): string {
-    return input.replace(ANSI_ESCAPE_PATTERN, '');
+  return input.replaceAll(ANSI_ESCAPE_PATTERN, '');
 }
 
 // Shared Date instance — avoids one `new Date()` allocation per log call.
@@ -28,71 +29,86 @@ const sharedDate = new Date();
 type Level = 'debug' | 'info' | 'warn' | 'error';
 
 const LEVEL_COLOR: Record<Level, (s: string) => string> = {
-    debug: chalk.gray,
-    info:  chalk.cyan,
-    warn:  chalk.yellow,
-    error: chalk.red,
+  debug: chalk.gray,
+  info: chalk.cyan,
+  warn: chalk.yellow,
+  error: chalk.red,
 };
 
 const LEVEL_CONSOLE: Record<Level, 'log' | 'warn' | 'error'> = {
-    debug: 'log',
-    info:  'log',
-    warn:  'warn',
-    error: 'error',
+  debug: 'log',
+  info: 'log',
+  warn: 'warn',
+  error: 'error',
 };
 
 function timestamp(): string {
-    sharedDate.setTime(Date.now());
-    return sharedDate.toISOString().slice(11, 19); // HH:MM:SS
+  sharedDate.setTime(Date.now());
+  return sharedDate.toISOString().slice(11, 19); // HH:MM:SS
 }
 
 function formatFields(fields?: Record<string, unknown>): string {
-    if (!fields) return '';
-    const inspected = inspect(fields, { colors: true, breakLength: Infinity, depth: 0 });
-    if (!inspected || inspected === '{}') return '';
-    const visible = stripAnsi(inspected);
-    if (visible.length > FIELDS_MAX_LENGTH) {
-        // Slice the *visible* string so we never cut a multi-byte ANSI escape
-        // mid-sequence (which would leave the trailing log lines mis-colored).
-        // The plain ellipsis is appended after stripping, so it does not get
-        // mangled by chalk's color-codes and renders consistently.
-        return visible.slice(0, FIELDS_MAX_LENGTH - 1) + '…';
-    }
-    return inspected;
+  if (!fields) return '';
+  const inspected = inspect(fields, { colors: true, breakLength: Infinity, depth: 0 });
+  if (!inspected || inspected === '{}') return '';
+  const visible = stripAnsi(inspected);
+  if (visible.length > FIELDS_MAX_LENGTH) {
+    // Slice the *visible* string so we never cut a multi-byte ANSI escape
+    // mid-sequence (which would leave the trailing log lines mis-colored).
+    // The plain ellipsis is appended after stripping, so it does not get
+    // mangled by chalk's color-codes and renders consistently.
+    return `${visible.slice(0, FIELDS_MAX_LENGTH - 1)  }…`;
+  }
+  return inspected;
 }
 
 function indentMultiline(text: string, indent: string): string {
-    if (!text.includes('\n')) return text;
-    return text.split('\n').map((line, i) => (i === 0 ? line : indent + line)).join('\n');
+  if (!text.includes('\n')) return text;
+  return text
+    .split('\n')
+    .map((line, i) => (i === 0 ? line : indent + line))
+    .join('\n');
 }
 
 function emit(level: Level, tag: string, message: string, fields?: Record<string, unknown>): void {
-    const ts = chalk.gray(timestamp());
-    const coloredTag = LEVEL_COLOR[level](tag.padEnd(TAG_WIDTH));
-    // Continuation lines align under the start of the message column:
-    //   HH:MM:SS (8) + SEP (2) + TAG (12) + SEP (2) = 24 spaces of leading indent.
-    const messageIndent = ' '.repeat(TIMESTAMP_WIDTH + SEP.length + TAG_WIDTH + SEP.length);
-    const boldMsg = chalk.bold(indentMultiline(message, messageIndent));
-    const suffix = formatFields(fields);
-    const line = suffix
-        ? `${ts}${SEP}${coloredTag}${SEP}${boldMsg}${SEP}${suffix}`
-        : `${ts}${SEP}${coloredTag}${SEP}${boldMsg}`;
-    console[LEVEL_CONSOLE[level]](line);
+  const ts = chalk.gray(timestamp());
+  const coloredTag = LEVEL_COLOR[level](tag.padEnd(TAG_WIDTH));
+  // Continuation lines align under the start of the message column:
+  //   HH:MM:SS (8) + SEP (2) + TAG (12) + SEP (2) = 24 spaces of leading indent.
+  const messageIndent = ' '.repeat(TIMESTAMP_WIDTH + SEP.length + TAG_WIDTH + SEP.length);
+  const boldMsg = chalk.bold(indentMultiline(message, messageIndent));
+  const suffix = formatFields(fields);
+  const line = suffix
+    ? `${ts}${SEP}${coloredTag}${SEP}${boldMsg}${SEP}${suffix}`
+    : `${ts}${SEP}${coloredTag}${SEP}${boldMsg}`;
+  console[LEVEL_CONSOLE[level]](line);
 }
 
 export const logger = {
-    debug: (tag: string, message: string, fields?: Record<string, unknown>) => emit('debug', tag, message, fields),
-    info:  (tag: string, message: string, fields?: Record<string, unknown>) => emit('info',  tag, message, fields),
-    warn:  (tag: string, message: string, fields?: Record<string, unknown>) => emit('warn',  tag, message, fields),
-    error: (tag: string, message: string, fields?: Record<string, unknown>) => emit('error', tag, message, fields),
+  debug: (tag: string, message: string, fields?: Record<string, unknown>) =>
+    emit('debug', tag, message, fields),
+  info: (tag: string, message: string, fields?: Record<string, unknown>) =>
+    emit('info', tag, message, fields),
+  warn: (tag: string, message: string, fields?: Record<string, unknown>) =>
+    emit('warn', tag, message, fields),
+  error: (tag: string, message: string, fields?: Record<string, unknown>) =>
+    emit('error', tag, message, fields),
 
-    group(label: string, fn: () => void): void {
-        if (typeof console.group === 'function') {
-            console.group(label);
-            try { fn(); } finally { console.groupEnd(); }
-        } else {
-            console.log(`\u250C\u2500 ${label}`);
-            try { fn(); } finally { console.log('\u2514\u2500'); }
-        }
-    },
+  group(label: string, fn: () => void): void {
+    if (typeof console.group === 'function') {
+      console.group(label);
+      try {
+        fn();
+      } finally {
+        console.groupEnd();
+      }
+    } else {
+      console.log(`\u250C\u2500 ${label}`);
+      try {
+        fn();
+      } finally {
+        console.log('\u2514\u2500');
+      }
+    }
+  },
 };

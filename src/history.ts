@@ -13,8 +13,13 @@
  */
 
 import Database from 'better-sqlite3';
-import path from 'path';
-import { type ChatMessage, type PersistedChatMessage, type SubagentLogMessage } from './services/llm';
+import path from 'node:path';
+
+import {
+  type ChatMessage,
+  type PersistedChatMessage,
+  type SubagentLogMessage,
+} from './services/llm';
 import { sanitizeChatMessage } from './services/textUtils';
 
 // ---------------------------------------------------------------------------
@@ -22,19 +27,19 @@ import { sanitizeChatMessage } from './services/textUtils';
 // ---------------------------------------------------------------------------
 
 export interface Session {
-    id: number;
-    name: string;
-    model: string;
-    created_at: string;
-    updated_at: string;
-    last_prompt_eval_count: number | null;
-    last_eval_count: number | null;
-    last_total_tokens: number | null;
+  id: number;
+  name: string;
+  model: string;
+  created_at: string;
+  updated_at: string;
+  last_prompt_eval_count: number | null;
+  last_eval_count: number | null;
+  last_total_tokens: number | null;
 }
 
 export interface SessionTokenStats {
-    promptEvalCount: number;
-    evalCount: number;
+  promptEvalCount: number;
+  evalCount: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -71,75 +76,61 @@ db.exec(`
 `);
 
 function addColumnIfMissing(sql: string): void {
-    try {
-        db.exec(sql);
-    } catch {
-        // Column likely already exists.
-    }
+  try {
+    db.exec(sql);
+  } catch {
+    // Column likely already exists.
+  }
 }
 
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_prompt_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_total_tokens INTEGER');
-addColumnIfMissing('ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT \'\'');
-addColumnIfMissing('ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT \'[]\'');
-addColumnIfMissing('ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT \'\'');
+addColumnIfMissing("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
+addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT ''");
 
 // ---------------------------------------------------------------------------
 // Prepared statements (created once, reused on every call)
 // ---------------------------------------------------------------------------
 
 const stmtInsertSession = db.prepare<[string, string]>(
-    'INSERT INTO sessions (name, model) VALUES (?, ?)',
+  'INSERT INTO sessions (name, model) VALUES (?, ?)'
 );
 
 const stmtUpdateSessionName = db.prepare<[string, number]>(
-    'UPDATE sessions SET name = ?, updated_at = datetime(\'now\') WHERE id = ?',
+  "UPDATE sessions SET name = ?, updated_at = datetime('now') WHERE id = ?"
 );
 
 const stmtUpdateSessionTimestamp = db.prepare<[number]>(
-    'UPDATE sessions SET updated_at = datetime(\'now\') WHERE id = ?',
+  "UPDATE sessions SET updated_at = datetime('now') WHERE id = ?"
 );
 
 const stmtUpdateSessionModel = db.prepare<[string, number]>(
-    'UPDATE sessions SET model = ?, updated_at = datetime(\'now\') WHERE id = ?',
+  "UPDATE sessions SET model = ?, updated_at = datetime('now') WHERE id = ?"
 );
 
 const stmtUpdateSessionTokenStats = db.prepare<[number, number, number, number]>(
-    'UPDATE sessions SET last_prompt_eval_count = ?, last_eval_count = ?, last_total_tokens = ?, updated_at = datetime(\'now\') WHERE id = ?',
+  "UPDATE sessions SET last_prompt_eval_count = ?, last_eval_count = ?, last_total_tokens = ?, updated_at = datetime('now') WHERE id = ?"
 );
 
-const stmtListSessions = db.prepare<[]>(
-    'SELECT * FROM sessions ORDER BY updated_at DESC',
-);
+const stmtListSessions = db.prepare<[]>('SELECT * FROM sessions ORDER BY updated_at DESC');
 
-const stmtDeleteSession = db.prepare<[number]>(
-    'DELETE FROM sessions WHERE id = ?',
-);
+const stmtDeleteSession = db.prepare<[number]>('DELETE FROM sessions WHERE id = ?');
 
-const stmtDeleteMessages = db.prepare<[number]>(
-    'DELETE FROM messages WHERE session_id = ?',
-);
-
-const stmtInsertMessage = db.prepare<[number, string, string, string, string, string, string]>(
-    'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-);
+const stmtDeleteMessages = db.prepare<[number]>('DELETE FROM messages WHERE session_id = ?');
 
 const stmtLoadMessages = db.prepare<[number]>(
-    'SELECT role, content, thinking, tool_calls, images, subagent_id FROM messages WHERE session_id = ? ORDER BY id ASC',
+  'SELECT role, content, thinking, tool_calls, images, subagent_id FROM messages WHERE session_id = ? ORDER BY id ASC'
 );
 
 const stmtSearchSessions = db.prepare<[string, string]>(
-    `SELECT DISTINCT s.* FROM sessions s\n     LEFT JOIN messages m ON m.session_id = s.id\n     WHERE LOWER(s.name) LIKE ? OR LOWER(m.content) LIKE ?\n     ORDER BY s.updated_at DESC`,
+  `SELECT DISTINCT s.* FROM sessions s\n     LEFT JOIN messages m ON m.session_id = s.id\n     WHERE LOWER(s.name) LIKE ? OR LOWER(m.content) LIKE ?\n     ORDER BY s.updated_at DESC`
 );
 
-const stmtGetSessionName = db.prepare<[number]>(
-    'SELECT name FROM sessions WHERE id = ?',
-);
+const stmtGetSessionName = db.prepare<[number]>('SELECT name FROM sessions WHERE id = ?');
 
-const stmtSessionExists = db.prepare<[number]>(
-    'SELECT 1 FROM sessions WHERE id = ?',
-);
+const stmtSessionExists = db.prepare<[number]>('SELECT 1 FROM sessions WHERE id = ?');
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -149,8 +140,8 @@ const stmtSessionExists = db.prepare<[number]>(
  * Returns true if a session with the given id exists.
  */
 export function sessionExists(sessionId: number): boolean {
-    const row = stmtSessionExists.get(sessionId) as { 1: number } | undefined;
-    return row !== undefined;
+  const row = stmtSessionExists.get(sessionId) as { 1: number } | undefined;
+  return row !== undefined;
 }
 
 /**
@@ -160,46 +151,46 @@ export function sessionExists(sessionId: number): boolean {
  * @param model – Ollama model name used in this session.
  */
 export function createSession(name: string, model: string): number {
-    const result = stmtInsertSession.run(name, model);
-    return result.lastInsertRowid as number;
+  const result = stmtInsertSession.run(name, model);
+  return result.lastInsertRowid as number;
 }
 
 /**
  * Renames an existing session (e.g. to the first user prompt).
  */
 export function renameSession(sessionId: number, name: string): void {
-    stmtUpdateSessionName.run(name, sessionId);
+  stmtUpdateSessionName.run(name, sessionId);
 }
 
 /**
  * Returns the name of a session, or undefined if the session does not exist.
  */
 export function getSessionName(sessionId: number): string | undefined {
-    const row = stmtGetSessionName.get(sessionId) as { name: string } | undefined;
-    return row?.name;
+  const row = stmtGetSessionName.get(sessionId) as { name: string } | undefined;
+  return row?.name;
 }
 
 /**
  * Returns all sessions ordered by most-recently-updated first.
  */
 export function listSessions(): Session[] {
-    return stmtListSessions.all() as Session[];
+  return stmtListSessions.all() as Session[];
 }
 
 /**
  * Searches sessions by title and message content.
  */
 export function searchSessions(query: string): Session[] {
-    const escaped = query.toLowerCase().replace(/[%_]/g, '\\$&');
-    const q = `%${escaped}%`;
-    return stmtSearchSessions.all(q, q) as Session[];
+  const escaped = query.toLowerCase().replaceAll(/[%_]/g, String.raw`\$&`);
+  const q = `%${escaped}%`;
+  return stmtSearchSessions.all(q, q) as Session[];
 }
 
 /**
  * Deletes a session and all its messages.
  */
 export function deleteSession(sessionId: number): void {
-    stmtDeleteSession.run(sessionId);
+  stmtDeleteSession.run(sessionId);
 }
 
 /**
@@ -207,143 +198,141 @@ export function deleteSession(sessionId: number): void {
  * Used after compaction and when switching sessions.
  */
 export function updateSessionMessages(
-    sessionId: number,
-    messages: PersistedChatMessage[],
-    tokenStats?: SessionTokenStats | null,
+  sessionId: number,
+  messages: PersistedChatMessage[],
+  tokenStats?: SessionTokenStats | null
 ): void {
-    // Strip system messages before persisting — the system prompt is always
-    // injected on-the-fly and should never be stored in the database.
-    const persistableMessages = messages.filter((m) => m.role !== 'system');
+  // Strip system messages before persisting — the system prompt is always
+  // injected on-the-fly and should never be stored in the database.
+  const persistableMessages = messages.filter((m) => m.role !== 'system');
 
-    const run = db.transaction(() => {
-        // Insert new messages into a temp staging table first, so the
-        // original data survives if the process crashes mid-write.
-        db.exec(
-            'CREATE TABLE IF NOT EXISTS messages_staging ' +
-            '(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, ' +
-            'role TEXT NOT NULL, content TEXT NOT NULL DEFAULT \'\', ' +
-            'thinking TEXT NOT NULL DEFAULT \'\', tool_calls TEXT NOT NULL DEFAULT \'[]\', ' +
-            'images TEXT NOT NULL DEFAULT \'[]\', subagent_id TEXT NOT NULL DEFAULT \'\')',
-        );
-        const stmtDeleteStaging = db.prepare<[number]>(
-            'DELETE FROM messages_staging WHERE session_id = ?',
-        );
-        stmtDeleteStaging.run(sessionId);
+  const run = db.transaction(() => {
+    // Insert new messages into a temp staging table first, so the
+    // original data survives if the process crashes mid-write.
+    db.exec(
+      'CREATE TABLE IF NOT EXISTS messages_staging ' +
+        '(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, ' +
+        "role TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', " +
+        "thinking TEXT NOT NULL DEFAULT '', tool_calls TEXT NOT NULL DEFAULT '[]', " +
+        "images TEXT NOT NULL DEFAULT '[]', subagent_id TEXT NOT NULL DEFAULT '')"
+    );
+    const stmtDeleteStaging = db.prepare<[number]>(
+      'DELETE FROM messages_staging WHERE session_id = ?'
+    );
+    stmtDeleteStaging.run(sessionId);
 
-        const stmtInsertStaging = db.prepare<[number, string, string, string, string, string, string]>(
-            'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        );
-        for (const msg of persistableMessages) {
-            const sanitizedMessage = sanitizeChatMessage(msg);
-            const subagentId =
-                sanitizedMessage.role === 'subagent_log' && sanitizedMessage.subagentId
-                    ? sanitizedMessage.subagentId
-                    : '';
-            const role = sanitizedMessage.role;
-            const content = sanitizedMessage.content ?? '';
-            const thinking =
-                sanitizedMessage.role === 'subagent_log' ? '' : (sanitizedMessage as ChatMessage).thinking ?? '';
-            const toolCalls =
-                sanitizedMessage.role === 'subagent_log' ? '[]' : JSON.stringify((sanitizedMessage as ChatMessage).tool_calls ?? []);
-            const images =
-                sanitizedMessage.role === 'subagent_log' ? '[]' : JSON.stringify((sanitizedMessage as ChatMessage).images ?? []);
-            stmtInsertStaging.run(
-                sessionId,
-                role,
-                content,
-                thinking,
-                toolCalls,
-                images,
-                subagentId,
-            );
-        }
+    const stmtInsertStaging = db.prepare<[number, string, string, string, string, string, string]>(
+      'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+    for (const msg of persistableMessages) {
+      const sanitizedMessage = sanitizeChatMessage(msg);
+      const subagentId =
+        sanitizedMessage.role === 'subagent_log' && sanitizedMessage.subagentId
+          ? sanitizedMessage.subagentId
+          : '';
+      const role = sanitizedMessage.role;
+      const content = sanitizedMessage.content ?? '';
+      const thinking =
+        sanitizedMessage.role === 'subagent_log'
+          ? ''
+          : ((sanitizedMessage as ChatMessage).thinking ?? '');
+      const toolCalls =
+        sanitizedMessage.role === 'subagent_log'
+          ? '[]'
+          : JSON.stringify((sanitizedMessage as ChatMessage).tool_calls ?? []);
+      const images =
+        sanitizedMessage.role === 'subagent_log'
+          ? '[]'
+          : JSON.stringify((sanitizedMessage as ChatMessage).images ?? []);
+      stmtInsertStaging.run(sessionId, role, content, thinking, toolCalls, images, subagentId);
+    }
 
-        // Atomic swap: delete originals only after staging is complete,
-        // then move staged rows into the real table.
-        stmtDeleteMessages.run(sessionId);
-        const stmtCopyStaging = db.prepare<[number]>(
-            'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id) ' +
-            'SELECT session_id, role, content, thinking, tool_calls, images, subagent_id ' +
-            'FROM messages_staging WHERE session_id = ?',
-        );
-        stmtCopyStaging.run(sessionId);
-        stmtDeleteStaging.run(sessionId);
+    // Atomic swap: delete originals only after staging is complete,
+    // then move staged rows into the real table.
+    stmtDeleteMessages.run(sessionId);
+    const stmtCopyStaging = db.prepare<[number]>(
+      'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id) ' +
+        'SELECT session_id, role, content, thinking, tool_calls, images, subagent_id ' +
+        'FROM messages_staging WHERE session_id = ?'
+    );
+    stmtCopyStaging.run(sessionId);
+    stmtDeleteStaging.run(sessionId);
 
-        if (tokenStats) {
-            const totalTokens = tokenStats.promptEvalCount + tokenStats.evalCount;
-            stmtUpdateSessionTokenStats.run(
-                tokenStats.promptEvalCount,
-                tokenStats.evalCount,
-                totalTokens,
-                sessionId,
-            );
-        } else {
-            stmtUpdateSessionTimestamp.run(sessionId);
-        }
-    });
-    run();
+    if (tokenStats) {
+      const totalTokens = tokenStats.promptEvalCount + tokenStats.evalCount;
+      stmtUpdateSessionTokenStats.run(
+        tokenStats.promptEvalCount,
+        tokenStats.evalCount,
+        totalTokens,
+        sessionId
+      );
+    } else {
+      stmtUpdateSessionTimestamp.run(sessionId);
+    }
+  });
+  run();
 }
 
 /**
  * Updates the persisted model for an existing session.
  */
 export function updateSessionModel(sessionId: number, model: string): void {
-    stmtUpdateSessionModel.run(model, sessionId);
+  stmtUpdateSessionModel.run(model, sessionId);
 }
 
 /**
  * Loads and returns the full message history for a session.
  */
 export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
-    const rows = stmtLoadMessages.all(sessionId) as {
-        role: string;
-        content: string;
-        thinking: string;
-        tool_calls: string;
-        images: string;
-        subagent_id: string;
-    }[];
+  const rows = stmtLoadMessages.all(sessionId) as {
+    role: string;
+    content: string;
+    thinking: string;
+    tool_calls: string;
+    images: string;
+    subagent_id: string;
+  }[];
 
-    return rows.map(row => {
-        if (row.role === 'subagent_log') {
-            const msg: SubagentLogMessage = {
-                role: 'subagent_log',
-                content: row.content,
-            };
-            if (row.subagent_id) {
-                msg.subagentId = row.subagent_id;
-            }
-            return sanitizeChatMessage(msg);
-        }
+  return rows.map((row) => {
+    if (row.role === 'subagent_log') {
+      const msg: SubagentLogMessage = {
+        role: 'subagent_log',
+        content: row.content,
+      };
+      if (row.subagent_id) {
+        msg.subagentId = row.subagent_id;
+      }
+      return sanitizeChatMessage(msg);
+    }
 
-        let toolCalls: ChatMessage['tool_calls'] | undefined = undefined;
-        try {
-            const parsed = JSON.parse(row.tool_calls);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                toolCalls = parsed as ChatMessage['tool_calls'];
-            }
-        } catch {
-            toolCalls = undefined;
-        }
-        let images: string[] = [];
-        try {
-            images = JSON.parse(row.images ?? '[]');
-        } catch {
-            images = [];
-        }
-        const msg: ChatMessage = {
-            role: row.role as ChatMessage['role'],
-            content: row.content,
-        };
-        if (row.thinking) {
-            msg.thinking = row.thinking;
-        }
-        if (toolCalls && toolCalls.length > 0) {
-            msg.tool_calls = toolCalls;
-        }
-        if (images && images.length > 0) {
-            msg.images = images;
-        }
-        return sanitizeChatMessage(msg);
-    });
+    let toolCalls: ChatMessage['tool_calls'] | undefined;
+    try {
+      const parsed = JSON.parse(row.tool_calls);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        toolCalls = parsed as ChatMessage['tool_calls'];
+      }
+    } catch {
+      toolCalls = undefined;
+    }
+    let images: string[] = [];
+    try {
+      images = JSON.parse(row.images ?? '[]');
+    } catch {
+      images = [];
+    }
+    const msg: ChatMessage = {
+      role: row.role as ChatMessage['role'],
+      content: row.content,
+    };
+    if (row.thinking) {
+      msg.thinking = row.thinking;
+    }
+    if (toolCalls && toolCalls.length > 0) {
+      msg.tool_calls = toolCalls;
+    }
+    if (images && images.length > 0) {
+      msg.images = images;
+    }
+    return sanitizeChatMessage(msg);
+  });
 }

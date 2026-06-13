@@ -71,7 +71,7 @@ export default function ErrorBoundary({ error, reset }: ErrorBoundaryProps) {
               Try again
             </button>
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => globalThis.location.reload()}
               style={{
                 padding: '0.5rem 1.25rem',
                 fontSize: '0.9rem',

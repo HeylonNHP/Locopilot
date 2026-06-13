@@ -1,10 +1,12 @@
 'use client';
 
-import React, { createContext, useContext, useReducer, type ReactNode } from 'react';
-import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
-import type { CompletionMode } from '@/types/chatConfig';
+import React, { createContext, type ReactNode, useContext, useReducer } from 'react';
+
 import type { ToolCall } from '@/services/llm';
 import type { ToolCallArguments } from '@/tools/tools';
+import type { CompletionMode } from '@/types/chatConfig';
+
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
 export interface ChatMessage {
   /** Stable client-only identity used as React list key. Never sent to the server. */
@@ -22,7 +24,7 @@ export interface ChatMessage {
 
 /** Return a copy of msg with a stable `id` field if it doesn't already have one. */
 function withId(msg: ChatMessage): ChatMessage {
-  return msg.id !== undefined ? msg : { ...msg, id: crypto.randomUUID() };
+  return msg.id === undefined ? { ...msg, id: crypto.randomUUID() } : msg;
 }
 
 export interface Session {
@@ -49,33 +51,33 @@ export interface WebSearchConfig {
 export type DoneReason = 'stop' | 'length' | 'load' | 'unload' | 'unknown';
 
 export interface SessionState {
-    messages: ChatMessage[];
-    error: string | null;
-    tokenStats: {
-        promptEvalCount: number;
-        evalCount: number;
-        totalTokens: number;
-        tokenLimit: number;
-        promptTps?: number;
-        evalTps?: number;
-        isEstimated?: boolean;
-    } | null;
-    currentTps: number | null;
-    compactingPhases: string[];
-    /**
-     * Why the most recently completed turn's LLM stream ended. Populated from
-     * the `done` SSE event's `doneReason` field (Ollama values: `stop`,
-     * `length`, `load`, `unload`). `undefined` until a turn completes;
-     * `unknown` is the fallback for older Ollama versions that omit the
-     * field. `length` indicates the model hit `num_predict` and the response
-     * was truncated; `stop` is a natural end-of-sequence. The client UI can
-     * read this to surface a truncation hint (not yet implemented in v1).
-     */
-    lastDoneReason?: DoneReason | undefined;
-    pendingApproval: {
-        command: { name: string; args: ToolCallArguments } | null;
-        requestId: string | null;
-    } | null;
+  messages: ChatMessage[];
+  error: string | null;
+  tokenStats: {
+    promptEvalCount: number;
+    evalCount: number;
+    totalTokens: number;
+    tokenLimit: number;
+    promptTps?: number;
+    evalTps?: number;
+    isEstimated?: boolean;
+  } | null;
+  currentTps: number | null;
+  compactingPhases: string[];
+  /**
+   * Why the most recently completed turn's LLM stream ended. Populated from
+   * the `done` SSE event's `doneReason` field (Ollama values: `stop`,
+   * `length`, `load`, `unload`). `undefined` until a turn completes;
+   * `unknown` is the fallback for older Ollama versions that omit the
+   * field. `length` indicates the model hit `num_predict` and the response
+   * was truncated; `stop` is a natural end-of-sequence. The client UI can
+   * read this to surface a truncation hint (not yet implemented in v1).
+   */
+  lastDoneReason?: DoneReason | undefined;
+  pendingApproval: {
+    command: { name: string; args: ToolCallArguments } | null;
+    requestId: string | null;
+  } | null;
 }
 
 interface ChatState {
@@ -143,7 +145,11 @@ type ChatAction =
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
   | { type: 'SET_MODEL_CONTEXT_LIMIT'; limit: number | null }
-  | { type: 'SHOW_APPROVAL'; command: { name: string; args: ToolCallArguments; toolCallName?: string } | null; requestId?: string }
+  | {
+      type: 'SHOW_APPROVAL';
+      command: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
+      requestId?: string;
+    }
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'REMOVE_LAST_ASSISTANT' }
   | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats']; targetSessionId?: number }
@@ -165,54 +171,62 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // Ignore the dispatch if it was meant for a different session.
       // This prevents stale async responses from loadSessionMessages
       // from overwriting the currently-viewed session's messages.
-      if (action.targetSessionId !== undefined && action.targetSessionId !== state.currentSessionId) {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
         return state;
       }
       if (
-        action.messages.length === 0
-        && action.targetSessionId !== undefined
-        && state.streamingSessions.has(action.targetSessionId)
+        action.messages.length === 0 &&
+        action.targetSessionId !== undefined &&
+        state.streamingSessions.has(action.targetSessionId)
       ) {
         return state;
       }
       return {
         ...state,
-        messages: action.messages
-            .filter((m: ChatMessage) => m.role !== 'system')
-            .map(withId)
+        messages: action.messages.filter((m: ChatMessage) => m.role !== 'system').map(withId),
       };
     }
-    case 'ADD_MESSAGE':
+    case 'ADD_MESSAGE': {
       return { ...state, messages: [...state.messages, withId(action.message)] };
+    }
     case 'UPDATE_LAST_MESSAGE': {
       const msgs = [...state.messages];
-      const last = msgs[msgs.length - 1];
+      const last = msgs.at(-1);
       if (last && last.role === 'assistant') {
         msgs[msgs.length - 1] = {
           ...last,
-          ...(action.content !== undefined ? { content: last.content + action.content } : {}),
-          ...(action.thinking !== undefined ? { thinking: (last.thinking || '') + action.thinking } : {}),
+          ...(action.content === undefined ? {} : { content: last.content + action.content }),
+          ...(action.thinking === undefined
+            ? {}
+            : { thinking: (last.thinking || '') + action.thinking }),
         };
       }
       return { ...state, messages: msgs };
     }
     case 'APPLY_ASSISTANT_DELTA': {
       const msgs = [...state.messages];
-      const last = msgs[msgs.length - 1];
+      const last = msgs.at(-1);
 
       if (!last || last.role !== 'assistant') {
-        msgs.push(withId({
-          role: 'assistant',
-          content: action.content ?? '',
-          ...(action.thinking !== undefined ? { thinking: action.thinking } : {}),
-        }));
+        msgs.push(
+          withId({
+            role: 'assistant',
+            content: action.content ?? '',
+            ...(action.thinking === undefined ? {} : { thinking: action.thinking }),
+          })
+        );
         return { ...state, messages: msgs };
       }
 
       msgs[msgs.length - 1] = {
         ...last,
-        ...(action.content !== undefined ? { content: last.content + action.content } : {}),
-        ...(action.thinking !== undefined ? { thinking: (last.thinking || '') + action.thinking } : {}),
+        ...(action.content === undefined ? {} : { content: last.content + action.content }),
+        ...(action.thinking === undefined
+          ? {}
+          : { thinking: (last.thinking || '') + action.thinking }),
       };
       return { ...state, messages: msgs };
     }
@@ -229,9 +243,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
         msgs[i] = {
           ...candidate,
-          content: candidate.content
-            ? `${candidate.content}\n${action.content}`
-            : action.content,
+          content: candidate.content ? `${candidate.content}\n${action.content}` : action.content,
         };
         return { ...state, messages: msgs };
       }
@@ -284,9 +296,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         }
         msgs[i] = {
           ...candidate,
-          content: candidate.content
-            ? `${candidate.content}\n${action.message}`
-            : action.message,
+          content: candidate.content ? `${candidate.content}\n${action.message}` : action.message,
         };
         return { ...state, messages: msgs };
       }
@@ -303,8 +313,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ],
       };
     }
-    case 'SET_SESSIONS':
+    case 'SET_SESSIONS': {
       return { ...state, sessions: action.sessions };
+    }
     case 'ADD_SESSION': {
       // Prepend the new session so it appears at the top of the sidebar
       const exists = state.sessions.some((s) => s.id === action.session.id);
@@ -320,27 +331,39 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         currentTps: state.currentTps,
         compactingPhases: state.compactingPhases,
         lastDoneReason: state.lastDoneReason,
-        pendingApproval: state.pendingCommand ? {
-          command: state.pendingCommand,
-          requestId: state.pendingApprovalId,
-        } : null,
+        pendingApproval: state.pendingCommand
+          ? {
+              command: state.pendingCommand,
+              requestId: state.pendingApprovalId,
+            }
+          : null,
       };
 
       let nextState = { ...state };
 
-      if (state.currentSessionId !== null) {
+      if (state.currentSessionId === null) {
+        nextState = { ...nextState, newSessionState: snapshot };
+      } else {
         const newMap = new Map(state.sessionStates);
         newMap.set(state.currentSessionId, snapshot);
         nextState = { ...nextState, sessionStates: newMap };
-      } else {
-        nextState = { ...nextState, newSessionState: snapshot };
       }
 
       // 2. Switch to the new session
       nextState = { ...nextState, currentSessionId: action.id };
 
       // 3. Restore the new session's state into active fields
-      if (action.id !== null) {
+      if (action.id === null) {
+        nextState = {
+          ...nextState,
+          messages: nextState.newSessionState.messages,
+          error: nextState.newSessionState.error,
+          tokenStats: nextState.newSessionState.tokenStats,
+          currentTps: nextState.newSessionState.currentTps,
+          compactingPhases: nextState.newSessionState.compactingPhases,
+          lastDoneReason: nextState.newSessionState.lastDoneReason,
+        };
+      } else {
         let session = nextState.sessionStates.get(action.id);
         // If we were on the new-session view and the server just assigned a
         // real ID, promote the newSessionState into sessionStates so the
@@ -352,7 +375,15 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           nextState = {
             ...nextState,
             sessionStates: newMap,
-            newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null, lastDoneReason: undefined },
+            newSessionState: {
+              messages: [],
+              error: null,
+              tokenStats: null,
+              currentTps: null,
+              compactingPhases: [],
+              pendingApproval: null,
+              lastDoneReason: undefined,
+            },
           };
           session = promoted;
         }
@@ -377,53 +408,49 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             compactingPhases: [],
           };
         }
-      } else {
-        nextState = {
-          ...nextState,
-          messages: nextState.newSessionState.messages,
-          error: nextState.newSessionState.error,
-          tokenStats: nextState.newSessionState.tokenStats,
-          currentTps: nextState.newSessionState.currentTps,
-          compactingPhases: nextState.newSessionState.compactingPhases,
-          lastDoneReason: nextState.newSessionState.lastDoneReason,
-        };
       }
 
       // Restore pending approval state
-      const targetSession = action.id !== null ? nextState.sessionStates.get(action.id) : null;
-      const pendingApproval = targetSession?.pendingApproval ?? nextState.newSessionState.pendingApproval;
-      if (pendingApproval) {
-        nextState = {
+      const targetSession = action.id === null ? null : nextState.sessionStates.get(action.id);
+      const pendingApproval =
+        targetSession?.pendingApproval ?? nextState.newSessionState.pendingApproval;
+      nextState = pendingApproval ? {
           ...nextState,
           pendingCommand: pendingApproval.command,
           showApproval: pendingApproval.command !== null,
           pendingApprovalId: pendingApproval.requestId,
-        };
-      } else {
-        nextState = {
+        } : {
           ...nextState,
           pendingCommand: null,
           showApproval: false,
           pendingApprovalId: null,
         };
-      }
 
       return nextState;
     }
-    case 'SET_MODELS':
+    case 'SET_MODELS': {
       return { ...state, models: action.models };
-    case 'SET_MODEL':
+    }
+    case 'SET_MODEL': {
       return { ...state, model: action.model };
-    case 'SET_STREAMING':
-      return { ...state, isStreaming: action.isStreaming, ...(action.isStreaming ? {} : { compactingPhases: [] }) };
-    case 'SET_ERROR':
+    }
+    case 'SET_STREAMING': {
+      return {
+        ...state,
+        isStreaming: action.isStreaming,
+        ...(action.isStreaming ? {} : { compactingPhases: [] }),
+      };
+    }
+    case 'SET_ERROR': {
       return { ...state, error: action.error };
+    }
     case 'SET_CONFIG': {
       const requestedNumCtx = action.config.numCtx ?? state.requestedNumCtx;
       const modelContextLimit = state.modelContextLimit;
-      const effectiveNumCtx = modelContextLimit && modelContextLimit > 0
-        ? Math.min(requestedNumCtx, modelContextLimit)
-        : requestedNumCtx;
+      const effectiveNumCtx =
+        modelContextLimit && modelContextLimit > 0
+          ? Math.min(requestedNumCtx, modelContextLimit)
+          : requestedNumCtx;
       const { numCtx: _, ...restConfig } = action.config;
       return { ...state, requestedNumCtx, numCtx: effectiveNumCtx, ...restConfig };
     }
@@ -445,7 +472,10 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           }
         }
         nextState = { ...nextState, sessionStates: newMap };
-        nextState = { ...nextState, newSessionState: { ...nextState.newSessionState, pendingApproval: null } };
+        nextState = {
+          ...nextState,
+          newSessionState: { ...nextState.newSessionState, pendingApproval: null },
+        };
         return nextState;
       }
 
@@ -470,63 +500,87 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         const newMap = new Map(nextState.sessionStates);
         newMap.set(state.currentSessionId, {
           ...session,
-          pendingApproval: action.command ? {
-            command: action.command,
-            requestId: action.requestId ?? null,
-          } : null,
+          pendingApproval: action.command
+            ? {
+                command: action.command,
+                requestId: action.requestId ?? null,
+              }
+            : null,
         });
         return { ...nextState, sessionStates: newMap };
       }
 
       // New session (currentSessionId is null)
-      nextState = { ...nextState, newSessionState: {
-        ...nextState.newSessionState,
-        pendingApproval: action.command ? {
-          command: action.command,
-          requestId: action.requestId ?? null,
-        } : null,
-      }};
+      nextState = {
+        ...nextState,
+        newSessionState: {
+          ...nextState.newSessionState,
+          pendingApproval: action.command
+            ? {
+                command: action.command,
+                requestId: action.requestId ?? null,
+              }
+            : null,
+        },
+      };
       return nextState;
     }
     case 'SET_MODEL_CONTEXT_LIMIT': {
-      const effectiveNumCtx = action.limit && action.limit > 0
-        ? Math.min(state.requestedNumCtx, action.limit)
-        : state.requestedNumCtx;
+      const effectiveNumCtx =
+        action.limit && action.limit > 0
+          ? Math.min(state.requestedNumCtx, action.limit)
+          : state.requestedNumCtx;
       return { ...state, modelContextLimit: action.limit, numCtx: effectiveNumCtx };
     }
-    case 'CLEAR_MESSAGES':
+    case 'CLEAR_MESSAGES': {
       return { ...state, messages: [] };
-    case 'REMOVE_LAST_ASSISTANT':
+    }
+    case 'REMOVE_LAST_ASSISTANT': {
       const msgs = state.messages;
       if (msgs.length > 0) {
-        const last = msgs[msgs.length - 1];
+        const last = msgs.at(-1);
         if (last && last.role === 'assistant') {
           return { ...state, messages: msgs.slice(0, -1) };
         }
       }
       return state;
+    }
     case 'SET_TOKEN_STATS': {
-      if (action.targetSessionId !== undefined && action.targetSessionId !== state.currentSessionId) {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
         return state;
       }
       // Merge with existing stats so that durable fields like evalTps /
       // promptTps (sent once on the `done` event) survive transient
       // `status` updates that only carry tokensUsed / tokenLimit.
-      const base = state.tokenStats ?? { promptEvalCount: 0, evalCount: 0, totalTokens: 0, tokenLimit: 0 };
+      const base = state.tokenStats ?? {
+        promptEvalCount: 0,
+        evalCount: 0,
+        totalTokens: 0,
+        tokenLimit: 0,
+      };
       return { ...state, tokenStats: { ...base, ...action.stats } };
     }
     case 'SET_DONE_REASON': {
-      if (action.targetSessionId !== undefined && action.targetSessionId !== state.currentSessionId) {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
         return state;
       }
       return { ...state, lastDoneReason: action.reason };
     }
-    case 'SET_CURRENT_TPS':
+    case 'SET_CURRENT_TPS': {
       return { ...state, currentTps: action.tps };
-    case 'CLEAR_TOKEN_STATS':
+    }
+    case 'CLEAR_TOKEN_STATS': {
       return { ...state, tokenStats: null };
-    case 'COMPACT_PROGRESS':
+    }
+    case 'COMPACT_PROGRESS': {
       return { ...state, compactingPhases: [...state.compactingPhases, action.message] };
+    }
     case 'INIT_SESSION': {
       if (state.sessionStates.has(action.sessionId)) return state;
       const newMap = new Map(state.sessionStates);
@@ -549,10 +603,12 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         currentTps: state.currentTps,
         compactingPhases: state.compactingPhases,
         lastDoneReason: state.lastDoneReason,
-        pendingApproval: state.pendingCommand ? {
-          command: state.pendingCommand,
-          requestId: state.pendingApprovalId,
-        } : null,
+        pendingApproval: state.pendingCommand
+          ? {
+              command: state.pendingCommand,
+              requestId: state.pendingApprovalId,
+            }
+          : null,
       };
       if (state.currentSessionId !== null) {
         const newMap = new Map(state.sessionStates);
@@ -574,7 +630,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             compactingPhases: session.compactingPhases,
             lastDoneReason: session.lastDoneReason,
             pendingCommand: session.pendingApproval?.command ?? null,
-            showApproval: session.pendingApproval ? session.pendingApproval.command !== null : false,
+            showApproval: session.pendingApproval
+              ? session.pendingApproval.command !== null
+              : false,
             pendingApprovalId: session.pendingApproval?.requestId ?? null,
           };
         }
@@ -599,7 +657,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         compactingPhases: state.newSessionState.compactingPhases,
         lastDoneReason: state.newSessionState.lastDoneReason,
         pendingCommand: state.newSessionState.pendingApproval?.command ?? null,
-        showApproval: state.newSessionState.pendingApproval ? state.newSessionState.pendingApproval.command !== null : false,
+        showApproval: state.newSessionState.pendingApproval
+          ? state.newSessionState.pendingApproval.command !== null
+          : false,
         pendingApprovalId: state.newSessionState.pendingApproval?.requestId ?? null,
       };
     }
@@ -611,17 +671,22 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, sessionStates: newMap, streamingSessions: newStreaming };
     }
     case 'START_STREAMING': {
-      return { ...state, streamingSessions: new Set(state.streamingSessions).add(action.sessionId) };
+      return {
+        ...state,
+        streamingSessions: new Set(state.streamingSessions).add(action.sessionId),
+      };
     }
     case 'STOP_STREAMING': {
       const nextSet = new Set(state.streamingSessions);
       nextSet.delete(action.sessionId);
       return { ...state, streamingSessions: nextSet };
     }
-    case 'CLEAR_COMPACT_PROGRESS':
+    case 'CLEAR_COMPACT_PROGRESS': {
       return { ...state, compactingPhases: [] };
-    default:
+    }
+    default: {
       return state;
+    }
   }
 }
 
@@ -655,7 +720,15 @@ const initialState: ChatState = {
   currentTps: null,
   compactingPhases: [],
   sessionStates: new Map<number, SessionState>(),
-  newSessionState: { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null, lastDoneReason: undefined },
+  newSessionState: {
+    messages: [],
+    error: null,
+    tokenStats: null,
+    currentTps: null,
+    compactingPhases: [],
+    pendingApproval: null,
+    lastDoneReason: undefined,
+  },
   streamingSessions: new Set<number>(),
 };
 
@@ -674,8 +747,18 @@ export function useChat() {
 }
 
 export function getActiveSessionState(state: ChatState): SessionState {
-    if (state.currentSessionId !== null) {
-        return state.sessionStates.get(state.currentSessionId) ?? { messages: [], error: null, tokenStats: null, currentTps: null, compactingPhases: [], pendingApproval: null, lastDoneReason: undefined };
-    }
-    return state.newSessionState;
+  if (state.currentSessionId !== null) {
+    return (
+      state.sessionStates.get(state.currentSessionId) ?? {
+        messages: [],
+        error: null,
+        tokenStats: null,
+        currentTps: null,
+        compactingPhases: [],
+        pendingApproval: null,
+        lastDoneReason: undefined,
+      }
+    );
+  }
+  return state.newSessionState;
 }

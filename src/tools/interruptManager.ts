@@ -13,31 +13,31 @@ const interruptHandlers = new Map<number, (result: string) => void>();
 let nextInterruptHandlerId = 1;
 
 export function requestInterrupt(): void {
-    interruptRequested = true;
-    for (const handler of interruptHandlers.values()) {
-        handler('[Interrupted by user.]');
-    }
+  interruptRequested = true;
+  for (const handler of interruptHandlers.values()) {
+    handler('[Interrupted by user.]');
+  }
 }
 
 export function registerInterruptHandler(handler: (result: string) => void): number {
-    const id = nextInterruptHandlerId++;
-    interruptHandlers.set(id, handler);
-    return id;
+  const id = nextInterruptHandlerId++;
+  interruptHandlers.set(id, handler);
+  return id;
 }
 
 export function unregisterInterruptHandler(id?: number): void {
-    if (id === undefined) {
-        interruptHandlers.clear();
-        return;
-    }
+  if (id === undefined) {
+    interruptHandlers.clear();
+    return;
+  }
 
-    interruptHandlers.delete(id);
+  interruptHandlers.delete(id);
 }
 
 export function clearInterrupt(): void {
-    interruptRequested = false;
+  interruptRequested = false;
 }
 
 export function isInterruptRequested(): boolean {
-    return interruptRequested;
+  return interruptRequested;
 }

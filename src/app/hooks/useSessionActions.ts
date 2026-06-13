@@ -1,14 +1,18 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
-import type { Dispatch } from 'react';
-import type { WritableRef } from './useStableRefs';
+import { type Dispatch, useCallback, useRef } from 'react';
+
 import { DEFAULT_SESSION_NAME } from '@/constants';
+
+import type { WritableRef } from './useStableRefs';
 
 // Minimal set of action shapes consumed here
 type SessionAction =
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
-  | { type: 'ADD_SESSION'; session: { id: number; name: string; model: string; created_at: string; updated_at: string } }
+  | {
+      type: 'ADD_SESSION';
+      session: { id: number; name: string; model: string; created_at: string; updated_at: string };
+    }
   | { type: 'DISCARD_SESSION'; sessionId: number }
   | { type: 'CLEAR_MESSAGES' };
 
@@ -50,7 +54,7 @@ export function useSessionActions({
       currentSearchQueryRef.current = query;
       await loadSessions(query.trim() ? query : undefined);
     },
-    [loadSessions],
+    [loadSessions]
   );
 
   const handleNewSession = useCallback(async () => {
@@ -61,7 +65,15 @@ export function useSessionActions({
         body: JSON.stringify({ name: DEFAULT_SESSION_NAME, model }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { session: { id: number; name: string; model: string; created_at: string; updated_at: string } };
+        const data = (await res.json()) as {
+          session: {
+            id: number;
+            name: string;
+            model: string;
+            created_at: string;
+            updated_at: string;
+          };
+        };
         dispatch({ type: 'ADD_SESSION', session: data.session });
         dispatch({ type: 'SET_CURRENT_SESSION', id: data.session.id });
         await loadSessions();
@@ -84,7 +96,7 @@ export function useSessionActions({
       if (sessionSwitchIdRef.current !== sessionId) return;
       replayBufferedEvents(sessionId);
     },
-    [dispatch, loadSessionMessages, replayBufferedEvents],
+    [dispatch, loadSessionMessages, replayBufferedEvents]
   );
 
   const handleDeleteSession = useCallback(
@@ -102,7 +114,7 @@ export function useSessionActions({
         // Silently ignore — session list will be stale but not broken
       }
     },
-    [dispatch, sessionIdRef, loadSessions],
+    [dispatch, sessionIdRef, loadSessions]
   );
 
   return { handleNewSession, handleSelectSession, handleDeleteSession, handleSearchSessions };

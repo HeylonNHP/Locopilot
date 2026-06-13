@@ -16,7 +16,9 @@
   overflow: hidden;
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  box-shadow: 0 16px 40px rgba(var(--rgb-shadow-navy), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  box-shadow:
+    0 16px 40px rgba(var(--rgb-shadow-navy), 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
 
   &-header {
     padding: 12px 12px 8px;
@@ -43,7 +45,9 @@
     font-size: 13px;
     cursor: pointer;
     text-align: left;
-    transition: background 0.15s ease, color 0.15s ease;
+    transition:
+      background 0.15s ease,
+      color 0.15s ease;
     outline: none;
 
     &:hover {

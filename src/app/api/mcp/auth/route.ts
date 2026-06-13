@@ -25,76 +25,76 @@
  * a no-op (`ok: true, connected: true`).
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 
 import { getClientManager, loadMCPConfig, reauthenticateMCPServer } from '../../../../mcp';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const VALID_NAME_REGEX = /^[a-z0-9_-]+$/i;
+const VALID_NAME_REGEX = /^[\w-]+$/i;
 
 interface AuthBody {
-    server?: unknown;
-    code?: unknown;
+  server?: unknown;
+  code?: unknown;
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-    let body: AuthBody;
-    try {
-        body = (await request.json()) as AuthBody;
-    } catch {
-        return NextResponse.json({ ok: false, error: 'Invalid JSON body.' }, { status: 400 });
-    }
+  let body: AuthBody;
+  try {
+    body = (await request.json()) as AuthBody;
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Invalid JSON body.' }, { status: 400 });
+  }
 
-    if (typeof body.server !== 'string' || !VALID_NAME_REGEX.test(body.server)) {
-        return NextResponse.json(
-            { ok: false, error: 'Invalid or missing "server" (must match /^[a-z0-9_-]+$/i).' },
-            { status: 400 },
-        );
-    }
-    const serverName = body.server;
+  if (typeof body.server !== 'string' || !VALID_NAME_REGEX.test(body.server)) {
+    return NextResponse.json(
+      { ok: false, error: 'Invalid or missing "server" (must match /^[a-z0-9_-]+$/i).' },
+      { status: 400 }
+    );
+  }
+  const serverName = body.server;
 
-    // Pre-flight: does the server exist and have an OAuth block?
-    const config = await loadMCPConfig();
-    if (!config.mcpServers[serverName]) {
-        return NextResponse.json(
-            { ok: false, error: `unknown MCP server "${serverName}"` },
-            { status: 404 },
-        );
-    }
-    if (config.mcpServers[serverName]?.oauth === undefined) {
-        return NextResponse.json(
-            { ok: false, error: `MCP server "${serverName}" has no OAuth config` },
-            { status: 400 },
-        );
-    }
+  // Pre-flight: does the server exist and have an OAuth block?
+  const config = await loadMCPConfig();
+  if (!config.mcpServers[serverName]) {
+    return NextResponse.json(
+      { ok: false, error: `unknown MCP server "${serverName}"` },
+      { status: 404 }
+    );
+  }
+  if (config.mcpServers[serverName]?.oauth === undefined) {
+    return NextResponse.json(
+      { ok: false, error: `MCP server "${serverName}" has no OAuth config` },
+      { status: 400 }
+    );
+  }
 
-    const manager = getClientManager();
-    manager.setRootConfig(config);
+  const manager = getClientManager();
+  manager.setRootConfig(config);
 
-    // Manual-code path: user pasted the code (serverless /
-    // loopback-listen-failed). Forward to the SDK.
-    if (typeof body.code === 'string' && body.code.length > 0) {
-        const result = await manager.finishAuthAndRetry(serverName, body.code);
-        if (!result.ok) {
-            return NextResponse.json(
-                { ok: false, error: result.reason ?? 'finishAuth failed' },
-                { status: 400 },
-            );
-        }
-        return NextResponse.json({ ok: true, server: serverName, connected: result.connected });
-    }
-
-    // No-code path: drop tokens and re-trigger the connect. The
-    // catch in `openConnection` will flip the handle to
-    // `auth_required` and emit the `auth-required` event.
-    const result = await reauthenticateMCPServer(serverName);
+  // Manual-code path: user pasted the code (serverless /
+  // loopback-listen-failed). Forward to the SDK.
+  if (typeof body.code === 'string' && body.code.length > 0) {
+    const result = await manager.finishAuthAndRetry(serverName, body.code);
     if (!result.ok) {
-        return NextResponse.json(
-            { ok: false, error: result.reason ?? 'reauthenticate failed' },
-            { status: 400 },
-        );
+      return NextResponse.json(
+        { ok: false, error: result.reason ?? 'finishAuth failed' },
+        { status: 400 }
+      );
     }
-    return NextResponse.json({ ok: true, server: serverName, connected: false });
+    return NextResponse.json({ ok: true, server: serverName, connected: result.connected });
+  }
+
+  // No-code path: drop tokens and re-trigger the connect. The
+  // catch in `openConnection` will flip the handle to
+  // `auth_required` and emit the `auth-required` event.
+  const result = await reauthenticateMCPServer(serverName);
+  if (!result.ok) {
+    return NextResponse.json(
+      { ok: false, error: result.reason ?? 'reauthenticate failed' },
+      { status: 400 }
+    );
+  }
+  return NextResponse.json({ ok: true, server: serverName, connected: false });
 }

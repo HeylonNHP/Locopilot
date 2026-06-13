@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
-import { useChat, type ChatMessage, type DoneReason } from '@/app/lib/chatStore';
-import type { StableRefs, WritableRef } from './useStableRefs';
 import { EventSourceParserStream } from 'eventsource-parser/stream';
-import type { Attachment } from '@/components/ChatInput';
-import { langFromFilename } from '@/components/ChatInput';
+import { useCallback, useRef, useState } from 'react';
+
+import { type ChatMessage, type DoneReason, useChat } from '@/app/lib/chatStore';
+import { type Attachment, langFromFilename } from '@/components/ChatInput';
 import { DEFAULT_SESSION_NAME } from '@/constants';
+
+import type { StableRefs, WritableRef } from './useStableRefs';
 
 const DONE_REASONS = ['stop', 'length', 'load', 'unload', 'unknown'] as const;
 function isDoneReason(s: string): s is DoneReason {
@@ -29,7 +30,7 @@ function getStreamErrorDetails(err: unknown): StreamErrorDetails | null {
 export function useChatStream(
   refs: StableRefs,
   abortControllersRef: WritableRef<Map<number, AbortController>>,
-  loadSessions: () => Promise<void>,
+  loadSessions: () => Promise<void>
 ) {
   const { state, dispatch } = useChat();
 
@@ -42,7 +43,9 @@ export function useChatStream(
   const nextRequestIdRef = useRef(0);
   const bufferOwnerMapRef = useRef<Map<number, number>>(new Map());
   const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: any }>>>(new Map());
-  const subagentBufferRef = useRef<Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null; sessionId?: number }>>(new Map());
+  const subagentBufferRef = useRef<
+    Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null; sessionId?: number }>
+  >(new Map());
   const retryPayloadRef = useRef<{ body: string } | null>(null);
   const requestFailedMapRef = useRef<Map<number, boolean>>(new Map());
   // --------------------------------------------------------------------------
@@ -61,7 +64,7 @@ export function useChatStream(
           const ctrl = abortControllersRef.current.get(-1)!;
           abortControllersRef.current.delete(-1);
           abortControllersRef.current.set(realId, ctrl);
-          setStreamingSessions(prev => {
+          setStreamingSessions((prev) => {
             const next = new Set(prev);
             next.delete(-1);
             next.add(realId);
@@ -84,7 +87,7 @@ export function useChatStream(
           }
         }
         // Migrate subagent buffer entries from placeholder -1 to the real session ID
-        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
+        for (const [_agentId, entry] of subagentBufferRef.current.entries()) {
           if (entry.sessionId === -1 || entry.sessionId === undefined) {
             entry.sessionId = realId;
           }
@@ -118,16 +121,17 @@ export function useChatStream(
       }
 
       switch (event) {
-
-        case 'thinking':
+        case 'thinking': {
           dispatch({ type: 'APPLY_ASSISTANT_DELTA', thinking: data.content ?? data });
           break;
+        }
 
-        case 'chunk':
+        case 'chunk': {
           dispatch({ type: 'APPLY_ASSISTANT_DELTA', content: data.content ?? data });
           break;
+        }
 
-        case 'tool_call':
+        case 'tool_call': {
           dispatch({
             type: 'ADD_MESSAGE',
             message: {
@@ -137,8 +141,9 @@ export function useChatStream(
             },
           });
           break;
+        }
 
-        case 'approval_request':
+        case 'approval_request': {
           dispatch({
             type: 'SHOW_APPROVAL',
             command: {
@@ -149,8 +154,9 @@ export function useChatStream(
             requestId: data.requestId,
           });
           break;
+        }
 
-        case 'tool_result':
+        case 'tool_result': {
           dispatch({
             type: 'ADD_MESSAGE',
             message: {
@@ -160,27 +166,31 @@ export function useChatStream(
             },
           });
           break;
+        }
 
-        case 'tool_progress':
+        case 'tool_progress': {
           dispatch({
             type: 'APPEND_TOOL_PROGRESS',
             name: data.name,
             content: data.message ?? data.content ?? String(data),
           });
           break;
+        }
 
-        case 'subagent_output':
+        case 'subagent_output': {
           dispatch({
             type: 'SUBAGENT_OUTPUT',
             agentId: typeof data.agentId === 'string' ? data.agentId : '__subagent__',
             message: typeof data.message === 'string' ? data.message : String(data.message ?? ''),
           });
           break;
+        }
 
         case 'subagent_chunk': {
           const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
           const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
-          const ownerSessionId = requestId != null ? bufferOwnerMapRef.current.get(requestId) : undefined;
+          const ownerSessionId =
+            requestId == null ? undefined : bufferOwnerMapRef.current.get(requestId);
           const buffer = subagentBufferRef.current.get(agentId);
           if (buffer) {
             buffer.text += text;
@@ -189,7 +199,7 @@ export function useChatStream(
             subagentBufferRef.current.set(agentId, {
               text,
               timer: null,
-              ...(ownerSessionId !== undefined ? { sessionId: ownerSessionId } : {}),
+              ...(ownerSessionId === undefined ? {} : { sessionId: ownerSessionId }),
             });
           }
           const entry = subagentBufferRef.current.get(agentId)!;
@@ -204,7 +214,7 @@ export function useChatStream(
           break;
         }
 
-        case 'status':
+        case 'status': {
           if (data.tokensUsed !== undefined && data.tokensUsed !== null) {
             dispatch({
               type: 'SET_TOKEN_STATS',
@@ -221,20 +231,27 @@ export function useChatStream(
             dispatch({ type: 'SET_CURRENT_TPS', tps: data.tps });
           }
           break;
+        }
 
-        case 'compact_progress':
+        case 'compact_progress': {
           if (typeof data.message === 'string') {
             dispatch({ type: 'COMPACT_PROGRESS', message: data.message });
           }
           break;
+        }
 
         case 'compact': {
           // Guard SET_MESSAGES and SET_TOKEN_STATS with the owning session so a
           // compaction that completes after the user has switched sessions cannot
           // overwrite the newly-viewed session's message list or token stats.
-          const compactOwner = requestId != null ? bufferOwnerMapRef.current.get(requestId) : undefined;
+          const compactOwner =
+            requestId == null ? undefined : bufferOwnerMapRef.current.get(requestId);
           if (Array.isArray(data.messages)) {
-            dispatch({ type: 'SET_MESSAGES', messages: data.messages, ...(compactOwner !== undefined ? { targetSessionId: compactOwner } : {}) });
+            dispatch({
+              type: 'SET_MESSAGES',
+              messages: data.messages,
+              ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
+            });
           }
           if (typeof data.stats?.newTokenCount === 'number') {
             dispatch({
@@ -245,7 +262,7 @@ export function useChatStream(
                 totalTokens: data.stats.newTokenCount,
                 tokenLimit: data.tokenLimit ?? refs.numCtxRef.current ?? state.numCtx,
               },
-              ...(compactOwner !== undefined ? { targetSessionId: compactOwner } : {}),
+              ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
             });
           } else {
             dispatch({ type: 'CLEAR_TOKEN_STATS' });
@@ -274,159 +291,170 @@ export function useChatStream(
             // coerces missing values to 'stop' and is the source of truth for
             // valid values; this is purely defensive.
             const reason: DoneReason = isDoneReason(data.doneReason) ? data.doneReason : 'unknown';
-            const doneOwnerSessionId = requestId != null ? bufferOwnerMapRef.current.get(requestId) : undefined;
-            dispatch({ type: 'SET_DONE_REASON', reason, ...(doneOwnerSessionId !== undefined ? { targetSessionId: doneOwnerSessionId } : {}) });
+            const doneOwnerSessionId =
+              requestId == null ? undefined : bufferOwnerMapRef.current.get(requestId);
+            dispatch({
+              type: 'SET_DONE_REASON',
+              reason,
+              ...(doneOwnerSessionId === undefined ? {} : { targetSessionId: doneOwnerSessionId }),
+            });
           }
           dispatch({ type: 'SET_CURRENT_TPS', tps: null });
           break;
         }
 
-        case 'error':
+        case 'error': {
           if (requestId != null) requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: data.message ?? 'Unknown error' });
           dispatch({ type: 'SET_CURRENT_TPS', tps: null });
           break;
+        }
 
-        case 'clear_assistant':
+        case 'clear_assistant': {
           dispatch({ type: 'REMOVE_LAST_ASSISTANT' });
           break;
+        }
 
-        default:
+        default: {
           break;
+        }
       }
     },
-    [dispatch],
+    [dispatch]
   );
 
   /**
    * Retry a failed chat turn using the originally-stored request payload.
    */
-  const retry = useCallback(
-    async () => {
-      const sessionId = refs.sessionIdRef.current ?? -1;
-      if (!retryPayloadRef.current || streamingSessions.has(sessionId)) return;
+  const retry = useCallback(async () => {
+    const sessionId = refs.sessionIdRef.current ?? -1;
+    if (!retryPayloadRef.current || streamingSessions.has(sessionId)) return;
 
-      const { body } = retryPayloadRef.current;
-      dispatch({ type: 'SET_ERROR', error: null });
-      dispatch({ type: 'SET_CURRENT_TPS', tps: null });
-      dispatch({ type: 'SET_DONE_REASON', reason: undefined });
+    const { body } = retryPayloadRef.current;
+    dispatch({ type: 'SET_ERROR', error: null });
+    dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+    dispatch({ type: 'SET_DONE_REASON', reason: undefined });
 
-      const abortController = new AbortController();
-      abortControllersRef.current.set(sessionId, abortController);
-      setStreamingSessions(prev => new Set(prev).add(sessionId));
-      dispatch({ type: 'START_STREAMING', sessionId });
+    const abortController = new AbortController();
+    abortControllersRef.current.set(sessionId, abortController);
+    setStreamingSessions((prev) => new Set(prev).add(sessionId));
+    dispatch({ type: 'START_STREAMING', sessionId });
 
-      const requestId = nextRequestIdRef.current++;
-      bufferOwnerMapRef.current.set(requestId, sessionId);
-      bufferedEventsRef.current.delete(sessionId);
-      requestFailedMapRef.current.set(requestId, false);
+    const requestId = nextRequestIdRef.current++;
+    bufferOwnerMapRef.current.set(requestId, sessionId);
+    bufferedEventsRef.current.delete(sessionId);
+    requestFailedMapRef.current.set(requestId, false);
 
-      try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body,
-          signal: abortController.signal,
-        });
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: abortController.signal,
+      });
 
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => 'Unknown error');
-          let parsedError: Record<string, unknown> | null = null;
-          try {
-            parsedError = JSON.parse(errorText) as Record<string, unknown>;
-          } catch {
-            const dataLines: string[] = [];
-            for (const line of errorText.split('\n')) {
-              if (line.startsWith('data:')) {
-                dataLines.push(line.slice(5).trim());
-              }
-            }
-            if (dataLines.length > 0) {
-              try {
-                parsedError = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
-              } catch {}
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        let parsedError: Record<string, unknown> | null = null;
+        try {
+          parsedError = JSON.parse(errorText) as Record<string, unknown>;
+        } catch {
+          const dataLines: string[] = [];
+          for (const line of errorText.split('\n')) {
+            if (line.startsWith('data:')) {
+              dataLines.push(line.slice(5).trim());
             }
           }
-          if (parsedError) {
-            const msg = parsedError.message ?? parsedError.error;
-            if (typeof msg === 'string' && msg.length > 0) {
-              throw new Error(`HTTP ${response.status}: ${msg}`);
-            }
-          }
-          throw new Error(`HTTP ${response.status}: ${errorText.length > 200 ? errorText.slice(0, 200) + '...' : errorText}`);
-        }
-
-        if (!response.body) throw new Error('No response body stream');
-
-        const eventStream = response.body
-          .pipeThrough(new TextDecoderStream())
-          .pipeThrough(new EventSourceParserStream());
-
-        const reader = eventStream.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          try {
-            const parsed = JSON.parse(value.data);
-            handleEvent(value.event || 'message', parsed, requestId);
-          } catch {
-            handleEvent(value.event || 'message', value.data, requestId);
+          if (dataLines.length > 0) {
+            try {
+              parsedError = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
+            } catch {}
           }
         }
-      } catch (err: unknown) {
-        const details = getStreamErrorDetails(err);
-        if (!details) {
-          requestFailedMapRef.current.set(requestId, true);
-          dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
-        } else if (details.name === 'AbortError') {
-          // User clicked Stop — silently ignore
-        } else if (
-          details.message.includes('input stream') ||
-          details.message.includes('network') ||
-          details.message.includes('fetch') ||
-          details.name === 'TypeError'
-        ) {
-          requestFailedMapRef.current.set(requestId, true);
-          dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
-        } else {
-          requestFailedMapRef.current.set(requestId, true);
-          dispatch({ type: 'SET_ERROR', error: details.message });
-        }
-      } finally {
-        const ownerId = bufferOwnerMapRef.current.get(requestId);
-
-        // Only flush subagent buffers belonging to this session
-        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
-          if (entry.sessionId === ownerId || entry.sessionId === undefined) {
-            if (entry.timer) clearTimeout(entry.timer);
-            dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
-            subagentBufferRef.current.delete(agentId);
+        if (parsedError) {
+          const msg = parsedError.message ?? parsedError.error;
+          if (typeof msg === 'string' && msg.length > 0) {
+            throw new Error(`HTTP ${response.status}: ${msg}`);
           }
         }
-
-        if (ownerId !== undefined) {
-          abortControllersRef.current.delete(ownerId);
-          setStreamingSessions(prev => {
-            const next = new Set(prev);
-            next.delete(ownerId);
-            return next;
-          });
-          dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
-          bufferOwnerMapRef.current.delete(requestId);
-          bufferedEventsRef.current.delete(ownerId);
-        }
-        loadSessions();
-        // Delayed refresh to pick up auto-generated title from background task
-        setTimeout(() => loadSessions(), 2000);
-        if (!requestFailedMapRef.current.get(requestId)) {
-          retryPayloadRef.current = null;
-        }
-        requestFailedMapRef.current.delete(requestId);
-        dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+        throw new Error(
+          `HTTP ${response.status}: ${errorText.length > 200 ? `${errorText.slice(0, 200)  }...` : errorText}`
+        );
       }
-    },
-    [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions],
-  );
+
+      if (!response.body) throw new Error('No response body stream');
+
+      const eventStream = response.body
+        .pipeThrough(new TextDecoderStream())
+        .pipeThrough(new EventSourceParserStream());
+
+      const reader = eventStream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        try {
+          const parsed = JSON.parse(value.data);
+          handleEvent(value.event || 'message', parsed, requestId);
+        } catch {
+          handleEvent(value.event || 'message', value.data, requestId);
+        }
+      }
+    } catch (err: unknown) {
+      const details = getStreamErrorDetails(err);
+      if (!details) {
+        requestFailedMapRef.current.set(requestId, true);
+        dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
+      } else if (details.name === 'AbortError') {
+        // User clicked Stop — silently ignore
+      } else if (
+        details.message.includes('input stream') ||
+        details.message.includes('network') ||
+        details.message.includes('fetch') ||
+        details.name === 'TypeError'
+      ) {
+        requestFailedMapRef.current.set(requestId, true);
+        dispatch({
+          type: 'SET_ERROR',
+          error:
+            'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
+        });
+      } else {
+        requestFailedMapRef.current.set(requestId, true);
+        dispatch({ type: 'SET_ERROR', error: details.message });
+      }
+    } finally {
+      const ownerId = bufferOwnerMapRef.current.get(requestId);
+
+      // Only flush subagent buffers belonging to this session
+      for (const [agentId, entry] of subagentBufferRef.current.entries()) {
+        if (entry.sessionId === ownerId || entry.sessionId === undefined) {
+          if (entry.timer) clearTimeout(entry.timer);
+          dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
+          subagentBufferRef.current.delete(agentId);
+        }
+      }
+
+      if (ownerId !== undefined) {
+        abortControllersRef.current.delete(ownerId);
+        setStreamingSessions((prev) => {
+          const next = new Set(prev);
+          next.delete(ownerId);
+          return next;
+        });
+        dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
+        bufferOwnerMapRef.current.delete(requestId);
+        bufferedEventsRef.current.delete(ownerId);
+      }
+      loadSessions();
+      // Delayed refresh to pick up auto-generated title from background task
+      setTimeout(() => loadSessions(), 2000);
+      if (!requestFailedMapRef.current.get(requestId)) {
+        retryPayloadRef.current = null;
+      }
+      requestFailedMapRef.current.delete(requestId);
+      dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+    }
+  }, [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions]);
 
   /**
    * Call this after loading a session's messages to replay any SSE events that
@@ -444,8 +472,14 @@ export function useChatStream(
   // messages are flushed to SQLite mid-stream (Phase 2) and are reloaded from
   // DB on session switch — replaying them here would create duplicates.
   const DELTA_EVENTS = new Set([
-    'chunk', 'thinking', 'tool_progress', 'subagent_chunk', 'status',
-    'compact_progress', 'done', 'approval_request',
+    'chunk',
+    'thinking',
+    'tool_progress',
+    'subagent_chunk',
+    'status',
+    'compact_progress',
+    'done',
+    'approval_request',
   ]);
 
   const replayBufferedEvents = useCallback(
@@ -459,7 +493,7 @@ export function useChatStream(
         }
       }
     },
-    [handleEvent],
+    [handleEvent]
   );
 
   // ---------------------------------------------------------------------------
@@ -468,7 +502,7 @@ export function useChatStream(
   // ---------------------------------------------------------------------------
   async function resolveAttachments(
     message: string,
-    attachments: Attachment[],
+    attachments: Attachment[]
   ): Promise<{ content: string; images: string[] }> {
     if (attachments.length === 0) return { content: message, images: [] };
 
@@ -491,14 +525,27 @@ export function useChatStream(
           // Large file: upload to server, inject partial + hint
           try {
             const form = new FormData();
-            form.append('file', att.file ?? new Blob([att.textContent ?? ''], { type: att.mimeType }), att.name);
+            form.append(
+              'file',
+              att.file ?? new Blob([att.textContent ?? ''], { type: att.mimeType }),
+              att.name
+            );
             form.append('filename', att.name);
             const uploadAbort = new AbortController();
             const uploadTimer = setTimeout(() => uploadAbort.abort(), 60_000);
-            const res = await fetch('/api/files/upload', { method: 'POST', body: form, signal: uploadAbort.signal });
+            const res = await fetch('/api/files/upload', {
+              method: 'POST',
+              body: form,
+              signal: uploadAbort.signal,
+            });
             clearTimeout(uploadTimer);
             if (res.ok) {
-              const data = await res.json() as { text: string; totalChars: number; tempPath: string; truncated: boolean };
+              const data = (await res.json()) as {
+                text: string;
+                totalChars: number;
+                tempPath: string;
+                truncated: boolean;
+              };
               const lang = langFromFilename(att.name);
               const partial = data.text;
               const notice = data.truncated
@@ -509,12 +556,16 @@ export function useChatStream(
               // Server error — fall back to inserting as much as we can inline
               const lang = langFromFilename(att.name);
               const safeFallback = (att.textContent ?? '').slice(0, TEXT_INLINE_LIMIT);
-              textBlocks.push(`**${att.name}** _(upload failed — showing first ${TEXT_INLINE_LIMIT.toLocaleString()} chars)_\n\`\`\`${lang}\n${safeFallback}\n\`\`\``);
+              textBlocks.push(
+                `**${att.name}** _(upload failed — showing first ${TEXT_INLINE_LIMIT.toLocaleString()} chars)_\n\`\`\`${lang}\n${safeFallback}\n\`\`\``
+              );
             }
           } catch {
             const lang = langFromFilename(att.name);
             const safeFallback = (att.textContent ?? '').slice(0, TEXT_INLINE_LIMIT);
-            textBlocks.push(`**${att.name}** _(upload error — showing first ${TEXT_INLINE_LIMIT.toLocaleString()} chars)_\n\`\`\`${lang}\n${safeFallback}\n\`\`\``);
+            textBlocks.push(
+              `**${att.name}** _(upload error — showing first ${TEXT_INLINE_LIMIT.toLocaleString()} chars)_\n\`\`\`${lang}\n${safeFallback}\n\`\`\``
+            );
           }
         }
         continue;
@@ -527,16 +578,29 @@ export function useChatStream(
           form.append('filename', att.name);
           const uploadAbort = new AbortController();
           const uploadTimer = setTimeout(() => uploadAbort.abort(), 60_000);
-          const res = await fetch('/api/files/upload', { method: 'POST', body: form, signal: uploadAbort.signal });
+          const res = await fetch('/api/files/upload', {
+            method: 'POST',
+            body: form,
+            signal: uploadAbort.signal,
+          });
           clearTimeout(uploadTimer);
           if (res.ok) {
-            const data = await res.json() as { text: string; pageCount: number; tempPath: string; truncated: boolean };
+            const data = (await res.json()) as {
+              text: string;
+              pageCount: number;
+              tempPath: string;
+              truncated: boolean;
+            };
             const notice = data.truncated
               ? `\n\n_PDF has ${data.pageCount} total pages. Showing pages 1–50. Full file saved at \`${data.tempPath}\` — use \`read_pdf\` with \`start_page\`/\`end_page\` to read more._`
               : '';
-            textBlocks.push(`**${att.name}** (PDF, ${data.pageCount} page${data.pageCount === 1 ? '' : 's'})\n\n${data.text}${notice}`);
+            textBlocks.push(
+              `**${att.name}** (PDF, ${data.pageCount} page${data.pageCount === 1 ? '' : 's'})\n\n${data.text}${notice}`
+            );
           } else {
-            textBlocks.push(`**${att.name}** _(PDF upload failed — provide the file path instead)_`);
+            textBlocks.push(
+              `**${att.name}** _(PDF upload failed — provide the file path instead)_`
+            );
           }
         } catch {
           textBlocks.push(`**${att.name}** _(PDF upload error — provide the file path instead)_`);
@@ -545,7 +609,7 @@ export function useChatStream(
       }
     }
 
-    const prefix = textBlocks.length > 0 ? textBlocks.join('\n\n') + '\n\n' : '';
+    const prefix = textBlocks.length > 0 ? `${textBlocks.join('\n\n')  }\n\n` : '';
     return { content: prefix + message, images };
   }
 
@@ -563,7 +627,11 @@ export function useChatStream(
 
       // Process attachments into message content + images
       const { content, images } = await resolveAttachments(message, attachments ?? []);
-      const userMessage: ChatMessage = { role: 'user', content, ...(images.length > 0 ? { images } : {}) };
+      const userMessage: ChatMessage = {
+        role: 'user',
+        content,
+        ...(images.length > 0 ? { images } : {}),
+      };
 
       dispatch({ type: 'ADD_MESSAGE', message: userMessage });
       dispatch({ type: 'SET_ERROR', error: null });
@@ -571,7 +639,7 @@ export function useChatStream(
 
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
-      setStreamingSessions(prev => new Set(prev).add(sessionId));
+      setStreamingSessions((prev) => new Set(prev).add(sessionId));
       dispatch({ type: 'START_STREAMING', sessionId });
 
       // Record which session owns this stream so events can be buffered when
@@ -633,23 +701,24 @@ export function useChatStream(
           }
 
           if (parsedError) {
-            const msg = (
+            const msg =
               parsedError.message ??
               parsedError.error ??
               parsedError.status ??
               parsedError.detail ??
-              parsedError.title
-            );
+              parsedError.title;
             if (typeof msg === 'string' && msg.length > 0) {
               throw new Error(`HTTP ${response.status}: ${msg}`);
             }
-            const values = Object.values(parsedError).filter((v): v is string => typeof v === 'string');
+            const values = Object.values(parsedError).filter(
+              (v): v is string => typeof v === 'string'
+            );
             if (values.length > 0) {
               throw new Error(`HTTP ${response.status}: ${values[0]}`);
             }
           }
 
-          const truncated = errorText.length > 200 ? errorText.slice(0, 200) + '...' : errorText;
+          const truncated = errorText.length > 200 ? `${errorText.slice(0, 200)  }...` : errorText;
           throw new Error(`HTTP ${response.status}: ${truncated}`);
         }
 
@@ -685,7 +754,11 @@ export function useChatStream(
           details.name === 'TypeError'
         ) {
           requestFailedMapRef.current.set(requestId, true);
-          dispatch({ type: 'SET_ERROR', error: 'Connection lost. The stream was interrupted — try again if the response seems incomplete.' });
+          dispatch({
+            type: 'SET_ERROR',
+            error:
+              'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
+          });
         } else {
           requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: details.message });
@@ -704,7 +777,7 @@ export function useChatStream(
 
         if (ownerId !== undefined) {
           abortControllersRef.current.delete(ownerId);
-          setStreamingSessions(prev => {
+          setStreamingSessions((prev) => {
             const next = new Set(prev);
             next.delete(ownerId);
             return next;
@@ -721,7 +794,7 @@ export function useChatStream(
         dispatch({ type: 'SET_CURRENT_TPS', tps: null });
       }
     },
-    [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions],
+    [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions]
   );
 
   return { sendChatMessage, retry, handleEvent, replayBufferedEvents };

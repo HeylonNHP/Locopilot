@@ -26,12 +26,12 @@
 
 import { isDangerousEnvKey } from './dangerousEnv';
 
-const ENV_REF_PATTERN = /\$\{env\.([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+const ENV_REF_PATTERN = /\${env\.([A-Z_a-z]\w*)}|\$([A-Z_a-z]\w*)/g;
 const DOLLAR_ESCAPE = '$$';
 
 export interface EnvExpansionResult {
-    value: string;
-    warnings: string[];
+  value: string;
+  warnings: string[];
 }
 
 /**
@@ -40,28 +40,31 @@ export interface EnvExpansionResult {
  * skipped dangerous keys).
  */
 export function expandEnvRefs(input: string, context: string): EnvExpansionResult {
-    if (typeof input !== 'string' || input.length === 0) {
-        return { value: input ?? '', warnings: [] };
+  if (typeof input !== 'string' || input.length === 0) {
+    return { value: input ?? '', warnings: [] };
+  }
+
+  const warnings: string[] = [];
+  const expanded = input.replaceAll(
+    ENV_REF_PATTERN,
+    (match, braced: string | undefined, bare: string | undefined) => {
+      // $$ → literal $
+      if (match === DOLLAR_ESCAPE) return '$';
+      const name = braced ?? bare ?? '';
+      if (isDangerousEnvKey(name)) {
+        warnings.push(`${context}: refused to expand dangerous env var "${name}"`);
+        return '';
+      }
+      const value = process.env[name];
+      if (value === undefined) {
+        warnings.push(`${context}: env var "${name}" is not set`);
+        return '';
+      }
+      return value;
     }
+  );
 
-    const warnings: string[] = [];
-    const expanded = input.replace(ENV_REF_PATTERN, (match, braced: string | undefined, bare: string | undefined) => {
-        // $$ → literal $
-        if (match === DOLLAR_ESCAPE) return '$';
-        const name = braced ?? bare ?? '';
-        if (isDangerousEnvKey(name)) {
-            warnings.push(`${context}: refused to expand dangerous env var "${name}"`);
-            return '';
-        }
-        const value = process.env[name];
-        if (value === undefined) {
-            warnings.push(`${context}: env var "${name}" is not set`);
-            return '';
-        }
-        return value;
-    });
-
-    return { value: expanded, warnings };
+  return { value: expanded, warnings };
 }
 
 /**
@@ -69,20 +72,20 @@ export function expandEnvRefs(input: string, context: string): EnvExpansionResul
  * the new record and any warnings aggregated across all entries.
  */
 export function expandEnvRefsInRecord(
-    record: Record<string, string> | undefined,
-    context: string,
+  record: Record<string, string> | undefined,
+  context: string
 ): { expanded: Record<string, string> | undefined; warnings: string[] } {
-    if (record === undefined) return { expanded: undefined, warnings: [] };
-    const expanded: Record<string, string> = {};
-    const warnings: string[] = [];
-    for (const [key, value] of Object.entries(record)) {
-        if (isDangerousEnvKey(key)) {
-            warnings.push(`${context}: refusing to use dangerous env key "${key}"`);
-            continue;
-        }
-        const result = expandEnvRefs(value, `${context} header "${key}"`);
-        expanded[key] = result.value;
-        warnings.push(...result.warnings);
+  if (record === undefined) return { expanded: undefined, warnings: [] };
+  const expanded: Record<string, string> = {};
+  const warnings: string[] = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (isDangerousEnvKey(key)) {
+      warnings.push(`${context}: refusing to use dangerous env key "${key}"`);
+      continue;
     }
-    return { expanded, warnings };
+    const result = expandEnvRefs(value, `${context} header "${key}"`);
+    expanded[key] = result.value;
+    warnings.push(...result.warnings);
+  }
+  return { expanded, warnings };
 }

@@ -1,19 +1,38 @@
 'use client';
-import './ChatInput.scss';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import './ChatInput.scss';
 
 const SIZE_WARNING_BYTES = 25 * 1024 * 1024; // 25 MB — show warning badge above this
 const TEXT_INLINE_LIMIT = 50_000; // chars — inject inline below this, upload above
 
 /** Language hint derived from file extension for fenced code blocks. */
 const EXT_LANG: Record<string, string> = {
-  ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx',
-  py: 'python', rb: 'ruby', rs: 'rust', go: 'go', java: 'java',
-  c: 'c', cpp: 'cpp', cs: 'csharp', sh: 'bash', zsh: 'bash',
-  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
-  md: 'markdown', html: 'html', css: 'css', scss: 'scss',
-  sql: 'sql', xml: 'xml', txt: '',
+  ts: 'typescript',
+  tsx: 'tsx',
+  js: 'javascript',
+  jsx: 'jsx',
+  py: 'python',
+  rb: 'ruby',
+  rs: 'rust',
+  go: 'go',
+  java: 'java',
+  c: 'c',
+  cpp: 'cpp',
+  cs: 'csharp',
+  sh: 'bash',
+  zsh: 'bash',
+  json: 'json',
+  yaml: 'yaml',
+  yml: 'yaml',
+  toml: 'toml',
+  md: 'markdown',
+  html: 'html',
+  css: 'css',
+  scss: 'scss',
+  sql: 'sql',
+  xml: 'xml',
+  txt: '',
 };
 
 function langFromFilename(name: string): string {
@@ -42,8 +61,32 @@ export interface Attachment {
 
 const ACCEPTED_MIME_PREFIXES = ['image/', 'text/'];
 const ACCEPTED_EXTENSIONS = new Set([
-  'pdf', 'ts', 'tsx', 'js', 'jsx', 'py', 'rb', 'rs', 'go', 'java', 'c', 'cpp', 'cs',
-  'sh', 'zsh', 'json', 'yaml', 'yml', 'toml', 'md', 'html', 'css', 'scss', 'sql', 'xml', 'txt',
+  'pdf',
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'py',
+  'rb',
+  'rs',
+  'go',
+  'java',
+  'c',
+  'cpp',
+  'cs',
+  'sh',
+  'zsh',
+  'json',
+  'yaml',
+  'yml',
+  'toml',
+  'md',
+  'html',
+  'css',
+  'scss',
+  'sql',
+  'xml',
+  'txt',
 ]);
 
 function isAccepted(file: File): boolean {
@@ -56,7 +99,7 @@ function isAccepted(file: File): boolean {
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
+    reader.addEventListener('load', () => resolve(reader.result as string));
     reader.onerror = () => reject(reader.error);
     reader.readAsText(file);
   });
@@ -65,12 +108,12 @@ function readFileAsText(file: File): Promise<string> {
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.addEventListener('load', () => {
       const result = reader.result as string;
       // Strip the "data:...;base64," prefix — Ollama expects raw base64
       const comma = result.indexOf(',');
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
+      resolve(comma === -1 ? result : result.slice(comma + 1));
+    });
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
@@ -84,7 +127,7 @@ interface Props {
 const MIN_TEXTAREA_HEIGHT = 44;
 const MAX_TEXTAREA_HEIGHT = 200;
 
-const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+const useIsomorphicLayoutEffect = typeof globalThis.window === 'undefined' ? useEffect : useLayoutEffect;
 
 const COMMANDS = [
   { command: '/clear', description: 'Clear conversation' },
@@ -114,7 +157,7 @@ function extractPaths(e: React.DragEvent): string[] {
       const trimmed = line.trim();
       if (
         trimmed.length > 0 &&
-        (trimmed.includes('\\') || trimmed.includes('/') || /^[A-Za-z]:[\\\/]/.test(trimmed))
+        (trimmed.includes('\\') || trimmed.includes('/') || /^[A-Za-z]:[/\\]/.test(trimmed))
       ) {
         paths.push(trimmed);
       }
@@ -140,7 +183,7 @@ function extractPaths(e: React.DragEvent): string[] {
         }
         // Convert forward slashes to backslashes on Windows-like paths
         if (/^[A-Za-z]:\//.test(path)) {
-          path = path.replace(/\//g, '\\');
+          path = path.replaceAll('/', '\\');
         }
         paths.push(path);
       }
@@ -154,8 +197,7 @@ function extractPaths(e: React.DragEvent): string[] {
   // Method 3: (file as any).path — works in Electron/WebView2.
   // Method 4: fallback to file.name.
   const files = e.dataTransfer.files;
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
+  for (const file of files) {
     if (!file) continue;
     const path = (file as any).path ?? file.name;
     if (path) {
@@ -186,11 +228,25 @@ export default function ChatInput({ onSend, disabled }: Props) {
       const isImage = file.type.startsWith('image/');
 
       if (isPdf) {
-        next.push({ id, type: 'pdf', name: file.name, mimeType: file.type || 'application/pdf', sizeBytes: file.size, file });
+        next.push({
+          id,
+          type: 'pdf',
+          name: file.name,
+          mimeType: file.type || 'application/pdf',
+          sizeBytes: file.size,
+          file,
+        });
       } else if (isImage) {
         try {
           const base64 = await readFileAsBase64(file);
-          next.push({ id, type: 'image', name: file.name, mimeType: file.type, sizeBytes: file.size, base64 });
+          next.push({
+            id,
+            type: 'image',
+            name: file.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            base64,
+          });
         } catch {
           // Skip unreadable images
         }
@@ -198,7 +254,14 @@ export default function ChatInput({ onSend, disabled }: Props) {
         // Text / code file
         try {
           const textContent = await readFileAsText(file);
-          next.push({ id, type: 'text', name: file.name, mimeType: file.type || 'text/plain', sizeBytes: file.size, textContent });
+          next.push({
+            id,
+            type: 'text',
+            name: file.name,
+            mimeType: file.type || 'text/plain',
+            sizeBytes: file.size,
+            textContent,
+          });
         } catch {
           // Skip unreadable files
         }
@@ -216,7 +279,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
 
     const nextHeight = Math.min(
       Math.max(textarea.scrollHeight, MIN_TEXTAREA_HEIGHT),
-      MAX_TEXTAREA_HEIGHT,
+      MAX_TEXTAREA_HEIGHT
     );
     const nextHeightPx = `${nextHeight}px`;
 
@@ -256,7 +319,9 @@ export default function ChatInput({ onSend, disabled }: Props) {
     const handleWindowDragOver = (e: DragEvent) => {
       if (
         e.dataTransfer &&
-        (e.dataTransfer.types.includes('Files') || (e.dataTransfer.items && Array.from(e.dataTransfer.items).some((item) => item.kind === 'file')))
+        (e.dataTransfer.types.includes('Files') ||
+          (e.dataTransfer.items &&
+            [...e.dataTransfer.items].some((item) => item.kind === 'file')))
       ) {
         e.preventDefault();
       }
@@ -265,18 +330,20 @@ export default function ChatInput({ onSend, disabled }: Props) {
     const handleWindowDrop = (e: DragEvent) => {
       if (
         e.dataTransfer &&
-        (e.dataTransfer.types.includes('Files') || (e.dataTransfer.items && Array.from(e.dataTransfer.items).some((item) => item.kind === 'file')))
+        (e.dataTransfer.types.includes('Files') ||
+          (e.dataTransfer.items &&
+            [...e.dataTransfer.items].some((item) => item.kind === 'file')))
       ) {
         e.preventDefault();
       }
     };
 
-    window.addEventListener('dragover', handleWindowDragOver);
-    window.addEventListener('drop', handleWindowDrop);
+    globalThis.addEventListener('dragover', handleWindowDragOver);
+    globalThis.addEventListener('drop', handleWindowDrop);
 
     return () => {
-      window.removeEventListener('dragover', handleWindowDragOver);
-      window.removeEventListener('drop', handleWindowDrop);
+      globalThis.removeEventListener('dragover', handleWindowDragOver);
+      globalThis.removeEventListener('drop', handleWindowDrop);
     };
   }, []);
 
@@ -303,26 +370,28 @@ export default function ChatInput({ onSend, disabled }: Props) {
     }
   };
 
-  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const fileItems: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item?.kind === 'file') {
-        const f = item.getAsFile();
-        if (f) fileItems.push(f);
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const fileItems: File[] = [];
+      for (const item of items) {
+        if (item?.kind === 'file') {
+          const f = item.getAsFile();
+          if (f) fileItems.push(f);
+        }
       }
-    }
-    if (fileItems.length > 0) {
-      e.preventDefault();
-      void addAttachments(fileItems);
-    }
-    // Otherwise let the browser handle the paste normally (text)
-  }, [addAttachments]);
+      if (fileItems.length > 0) {
+        e.preventDefault();
+        void addAttachments(fileItems);
+      }
+      // Otherwise let the browser handle the paste normally (text)
+    },
+    [addAttachments]
+  );
 
   const applySuggestion = (suggestion: string) => {
-    setInput(suggestion + ' ');
+    setInput(`${suggestion  } `);
     setShowSuggestions(false);
     textareaRef.current?.focus();
   };
@@ -374,7 +443,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
     setIsDragging(false);
 
     // Prefer actual File objects (drag from file manager)
-    const droppedFiles = Array.from(e.dataTransfer.files);
+    const droppedFiles = [...e.dataTransfer.files];
     const acceptedFiles = droppedFiles.filter(isAccepted);
     if (acceptedFiles.length > 0) {
       void addAttachments(acceptedFiles);
@@ -400,10 +469,10 @@ export default function ChatInput({ onSend, disabled }: Props) {
 
     let insert = joined;
     if (before.length > 0 && !/\s$/.test(before)) {
-      insert = ' ' + insert;
+      insert = ` ${  insert}`;
     }
     if (after.length > 0 && !/^\s/.test(after)) {
-      insert = insert + ' ';
+      insert = `${insert  } `;
     }
 
     const newValue = before + insert + after;
@@ -427,7 +496,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
         accept="image/*,application/pdf,text/plain,text/markdown,text/html,text/css,.ts,.tsx,.js,.jsx,.py,.rb,.rs,.go,.java,.c,.cpp,.cs,.sh,.zsh,.json,.yaml,.yml,.toml,.md,.scss,.sql,.xml"
         style={{ display: 'none' }}
         onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
+          const files = [...e.target.files ?? []];
           if (files.length > 0) void addAttachments(files);
           // Reset so the same file can be re-added if removed
           e.target.value = '';
@@ -443,8 +512,8 @@ export default function ChatInput({ onSend, disabled }: Props) {
                 onClick={() => applySuggestion(s.command)}
                 onMouseEnter={() => setSelectedIndex(i)}
                 className={
-                  'chat-input-suggestion-item' +
-                  (i === selectedIndex ? ' chat-input-suggestion-active' : '')
+                  `chat-input-suggestion-item${ 
+                  i === selectedIndex ? ' chat-input-suggestion-active' : ''}`
                 }
               >
                 <span className="chat-input-suggestion-cmd">{s.command}</span>
@@ -457,7 +526,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
         {/* Attachment preview strip */}
         {attachments.length > 0 && (
           <div className="chat-input-attachments">
-            {attachments.map((att, idx) => {
+            {attachments.map((att, _idx) => {
               const removeBtn = (
                 <button
                   type="button"
@@ -465,8 +534,18 @@ export default function ChatInput({ onSend, disabled }: Props) {
                   onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
                   aria-label={`Remove ${att.name}`}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
                 </button>
               );
@@ -479,30 +558,67 @@ export default function ChatInput({ onSend, disabled }: Props) {
                       className="chat-input-attachment-thumb"
                     />
                     {att.sizeBytes > SIZE_WARNING_BYTES && (
-                      <span className="chat-input-attachment-warn" title="Large file — will upload to server">⚠</span>
+                      <span
+                        className="chat-input-attachment-warn"
+                        title="Large file — will upload to server"
+                      >
+                        ⚠
+                      </span>
                     )}
                     {removeBtn}
                   </div>
                 );
               }
               return (
-                <div key={att.id} className={`chat-input-attachment-chip chat-input-attachment-chip--${att.type}`}>
+                <div
+                  key={att.id}
+                  className={`chat-input-attachment-chip chat-input-attachment-chip--${att.type}`}
+                >
                   <span className="chat-input-attachment-icon">
                     {att.type === 'pdf' ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                         <polyline points="14 2 14 8 20 8" />
-                        <line x1="9" y1="13" x2="15" y2="13" /><line x1="9" y1="17" x2="15" y2="17" />
+                        <line x1="9" y1="13" x2="15" y2="13" />
+                        <line x1="9" y1="17" x2="15" y2="17" />
                       </svg>
                     ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="16 18 22 12 16 6" />
+                        <polyline points="8 6 2 12 8 18" />
                       </svg>
                     )}
                   </span>
-                  <span className="chat-input-attachment-name" title={att.name}>{att.name}</span>
+                  <span className="chat-input-attachment-name" title={att.name}>
+                    {att.name}
+                  </span>
                   {att.sizeBytes > SIZE_WARNING_BYTES && (
-                    <span className="chat-input-attachment-warn" title="Large file — will upload to server">⚠</span>
+                    <span
+                      className="chat-input-attachment-warn"
+                      title="Large file — will upload to server"
+                    >
+                      ⚠
+                    </span>
                   )}
                   {removeBtn}
                 </div>
@@ -535,7 +651,17 @@ export default function ChatInput({ onSend, disabled }: Props) {
             title="Attach file or image"
             aria-label="Attach file or image"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
           </button>

@@ -1,9 +1,10 @@
 'use client';
-import './SettingsModal.scss';
-
 import { useState } from 'react';
+
 import { useChat } from '@/app/lib/chatStore';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+
+import './SettingsModal.scss';
 
 interface Props {
   onClose: () => void;
@@ -19,11 +20,17 @@ export default function SettingsModal({ onClose }: Props) {
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
   const totalSeconds = Math.floor((state.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000);
   const [chatTimeoutHours, setChatTimeoutHours] = useState(String(Math.floor(totalSeconds / 3600)));
-  const [chatTimeoutMinutes, setChatTimeoutMinutes] = useState(String(Math.floor((totalSeconds % 3600) / 60)));
+  const [chatTimeoutMinutes, setChatTimeoutMinutes] = useState(
+    String(Math.floor((totalSeconds % 3600) / 60))
+  );
   const [chatTimeoutSeconds, setChatTimeoutSeconds] = useState(String(totalSeconds % 60));
   const [webMaxQueries, setWebMaxQueries] = useState(String(state.webSearch?.maxQueries ?? 3));
-  const [webResultsPerQuery, setWebResultsPerQuery] = useState(String(state.webSearch?.resultsPerQuery ?? 3));
-  const [webPerPageCharLimit, setWebPerPageCharLimit] = useState(String(state.webSearch?.perPageCharLimit ?? 5000));
+  const [webResultsPerQuery, setWebResultsPerQuery] = useState(
+    String(state.webSearch?.resultsPerQuery ?? 3)
+  );
+  const [webPerPageCharLimit, setWebPerPageCharLimit] = useState(
+    String(state.webSearch?.perPageCharLimit ?? 5000)
+  );
   const [modelContextLimit, setModelContextLimit] = useState(state.modelContextLimit);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -31,15 +38,15 @@ export default function SettingsModal({ onClose }: Props) {
   const handleSave = async () => {
     setSaveError(null);
 
-    const parsedNumCtx = parseInt(numCtx) || 131072;
-    const parsedHours = parseInt(chatTimeoutHours) || 0;
-    const parsedMinutes = parseInt(chatTimeoutMinutes) || 0;
-    const parsedSeconds = parseInt(chatTimeoutSeconds) || 0;
-    const totalTimeoutSeconds = (parsedHours * 3600) + (parsedMinutes * 60) + parsedSeconds;
+    const parsedNumCtx = Number.parseInt(numCtx) || 131072;
+    const parsedHours = Number.parseInt(chatTimeoutHours) || 0;
+    const parsedMinutes = Number.parseInt(chatTimeoutMinutes) || 0;
+    const parsedSeconds = Number.parseInt(chatTimeoutSeconds) || 0;
+    const totalTimeoutSeconds = parsedHours * 3600 + parsedMinutes * 60 + parsedSeconds;
     const parsedChatTimeoutMs = totalTimeoutSeconds * 1000;
-    const parsedWebMaxQueries = parseInt(webMaxQueries) || 3;
-    const parsedWebResultsPerQuery = parseInt(webResultsPerQuery) || 3;
-    const parsedWebPerPageCharLimit = parseInt(webPerPageCharLimit) || 5000;
+    const parsedWebMaxQueries = Number.parseInt(webMaxQueries) || 3;
+    const parsedWebResultsPerQuery = Number.parseInt(webResultsPerQuery) || 3;
+    const parsedWebPerPageCharLimit = Number.parseInt(webPerPageCharLimit) || 5000;
 
     const config = {
       baseUrl,
@@ -91,8 +98,8 @@ export default function SettingsModal({ onClose }: Props) {
       dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: modelContextLimit });
       dispatch({ type: 'SET_CONFIG', config });
       onClose();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save config.';
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save config.';
       setSaveError(message);
     } finally {
       setIsSaving(false);
@@ -184,15 +191,18 @@ export default function SettingsModal({ onClose }: Props) {
               />
             </div>
 
-            {state.numCtx !== state.requestedNumCtx ? (
+            {state.numCtx === state.requestedNumCtx ? (
+              <div />
+            ) : (
               <div className="settings-row">
                 <label className="settings-label">Effective Context Size</label>
-                <span className="settings-input text-secondary" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <span
+                  className="settings-input text-secondary"
+                  style={{ display: 'inline-flex', alignItems: 'center' }}
+                >
                   {state.numCtx.toLocaleString()} (capped by model limit)
                 </span>
               </div>
-            ) : (
-              <div />
             )}
           </div>
 
@@ -302,7 +312,10 @@ export default function SettingsModal({ onClose }: Props) {
             <button
               onClick={handleSave}
               disabled={isSaving}
-              className={'settings-btn-save ' + (isSaving ? 'settings-btn-save-disabled' : 'settings-btn-save-active')}
+              className={
+                `settings-btn-save ${ 
+                isSaving ? 'settings-btn-save-disabled' : 'settings-btn-save-active'}`
+              }
             >
               {isSaving ? 'Saving...' : 'Save'}
             </button>

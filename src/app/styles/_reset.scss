@@ -11,7 +11,14 @@
 html,
 body {
   height: 100%;
-  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Oxygen, Ubuntu, sans-serif;
+  font-family:
+    'Segoe UI',
+    -apple-system,
+    BlinkMacSystemFont,
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    sans-serif;
   background:
     // Floating bubbles
     radial-gradient(circle at 15% 25%, var(--bg-bubble-1) 0%, transparent 25%),
@@ -20,16 +27,17 @@ body {
     radial-gradient(circle at 85% 80%, var(--bg-bubble-4) 0%, transparent 22%),
     radial-gradient(circle at 35% 85%, var(--bg-bubble-5) 0%, transparent 15%),
     // Sky to grass gradient
-    linear-gradient(170deg,
-      var(--bg-gradient-0)  0%,
-      var(--bg-gradient-1) 15%,
-      var(--bg-gradient-2) 30%,
-      var(--bg-gradient-3) 45%,
-      var(--bg-gradient-4) 60%,
-      var(--bg-gradient-5) 75%,
-      var(--bg-gradient-6) 90%,
-      var(--bg-gradient-7) 100%
-    );
+    linear-gradient(
+        170deg,
+        var(--bg-gradient-0) 0%,
+        var(--bg-gradient-1) 15%,
+        var(--bg-gradient-2) 30%,
+        var(--bg-gradient-3) 45%,
+        var(--bg-gradient-4) 60%,
+        var(--bg-gradient-5) 75%,
+        var(--bg-gradient-6) 90%,
+        var(--bg-gradient-7) 100%
+      );
   background-attachment: fixed;
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;

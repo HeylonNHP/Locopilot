@@ -1,7 +1,9 @@
 'use client';
 
-import { useRef, useCallback } from 'react';
+import { useCallback, useRef } from 'react';
+
 import { useChat } from '@/app/lib/chatStore';
+
 import type { StableRefs } from './useStableRefs';
 
 /**
@@ -15,21 +17,24 @@ export function useDataLoaders(refs: StableRefs) {
   const sessionLoadRequestIdRef = useRef(0);
   const sessionSearchRequestIdRef = useRef(0);
 
-  const loadSessions = useCallback(async (query?: string) => {
-    const requestId = sessionSearchRequestIdRef.current + 1;
-    sessionSearchRequestIdRef.current = requestId;
+  const loadSessions = useCallback(
+    async (query?: string) => {
+      const requestId = sessionSearchRequestIdRef.current + 1;
+      sessionSearchRequestIdRef.current = requestId;
 
-    try {
-      const url = query ? `/api/sessions?q=${encodeURIComponent(query)}` : '/api/sessions';
-      const res = await fetch(url);
-      if (!res.ok || sessionSearchRequestIdRef.current !== requestId) return;
-      const data = await res.json();
-      if (sessionSearchRequestIdRef.current !== requestId) return;
-      dispatch({ type: 'SET_SESSIONS', sessions: data.sessions ?? [] });
-    } catch (err) {
-      console.error('Failed to load sessions:', err);
-    }
-  }, [dispatch]);
+      try {
+        const url = query ? `/api/sessions?q=${encodeURIComponent(query)}` : '/api/sessions';
+        const res = await fetch(url);
+        if (!res.ok || sessionSearchRequestIdRef.current !== requestId) return;
+        const data = await res.json();
+        if (sessionSearchRequestIdRef.current !== requestId) return;
+        dispatch({ type: 'SET_SESSIONS', sessions: data.sessions ?? [] });
+      } catch (err) {
+        console.error('Failed to load sessions:', err);
+      }
+    },
+    [dispatch]
+  );
 
   /**
    * Fetches the model's actual context limit from Ollama and applies the clamp.
@@ -47,71 +52,78 @@ export function useDataLoaders(refs: StableRefs) {
   };
 
   // Optimistic selection: mark the session immediately and discard stale responses.
-  const loadSessionMessages = useCallback(async (sessionId: number) => {
-    const requestId = sessionLoadRequestIdRef.current + 1;
-    sessionLoadRequestIdRef.current = requestId;
-    dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
+  const loadSessionMessages = useCallback(
+    async (sessionId: number) => {
+      const requestId = sessionLoadRequestIdRef.current + 1;
+      sessionLoadRequestIdRef.current = requestId;
+      dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
 
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}`);
-      if (!res.ok) {
-        if (res.status === 404 && sessionLoadRequestIdRef.current === requestId) {
-          // Session was deleted (e.g. in another tab). Clear state immediately
-          // so the UI doesn't stay stuck on a ghost session, and so subsequent
-          // chat sends won't reuse the stale session ID.
-          refs.sessionIdRef.current = null;
-          dispatch({ type: 'SET_CURRENT_SESSION', id: null });
-          dispatch({ type: 'CLEAR_MESSAGES' });
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`);
+        if (!res.ok) {
+          if (res.status === 404 && sessionLoadRequestIdRef.current === requestId) {
+            // Session was deleted (e.g. in another tab). Clear state immediately
+            // so the UI doesn't stay stuck on a ghost session, and so subsequent
+            // chat sends won't reuse the stale session ID.
+            refs.sessionIdRef.current = null;
+            dispatch({ type: 'SET_CURRENT_SESSION', id: null });
+            dispatch({ type: 'CLEAR_MESSAGES' });
+          }
+          return;
         }
-        return;
-      }
-      if (sessionLoadRequestIdRef.current !== requestId) return;
-      const data = await res.json();
-      if (sessionLoadRequestIdRef.current !== requestId) return;
-      if (data.messages?.length > 0) {
-        dispatch({ type: 'SET_MESSAGES', messages: data.messages, targetSessionId: sessionId });
-      }
-      if (data.session?.model) {
-        await loadModelContextLimit(data.session.model);
-        // Re-check after the await — the user may have switched sessions
-        // while the model info fetch was in flight. If so, bail out so we
-        // don't dispatch token stats for a now-stale session.
         if (sessionLoadRequestIdRef.current !== requestId) return;
+        const data = await res.json();
+        if (sessionLoadRequestIdRef.current !== requestId) return;
+        if (data.messages?.length > 0) {
+          dispatch({ type: 'SET_MESSAGES', messages: data.messages, targetSessionId: sessionId });
+        }
+        if (data.session?.model) {
+          await loadModelContextLimit(data.session.model);
+          // Re-check after the await — the user may have switched sessions
+          // while the model info fetch was in flight. If so, bail out so we
+          // don't dispatch token stats for a now-stale session.
+          if (sessionLoadRequestIdRef.current !== requestId) return;
+        }
+        if (data.estimatedTokens != null) {
+          dispatch({
+            type: 'SET_TOKEN_STATS',
+            stats: {
+              promptEvalCount: 0,
+              evalCount: data.estimatedTokens,
+              totalTokens: data.estimatedTokens,
+              tokenLimit: refs.numCtxRef.current,
+              isEstimated: true,
+            },
+            targetSessionId: sessionId,
+          });
+        } else if (
+          data.session?.last_total_tokens &&
+          data.session?.last_prompt_eval_count !== undefined &&
+          data.session?.last_eval_count !== undefined
+        ) {
+          // Use the session's own persisted context limit if available, otherwise
+          // fall back to the currently-displayed one. This prevents restored
+          // sessions from showing wrong percentages after model/context switches.
+          const tokenLimit = data.session.num_ctx ?? refs.numCtxRef.current;
+          dispatch({
+            type: 'SET_TOKEN_STATS',
+            stats: {
+              promptEvalCount: data.session.last_prompt_eval_count ?? 0,
+              evalCount: data.session.last_eval_count ?? 0,
+              totalTokens: data.session.last_total_tokens ?? 0,
+              tokenLimit,
+            },
+            targetSessionId: sessionId,
+          });
+        } else {
+          dispatch({ type: 'CLEAR_TOKEN_STATS' });
+        }
+      } catch {
+        // Silently ignore
       }
-      if (data.estimatedTokens != null) {
-        dispatch({
-          type: 'SET_TOKEN_STATS',
-          stats: {
-            promptEvalCount: 0,
-            evalCount: data.estimatedTokens,
-            totalTokens: data.estimatedTokens,
-            tokenLimit: refs.numCtxRef.current,
-            isEstimated: true,
-          },
-          targetSessionId: sessionId,
-        });
-      } else if (data.session?.last_total_tokens && data.session?.last_prompt_eval_count !== undefined && data.session?.last_eval_count !== undefined) {
-        // Use the session's own persisted context limit if available, otherwise
-        // fall back to the currently-displayed one. This prevents restored
-        // sessions from showing wrong percentages after model/context switches.
-        const tokenLimit = data.session.num_ctx ?? refs.numCtxRef.current;
-        dispatch({
-          type: 'SET_TOKEN_STATS',
-          stats: {
-            promptEvalCount: data.session.last_prompt_eval_count ?? 0,
-            evalCount: data.session.last_eval_count ?? 0,
-            totalTokens: data.session.last_total_tokens ?? 0,
-            tokenLimit,
-          },
-          targetSessionId: sessionId,
-        });
-      } else {
-        dispatch({ type: 'CLEAR_TOKEN_STATS' });
-      }
-    } catch {
-      // Silently ignore
-    }
-  }, [dispatch]);
+    },
+    [dispatch]
+  );
 
   // Called only on mount — no stability guarantee needed.
   const loadModels = async () => {
@@ -123,7 +135,8 @@ export function useDataLoaders(refs: StableRefs) {
         const modelList = Array.isArray(models) ? models : [];
         dispatch({ type: 'SET_MODELS', models: modelList });
         if (!refs.modelRef.current && modelList.length > 0) {
-          const firstModel = typeof modelList[0] === 'string' ? modelList[0] : (modelList[0].name ?? '');
+          const firstModel =
+            typeof modelList[0] === 'string' ? modelList[0] : (modelList[0].name ?? '');
           if (firstModel) {
             dispatch({ type: 'SET_MODEL', model: firstModel });
             await loadModelContextLimit(firstModel);
@@ -154,7 +167,8 @@ export function useDataLoaders(refs: StableRefs) {
             chatTimeoutMs: config.chatTimeoutMs ?? state.chatTimeoutMs,
             webSearch: config.webSearch ?? state.webSearch,
             completionMode: config.completionMode ?? state.completionMode,
-            maxPromptLoopIterations: config.maxPromptLoopIterations ?? state.maxPromptLoopIterations,
+            maxPromptLoopIterations:
+              config.maxPromptLoopIterations ?? state.maxPromptLoopIterations,
           },
         });
         // Fetch and apply model context limit after config is loaded

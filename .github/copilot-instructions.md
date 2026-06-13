@@ -1,4 +1,5 @@
 <!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
+
 - [x] Verify that the copilot-instructions.md file in the .github directory is created.
 - [x] Clarify Project Requirements
 - [x] Scaffold the Project
@@ -10,9 +11,11 @@
 - [x] Ensure Documentation is Complete
 
 ## Project Summary
+
 A CLI tool for chatting with Ollama. It handles configuration for host/port, model selection, and basic chat loops.
 
 ## Technical Stack
+
 - Node.js (ESM)
 - Inquirer for CLI interactions
 - Axios for Ollama API communication
@@ -23,6 +26,7 @@ A CLI tool for chatting with Ollama. It handles configuration for host/port, mod
 Apply appropriate design patterns and good programming practices to all code changes:
 
 ### Design Patterns
+
 - **Prefer composition over inheritance** — use composition, delegation, and dependency injection to build flexible, testable components.
 - **Apply SOLID principles** — single responsibility, open/closed, Liskov substitution, interface segregation, and dependency inversion.
 - **Use established patterns where fit**:
@@ -34,6 +38,7 @@ Apply appropriate design patterns and good programming practices to all code cha
 - **Avoid over-engineering** — use patterns when they genuinely simplify complexity, not to add abstraction layers for their own sake.
 
 ### Good Practices
+
 - **Single Responsibility** — each function/module should do one thing well; keep functions small and focused.
 - **DRY (Don't Repeat Yourself)** — extract shared logic into reusable helpers; avoid copy-paste code.
 - **Explicit over implicit** — prefer clear, descriptive naming and explicit flows over clever shortcuts.
@@ -44,15 +49,14 @@ Apply appropriate design patterns and good programming practices to all code cha
 - **Testability** — structure code so dependencies can be injected or mocked for testing.
 
 ### Refactoring Guidelines
+
 - When modifying existing code, look for opportunities to improve structure.
 - Extract new helpers into dedicated modules (e.g., `services/`, `tools/`) rather than bloating `index.ts`.
 - Update this file when patterns or key architectural decisions change.
 
-
 - Work through each checklist item systematically.
 - Keep communication concise and focused.
 - Follow development best practices.
-
 
 <!-- Feature documentation — keep this section up to date as the application evolves -->
 
@@ -66,9 +70,9 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
 - **YOLO Mode**: A high-trust mode that skips command confirmation for automated workflows, enabled via startup prompt, `--yolo`/`-y` flag, or `YOLO=true` environment variable.
 - **Session Management**: Resume recent chats, switch between multiple active sessions (`/sessions`), or delete old ones (`/delete`).
 - **Slash Commands**: Specialized commands for utility tasks:
-    - `/model`: Refresh and switch LLM models mid-conversation.
-    - `/settings`: Change App and Session settings (replaces initial startup prompts).
-    - `/compact`: Force conversation summarization to recover context.
+  - `/model`: Refresh and switch LLM models mid-conversation.
+  - `/settings`: Change App and Session settings (replaces initial startup prompts).
+  - `/compact`: Force conversation summarization to recover context.
   - `/dump`: Export the current conversation history, including the system prompt and tool call/tool result details, to a markdown debug file.
     - `/clear-images`: Remove all image attachments from the active conversation, both in client state and persisted SQLite, to free vision context and recover from 400 errors.
     - `/sessions`: Switch between multiple persistent chat histories.
@@ -79,6 +83,7 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
 ## Tool-calling / Command-execution
 
 Feature summary:
+
 - **`run_command`**: Request shell commands. Uses a process registry for tracking and `Ctrl+X` for interruption.
 - **`run_subagents`**: Run one or more isolated sub-agents sequentially. Each sub-agent gets a fresh ephemeral history, the normal tool set except `run_subagents` itself, and returns only its final answer back to the parent agent.
 - **Process Registry**: Long-running commands are tracked by ID, allowing the AI to poll for output using a `check_process_output` tool if a command exceeds the initial 30s timeout.
@@ -90,6 +95,7 @@ Feature summary:
 ## Markdown rendering
 
 Feature summary:
+
 - **`streamAIResponse`**: Provides real-time "typing" effect chunk-by-chunk. Intentionally skips markdown formatting during streaming for performance and accuracy.
 - **`printAIResponse`**: Renders full markdown (tables, code blocks, formatting) using `marked` and `marked-terminal` once the stream is complete or for static messages.
 - **Viewport Recovery**: Uses a viewport-aware strategy to replace raw streamed text with formatted markdown if the response fits on screen; otherwise, appends the formatted version after a separator.
@@ -98,7 +104,8 @@ Feature summary:
 ## Session & Token Management
 
 Feature summary:
-- **SQLite Storage**: Uses `better-sqlite3` in WAL mode for reliable, concurrent message persistence. 
+
+- **SQLite Storage**: Uses `better-sqlite3` in WAL mode for reliable, concurrent message persistence.
 - **Live Token Meter**: Displays a real-time status line ([statusLine.ts](statusLine.ts)) with a 10-frame spinner (`⠋⠙⠹...`), current phase, model, context usage (`used / limit`), and source tag (`estimated` vs `ollama`).
 - **Authoritative Stats**: Reconciles estimated local token counts (`tiktoken`) with authoritative metrics from Ollama (`prompt_eval_count`, `eval_count`) at the end of each turn.
 - **Token Calculation**: Estimated counts [tokenizer.ts](tokenizer.ts) add 4 tokens per message plus role, content, and tool call overhead to match OpenAI-style counting as a robust local approximation.
@@ -108,6 +115,7 @@ Feature summary:
 ## Web search & Fetch tools
 
 Feature summary:
+
 - **`web_search`**: Multi-query DuckDuckGo search with automatic derivation of search intent and pagination support.
 - **`fetch_url`**: Direct page retrieval for following links or deep-diving into specific documentation.
 - **`fetch_image`**: Fetches an image from a URL or local file path and attaches it as base64 to the conversation message. Vision-only; only useful with models that have image understanding (e.g. llava, llama3.2-vision). Supports JPEG, PNG, GIF, WebP, and BMP up to 10 MB. The base64 is stored in the `images` field of the tool result message and is persisted to SQLite alongside other message fields.
@@ -125,22 +133,22 @@ Feature summary:
   - Ensure all new features align with the "Local, Private, Safe" philosophy.
 
 - **Web search tool** (`web_search`):
-    - Changed `queries` parameter from `string` to `array` in the tool schema to encourage LLMs to provide multiple explicit queries properly.
-    - Updated `parseQueriesInput` in `tools.ts` to handle actual arrays, JSON-encoded arrays, and strings separated by newlines, commas, or semicolons.
-    - Updated tool description and system prompt to explicitly encourage using 2-3 queries for complex tasks.
-    - Improved automated query derivation in `webSearchTool.ts` to split prompts on "and", "or", commas, and semicolons.
-    - This ensures more effective search coverage even with "lazy" model inputs.- [x] **Alternate interrupt key** (default: `Ctrl+X`):
-    - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
-    - Summary: Added a `keypress` listener (defaulting to `Ctrl+X`) that interrupts the AI tool-call loop without exiting the application. `Ctrl+C` retains its normal behavior (exits Locopilot) at all times.
-    - Intent: Prevent accidental closures of Locopilot when the user only wants to stop a looping or long-running AI task. Because `setRawMode(true)` suppresses the OS SIGINT signal for Ctrl+C, the keypress listener re-raises SIGINT via `process.kill(process.pid, 'SIGINT')` so the top-level exit handler fires normally.
+  - Changed `queries` parameter from `string` to `array` in the tool schema to encourage LLMs to provide multiple explicit queries properly.
+  - Updated `parseQueriesInput` in `tools.ts` to handle actual arrays, JSON-encoded arrays, and strings separated by newlines, commas, or semicolons.
+  - Updated tool description and system prompt to explicitly encourage using 2-3 queries for complex tasks.
+  - Improved automated query derivation in `webSearchTool.ts` to split prompts on "and", "or", commas, and semicolons.
+  - This ensures more effective search coverage even with "lazy" model inputs.- [x] **Alternate interrupt key** (default: `Ctrl+X`):
+  - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a `keypress` listener (defaulting to `Ctrl+X`) that interrupts the AI tool-call loop without exiting the application. `Ctrl+C` retains its normal behavior (exits Locopilot) at all times.
+  - Intent: Prevent accidental closures of Locopilot when the user only wants to stop a looping or long-running AI task. Because `setRawMode(true)` suppresses the OS SIGINT signal for Ctrl+C, the keypress listener re-raises SIGINT via `process.kill(process.pid, 'SIGINT')` so the top-level exit handler fires normally.
 - [x] **Refactored run_command tool** (`runCommandTool.ts`):
-    - Files: `runCommandTool.ts` (new), `tools.ts`
-    - Summary: Extracted command execution logic, process registry, and shell resolution into `runCommandTool.ts`.
-    - Intent: Keep `tools.ts` focused on common tool-calling orchestration and schemas while isolating concrete tool implementations.
+  - Files: `runCommandTool.ts` (new), `tools.ts`
+  - Summary: Extracted command execution logic, process registry, and shell resolution into `runCommandTool.ts`.
+  - Intent: Keep `tools.ts` focused on common tool-calling orchestration and schemas while isolating concrete tool implementations.
 - [x] **Preserve message history on error/interrupt**:
-    - Files: `index.ts`
-    - Summary: Removed the code that rolled back `messages.length` to `historyLengthBeforeTurn` when an AI turn was interrupted or failed due to an Ollama API error.
-    - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
+  - Files: `index.ts`
+  - Summary: Removed the code that rolled back `messages.length` to `historyLengthBeforeTurn` when an AI turn was interrupted or failed due to an Ollama API error.
+  - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
 
@@ -447,6 +455,7 @@ Feature summary:
   - Intent: Give the model and user clearer runtime context when polling long-running commands or diagnosing slow executions.
 
 (End of maintenance instructions)
+
 - 2026-02-24: Added alternate `Ctrl+X` interrupt key
   - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
   - Summary: Added `installKeyInterruptListener` / `removeKeyInterruptListener` in `tools.ts`. `Ctrl+X` interrupts the AI loop; `Ctrl+C` exits the app as normal at all times. Because `setRawMode(true)` suppresses OS SIGINT, the keypress listener re-raises it via `process.kill(process.pid, 'SIGINT')` when Ctrl+C is pressed.

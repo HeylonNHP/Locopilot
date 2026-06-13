@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 
 interface UseScrollManagerOptions {
   /** Reactive message list — used as an effect dependency to trigger scroll. */
@@ -52,11 +52,9 @@ export function useScrollManager({
         if (!entry) return;
         const isAtBottom = entry.isIntersecting;
         isAtBottomRef.current = isAtBottom;
-        setShowScrollToLatest(
-          !isAtBottom && container.scrollHeight > container.clientHeight + 1,
-        );
+        setShowScrollToLatest(!isAtBottom && container.scrollHeight > container.clientHeight + 1);
       },
-      { root: container, rootMargin: '0px 0px 32px 0px', threshold: 0 },
+      { root: container, rootMargin: '0px 0px 32px 0px', threshold: 0 }
     );
 
     observer.observe(sentinel);
@@ -78,7 +76,6 @@ export function useScrollManager({
     previousSessionIdRef.current = currentSessionId;
 
     return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, currentSessionId, scrollToLatest]);
 
   return { showScrollToLatest, scrollToLatest, messagesAreaRef, messagesEndRef };

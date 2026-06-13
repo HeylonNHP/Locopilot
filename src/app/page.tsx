@@ -1,25 +1,27 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { useChat } from './lib/chatStore';
-import { useStableRefs } from './hooks/useStableRefs';
-import { useDataLoaders } from './hooks/useDataLoaders';
-import { useChatStream } from './hooks/useChatStream';
-import { useSlashCommands } from './hooks/useSlashCommands';
-import { useSessionUrlParam } from './hooks/useSessionUrlParam';
-import { useScrollManager } from './hooks/useScrollManager';
-import { useApproval } from './hooks/useApproval';
-import { useSessionActions } from './hooks/useSessionActions';
-import ChatMessageBubble from '@/components/ChatMessageBubble';
-import { type Attachment } from '@/components/ChatInput';
-import ScrollToLatestButton from '@/components/ScrollToLatestButton';
-import { SessionSidebar, SkillsPanel } from '@/components/sidebar';
+
 import ApprovalModal from '@/components/ApprovalModal';
-import StatusBar from '@/components/StatusBar';
-import SettingsModal from '@/components/SettingsModal';
+import { type Attachment } from '@/components/ChatInput';
+import ChatMessageBubble from '@/components/ChatMessageBubble';
+import { EmptyState } from '@/components/EmptyState';
 import { ErrorBanner } from '@/components/ErrorBanner';
 import { InputArea } from '@/components/InputArea';
-import { EmptyState } from '@/components/EmptyState';
+import ScrollToLatestButton from '@/components/ScrollToLatestButton';
+import SettingsModal from '@/components/SettingsModal';
+import { SessionSidebar, SkillsPanel } from '@/components/sidebar';
+import StatusBar from '@/components/StatusBar';
+
+import { useApproval } from './hooks/useApproval';
+import { useChatStream } from './hooks/useChatStream';
+import { useDataLoaders } from './hooks/useDataLoaders';
+import { useScrollManager } from './hooks/useScrollManager';
+import { useSessionActions } from './hooks/useSessionActions';
+import { useSessionUrlParam } from './hooks/useSessionUrlParam';
+import { useSlashCommands } from './hooks/useSlashCommands';
+import { useStableRefs } from './hooks/useStableRefs';
+import { useChat } from './lib/chatStore';
 
 /** Inner component — uses useSearchParams so must live inside Suspense. */
 function HomeInner() {
@@ -33,9 +35,15 @@ function HomeInner() {
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
 
-  useEffect(() => { isCompactingRef.current = isCompacting; }, [isCompacting]);
-  useEffect(() => { isGeneratingTitleRef.current = isGeneratingTitle; }, [isGeneratingTitle]);
-  useEffect(() => { currentSessionIdRef.current = state.currentSessionId; }, [state.currentSessionId]);
+  useEffect(() => {
+    isCompactingRef.current = isCompacting;
+  }, [isCompacting]);
+  useEffect(() => {
+    isGeneratingTitleRef.current = isGeneratingTitle;
+  }, [isGeneratingTitle]);
+  useEffect(() => {
+    currentSessionIdRef.current = state.currentSessionId;
+  }, [state.currentSessionId]);
 
   const refs = useStableRefs(state);
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
@@ -51,12 +59,13 @@ function HomeInner() {
   const { sendChatMessage, retry, replayBufferedEvents } = useChatStream(
     refs,
     abortControllersRef,
-    loadSessions,
+    loadSessions
   );
 
-  const isCurrentSessionStreaming = state.currentSessionId !== null
-    ? state.streamingSessions.has(state.currentSessionId)
-    : state.streamingSessions.has(-1);
+  const isCurrentSessionStreaming =
+    state.currentSessionId === null
+      ? state.streamingSessions.has(-1)
+      : state.streamingSessions.has(state.currentSessionId);
 
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
@@ -66,14 +75,15 @@ function HomeInner() {
     pendingApprovalId: state.pendingApprovalId,
   });
 
-  const { handleNewSession, handleSelectSession, handleDeleteSession, handleSearchSessions } = useSessionActions({
-    dispatch,
-    sessionIdRef: refs.sessionIdRef,
-    loadSessions,
-    loadSessionMessages,
-    replayBufferedEvents,
-    model: state.model,
-  });
+  const { handleNewSession, handleSelectSession, handleDeleteSession, handleSearchSessions } =
+    useSessionActions({
+      dispatch,
+      sessionIdRef: refs.sessionIdRef,
+      loadSessions,
+      loadSessionMessages,
+      replayBufferedEvents,
+      model: state.model,
+    });
 
   const { handleSlashCommand } = useSlashCommands({
     refs,
@@ -91,7 +101,6 @@ function HomeInner() {
     loadSessions();
     loadModels();
     loadConfig();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSend = useCallback(
@@ -116,7 +125,7 @@ function HomeInner() {
         await sendChatMessage(message, attachments);
       }
     },
-    [dispatch, handleSlashCommand, sendChatMessage],
+    [dispatch, handleSlashCommand, sendChatMessage]
   );
 
   const handleStop = useCallback(() => {
@@ -127,12 +136,18 @@ function HomeInner() {
   const handleSkillPrompt = useCallback(
     (message: string) => {
       if (isCurrentSessionStreaming) {
-        dispatch({ type: 'ADD_MESSAGE', message: { role: 'system', content: 'Cannot manage skills while the AI is responding. Stop the response first.' } });
+        dispatch({
+          type: 'ADD_MESSAGE',
+          message: {
+            role: 'system',
+            content: 'Cannot manage skills while the AI is responding. Stop the response first.',
+          },
+        });
         return;
       }
       handleSend(message, []);
     },
-    [isCurrentSessionStreaming, handleSend, dispatch],
+    [isCurrentSessionStreaming, handleSend, dispatch]
   );
 
   return (
@@ -154,9 +169,7 @@ function HomeInner() {
             {state.messages.length === 0 ? (
               <EmptyState modelCount={state.models.length} />
             ) : (
-              state.messages.map((msg, i) => (
-                <ChatMessageBubble key={msg.id ?? i} message={msg} />
-              ))
+              state.messages.map((msg, i) => <ChatMessageBubble key={msg.id ?? i} message={msg} />)
             )}
 
             {state.error && (

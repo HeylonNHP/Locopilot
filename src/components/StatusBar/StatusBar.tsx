@@ -1,10 +1,12 @@
 'use client';
-import './StatusBar.scss';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
 import { useChat } from '@/app/lib/chatStore';
-import ModelSelector from '../ModelSelector';
+
 import CompletionModeSelector from '../CompletionModeSelector';
+import ModelSelector from '../ModelSelector';
+
+import './StatusBar.scss';
 
 export default function StatusBar() {
   const { state } = useChat();
@@ -18,17 +20,20 @@ export default function StatusBar() {
 
   // Sync isDark with the current data-theme attribute (set by FOUC script or toggle)
   useEffect(() => {
-    setIsDark(document.documentElement.getAttribute('data-theme') === 'dark');
+    setIsDark(document.documentElement.dataset.theme === 'dark');
   }, []);
 
-  const handleOpenSelector = useCallback((e: { clientX: number; clientY: number }) => {
-    if (state.models.length > 0 && model) {
-      // Snapshot the click coordinates so the dropdown can anchor to the
-      // exact point the user clicked, even if the anchor ref re-renders.
-      lastClickRef.current = { x: e.clientX, y: e.clientY };
-      setShowSelector(true);
-    }
-  }, [state.models.length, model]);
+  const handleOpenSelector = useCallback(
+    (e: { clientX: number; clientY: number }) => {
+      if (state.models.length > 0 && model) {
+        // Snapshot the click coordinates so the dropdown can anchor to the
+        // exact point the user clicked, even if the anchor ref re-renders.
+        lastClickRef.current = { x: e.clientX, y: e.clientY };
+        setShowSelector(true);
+      }
+    },
+    [state.models.length, model]
+  );
 
   const handleCloseSelector = useCallback(() => {
     setShowSelector(false);
@@ -45,8 +50,10 @@ export default function StatusBar() {
 
   const handleThemeToggle = useCallback(() => {
     const next = isDark ? 'frutiger-aero' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    try { localStorage.setItem('locopilot-theme', next); } catch (_) {}
+    document.documentElement.dataset.theme = next;
+    try {
+      localStorage.setItem('locopilot-theme', next);
+    } catch {}
     setIsDark(!isDark);
   }, [isDark]);
 
@@ -64,20 +71,18 @@ export default function StatusBar() {
   // Mark whether we're showing an estimate or authoritative count.
   // Backend-driven estimates carry isEstimated=true; absent stats mean
   // we haven't heard from the backend yet (briefly before first SSE event).
-  const isEstimated = tokenStats?.isEstimated ?? (tokenStats === null);
+  const isEstimated = tokenStats?.isEstimated ?? tokenStats === null;
   const sourceLabel = isEstimated ? '(est)' : '';
 
   // Tokens-per-second display: live rough estimate during streaming,
   // accurate Ollama-calculated value after the turn finishes.
   const tpsValue = state.currentTps ?? tokenStats?.evalTps ?? tokenStats?.promptTps;
-  const tpsLabel = tpsValue != null ? `${tpsValue} t/s` : null;
+  const tpsLabel = tpsValue == null ? null : `${tpsValue} t/s`;
 
   const completionMode = (state.completionMode || 'normal') as string;
   const maxIterations = state.maxPromptLoopIterations ?? 4;
   const maxLabel = maxIterations === 0 ? '∞' : String(maxIterations);
-  const modeLabel = completionMode === 'prompt-loop'
-    ? `Prompt loop (${maxLabel})`
-    : 'Normal';
+  const modeLabel = completionMode === 'prompt-loop' ? `Prompt loop (${maxLabel})` : 'Normal';
 
   return (
     <div className="statusbar">
@@ -122,25 +127,25 @@ export default function StatusBar() {
         <span
           ref={modeRef}
           className="statusbar-mode"
-            onClick={handleOpenModeSelector}
+          onClick={handleOpenModeSelector}
           role="button"
           tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                // Keyboard activation: pass the anchor element's centre
-                // as the click point so the dropdown anchors sensibly.
-                if (modeRef.current) {
-                  const rect = modeRef.current.getBoundingClientRect();
-                  handleOpenModeSelector({
-                    clientX: rect.left + rect.width / 2,
-                    clientY: rect.top,
-                  });
-                } else {
-                  handleOpenModeSelector({ clientX: 0, clientY: 0 });
-                }
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              // Keyboard activation: pass the anchor element's centre
+              // as the click point so the dropdown anchors sensibly.
+              if (modeRef.current) {
+                const rect = modeRef.current.getBoundingClientRect();
+                handleOpenModeSelector({
+                  clientX: rect.left + rect.width / 2,
+                  clientY: rect.top,
+                });
+              } else {
+                handleOpenModeSelector({ clientX: 0, clientY: 0 });
               }
-            }}
+            }
+          }}
         >
           Mode: {modeLabel}
         </span>

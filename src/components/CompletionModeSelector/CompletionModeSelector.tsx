@@ -1,9 +1,10 @@
 'use client';
-import './CompletionModeSelector.scss';
-
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+
 import { useChat } from '@/app/lib/chatStore';
+
+import './CompletionModeSelector.scss';
 
 interface CompletionModeSelectorProps {
   anchorRef: React.RefObject<HTMLElement | null>;
@@ -13,8 +14,12 @@ interface CompletionModeSelectorProps {
 }
 
 const MODES = [
-  { value: 'normal', label: 'Normal', description: 'Turn ends after the LLM\'s first response.' },
-  { value: 'prompt-loop', label: 'Prompt loop', description: 'Auto-continues until the task is fully done.' },
+  { value: 'normal', label: 'Normal', description: "Turn ends after the LLM's first response." },
+  {
+    value: 'prompt-loop',
+    label: 'Prompt loop',
+    description: 'Auto-continues until the task is fully done.',
+  },
 ] as const;
 
 export default function CompletionModeSelector({
@@ -44,8 +49,13 @@ export default function CompletionModeSelector({
       const dropdownWidth = 320;
       const margin = 16;
 
-      const anchorX = click?.x ?? (anchor ? anchor.getBoundingClientRect().left + anchor.getBoundingClientRect().width / 2 : window.innerWidth / 2);
-      const anchorTopY = click?.y ?? (anchor ? anchor.getBoundingClientRect().top : window.innerHeight);
+      const anchorX =
+        click?.x ??
+        (anchor
+          ? anchor.getBoundingClientRect().left + anchor.getBoundingClientRect().width / 2
+          : window.innerWidth / 2);
+      const anchorTopY =
+        click?.y ?? (anchor ? anchor.getBoundingClientRect().top : window.innerHeight);
 
       let left = anchorX - dropdownWidth / 2;
       if (left < margin) left = margin;
@@ -96,15 +106,8 @@ export default function CompletionModeSelector({
     };
   }, [isOpen, onClose]);
 
-  const {
-    baseUrl,
-    model,
-    yolo,
-    thinkingEnabled,
-    compactionModel,
-    chatTimeoutMs,
-    webSearch,
-  } = state;
+  const { baseUrl, model, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch } =
+    state;
 
   const persist = useCallback(
     (config: Record<string, unknown>) => {
@@ -127,10 +130,12 @@ export default function CompletionModeSelector({
               ...config,
             }),
           });
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }, 300);
     },
-    [dispatch, baseUrl, model, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch],
+    [dispatch, baseUrl, model, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch]
   );
 
   const handleSelectMode = useCallback(
@@ -142,7 +147,7 @@ export default function CompletionModeSelector({
       persist({ completionMode: mode });
       onClose();
     },
-    [completionMode, persist, onClose],
+    [completionMode, persist, onClose]
   );
 
   const handleIterationsChange = useCallback(
@@ -150,12 +155,12 @@ export default function CompletionModeSelector({
       const raw = e.target.value;
       setIterationsInput(raw);
 
-      const num = parseInt(raw, 10);
+      const num = Number.parseInt(raw, 10);
       if (raw === '' || (isNaN(num) && raw !== '')) return;
-      const value = (raw === '' || num === 0) ? 0 : Math.max(0, num);
+      const value = raw === '' || num === 0 ? 0 : Math.max(0, num);
       persist({ maxPromptLoopIterations: value });
     },
-    [persist],
+    [persist]
   );
 
   if (!isOpen) return null;
@@ -171,9 +176,7 @@ export default function CompletionModeSelector({
         maxHeight: position.maxHeight,
       }}
     >
-      <div className="completion-mode-selector-header">
-        Completion mode
-      </div>
+      <div className="completion-mode-selector-header">Completion mode</div>
       <div className="completion-mode-selector-list">
         {MODES.map((m) => (
           <button
@@ -214,12 +217,10 @@ export default function CompletionModeSelector({
               onChange={handleIterationsChange}
             />
           </label>
-          <span className="completion-mode-selector-setting-hint">
-            0 = unlimited
-          </span>
+          <span className="completion-mode-selector-setting-hint">0 = unlimited</span>
         </div>
       )}
     </div>,
-    document.body,
+    document.body
   );
 }

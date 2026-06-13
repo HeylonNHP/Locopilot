@@ -13,131 +13,131 @@
  * Project skills override personal skills with the same name.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import { promises as fsp } from 'fs';
+import { promises as fsp } from 'node:fs';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import path from 'node:path';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /** A loaded skill from disk */
 export interface Skill {
-    name: string;
-    description: string;
-    path: string; // Absolute path to the skill directory
-    body: string; // SKILL.md body (after frontmatter)
-    alwaysApply: boolean;
-    autoInvoke: boolean;
-    /** Glob patterns — skill is only active when matching files are in context */
-    globPatterns?: string[] | undefined;
-    /** Tool names this skill is allowed to use; undefined = no restriction */
-    allowedTools?: string[] | undefined;
+  name: string;
+  description: string;
+  path: string; // Absolute path to the skill directory
+  body: string; // SKILL.md body (after frontmatter)
+  alwaysApply: boolean;
+  autoInvoke: boolean;
+  /** Glob patterns — skill is only active when matching files are in context */
+  globPatterns?: string[] | undefined;
+  /** Tool names this skill is allowed to use; undefined = no restriction */
+  allowedTools?: string[] | undefined;
 }
 
 // ── Frontmatter parsing ─────────────────────────────────────────────────────
 
-const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---\s*\n?/;
+const FRONTMATTER_RE = /^---\s*\n([\S\s]*?)\n---\s*\n?/;
 
 interface ParsedFrontmatter {
-    body: string;
-    name: string;
-    description: string;
-    alwaysApply: boolean;
-    autoInvoke: boolean;
-    globPatterns?: string[] | undefined;
-    allowedTools?: string[] | undefined;
+  body: string;
+  name: string;
+  description: string;
+  alwaysApply: boolean;
+  autoInvoke: boolean;
+  globPatterns?: string[] | undefined;
+  allowedTools?: string[] | undefined;
 }
 
 function parseStringArray(raw: string): string[] | undefined {
-    try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
-            return parsed as string[];
-        }
-    } catch {
-        // Not valid JSON; ignore
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
+      return parsed as string[];
     }
-    return undefined;
+  } catch {
+    // Not valid JSON; ignore
+  }
+  return undefined;
 }
 
 function parseFrontmatter(raw: string): ParsedFrontmatter | null {
-    const match = raw.match(FRONTMATTER_RE);
-    if (!match) return null;
+  const match = raw.match(FRONTMATTER_RE);
+  if (!match) return null;
 
-    const fmBlock = match[1]!;
-    const body = raw.slice(match[0].length).trim();
+  const fmBlock = match[1]!;
+  const body = raw.slice(match[0].length).trim();
 
-    const meta: Record<string, string> = {};
-    for (const line of fmBlock.split('\n')) {
-        const colonIdx = line.indexOf(':');
-        if (colonIdx === -1) continue;
-        const key = line.slice(0, colonIdx).trim();
-        const value = line.slice(colonIdx + 1).trim();
-        if (key && value !== undefined) {
-            meta[key] = value;
-        }
+  const meta: Record<string, string> = {};
+  for (const line of fmBlock.split('\n')) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const value = line.slice(colonIdx + 1).trim();
+    if (key && value !== undefined) {
+      meta[key] = value;
     }
+  }
 
-    const name = meta['name'];
-    const description = meta['description'];
-    if (!name || !description) {
-        // Frontmatter must have at least name and description
-        return null;
-    }
+  const name = meta['name'];
+  const description = meta['description'];
+  if (!name || !description) {
+    // Frontmatter must have at least name and description
+    return null;
+  }
 
-    const alwaysApply = meta['alwaysApply'] === 'true';
-    const autoInvoke = meta['autoInvoke'] !== 'false'; // default true
+  const alwaysApply = meta['alwaysApply'] === 'true';
+  const autoInvoke = meta['autoInvoke'] !== 'false'; // default true
 
-    const globPatterns = meta['globPatterns'] ? parseStringArray(meta['globPatterns']) : undefined;
-    const allowedTools = meta['allowedTools'] ? parseStringArray(meta['allowedTools']) : undefined;
+  const globPatterns = meta['globPatterns'] ? parseStringArray(meta['globPatterns']) : undefined;
+  const allowedTools = meta['allowedTools'] ? parseStringArray(meta['allowedTools']) : undefined;
 
-    return { body, name, description, alwaysApply, autoInvoke, globPatterns, allowedTools };
+  return { body, name, description, alwaysApply, autoInvoke, globPatterns, allowedTools };
 }
 
 // ── Discovery ────────────────────────────────────────────────────────────────
 
 function readSkillsFromDir(baseDir: string): Skill[] {
-    const skills: Skill[] = [];
+  const skills: Skill[] = [];
 
-    if (!fs.existsSync(baseDir)) return skills;
+  if (!fs.existsSync(baseDir)) return skills;
 
-    let entries: fs.Dirent[];
-    try {
-        entries = fs.readdirSync(baseDir, { withFileTypes: true });
-    } catch {
-        return skills;
-    }
-
-    for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const skillDir = path.join(baseDir, entry.name);
-        const skillMdPath = path.join(skillDir, 'SKILL.md');
-
-        if (!fs.existsSync(skillMdPath)) continue;
-
-        let raw: string;
-        try {
-            raw = fs.readFileSync(skillMdPath, 'utf-8');
-        } catch {
-            continue;
-        }
-
-        const parsed = parseFrontmatter(raw);
-        if (!parsed) continue;
-
-        skills.push({
-            name: parsed.name,
-            description: parsed.description,
-            path: skillDir,
-            body: parsed.body,
-            alwaysApply: parsed.alwaysApply,
-            autoInvoke: parsed.autoInvoke,
-            globPatterns: parsed.globPatterns,
-            allowedTools: parsed.allowedTools,
-        });
-    }
-
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(baseDir, { withFileTypes: true });
+  } catch {
     return skills;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const skillDir = path.join(baseDir, entry.name);
+    const skillMdPath = path.join(skillDir, 'SKILL.md');
+
+    if (!fs.existsSync(skillMdPath)) continue;
+
+    let raw: string;
+    try {
+      raw = fs.readFileSync(skillMdPath, 'utf8');
+    } catch {
+      continue;
+    }
+
+    const parsed = parseFrontmatter(raw);
+    if (!parsed) continue;
+
+    skills.push({
+      name: parsed.name,
+      description: parsed.description,
+      path: skillDir,
+      body: parsed.body,
+      alwaysApply: parsed.alwaysApply,
+      autoInvoke: parsed.autoInvoke,
+      globPatterns: parsed.globPatterns,
+      allowedTools: parsed.allowedTools,
+    });
+  }
+
+  return skills;
 }
 
 /**
@@ -145,34 +145,34 @@ function readSkillsFromDir(baseDir: string): Skill[] {
  * Project skills override personal skills with the same name.
  */
 export function discoverSkills(): Skill[] {
-    const personalDir = path.join(os.homedir(), '.locopilot', 'skills');
-    const projectDir = path.join(process.cwd(), '.locopilot', 'skills');
+  const personalDir = path.join(os.homedir(), '.locopilot', 'skills');
+  const projectDir = path.join(process.cwd(), '.locopilot', 'skills');
 
-    const personalSkills = readSkillsFromDir(personalDir);
-    const projectSkills = readSkillsFromDir(projectDir);
+  const personalSkills = readSkillsFromDir(personalDir);
+  const projectSkills = readSkillsFromDir(projectDir);
 
-    // Merge: project skills override personal skills by name
-    const merged = new Map<string, Skill>();
-    for (const skill of personalSkills) {
-        merged.set(skill.name, skill);
-    }
-    for (const skill of projectSkills) {
-        merged.set(skill.name, skill);
-    }
+  // Merge: project skills override personal skills by name
+  const merged = new Map<string, Skill>();
+  for (const skill of personalSkills) {
+    merged.set(skill.name, skill);
+  }
+  for (const skill of projectSkills) {
+    merged.set(skill.name, skill);
+  }
 
-    return Array.from(merged.values());
+  return [...merged.values()];
 }
 
 // ── State management ─────────────────────────────────────────────────────────
 
 interface SkillStateFile {
-    enabled: string[];
-    disabled: string[];
+  enabled: string[];
+  disabled: string[];
 }
 
 function getStateFilePath(projectDir?: string): string {
-    const base = projectDir ?? process.cwd();
-    return path.join(base, '.locopilot', 'skills.json');
+  const base = projectDir ?? process.cwd();
+  return path.join(base, '.locopilot', 'skills.json');
 }
 
 // ── Write queue to serialise concurrent skill-state mutations ─────────────
@@ -180,14 +180,18 @@ function getStateFilePath(projectDir?: string): string {
 let skillStateWriteQueue: Promise<void> = Promise.resolve();
 
 async function saveSkillStateUnqueued(
-    state: { enabled: string[]; disabled: string[] },
-    projectDir?: string,
+  state: { enabled: string[]; disabled: string[] },
+  projectDir?: string
 ): Promise<void> {
-    const statePath = getStateFilePath(projectDir);
-    const dir = path.dirname(statePath);
+  const statePath = getStateFilePath(projectDir);
+  const dir = path.dirname(statePath);
 
-    await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(statePath, JSON.stringify({ enabled: state.enabled, disabled: state.disabled }, null, 2), 'utf-8');
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(
+    statePath,
+    JSON.stringify({ enabled: state.enabled, disabled: state.disabled }, null, 2),
+    'utf-8'
+  );
 }
 
 /**
@@ -195,22 +199,22 @@ async function saveSkillStateUnqueued(
  * If skills.json doesn't exist, returns empty arrays.
  */
 export function loadSkillState(projectDir?: string): { enabled: string[]; disabled: string[] } {
-    const statePath = getStateFilePath(projectDir);
+  const statePath = getStateFilePath(projectDir);
 
-    if (!fs.existsSync(statePath)) {
-        return { enabled: [], disabled: [] };
-    }
+  if (!fs.existsSync(statePath)) {
+    return { enabled: [], disabled: [] };
+  }
 
-    try {
-        const raw = fs.readFileSync(statePath, 'utf-8');
-        const parsed = JSON.parse(raw) as SkillStateFile;
-        return {
-            enabled: Array.isArray(parsed.enabled) ? parsed.enabled : [],
-            disabled: Array.isArray(parsed.disabled) ? parsed.disabled : [],
-        };
-    } catch {
-        return { enabled: [], disabled: [] };
-    }
+  try {
+    const raw = fs.readFileSync(statePath, 'utf8');
+    const parsed = JSON.parse(raw) as SkillStateFile;
+    return {
+      enabled: Array.isArray(parsed.enabled) ? parsed.enabled : [],
+      disabled: Array.isArray(parsed.disabled) ? parsed.disabled : [],
+    };
+  } catch {
+    return { enabled: [], disabled: [] };
+  }
 }
 
 /**
@@ -218,14 +222,14 @@ export function loadSkillState(projectDir?: string): { enabled: string[]; disabl
  * Delegates to the write queue so concurrent mutations are serialised.
  */
 export async function saveSkillState(
-    state: { enabled: string[]; disabled: string[] },
-    projectDir?: string,
+  state: { enabled: string[]; disabled: string[] },
+  projectDir?: string
 ): Promise<void> {
-    skillStateWriteQueue = skillStateWriteQueue.then(
-        () => saveSkillStateUnqueued(state, projectDir),
-        () => saveSkillStateUnqueued(state, projectDir),
-    );
-    return skillStateWriteQueue;
+  skillStateWriteQueue = skillStateWriteQueue.then(
+    () => saveSkillStateUnqueued(state, projectDir),
+    () => saveSkillStateUnqueued(state, projectDir)
+  );
+  return skillStateWriteQueue;
 }
 
 /**
@@ -233,32 +237,35 @@ export async function saveSkillState(
  * The read-modify-write runs inside the write queue to prevent TOCTOU races.
  */
 export async function enableSkill(name: string, projectDir?: string): Promise<void> {
-    skillStateWriteQueue = skillStateWriteQueue.then(async () => {
-        const state = loadSkillState(projectDir);
-        const enabled = new Set(state.enabled);
-        const disabled = new Set(state.disabled);
+  skillStateWriteQueue = skillStateWriteQueue.then(
+    async () => {
+      const state = loadSkillState(projectDir);
+      const enabled = new Set(state.enabled);
+      const disabled = new Set(state.disabled);
 
-        enabled.add(name);
-        disabled.delete(name);
+      enabled.add(name);
+      disabled.delete(name);
 
-        await saveSkillStateUnqueued(
-            { enabled: Array.from(enabled), disabled: Array.from(disabled) },
-            projectDir,
-        );
-    }, async () => {
-        const state = loadSkillState(projectDir);
-        const enabled = new Set(state.enabled);
-        const disabled = new Set(state.disabled);
+      await saveSkillStateUnqueued(
+        { enabled: [...enabled], disabled: [...disabled] },
+        projectDir
+      );
+    },
+    async () => {
+      const state = loadSkillState(projectDir);
+      const enabled = new Set(state.enabled);
+      const disabled = new Set(state.disabled);
 
-        enabled.add(name);
-        disabled.delete(name);
+      enabled.add(name);
+      disabled.delete(name);
 
-        await saveSkillStateUnqueued(
-            { enabled: Array.from(enabled), disabled: Array.from(disabled) },
-            projectDir,
-        );
-    });
-    return skillStateWriteQueue;
+      await saveSkillStateUnqueued(
+        { enabled: [...enabled], disabled: [...disabled] },
+        projectDir
+      );
+    }
+  );
+  return skillStateWriteQueue;
 }
 
 /**
@@ -266,32 +273,35 @@ export async function enableSkill(name: string, projectDir?: string): Promise<vo
  * The read-modify-write runs inside the write queue to prevent TOCTOU races.
  */
 export async function disableSkill(name: string, projectDir?: string): Promise<void> {
-    skillStateWriteQueue = skillStateWriteQueue.then(async () => {
-        const state = loadSkillState(projectDir);
-        const enabled = new Set(state.enabled);
-        const disabled = new Set(state.disabled);
+  skillStateWriteQueue = skillStateWriteQueue.then(
+    async () => {
+      const state = loadSkillState(projectDir);
+      const enabled = new Set(state.enabled);
+      const disabled = new Set(state.disabled);
 
-        disabled.add(name);
-        enabled.delete(name);
+      disabled.add(name);
+      enabled.delete(name);
 
-        await saveSkillStateUnqueued(
-            { enabled: Array.from(enabled), disabled: Array.from(disabled) },
-            projectDir,
-        );
-    }, async () => {
-        const state = loadSkillState(projectDir);
-        const enabled = new Set(state.enabled);
-        const disabled = new Set(state.disabled);
+      await saveSkillStateUnqueued(
+        { enabled: [...enabled], disabled: [...disabled] },
+        projectDir
+      );
+    },
+    async () => {
+      const state = loadSkillState(projectDir);
+      const enabled = new Set(state.enabled);
+      const disabled = new Set(state.disabled);
 
-        disabled.add(name);
-        enabled.delete(name);
+      disabled.add(name);
+      enabled.delete(name);
 
-        await saveSkillStateUnqueued(
-            { enabled: Array.from(enabled), disabled: Array.from(disabled) },
-            projectDir,
-        );
-    });
-    return skillStateWriteQueue;
+      await saveSkillStateUnqueued(
+        { enabled: [...enabled], disabled: [...disabled] },
+        projectDir
+      );
+    }
+  );
+  return skillStateWriteQueue;
 }
 
 // ── Filtering ────────────────────────────────────────────────────────────────
@@ -303,20 +313,20 @@ export async function disableSkill(name: string, projectDir?: string): Promise<v
  * the disabled list are excluded.
  */
 export function getEnabledSkills(
-    allSkills: Skill[],
-    state: { enabled: string[]; disabled: string[] },
+  allSkills: Skill[],
+  state: { enabled: string[]; disabled: string[] }
 ): Skill[] {
-    const enabledSet = new Set(state.enabled);
-    const disabledSet = new Set(state.disabled);
+  const enabledSet = new Set(state.enabled);
+  const disabledSet = new Set(state.disabled);
 
-    return allSkills.filter((skill) => {
-        // If explicitly enabled, it's in
-        if (enabledSet.has(skill.name)) return true;
-        // If explicitly disabled, it's out
-        if (disabledSet.has(skill.name)) return false;
-        // Default: new skills are enabled unless disabled
-        return true;
-    });
+  return allSkills.filter((skill) => {
+    // If explicitly enabled, it's in
+    if (enabledSet.has(skill.name)) return true;
+    // If explicitly disabled, it's out
+    if (disabledSet.has(skill.name)) return false;
+    // Default: new skills are enabled unless disabled
+    return true;
+  });
 }
 
 // ── Glob matching ──────────────────────────────────────────────────────────
@@ -329,32 +339,32 @@ export function getEnabledSkills(
  *   - `?`  — matches any single character within a segment
  */
 function globToRegex(pattern: string): RegExp {
-    let out = '';
-    let i = 0;
-    while (i < pattern.length) {
-        const ch = pattern[i]!;
-        if (ch === '*') {
-            if (pattern[i + 1] === '*') {
-                // ** — match across segments
-                out += '.*';
-                i += 2;
-            } else {
-                // * — match within a segment
-                out += '[^/]*';
-                i += 1;
-            }
-        } else if (ch === '?') {
-            out += '.';
-            i += 1;
-        } else if ('.+^${}()|[]\\'.includes(ch)) {
-            out += '\\' + ch;
-            i += 1;
-        } else {
-            out += ch;
-            i += 1;
-        }
+  let out = '';
+  let i = 0;
+  while (i < pattern.length) {
+    const ch = pattern[i]!;
+    if (ch === '*') {
+      if (pattern[i + 1] === '*') {
+        // ** — match across segments
+        out += '.*';
+        i += 2;
+      } else {
+        // * — match within a segment
+        out += '[^/]*';
+        i += 1;
+      }
+    } else if (ch === '?') {
+      out += '.';
+      i += 1;
+    } else if ('.+^${}()|[]\\'.includes(ch)) {
+      out += `\\${  ch}`;
+      i += 1;
+    } else {
+      out += ch;
+      i += 1;
     }
-    return new RegExp('^' + out + '$');
+  }
+  return new RegExp(`^${  out  }$`);
 }
 
 /**
@@ -363,24 +373,24 @@ function globToRegex(pattern: string): RegExp {
  * Simple glob matching: supports * and ** patterns.
  */
 export function filterSkillsByGlobs(skills: Skill[], filePaths: string[]): Skill[] {
-    if (filePaths.length === 0) {
-        // No file paths provided — return skills that don't require glob matching
-        return skills.filter((s) => !s.globPatterns || s.globPatterns.length === 0);
+  if (filePaths.length === 0) {
+    // No file paths provided — return skills that don't require glob matching
+    return skills.filter((s) => !s.globPatterns || s.globPatterns.length === 0);
+  }
+
+  return skills.filter((skill) => {
+    if (!skill.globPatterns || skill.globPatterns.length === 0) {
+      // No glob patterns — always matches
+      return true;
     }
 
-    return skills.filter((skill) => {
-        if (!skill.globPatterns || skill.globPatterns.length === 0) {
-            // No glob patterns — always matches
-            return true;
-        }
-
-        const regexes = skill.globPatterns.map(globToRegex);
-        return filePaths.some((filePath) => {
-            // Test just the basename first (most globs like *.tsx target basenames)
-            const basename = filePath.split('/').pop() ?? filePath;
-            return regexes.some((re) => re.test(filePath) || re.test(basename));
-        });
+    const regexes = skill.globPatterns.map(globToRegex);
+    return filePaths.some((filePath) => {
+      // Test just the basename first (most globs like *.tsx target basenames)
+      const basename = filePath.split('/').pop() ?? filePath;
+      return regexes.some((re) => re.test(filePath) || re.test(basename));
     });
+  });
 }
 
 // ── Allowed-tools enforcement ────────────────────────────────────────────────
@@ -392,16 +402,18 @@ export function filterSkillsByGlobs(skills: Skill[], filePaths: string[]): Skill
  * returns undefined (no restriction).
  */
 export function getAllowedToolsFromSkills(skills: Skill[]): string[] | undefined {
-    const alwaysApply = skills.filter((s) => s.alwaysApply && s.allowedTools && s.allowedTools.length > 0);
-    if (alwaysApply.length === 0) return undefined;
+  const alwaysApply = skills.filter(
+    (s) => s.alwaysApply && s.allowedTools && s.allowedTools.length > 0
+  );
+  if (alwaysApply.length === 0) return undefined;
 
-    const union = new Set<string>();
-    for (const skill of alwaysApply) {
-        for (const tool of skill.allowedTools!) {
-            union.add(tool);
-        }
+  const union = new Set<string>();
+  for (const skill of alwaysApply) {
+    for (const tool of skill.allowedTools!) {
+      union.add(tool);
     }
-    return Array.from(union);
+  }
+  return [...union];
 }
 
 // ── Prompt builders ──────────────────────────────────────────────────────────
@@ -412,16 +424,16 @@ export function getAllowedToolsFromSkills(skills: Skill[]): string[] | undefined
  * When filePaths is provided, skills are filtered by globPatterns.
  */
 export function buildAlwaysApplyPrompt(skills: Skill[], filePaths?: string[]): string {
-    let filtered = skills.filter((s) => s.alwaysApply);
-    if (filePaths !== undefined) {
-        filtered = filterSkillsByGlobs(filtered, filePaths);
-    }
-    if (filtered.length === 0) return '';
+  let filtered = skills.filter((s) => s.alwaysApply);
+  if (filePaths !== undefined) {
+    filtered = filterSkillsByGlobs(filtered, filePaths);
+  }
+  if (filtered.length === 0) return '';
 
-    const bodies = filtered.map((s) => s.body.trim()).filter(Boolean);
-    if (bodies.length === 0) return '';
+  const bodies = filtered.map((s) => s.body.trim()).filter(Boolean);
+  if (bodies.length === 0) return '';
 
-    return '\n## Active Skills\n\n' + bodies.join('\n\n') + '\n';
+  return `\n## Active Skills\n\n${  bodies.join('\n\n')  }\n`;
 }
 
 /**
@@ -431,14 +443,14 @@ export function buildAlwaysApplyPrompt(skills: Skill[], filePaths?: string[]): s
  * When filePaths is provided, skills are filtered by globPatterns.
  */
 export function buildAvailableSkillsSummary(skills: Skill[], filePaths?: string[]): string {
-    let filtered = skills.filter((s) => s.autoInvoke);
-    if (filePaths !== undefined) {
-        filtered = filterSkillsByGlobs(filtered, filePaths);
-    }
-    if (filtered.length === 0) return '';
+  let filtered = skills.filter((s) => s.autoInvoke);
+  if (filePaths !== undefined) {
+    filtered = filterSkillsByGlobs(filtered, filePaths);
+  }
+  if (filtered.length === 0) return '';
 
-    const lines = filtered.map((s) => `- **${s.name}**: ${s.description}`);
-    return '\n## Available Skills\n\n' + lines.join('\n') + '\n';
+  const lines = filtered.map((s) => `- **${s.name}**: ${s.description}`);
+  return `\n## Available Skills\n\n${  lines.join('\n')  }\n`;
 }
 
 // ── Lookup ───────────────────────────────────────────────────────────────────
@@ -447,14 +459,14 @@ export function buildAvailableSkillsSummary(skills: Skill[], filePaths?: string[
 let skillCache: Map<string, Skill> | null = null;
 
 function ensureCache(): Map<string, Skill> {
-    if (!skillCache) {
-        const skills = discoverSkills();
-        skillCache = new Map<string, Skill>();
-        for (const skill of skills) {
-            skillCache.set(skill.name, skill);
-        }
+  if (!skillCache) {
+    const skills = discoverSkills();
+    skillCache = new Map<string, Skill>();
+    for (const skill of skills) {
+      skillCache.set(skill.name, skill);
     }
-    return skillCache;
+  }
+  return skillCache;
 }
 
 /**
@@ -462,16 +474,16 @@ function ensureCache(): Map<string, Skill> {
  * Also respects enable/disable state — only returns enabled skills.
  */
 export function getSkillByName(name: string): Skill | undefined {
-    const cache = ensureCache();
-    const skill = cache.get(name);
-    if (!skill) return undefined;
+  const cache = ensureCache();
+  const skill = cache.get(name);
+  if (!skill) return undefined;
 
-    // Check if the skill is disabled
-    const state = loadSkillState();
-    const enabled = getEnabledSkills([skill], state);
-    if (enabled.length === 0) return undefined;
+  // Check if the skill is disabled
+  const state = loadSkillState();
+  const enabled = getEnabledSkills([skill], state);
+  if (enabled.length === 0) return undefined;
 
-    return skill;
+  return skill;
 }
 
 /**
@@ -479,7 +491,7 @@ export function getSkillByName(name: string): Skill | undefined {
  * Calls ensureCache() so the cache is populated if not yet initialised.
  */
 export function getCachedSkills(): Skill[] {
-    return Array.from(ensureCache().values());
+  return [...ensureCache().values()];
 }
 
 /**
@@ -487,5 +499,5 @@ export function getCachedSkills(): Skill[] {
  * Useful when skills are added/removed at runtime.
  */
 export function invalidateSkillCache(): void {
-    skillCache = null;
+  skillCache = null;
 }

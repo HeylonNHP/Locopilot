@@ -5,9 +5,9 @@ A terminal chat client for Ollama that lets you interact with local models, pers
 ## Quick start
 
 1. Install dependencies.
-    ```bash
-    npm install
-    ```
+   ```bash
+   npm install
+   ```
 2. Make sure Ollama is installed, running, and has at least one model available.
 3. Start Locopilot.
    ```bash
@@ -33,14 +33,14 @@ $env:YOLO="true"; npm start
 
 ## What it does
 
-| Feature | What you get |
-| --- | --- |
-| Local Ollama chat | Streams responses from a local Ollama instance and renders them as terminal-friendly markdown. |
-| Persistent sessions | Saves chats and settings locally so you can resume, switch, or delete sessions later. |
-| Safe tool execution | Supports `run_command` with approval by default, plus YOLO mode for trusted automation. |
+| Feature                    | What you get                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Local Ollama chat          | Streams responses from a local Ollama instance and renders them as terminal-friendly markdown.               |
+| Persistent sessions        | Saves chats and settings locally so you can resume, switch, or delete sessions later.                        |
+| Safe tool execution        | Supports `run_command` with approval by default, plus YOLO mode for trusted automation.                      |
 | Developer-focused commands | Includes `/settings`, `/model`, `/compact`, `/dump`, `/sessions`, `/delete`, `/nudge`, `/help`, and `/exit`. |
-| Web and file tools | Offers `web_search`, `fetch_url`, `fetch_image`, `read_file`, and `write_file` for agentic workflows. |
-| Context management | Compacts long conversations and clamps runtime context to the selected model's reported limit. |
+| Web and file tools         | Offers `web_search`, `fetch_url`, `fetch_image`, `read_file`, and `write_file` for agentic workflows.        |
+| Context management         | Compacts long conversations and clamps runtime context to the selected model's reported limit.               |
 
 ## Requirements
 
