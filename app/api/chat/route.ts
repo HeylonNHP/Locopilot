@@ -21,7 +21,7 @@
 import { randomUUID } from 'crypto';
 import { NextRequest } from 'next/server';
 import { sendLlmChatStream, getLlmApiErrorMessage, fetchLlmModelInfo, getLlmModelVisionSupport } from '../../../services/llm';
-import type { ChatMessage, StreamChatParams } from '../../../services/llm';
+import type { ChatMessage, StreamChatParams, PersistedChatMessage } from '../../../services/llm';
 import { TOOLS, handleToolCall, sanitize, type RequestContext, type ToolOutputSink } from '../../../tools/tools';
 import { waitForApproval, resolveApproval, type ApprovalDecision } from '../../lib/approvalRegistry';
 import { loadConfig } from '../../../services/configManager';
@@ -58,6 +58,34 @@ function isClientChatMessage(value: unknown): value is ClientChatMessage {
     if (typeof msg.role !== 'string' || typeof msg.content !== 'string') return false;
     if (msg.role === 'subagent_log') return true;
     return msg.role === 'system' || msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool';
+}
+
+/** Compare two persisted messages for the initial-state merge. */
+function messagesEqual(a: PersistedChatMessage, b: PersistedChatMessage): boolean {
+    if (a.role !== b.role) return false;
+    if (a.content !== b.content) return false;
+    if (a.role === 'subagent_log' && b.role === 'subagent_log') {
+        return (a as { role: 'subagent_log'; subagentId?: string }).subagentId ===
+            (b as { role: 'subagent_log'; subagentId?: string }).subagentId;
+    }
+    return true;
+}
+
+/**
+ * Merge the client's view of the conversation into the freshly-loaded DB state.
+ * Preserves any messages already persisted (e.g. from a concurrent tab) and
+ * appends only the client messages that are new, including subagent_log entries.
+ */
+function mergeClientMessages(
+    fresh: PersistedChatMessage[],
+    client: PersistedChatMessage[],
+): PersistedChatMessage[] {
+    let prefix = 0;
+    const maxPrefix = Math.min(fresh.length, client.length);
+    while (prefix < maxPrefix && messagesEqual(fresh[prefix]!, client[prefix]!)) {
+        prefix++;
+    }
+    return [...fresh, ...client.slice(prefix)];
 }
 
 function sanitizeAssistantTextFragment(text: string): string {
@@ -240,22 +268,34 @@ export async function POST(req: NextRequest): Promise<Response> {
             // run_command skips the approval gate and executes unconditionally.
             let effectiveYolo = false;
             let emptyResponseRecoveryAttempts = 0;
-            // Accumulate every server-generated message so the DB persistence
-            // delta stays correct even after in-place compaction replaces
-            // currentMessages (Bug 2 fix).
-            const serverMessagesAccumulator: ChatMessage[] = [];
+            // Server-generated messages that have not yet been persisted.
+            // flushSessionState appends these to the fresh DB message list.
+            // Compaction uses a full replacement instead.
+            const pendingAppends: PersistedChatMessage[] = [];
+            let pendingReplace: PersistedChatMessage[] | null = null;
 
             async function flushSessionState(): Promise<void> {
                 if (activeSessionId == null) return;
                 // Race: session may have been deleted mid-stream by another tab.
                 if (!sessionExists(activeSessionId)) return;
-                // Replace all DB messages with the full in-memory array.
-                // updateSessionMessages does DELETE+INSERT, so this is safe to call repeatedly.
-                await enqueueSessionWrite(
-                    activeSessionId,
-                    () => currentMessages,
-                    { promptEvalCount, evalCount },
-                );
+
+                if (pendingReplace) {
+                    const replacement = pendingReplace;
+                    pendingReplace = null;
+                    await enqueueSessionWrite(
+                        activeSessionId,
+                        () => replacement,
+                        { promptEvalCount, evalCount },
+                    );
+                } else if (pendingAppends.length > 0) {
+                    const appends = [...pendingAppends];
+                    await enqueueSessionWrite(
+                        activeSessionId,
+                        (fresh) => [...fresh, ...appends],
+                        { promptEvalCount, evalCount },
+                    );
+                    pendingAppends.length = 0;
+                }
             }
 
             const systemMessage: ChatMessage = {
@@ -301,6 +341,14 @@ export async function POST(req: NextRequest): Promise<Response> {
                     activeSessionId = createSession(DEFAULT_SESSION_NAME, model as string);
                     sendEvent('session_created', { sessionId: activeSessionId });
                 }
+
+                // Persist the client's messages (including subagent_log entries) as
+                // the base state for this request.  Merging avoids clobbering any
+                // messages written concurrently from another tab.
+                await enqueueSessionWrite(
+                    activeSessionId,
+                    (fresh) => mergeClientMessages(fresh, originalClientMessages as PersistedChatMessage[]),
+                );
                 // Per-request MCP approval set. Mutated in place when the user
                 // resolves an approval_request event for a specific mcp_call.
                 const mcpApprovalsSet = new Set<string>();
@@ -554,7 +602,15 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     throw new Error('Cannot compact: missing system prompt.');
                                 }
                                 currentMessages.splice(0, currentMessages.length, preservedSystemMessage, ...compactResult.newMessages);
+                                // LLM-only nudge – not sent to the client and not persisted.
+                                currentMessages.push({
+                                    role: 'user',
+                                    content:
+                                        'The conversation history was automatically compacted due to context length. ' +
+                                        'Please continue working on the original task without asking for confirmation.',
+                                });
                                 // Persist compacted history so the frontend sees the reduced state.
+                                pendingReplace = [...currentMessages];
                                 await flushSessionState();
                                 // Send the compacted message list to the client AFTER
                                 // persisting so the client doesn't see a state that
@@ -562,19 +618,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 sendEvent('compact', {
                                     messages: compactResult.newMessages,
                                     stats: compactResult.stats,
-                                });
-                                // LLM-only nudge – not sent to the client.
-                                currentMessages.push({
-                                    role: 'user',
-                                    content:
-                                        'The conversation history was automatically compacted due to context length. ' +
-                                        'Please continue working on the original task without asking for confirmation.',
-                                });
-                                serverMessagesAccumulator.push({
-                                    role: 'user',
-                                    content:
-                                        'The conversation history was automatically compacted due to context length. ' +
-                                        'Please continue working on the original task without asking for confirmation.',
                                 });
                                 lastAuthoritativeTokens = countMessagesTokens(currentMessages, model as string);
                                 if (compactResult.stats.newTokenCount > effectiveNumCtx) {
@@ -786,7 +829,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     }
 
                     currentMessages.push(assistantMessage);
-                    serverMessagesAccumulator.push(assistantMessage);
+                    pendingAppends.push(assistantMessage);
 
                     if ((!toolCalls || toolCalls.length === 0) && !hasMeaningfulAssistantContent(assistantMessage)) {
                         if (emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
@@ -797,7 +840,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     'Your last response was empty. Provide a direct answer now. ' +
                                     'If commands are needed, call run_command. If commands already ran, summarize their output and errors.',
                             });
-                            serverMessagesAccumulator.push({
+                            pendingAppends.push({
                                 role: 'user',
                                 content:
                                     'Your last response was empty. Provide a direct answer now. ' +
@@ -867,7 +910,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         duration: 0,
                                     });
                                     currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
-                                    serverMessagesAccumulator.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                    pendingAppends.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
                                     continue;
                                 }
                             }
@@ -951,7 +994,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                                     duration: 0,
                                                 });
                                                 currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
-                                                serverMessagesAccumulator.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                                pendingAppends.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
                                                 continue;
                                             }
 
@@ -1076,7 +1119,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 toolMessage.images = result.images;
                             }
                             currentMessages.push(toolMessage);
-                            serverMessagesAccumulator.push(toolMessage);
+                            pendingAppends.push(toolMessage);
                         }
 
                         // Signal we are switching back to the LLM with tool results.
@@ -1240,10 +1283,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 role: 'user',
                                 content: nudgeText,
                             });
-                            serverMessagesAccumulator.push({
-                                role: 'user',
-                                content: nudgeText,
-                            });
+                            // Nudge is LLM-only — keep it out of the persisted history
+                            // so it does not appear as a phantom user message on reload.
                             // Nudge messages added to history — reset the
                             // authoritative token anchor so the next iteration
                             // uses the fallback estimator for auto-compaction.
@@ -1283,12 +1324,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                             });
                     }
 
-                    // Persist final state.
-                    await enqueueSessionWrite(
-                        currentSessionId,
-                        () => currentMessages,
-                        { promptEvalCount, evalCount },
-                    );
+                    // Persist final state (append any remaining server-generated
+                    // messages to the latest DB state).
+                    await flushSessionState();
 
                     const totalTokens = promptEvalCount + evalCount;
 
@@ -1326,11 +1364,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 if (err instanceof DOMException && err.name === 'AbortError') {
                     // Save whatever we have so far before closing.
                     if (activeSessionId != null && sessionExists(activeSessionId)) {
-                        await enqueueSessionWrite(
-                            activeSessionId,
-                            () => currentMessages,
-                            { promptEvalCount, evalCount },
-                        ).catch((e) => {
+                        await flushSessionState().catch((e) => {
                             logger.error('chat', 'Abort flush failed', { error: e });
                         });
                     }

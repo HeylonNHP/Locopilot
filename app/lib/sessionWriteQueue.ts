@@ -7,6 +7,7 @@ import type { SessionTokenStats } from '../../history';
 import type { PersistedChatMessage } from '../../services/llm';
 
 const sessionWriteQueues = new Map<number, Promise<void>>();
+const sessionRenameQueues = new Map<number, Promise<void>>();
 
 /**
  * Queue a session-messages write for the given session.  All writes to the
@@ -19,6 +20,9 @@ const sessionWriteQueues = new Map<number, Promise<void>>();
  * the desired new message list.  This prevents the last-writer-wins race
  * where two concurrent requests for the same session could overwrite each
  * other's messages.
+ *
+ * Errors are propagated to the caller. The queue itself stays alive so a
+ * failed write does not block subsequent writes for the same session.
  */
 export async function enqueueSessionWrite(
     sessionId: number,
@@ -29,7 +33,7 @@ export async function enqueueSessionWrite(
 
     // Serialize: wait for the previous write, then read fresh DB state,
     // let the caller produce the new list, and persist it.
-    const next = prev.then(async () => {
+    const work = prev.then(async () => {
         if (!sessionExists(sessionId)) {
             console.warn(`[sessionWriteQueue] Skipping write for deleted session ${sessionId}`);
             return;
@@ -37,18 +41,14 @@ export async function enqueueSessionWrite(
         const currentMessages = loadSessionMessages(sessionId);
         const newMessages = await buildMessages(currentMessages);
         updateSessionMessages(sessionId, newMessages, tokenStats);
-    }).catch((err) => {
-        // Prevent an unhandled rejection from breaking the queue.
-        // A failed write should not block subsequent writes for this session.
-        console.error(
-            `[sessionWriteQueue] Failed to write messages for session ${sessionId}:`,
-            err instanceof Error ? err.message : String(err),
-        );
     });
 
-    sessionWriteQueues.set(sessionId, next);
-    return next.finally(() => {
-        if (sessionWriteQueues.get(sessionId) === next) {
+    // Keep the queue alive on error so later writes are not blocked, but
+    // surface the failure to the caller by returning the rejecting promise.
+    const queued = work.catch(() => {});
+    sessionWriteQueues.set(sessionId, queued);
+    return work.finally(() => {
+        if (sessionWriteQueues.get(sessionId) === queued) {
             sessionWriteQueues.delete(sessionId);
         }
     });
@@ -57,25 +57,22 @@ export async function enqueueSessionWrite(
 /**
  * Per-session rename queue — serializes renameSession calls for the same
  * session ID so concurrent /title requests don't race on SQL writes.
+ *
+ * Errors are propagated to the caller.
  */
-const sessionRenameQueues = new Map<number, Promise<void>>();
-
 export async function enqueueSessionRename(
     sessionId: number,
     newName: string,
 ): Promise<void> {
     const prev = sessionRenameQueues.get(sessionId) ?? Promise.resolve();
-    const next = prev.then(async () => {
+    const work = prev.then(async () => {
         renameSession(sessionId, newName);
-    }).catch((err) => {
-        console.error(
-            `[sessionWriteQueue] Failed to rename session ${sessionId}:`,
-            err instanceof Error ? err.message : String(err),
-        );
     });
-    sessionRenameQueues.set(sessionId, next);
-    return next.finally(() => {
-        if (sessionRenameQueues.get(sessionId) === next) {
+
+    const queued = work.catch(() => {});
+    sessionRenameQueues.set(sessionId, queued);
+    return work.finally(() => {
+        if (sessionRenameQueues.get(sessionId) === queued) {
             sessionRenameQueues.delete(sessionId);
         }
     });

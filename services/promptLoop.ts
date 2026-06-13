@@ -149,6 +149,10 @@ export async function generateJudgeFeedback(
         );
         return { feedback };
     } catch (err) {
+        // Propagate user aborts so the outer route can clean up correctly.
+        if (err instanceof DOMException && err.name === 'AbortError') {
+            throw err;
+        }
         logger.error(
             'prompt-loop',
             'Critic call failed — returning empty feedback',
@@ -172,8 +176,9 @@ export async function generateJudgeFeedback(
  * @returns An object with `satisfied` set to true if the task is satisfied.
  *          Returns satisfied=true only when the judge's answer explicitly
  *          starts with 'YES'; everything else is treated as NOT satisfied.
- *          On a thrown exception (network/model failure) returns
- *          { satisfied: true } to prevent an infinite loop.
+ *          Thrown exceptions (network/model failure or user abort) are
+ *          propagated to the caller so they are not silently misclassified
+ *          as a satisfied reply.
  */
 export async function checkCompleteness(
     baseUrl: string,
@@ -241,17 +246,15 @@ export async function checkCompleteness(
 
         return { satisfied: true };
     } catch (err) {
-        // Propagate user aborts so the outer route can clean up correctly.
-        if (err instanceof DOMException && err.name === 'AbortError') {
-            throw err;
-        }
-        // Judge call failed (network, model crash, etc.). Log and treat as
-        // satisfied so a transient infrastructure error doesn't infinite-loop.
+        // Propagate all failures to the caller. Returning satisfied=true on a
+        // network/model error would hide the failure from the user and could
+        // emit an incomplete answer; letting the route catch surface it as an
+        // SSE error is safer.
         logger.error(
             'prompt-loop',
             'checkCompleteness error',
             { error: err },
         );
-        return { satisfied: true };
+        throw err;
     }
 }
