@@ -21,8 +21,8 @@
 import { type NextRequest } from 'next/server';
 import { randomUUID } from 'node:crypto';
 
-import type { ToolDefinition } from '../../../services/adapters/llmAdapter';
-import type { Config } from '../../../types/chatConfig';
+import type { ToolDefinition } from '@/services/adapters/llmAdapter';
+import type { Config } from '@/types/chatConfig';
 
 import {
   AUTO_COMPACT_THRESHOLD_PCT,
@@ -30,12 +30,22 @@ import {
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_SESSION_NAME,
   MCP_TOOL_SEARCH_THRESHOLD,
-} from '../../../constants';
-import { createSession, getSessionName, renameSession, sessionExists } from '../../../history';
-import { getMCPServerConfig, getMCPToolCount, getMergedMCPToolDefinitions, getMergedMCPToolDefinitionsForSearch } from '../../../mcp';
-import { createSystemPrompt } from '../../../services/chatSession';
-import { compactHistory } from '../../../services/compact';
-import { loadConfig } from '../../../services/configManager';
+} from '@/constants';
+import { createSession, getSessionName, renameSession, sessionExists } from '@/history';
+import { getMCPServerConfig, getMCPToolCount, getMergedMCPToolDefinitions, getMergedMCPToolDefinitionsForSearch } from '@/mcp';
+import { createSystemPrompt } from '@/services/chatSession';
+import { compactHistory } from '@/services/compact';
+import { loadConfig } from '@/services/configManager';
+import { resolveCompactionModel } from '@/services/modelManager';
+import { checkCompleteness } from '@/services/promptLoop';
+import { discoverSkills, getAllowedToolsFromSkills, getEnabledSkills, loadSkillState } from '@/services/skillManager';
+import { sanitizeChatMessage, stripSpecialTokens } from '@/services/textUtils';
+import { generateSessionTitle, sanitizeContentForTitle } from '@/services/titleGeneration';
+import { generateFallbackTitle } from '@/services/titleUtils';
+import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
+import { enterRequestScope } from '@/tools/impl/runCommandTool';
+import { handleToolCall, type RequestContext, sanitize, type ToolOutputSink, TOOLS } from '@/tools/tools';
+
 import {
   type ChatMessage,
   fetchLlmModelInfo,
@@ -45,15 +55,6 @@ import {
   sendLlmChatStream,
   type StreamChatParams,
 } from '../../../services/llm';
-import { resolveCompactionModel } from '../../../services/modelManager';
-import { checkCompleteness } from '../../../services/promptLoop';
-import { discoverSkills, getAllowedToolsFromSkills, getEnabledSkills, loadSkillState } from '../../../services/skillManager';
-import { sanitizeChatMessage, stripSpecialTokens } from '../../../services/textUtils';
-import { generateSessionTitle, sanitizeContentForTitle } from '../../../services/titleGeneration';
-import { generateFallbackTitle } from '../../../services/titleUtils';
-import { countMessagesTokens, countTextTokens } from '../../../services/tokenizer';
-import { enterRequestScope } from '../../../tools/impl/runCommandTool';
-import { handleToolCall, type RequestContext, sanitize, type ToolOutputSink, TOOLS } from '../../../tools/tools';
 import { type ApprovalDecision, resolveApproval, waitForApproval } from '../../lib/approvalRegistry';
 import { logger } from '../../lib/logger';
 import { enqueueSessionRename, enqueueSessionWrite } from '../../lib/sessionWriteQueue';
