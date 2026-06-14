@@ -58,7 +58,7 @@ function getCapabilityBadges(capabilities?: string[]): string[] {
 
 interface ModelSelectorProps {
   anchorRef: React.RefObject<HTMLElement | null>;
-  lastClickRef: React.MutableRefObject<{ x: number; y: number } | null>;
+  lastClickRef: React.RefObject<{ x: number; y: number } | null>;
   isOpen: boolean;
   onClose: () => void;
 }

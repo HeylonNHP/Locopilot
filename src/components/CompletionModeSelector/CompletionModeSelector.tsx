@@ -8,7 +8,7 @@ import './CompletionModeSelector.scss';
 
 interface CompletionModeSelectorProps {
   anchorRef: React.RefObject<HTMLElement | null>;
-  lastClickRef: React.MutableRefObject<{ x: number; y: number } | null>;
+  lastClickRef: React.RefObject<{ x: number; y: number } | null>;
   isOpen: boolean;
   onClose: () => void;
 }
