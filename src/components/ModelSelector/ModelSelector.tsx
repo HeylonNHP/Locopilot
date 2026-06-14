@@ -24,37 +24,46 @@ function getCapabilityBadges(capabilities?: string[]): string[] {
   for (const capability of capabilities) {
     const key = capability.toLowerCase().trim();
     switch (key) {
-    case 'tools': {
-      normalized.add('tools');
-    
-    break;
-    }
-    case 'vision': 
-    case 'multimodal': 
-    case 'image': {
-      normalized.add('vision');
-    
-    break;
-    }
-    case 'thinking': {
-      normalized.add('thinking');
-    
-    break;
-    }
-    case 'audio': {
-      normalized.add('audio');
-    
-    break;
-    }
-    // No default
+      case 'tools': {
+        normalized.add('tools');
+        break;
+      }
+      case 'vision':
+      case 'multimodal':
+      case 'image': {
+        normalized.add('vision');
+        break;
+      }
+      case 'thinking': {
+        normalized.add('thinking');
+        break;
+      }
+      case 'audio': {
+        normalized.add('audio');
+        break;
+      }
+      default: {
+        // Preserve any capability the backend reports that we don't have a
+        // canonical alias for. This prevents unknown model features from
+        // being silently dropped in the selector badge list.
+        normalized.add(key);
+        break;
+      }
     }
   }
 
   const capabilityOrder = ['tools', 'vision', 'thinking', 'audio'] as const;
+  const known = capabilityOrder.filter((capability) => normalized.has(capability));
+  const knownSet = new Set(known);
+  const unknown = [...normalized]
+    .filter((capability) => !knownSet.has(capability as (typeof capabilityOrder)[number]))
+    .sort()
+    .map((capability) => CAPABILITY_LABELS[capability] ?? capability.charAt(0).toUpperCase() + capability.slice(1));
 
-  return capabilityOrder
-    .filter((capability) => normalized.has(capability))
-    .map((capability) => CAPABILITY_LABELS[capability]!);
+  return [
+    ...known.map((capability) => CAPABILITY_LABELS[capability]!),
+    ...unknown,
+  ];
 }
 
 interface ModelSelectorProps {
