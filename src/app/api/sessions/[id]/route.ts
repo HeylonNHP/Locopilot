@@ -3,6 +3,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { deleteSession, listSessions, loadSessionMessages } from '@/history';
+import { type ChatMessage } from '@/services/llm';
 import { countMessagesTokens } from '@/services/tokenizer';
 
 export async function GET(
@@ -27,7 +28,7 @@ export async function GET(
     }
 
     const messages = loadSessionMessages(sessionId);
-    const messagesForCounting = (messages as any[]).filter((m) => m.role !== 'subagent_log');
+    const messagesForCounting = messages.filter((m): m is ChatMessage => m.role !== 'subagent_log');
     const estimatedTokens =
       messagesForCounting.length > 0 ? countMessagesTokens(messagesForCounting, session.model) : 0;
     return NextResponse.json({ session, messages, estimatedTokens });
