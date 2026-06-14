@@ -231,8 +231,14 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
 
+            type RetryableErrorShape = {
+              response?: { status?: unknown };
+              code?: unknown;
+              message?: unknown;
+            };
+
             function isRetryableError(err: unknown): boolean {
-                const e = err as Record<string, any> | null | undefined;
+                const e = err as RetryableErrorShape | null | undefined;
                 if (!e) return false;
                 // axios-style HTTP errors
                 if (e.response && typeof e.response.status === 'number') {
