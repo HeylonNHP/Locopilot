@@ -3,9 +3,10 @@
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import { useCallback, useRef, useState } from 'react';
 
-import { type ChatMessage, type DoneReason, useChat } from '@/app/lib/chatStore';
+import { type ChatMessage, type DoneReason, type SessionState, useChat } from '@/app/lib/chatStore';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
 import { DEFAULT_SESSION_NAME } from '@/constants';
+import { type ToolCallArguments } from '@/tools/tools';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
@@ -21,6 +22,43 @@ interface StreamErrorDetails {
 
 function getStreamErrorDetails(err: unknown): StreamErrorDetails | null {
   return err instanceof Error ? { name: err.name, message: err.message } : null;
+}
+
+/** Parsed JSON payload from an SSE event. Fields are optional because the
+ *  data originates from `JSON.parse` and may be malformed or partial. */
+interface SseEventData {
+  sessionId?: number;
+  content?: string;
+  name?: string;
+  arguments?: unknown;
+  toolName?: string;
+  toolCallName?: string;
+  args?: ToolCallArguments;
+  requestId?: string;
+  result?: string;
+  duration?: number;
+  message?: string;
+  agentId?: string;
+  text?: string;
+  type?: 'thinking' | 'content';
+  tokensUsed?: number;
+  tokenLimit?: number;
+  tps?: number;
+  isEstimated?: boolean;
+  messages?: ChatMessage[];
+  stats?: { oldTokenCount?: number; newTokenCount?: number };
+  tokenStats?: SessionState['tokenStats'];
+  doneReason?: string;
+}
+
+/** Coerce an unknown parsed JSON value into an `SseEventData` object.
+ *  Non-object values are wrapped as `{ content: String(value) }` so the
+ *  `chunk` / `thinking` handlers still receive the raw text. */
+function toSseEventData(value: unknown): SseEventData {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return value as SseEventData;
+  }
+  return { content: String(value) };
 }
 
 /**
@@ -42,7 +80,7 @@ export function useChatStream(
   const [streamingSessions, setStreamingSessions] = useState<Set<number>>(new Set());
   const nextRequestIdRef = useRef(0);
   const bufferOwnerMapRef = useRef<Map<number, number>>(new Map());
-  const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: any }>>>(new Map());
+  const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: SseEventData }>>>(new Map());
   const subagentBufferRef = useRef<
     Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null; sessionId?: number }>
   >(new Map());
@@ -51,7 +89,7 @@ export function useChatStream(
   // --------------------------------------------------------------------------
 
   const handleEvent = useCallback(
-    (event: string, data: any, requestId?: number) => {
+    (event: string, data: SseEventData, requestId?: number) => {
       // ── session_created must ALWAYS be processed first ──────────────────
       // It syncs bufferOwnerMapRef and refs.sessionIdRef to the real
       // session ID.  If the buffer guard below intercepted it, the guard
@@ -122,12 +160,18 @@ export function useChatStream(
 
       switch (event) {
         case 'thinking': {
-          dispatch({ type: 'APPLY_ASSISTANT_DELTA', thinking: data.content ?? data });
+          dispatch({
+            type: 'APPLY_ASSISTANT_DELTA',
+            ...(typeof data.content === 'string' ? { thinking: data.content } : {}),
+          });
           break;
         }
 
         case 'chunk': {
-          dispatch({ type: 'APPLY_ASSISTANT_DELTA', content: data.content ?? data });
+          dispatch({
+            type: 'APPLY_ASSISTANT_DELTA',
+            ...(typeof data.content === 'string' ? { content: data.content } : {}),
+          });
           break;
         }
 
@@ -136,8 +180,8 @@ export function useChatStream(
             type: 'ADD_MESSAGE',
             message: {
               role: 'tool',
-              content: `🔧 **${data.name}**\n\`\`\`json\n${JSON.stringify(data.arguments, null, 2)}\n\`\`\``,
-              name: data.name,
+              content: `🔧 **${data.name ?? ''}**\n\`\`\`json\n${JSON.stringify(data.arguments, null, 2)}\n\`\`\``,
+              ...(data.name === undefined ? {} : { name: data.name }),
             },
           });
           break;
@@ -147,11 +191,11 @@ export function useChatStream(
           dispatch({
             type: 'SHOW_APPROVAL',
             command: {
-              name: data.toolName ?? data.name,
-              args: data.args,
+              name: data.toolName ?? data.name ?? '',
+              args: data.args ?? {},
               ...(typeof data.toolCallName === 'string' ? { toolCallName: data.toolCallName } : {}),
             },
-            requestId: data.requestId,
+            ...(data.requestId === undefined ? {} : { requestId: data.requestId }),
           });
           break;
         }
@@ -161,8 +205,8 @@ export function useChatStream(
             type: 'ADD_MESSAGE',
             message: {
               role: 'tool',
-              content: `✅ **${data.name}** (${data.duration ?? 0}ms)\n\n\`\`\`\n${data.result ?? ''}\n\`\`\``,
-              name: data.name,
+              content: `✅ **${data.name ?? ''}** (${data.duration ?? 0}ms)\n\n\`\`\`\n${data.result ?? ''}\n\`\`\``,
+              ...(data.name === undefined ? {} : { name: data.name }),
             },
           });
           break;
@@ -171,7 +215,7 @@ export function useChatStream(
         case 'tool_progress': {
           dispatch({
             type: 'APPEND_TOOL_PROGRESS',
-            name: data.name,
+            ...(data.name === undefined ? {} : { name: data.name }),
             content: data.message ?? data.content ?? String(data),
           });
           break;
@@ -220,7 +264,7 @@ export function useChatStream(
               type: 'SET_TOKEN_STATS',
               stats: {
                 totalTokens: data.tokensUsed,
-                tokenLimit: data.tokenLimit,
+                tokenLimit: data.tokenLimit ?? 0,
                 promptEvalCount: 0,
                 evalCount: data.tokensUsed,
                 isEstimated: data.isEstimated ?? false,
@@ -395,10 +439,10 @@ export function useChatStream(
         const { done, value } = await reader.read();
         if (done) break;
         try {
-          const parsed = JSON.parse(value.data);
+          const parsed = toSseEventData(JSON.parse(value.data));
           handleEvent(value.event || 'message', parsed, requestId);
         } catch {
-          handleEvent(value.event || 'message', value.data, requestId);
+          handleEvent(value.event || 'message', { content: value.data }, requestId);
         }
       }
     } catch (err: unknown) {
@@ -736,10 +780,10 @@ export function useChatStream(
           if (done) break;
 
           try {
-            const parsed = JSON.parse(value.data);
+            const parsed = toSseEventData(JSON.parse(value.data));
             handleEvent(value.event || 'message', parsed, requestId);
           } catch {
-            handleEvent(value.event || 'message', value.data, requestId);
+            handleEvent(value.event || 'message', { content: value.data }, requestId);
           }
         }
       } catch (err: unknown) {
