@@ -18,6 +18,7 @@
  *   event: error\ndata: {"message":"…"}\n\n
  */
 
+import axios from 'axios';
 import { type NextRequest } from 'next/server';
 import { randomUUID } from 'node:crypto';
 
@@ -231,24 +232,42 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
 
-            type RetryableErrorShape = {
-              response?: { status?: unknown };
-              code?: unknown;
-              message?: unknown;
-            };
+            function isRetryableStatus(value: number): value is 429 | 502 | 503 | 504 {
+                return value === 429 || value === 502 || value === 503 || value === 504;
+            }
+
+            function isRetryableNetworkCode(value: string): value is 'ECONNRESET' | 'ETIMEDOUT' | 'EPIPE' {
+                return value === 'ECONNRESET' || value === 'ETIMEDOUT' || value === 'EPIPE';
+            }
+
+            function hasRetryableMessage(value: string): boolean {
+                return value.includes('fetch failed') || value.includes('network timeout');
+            }
 
             function isRetryableError(err: unknown): boolean {
-                const e = err as RetryableErrorShape | null | undefined;
-                if (!e) return false;
                 // axios-style HTTP errors
-                if (e.response && typeof e.response.status === 'number') {
-                    const status = e.response.status;
-                    if (status === 429 || status === 502 || status === 503 || status === 504) return true;
+                if (axios.isAxiosError(err)) {
+                    const status = err.response?.status;
+                    if (typeof status === 'number' && isRetryableStatus(status)) {
+                        return true;
+                    }
                 }
-                // axios network-level codes
-                if (typeof e.code === 'string' && (e.code === 'ECONNRESET' || e.code === 'ETIMEDOUT' || e.code === 'EPIPE')) return true;
+
+                // axios / Node.js network-level error codes
+                if (
+                    err instanceof Error &&
+                    'code' in err &&
+                    typeof err.code === 'string' &&
+                    isRetryableNetworkCode(err.code)
+                ) {
+                    return true;
+                }
+
                 // generic fetch/network failures
-                if (typeof e.message === 'string' && (e.message.includes('fetch failed') || e.message.includes('network timeout'))) return true;
+                if (err instanceof Error && hasRetryableMessage(err.message)) {
+                    return true;
+                }
+
                 return false;
             }
 
