@@ -8,9 +8,11 @@
  * The server runs the full AI agent loop (LLM → tools → LLM → …) and
  * streams back Server-Sent Events (SSE) for every incremental update.
  *
- * SSE event types:
- *   event: thinking\ndata: <string>\n\n
- *   event: chunk\ndata: <string>\n\n
+ * Full SSE contract (event names and payload shapes) lives in
+ * src/types/sse.ts so the producer and consumers stay in sync.
+ * Highlights:
+ *   event: thinking\ndata: {"content":"…"}\n\n
+ *   event: chunk\ndata: {"content":"…"}\n\n
  *   event: tool_call\ndata: {"name":"…","arguments":{…}}\n\n
  *   event: tool_result\ndata: {"name":"…","result":"…","duration":123}\n\n
  *   event: status\ndata: {"phase":"thinking"|"responding"|"tools"|"truncated"|"completeness-check","tokensUsed":N,"tokenLimit":N}\n\n
@@ -22,8 +24,10 @@ import axios from 'axios';
 import { type NextRequest } from 'next/server';
 import { randomUUID } from 'node:crypto';
 
+import type { DoneReason } from '@/app/lib/chatStore';
 import type { ToolDefinition } from '@/services/adapters/llmAdapter';
 import type { Config } from '@/types/chatConfig';
+import type { SseEventPayloadMap } from '@/types/sse';
 
 import {
   AUTO_COMPACT_THRESHOLD_PCT,
@@ -220,7 +224,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             // cannot see each other's running commands.
             enterRequestScope();
 
-            function sendEvent(event: string, data: unknown): void {
+            function sendEvent<N extends keyof SseEventPayloadMap>(event: N, data: SseEventPayloadMap[N]): void {
                 try {
                     controller.enqueue(
                         encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
@@ -416,7 +420,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     sendEvent('approval_request', {
                         requestId: subRequestId,
                         toolName: req2.toolName,
-                        args: req2.args,
+                        args: req2.args as Record<string, unknown>,
                         fromSubAgent: true,
                     });
                     const decision = await Promise.race([
@@ -717,7 +721,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // end-of-sequence (`stop`) from a token-cap truncation (`length`)
                     // and from server heartbeats (`load` / `unload`). The chat route
                     // never previously consulted this field.
-                    let lastDoneReason: string | undefined;
+                            let lastDoneReason: DoneReason | undefined;
 
                     // ── Retry transient LLM errors (503, 502, 504, 429, network) ──
                     const MAX_LLM_RETRIES = 3;
@@ -742,7 +746,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 const thinkingChunk = sanitizeAssistantTextFragment(msg.thinking);
                                 if (thinkingChunk) {
                                     thinking += thinkingChunk;
-                                    sendEvent('thinking', thinkingChunk);
+                                    sendEvent('thinking', { content: thinkingChunk });
                                     // Count thinking tokens toward live throughput so the TPS
                                     // badge stays visible during long reasoning chains.
                                     roughTokens += countTextTokens(thinkingChunk, model as string);
@@ -754,7 +758,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 const contentChunk = sanitizeAssistantTextFragment(msg.content);
                                 if (contentChunk) {
                                     content += contentChunk;
-                                    sendEvent('chunk', contentChunk);
+                                    sendEvent('chunk', { content: contentChunk });
                                     roughTokens += countTextTokens(contentChunk, model as string);
                                 }
                             }
@@ -786,7 +790,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     promptEvalDuration = chunk.prompt_eval_duration ?? 0;
                                     evalDuration = chunk.eval_duration ?? 0;
                                     lastDoneReason = (typeof chunk.done_reason === 'string' && VALID_DONE_REASONS.has(chunk.done_reason))
-                                    ? chunk.done_reason
+                                    ? (chunk.done_reason as DoneReason)
                                     : undefined;
                                 }
                             }
@@ -1213,8 +1217,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // loop. Capped at effectiveMaxPromptLoopIterations (0 = unlimited).
                     if (
                         effectiveCompletionMode === 'prompt-loop'
-                        && lastDoneReason !== 'load'
-                        && lastDoneReason !== 'unload'
                         && originalUserRequest
                         && content.trim()
                     ) {
@@ -1373,10 +1375,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // evalDuration is the generation phase; promptEvalDuration is the prompt-processing phase.
                     const promptTps = promptEvalDuration > 0
                         ? +(promptEvalCount / (promptEvalDuration / 1_000_000_000)).toFixed(2)
-                        : null;
+                        : undefined;
                     const evalTps = evalDuration > 0
                         ? +(evalCount / (evalDuration / 1_000_000_000)).toFixed(2)
-                        : null;
+                        : undefined;
                     const effectiveEvalTps = evalTps ?? wallClockTps;
 
                     sendEvent('done', {
@@ -1388,10 +1390,12 @@ export async function POST(req: NextRequest): Promise<Response> {
                             evalCount,
                             totalTokens,
                             tokenLimit: effectiveNumCtx,
-                            promptTps,
-                            evalTps: effectiveEvalTps,
+                            ...(typeof promptTps === 'number' ? { promptTps } : {}),
+                            ...(typeof effectiveEvalTps === 'number'
+                                ? { evalTps: effectiveEvalTps }
+                                : {}),
                         },
-                        doneReason: lastDoneReason ?? 'stop',
+                        doneReason: (lastDoneReason && lastDoneReason !== 'unknown') ? lastDoneReason : 'stop',
                     });
 
                     controller.close();

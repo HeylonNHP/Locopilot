@@ -3,10 +3,11 @@
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import { useCallback, useRef, useState } from 'react';
 
-import { type ChatMessage, type DoneReason, type SessionState, useChat } from '@/app/lib/chatStore';
+import type { SseEventPayloadMap } from '@/types/sse';
+
+import { type ChatMessage, type DoneReason, useChat } from '@/app/lib/chatStore';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
 import { DEFAULT_SESSION_NAME } from '@/constants';
-import { type ToolCallArguments } from '@/tools/tools';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
@@ -24,41 +25,22 @@ function getStreamErrorDetails(err: unknown): StreamErrorDetails | null {
   return err instanceof Error ? { name: err.name, message: err.message } : null;
 }
 
-/** Parsed JSON payload from an SSE event. Fields are optional because the
- *  data originates from `JSON.parse` and may be malformed or partial. */
-interface SseEventData {
-  sessionId?: number;
-  content?: string;
-  name?: string;
-  arguments?: unknown;
-  toolName?: string;
-  toolCallName?: string;
-  args?: ToolCallArguments;
-  requestId?: string;
-  result?: string;
-  duration?: number;
-  message?: string;
-  agentId?: string;
-  text?: string;
-  type?: 'thinking' | 'content';
-  tokensUsed?: number;
-  tokenLimit?: number;
-  tps?: number;
-  isEstimated?: boolean;
-  messages?: ChatMessage[];
-  stats?: { oldTokenCount?: number; newTokenCount?: number };
-  tokenStats?: SessionState['tokenStats'];
-  doneReason?: string;
-}
+/** Parsed SSE event payload. Defined as a union of the shared contract in
+ *  src/types/sse.ts so the producer and consumer stay in sync. */
+type SseEventPayload = SseEventPayloadMap[keyof SseEventPayloadMap];
 
-/** Coerce an unknown parsed JSON value into an `SseEventData` object.
- *  Non-object values are wrapped as `{ content: String(value) }` so the
- *  `chunk` / `thinking` handlers still receive the raw text. */
+type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (k: infer I) => void ? I : never;
+
+type SseEventData = Partial<UnionToIntersection<SseEventPayload>>;
+
+/** Coerce an unknown parsed JSON value into the shared SSE payload union.
+ *  Non-object values are wrapped as a chunk/thinking payload so malformed
+ *  frames still have a defined shape. */
 function toSseEventData(value: unknown): SseEventData {
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
     return value as SseEventData;
   }
-  return { content: String(value) };
+  return { content: String(value) } as SseEventData;
 }
 
 /**
