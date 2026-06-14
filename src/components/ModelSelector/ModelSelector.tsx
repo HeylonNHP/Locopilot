@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { useChat } from '@/app/lib/chatStore';
 
 import './ModelSelector.scss';
@@ -147,23 +148,7 @@ export default function ModelSelector({
   }, [isOpen]);
 
   // Close on outside click and Escape
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', handleClick);
-    document.addEventListener('keydown', handleKey);
-    return () => {
-      document.removeEventListener('mousedown', handleClick);
-      document.removeEventListener('keydown', handleKey);
-    };
-  }, [isOpen, onClose]);
+  useClickOutsideEscape(panelRef, { isOpen, onClose });
 
   const handleSelect = useCallback(
     async (modelName: string) => {
