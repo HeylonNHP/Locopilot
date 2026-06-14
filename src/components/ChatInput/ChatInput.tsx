@@ -1,4 +1,5 @@
 'use client';
+import Image from 'next/image';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import './ChatInput.scss';
@@ -141,6 +142,13 @@ const COMMANDS = [
   { command: '/title', description: 'Generate session title' },
 ];
 
+// Some embedded runtimes (Electron/WebView2) attach a local file path to
+// dropped File objects. Declare the extension so we can read it without
+// falling back to `any`.
+interface FileWithPath extends File {
+  path?: string;
+}
+
 function extractPaths(e: React.DragEvent): string[] {
   const paths: string[] = [];
 
@@ -189,12 +197,12 @@ function extractPaths(e: React.DragEvent): string[] {
     return paths;
   }
 
-  // Method 3: (file as any).path — works in Electron/WebView2.
+  // Method 3: (file as FileWithPath).path — works in Electron/WebView2.
   // Method 4: fallback to file.name.
   const files = e.dataTransfer.files;
   for (const file of files) {
     if (!file) continue;
-    const path = (file as any).path ?? file.name;
+    const path = (file as FileWithPath).path ?? file.name;
     if (path) {
       paths.push(path);
     }
@@ -547,10 +555,13 @@ export default function ChatInput({ onSend, disabled }: Props) {
               if (att.type === 'image' && att.base64) {
                 return (
                   <div key={att.id} className="chat-input-attachment-img-card" title={att.name}>
-                    <img
+                    <Image
                       src={`data:${att.mimeType};base64,${att.base64}`}
                       alt={att.name}
                       className="chat-input-attachment-thumb"
+                      fill
+                      sizes="52px"
+                      unoptimized
                     />
                     {att.sizeBytes > SIZE_WARNING_BYTES && (
                       <span
