@@ -1,5 +1,6 @@
 'use client';
 import dynamic from 'next/dynamic';
+import Image from 'next/image';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type ChatMessage } from '@/app/lib/chatStore';
@@ -67,11 +68,14 @@ function AttachmentImages({ images }: { images: string[] }) {
         // Stable key: use a short content prefix so React doesn't mix up siblings
         const key = `img-${i}-${base64.slice(0, 16)}`;
         return (
-          <img
+          <Image
             key={key}
             src={`data:${mime};base64,${base64}`}
             alt={`Attached image ${i + 1}`}
             className="bubble-attachment-image"
+            width={320}
+            height={240}
+            unoptimized
           />
         );
       })}
