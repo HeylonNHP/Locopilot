@@ -8,20 +8,15 @@
  * - Chat context creation and maintenance
  */
 
-import chalk from 'chalk';
-
 import type { ChatContext, Config } from '../types/chatConfig';
 
+import { logger } from '../app/lib/logger';
 import {
   AUTO_COMPACT_THRESHOLD_PCT,
   COMPACT_WARNING_THRESHOLD_PCT,
   COMPACT_WARNING_TOKEN_INTERVAL,
 } from '../constants';
-import {
-  type SessionTokenStats,
-  updateSessionMessages,
-  updateSessionModel,
-} from '../history';
+import { type SessionTokenStats, updateSessionMessages, updateSessionModel } from '../history';
 import { clearLiveStatus, updatePhase, updateVram } from '../statusLine';
 import {
   getToolSystemPrompt,
@@ -118,9 +113,7 @@ export function createSystemPrompt(visionSupported?: boolean, yoloMode: boolean 
     `You are Locopilot, a helpful AI assistant running inside a terminal application.\n` +
     `Current date and time: ${dateTimeStr}\n` +
     `${alwaysApplySection}` +
-    `\n${ 
-    getToolSystemPrompt(yoloMode, visionSupported) 
-    }${availableSkillsSection}` +
+    `\n${getToolSystemPrompt(yoloMode, visionSupported)}${availableSkillsSection}` +
     `\nYou may call \`load_skill\` to load the full instructions for any available skill listed above.\n` +
     `Skill creation: You can create new skills for the user by calling create_skill(name, description, body, ...). This writes a SKILL.md file to .locopilot/skills/<name>/ that becomes immediately available. Use this proactively when the user describes a reusable convention or workflow they'd like to preserve. You can also update existing skills by calling create_skill with the same name.\n`
   );
@@ -244,15 +237,14 @@ function createChatContext(
         state.visionSupported === false &&
         state.messages.some((message) => Array.isArray(message.images) && message.images.length > 0)
       ) {
-        console.log(
-          chalk.yellow(
-            `\n⚠️  Model ${state.currentModel} does not support vision input; ` +
-              `existing image attachments in this session will be ignored by the model.\n`
-          )
+        logger.warn(
+          'chat-session',
+          `Model ${state.currentModel} does not support vision input; ` +
+            `existing image attachments in this session will be ignored by the model.`
         );
       }
 
-      console.log(chalk.green(`\nSwitched to model: ${state.currentModel}`));
+      logger.info('chat-session', `Switched to model: ${state.currentModel}`);
     },
     updateSession: (sessionId: number, newMessages: ChatMessage[], isNamed: boolean) => {
       state.messages = newMessages;
@@ -292,9 +284,7 @@ function getModelVisionSupport(info: LlmModelInfo): boolean {
   if (Array.isArray(info.capabilities)) {
     const capabilities = new Set(info.capabilities.map(String));
     return (
-      capabilities.has('vision') ||
-      capabilities.has('multimodal') ||
-      capabilities.has('image')
+      capabilities.has('vision') || capabilities.has('multimodal') || capabilities.has('image')
     );
   }
   return false;
@@ -312,14 +302,13 @@ export async function loadModelMetadata(state: ChatSessionState, config: Config)
     applyEffectiveNumCtx(state);
 
     if (state.thinkingSupported) {
-      console.log(chalk.dim(`(Model ${state.currentModel} supports thinking)`));
+      logger.debug('chat-session', `Model ${state.currentModel} supports thinking`);
     }
     if (state.modelContextLimit && state.requestedNumCtx > state.modelContextLimit) {
-      console.log(
-        chalk.yellow(
-          `\n⚠️  Model ${state.currentModel} reports max context num_ctx=${state.modelContextLimit}; ` +
-            `using that temporarily instead of requested ${state.requestedNumCtx}.\n`
-        )
+      logger.warn(
+        'chat-session',
+        `Model ${state.currentModel} reports max context num_ctx=${state.modelContextLimit}; ` +
+          `using that temporarily instead of requested ${state.requestedNumCtx}.`
       );
     }
   } catch {
@@ -390,11 +379,9 @@ export function refreshTokenStatus(
     ) {
       state.lastCompactWarningTokens = tokensUsed;
       clearLiveStatus();
-      console.log(
-        chalk.yellow.bold(`\n⚠️  Context is ${percentage.toFixed(0)}% full. `) +
-          chalk.yellow(`Consider running `) +
-          chalk.cyan(`/compact`) +
-          chalk.yellow(` to save tokens.\n`)
+      logger.warn(
+        'chat-session',
+        `Context is ${percentage.toFixed(0)}% full. Consider running /compact to save tokens.`
       );
     }
   }
@@ -417,14 +404,10 @@ export function printFinalTokenSnapshot(
 ): void {
   const percentage =
     state.numCtx > 0 ? Math.min(100, Math.round((tokensUsed / state.numCtx) * 100)) : 0;
-  const pctColor = percentage >= 90 ? chalk.red : percentage >= 75 ? chalk.yellow : chalk.green;
-
-  console.log(
-    chalk.dim(`[${state.currentModel}] `) +
-      pctColor(`${tokensUsed}/${state.numCtx} tokens`) +
-      chalk.dim(` (${percentage}%)`) +
-      chalk.cyan.dim(' (ollama)') +
-      chalk.dim(` (Used ${tokensUsed} ${tokensUsed === 1 ? 'token' : 'tokens'})`)
+  logger.info(
+    'chat-session',
+    `[${state.currentModel}] ${tokensUsed}/${state.numCtx} tokens (${percentage}%) ` +
+      `(ollama) (Used ${tokensUsed} ${tokensUsed === 1 ? 'token' : 'tokens'})`
   );
 
   onStats?.({
@@ -451,8 +434,9 @@ export async function autoCompactIfNeeded(
   if (pct < AUTO_COMPACT_THRESHOLD_PCT) return false;
 
   clearLiveStatus();
-  console.log(
-    chalk.yellow(`\n⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...\n`)
+  logger.info(
+    'chat-session',
+    `Context at ${pct.toFixed(0)}% — auto-compacting before continuing...`
   );
 
   try {
@@ -472,11 +456,10 @@ export async function autoCompactIfNeeded(
     );
 
     if (result.stats.newTokenCount > state.numCtx) {
-      console.log(
-        chalk.red(
-          `⚠️  Compaction reduced context but history is still over the model limit ` +
-            `(${result.stats.newTokenCount}/${state.numCtx} tokens). The next turn may fail.\n`
-        )
+      logger.warn(
+        'chat-session',
+        `Compaction reduced context but history is still over the model limit ` +
+          `(${result.stats.newTokenCount}/${state.numCtx} tokens). The next turn may fail.`
       );
     }
 
@@ -505,7 +488,7 @@ export async function autoCompactIfNeeded(
   } catch (err) {
     clearLiveStatus();
     const msg = err instanceof Error ? err.message : String(err);
-    console.log(chalk.yellow(`⚠️  Auto-compact skipped: ${msg}\n`));
+    logger.warn('chat-session', `Auto-compact skipped: ${msg}`);
     return false;
   }
 }
@@ -569,7 +552,7 @@ export async function processAITurn(
           state.numCtx
         );
         clearLiveStatus();
-        console.log(`${chalk.red('AI Error Summary: ') + chalk.yellow(errorSummary)  }\n`);
+        logger.info('chat-session', `AI Error Summary: ${errorSummary}`);
 
         state.messages.push(
           sanitizeChatMessage({
