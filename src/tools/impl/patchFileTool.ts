@@ -416,7 +416,7 @@ export class PatchFileTool {
     }
 
     if (updatedContent !== content) {
-      await writeFile(absPath, updatedContent, { encoding: 'utf8', signal } as any);
+      await writeFile(absPath, updatedContent, { encoding: 'utf8', signal });
     }
 
     const result = [

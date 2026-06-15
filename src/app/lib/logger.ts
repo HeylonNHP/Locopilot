@@ -85,6 +85,7 @@ function emit(level: Level, tag: string, message: string, fields?: Record<string
   const line = suffix
     ? `${ts}${SEP}${coloredTag}${SEP}${boldMsg}${SEP}${suffix}`
     : `${ts}${SEP}${coloredTag}${SEP}${boldMsg}`;
+  // eslint-disable-next-line no-console -- this logger IS the abstraction over console; all log output funnels through here.
   console[LEVEL_CONSOLE[level]](line);
 }
 
@@ -99,18 +100,23 @@ export const logger = {
     emit('error', tag, message, fields),
 
   group(label: string, fn: () => void): void {
+    // eslint-disable-next-line no-console -- typeof check on console.group is not a call but the rule flags property access.
     if (typeof console.group === 'function') {
+      // eslint-disable-next-line no-console -- logger.group() wraps console.group/groupEnd as the public API.
       console.group(label);
       try {
         fn();
       } finally {
+        // eslint-disable-next-line no-console -- paired with the console.group above.
         console.groupEnd();
       }
     } else {
+      // eslint-disable-next-line no-console -- polyfill fallback when console.group is unavailable.
       console.log(`\u250C\u2500 ${label}`);
       try {
         fn();
       } finally {
+        // eslint-disable-next-line no-console -- closing polyfill fallback.
         console.log('\u2514\u2500');
       }
     }

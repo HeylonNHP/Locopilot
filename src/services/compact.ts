@@ -694,7 +694,9 @@ export function printCompactStats(stats: CompactResult['stats']): void {
   const ratio =
     stats.oldTokenCount > 0 ? ((tokensSaved / stats.oldTokenCount) * 100).toFixed(1) : '0.0';
 
+  // eslint-disable-next-line no-console
   console.log(chalk.green('\n── Compaction complete ──────────────────────────'));
+  // eslint-disable-next-line no-console
   console.log(
     chalk.white('  Tokens   : ') +
       chalk.red(String(stats.oldTokenCount)) +
@@ -702,5 +704,6 @@ export function printCompactStats(stats: CompactResult['stats']): void {
       chalk.green(String(stats.newTokenCount)) +
       chalk.dim(` (−${tokensSaved} tokens, ${ratio}% reduction)`)
   );
+  // eslint-disable-next-line no-console
   console.log(chalk.green('─────────────────────────────────────────────────\n'));
 }

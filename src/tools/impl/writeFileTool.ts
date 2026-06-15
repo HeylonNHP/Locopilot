@@ -99,7 +99,7 @@ export class WriteFileTool {
           ].join('\n');
           return warning;
         }
-        await writeFile(absPath, args.content, { encoding: 'utf8', flag: 'wx', signal } as any);
+        await writeFile(absPath, args.content, { encoding: 'utf8', flag: 'wx', signal });
         const result = [
           'write_file_result:',
           `path: ${absPath}`,
@@ -110,7 +110,7 @@ export class WriteFileTool {
       }
 
       if (mode === 'overwrite') {
-        await writeFile(absPath, args.content, { encoding: 'utf8', signal } as any);
+        await writeFile(absPath, args.content, { encoding: 'utf8', signal });
         const result = [
           'write_file_result:',
           `path: ${absPath}`,
@@ -121,7 +121,7 @@ export class WriteFileTool {
       }
 
       // mode === 'append'
-      await appendFile(absPath, args.content, { encoding: 'utf8', signal } as any);
+      await appendFile(absPath, args.content, { encoding: 'utf8', signal } as unknown as Parameters<typeof appendFile>[2]);
       const result = [
         'write_file_result:',
         `path: ${absPath}`,

@@ -1,10 +1,10 @@
 import { input, select } from '@inquirer/prompts';
-import chalk from 'chalk';
 import { access, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Config } from '../types/chatConfig';
 
+import { logger } from '../app/lib/logger';
 import {
   DEFAULT_NUM_CTX,
   DEFAULT_WEB_SEARCH_MAX_QUERIES,
@@ -28,8 +28,8 @@ export async function loadConfig(): Promise<Config | null> {
     const data = await readFile(CONFIG_PATH, 'utf8');
     return JSON.parse(data);
   } catch (err) {
-    if (err && (err as any).code !== 'ENOENT') {
-      console.error(chalk.red('Error reading or parsing config file.'));
+    if (err && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.error('Config', 'Error reading or parsing config file.');
     }
     return null;
   }
@@ -53,14 +53,14 @@ export async function saveConfig(config: Config): Promise<void> {
  * Handles unexpected errors during application execution.
  * @param err - The error object
  */
-export function handleUnexpectedError(err: any): void {
-  if (err && err.name === 'ExitPromptError') {
-    console.log('\nExiting Locopilot.');
+export function handleUnexpectedError(err: unknown): void {
+  if (err instanceof Error && err.name === 'ExitPromptError') {
+    logger.info('Config', '\nExiting Locopilot.');
     // Intentional CLI termination on user interrupting an inquirer prompt.
     // eslint-disable-next-line unicorn/no-process-exit
     process.exit(0);
   }
-  console.error(chalk.red('An unexpected error occurred:'), err);
+  logger.error('Config', 'An unexpected error occurred', { error: err instanceof Error ? err.message : String(err) });
   // Intentional fatal CLI termination; this is the top-level error handler.
   // eslint-disable-next-line unicorn/no-process-exit
   process.exit(1);
@@ -77,7 +77,7 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
 
   while (true) {
     if (!config) {
-      console.log(chalk.blue('Initial Configuration Required'));
+      logger.info('Config', 'Initial Configuration Required');
       const host = await input({
         message: 'Enter Ollama host (e.g., localhost):',
         default: 'localhost',
@@ -93,10 +93,8 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
       await saveConfig(config);
       return config;
     } catch {
-      console.error(chalk.red(`\nCould not connect to Ollama at ${  config.baseUrl}`));
-      console.error(
-        chalk.yellow('Please check if Ollama is running and the address is correct.\n')
-      );
+      logger.error('Config', `Could not connect to Ollama at ${config.baseUrl}`);
+      logger.warn('Config', 'Please check if Ollama is running and the address is correct.');
 
       const action = await select({
         message: 'What would you like to do?',
