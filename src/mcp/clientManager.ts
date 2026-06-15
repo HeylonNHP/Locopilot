@@ -27,6 +27,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
+import { logger } from '../app/lib/logger';
 import { expandEnvRefsInRecord } from './envExpansion';
 import { emitMCPEvent } from './events';
 import { buildOAuthProvider, consumeAuthorizationCode } from './oauthProvider';
@@ -295,7 +296,7 @@ class MCPClientManager {
       // what the dispatcher would expose.
       const blocklist = handle.config.disabledTools ?? [];
       handle.tools = newTools.filter((t) => !blocklist.includes(t.name));
-      console.log(`[mcp:${serverName}] tool list refreshed: ${handle.tools.length} tool(s)`);
+      logger.info('mcp', `[${serverName}] tool list refreshed: ${handle.tools.length} tool(s)`);
       // Notify the SSE channel — the consumer will re-fetch the
       // full status listing to pick up the new tool names + counts.
       emitMCPEvent({ kind: 'tools', serverName });
