@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosRequestConfig } from 'axios';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 
@@ -202,7 +202,7 @@ async function sendOllamaChat(
   timeoutMs?: number | undefined,
   signal?: AbortSignal
 ): Promise<ChatApiResponse> {
-  const config: any = {};
+  const config: AxiosRequestConfig = {};
   if (timeoutMs !== undefined) config.timeout = timeoutMs;
   if (signal) config.signal = signal;
 
@@ -247,7 +247,7 @@ async function* sendOllamaChatStream(
   baseUrl: string,
   params: StreamChatParams
 ): AsyncGenerator<ChatApiResponse> {
-  const requestConfig: any = {
+  const requestConfig: AxiosRequestConfig = {
     responseType: 'stream',
   };
   if (params.signal) {
