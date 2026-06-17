@@ -128,7 +128,7 @@ interface ChatState {
   streamingSessions: Set<number>;
 }
 
-type ChatAction =
+export type ChatAction =
   | { type: 'SET_MESSAGES'; messages: ChatMessage[]; targetSessionId?: number }
   | { type: 'ADD_MESSAGE'; message: ChatMessage }
   | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string }

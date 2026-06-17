@@ -3,24 +3,24 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import ApprovalModal from '@/components/ApprovalModal';
-import { type Attachment } from '@/components/ChatInput';
-import ChatMessageBubble from '@/components/ChatMessageBubble';
-import { EmptyState } from '@/components/EmptyState';
-import { ErrorBanner } from '@/components/ErrorBanner';
 import { InputArea } from '@/components/InputArea';
-import ScrollToLatestButton from '@/components/ScrollToLatestButton';
+import { MessagesArea } from '@/components/MessagesArea';
+import { PageLayout } from '@/components/PageLayout';
 import SettingsModal from '@/components/SettingsModal';
 import { SessionSidebar, SkillsPanel } from '@/components/sidebar';
 import StatusBar from '@/components/StatusBar';
 
+import { useActionHandlers } from './hooks/useActionHandlers';
 import { useApproval } from './hooks/useApproval';
 import { useChatStream } from './hooks/useChatStream';
 import { useDataLoaders } from './hooks/useDataLoaders';
 import { useScrollManager } from './hooks/useScrollManager';
+import { useSendHandler } from './hooks/useSendHandler';
 import { useSessionActions } from './hooks/useSessionActions';
 import { useSessionUrlParam } from './hooks/useSessionUrlParam';
 import { useSlashCommands } from './hooks/useSlashCommands';
 import { useStableRefs } from './hooks/useStableRefs';
+import { useSyncRefs } from './hooks/useSyncRefs';
 import { useChat } from './lib/chatStore';
 
 /** Inner component — uses useSearchParams so must live inside Suspense. */
@@ -31,19 +31,12 @@ function HomeInner() {
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
 
   const abortControllersRef = useRef<Map<number, AbortController>>(new Map());
-  const currentSessionIdRef = useRef<number | null>(state.currentSessionId);
-  const isCompactingRef = useRef(false);
-  const isGeneratingTitleRef = useRef(false);
 
-  useEffect(() => {
-    isCompactingRef.current = isCompacting;
-  }, [isCompacting]);
-  useEffect(() => {
-    isGeneratingTitleRef.current = isGeneratingTitle;
-  }, [isGeneratingTitle]);
-  useEffect(() => {
-    currentSessionIdRef.current = state.currentSessionId;
-  }, [state.currentSessionId]);
+  const { isCompactingRef, isGeneratingTitleRef } = useSyncRefs(
+    isCompacting,
+    isGeneratingTitle,
+    state.currentSessionId
+  );
 
   const refs = useStableRefs(state);
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
@@ -97,125 +90,74 @@ function HomeInner() {
     sendChatMessage,
   });
 
+  const handleSend = useSendHandler(dispatch, handleSlashCommand, sendChatMessage);
+
+  const { handleStop, handleSkillPrompt } = useActionHandlers(
+    abortControllersRef,
+    state.currentSessionId,
+    isCurrentSessionStreaming,
+    handleSend,
+    dispatch
+  );
+
   useEffect(() => {
     loadSessions();
     loadModels();
     loadConfig();
   }, []);
 
-  const handleSend = useCallback(
-    async (message: string, attachments: Attachment[]) => {
-      const trimmed = message.trim();
-      const hasAttachments = attachments.length > 0;
-      if (!trimmed && !hasAttachments) return;
-      dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
-      // Slash commands don't accept attachments — warn if the user had some pending.
-      if (trimmed.startsWith('/')) {
-        if (hasAttachments) {
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'system',
-              content: `Attachments are not supported with slash commands. Your ${attachments.length} file(s) were not sent.`,
-            },
-          });
-        }
-        await handleSlashCommand(trimmed);
-      } else {
-        await sendChatMessage(message, attachments);
-      }
-    },
-    [dispatch, handleSlashCommand, sendChatMessage]
-  );
-
-  const handleStop = useCallback(() => {
-    const controller = abortControllersRef.current.get(state.currentSessionId ?? -1);
-    controller?.abort();
-  }, [state.currentSessionId]);
-
-  const handleSkillPrompt = useCallback(
-    (message: string) => {
-      if (isCurrentSessionStreaming) {
-        dispatch({
-          type: 'ADD_MESSAGE',
-          message: {
-            role: 'system',
-            content: 'Cannot manage skills while the AI is responding. Stop the response first.',
-          },
-        });
-        return;
-      }
-      handleSend(message, []);
-    },
-    [isCurrentSessionStreaming, handleSend, dispatch]
-  );
-
   return (
-    <div className="app-root">
-      <SessionSidebar
-        onNewSession={handleNewSession}
-        onSelectSession={handleSelectSession}
-        onDeleteSession={handleDeleteSession}
-        onSettings={handleOpenSettings}
-        onSearchSessions={handleSearchSessions}
-      />
+    <PageLayout
+      sidebar={
+        <SessionSidebar
+          onNewSession={handleNewSession}
+          onSelectSession={handleSelectSession}
+          onDeleteSession={handleDeleteSession}
+          onSettings={handleOpenSettings}
+          onSearchSessions={handleSearchSessions}
+        />
+      }
+      mainArea={
+        <>
+          <MessagesArea
+            messages={state.messages}
+            error={state.error}
+            isCurrentSessionStreaming={isCurrentSessionStreaming}
+            modelCount={state.models.length}
+            showScrollToLatest={showScrollToLatest}
+            messagesAreaRef={messagesAreaRef}
+            messagesEndRef={messagesEndRef}
+            onRetry={retry}
+            onDismissError={() => dispatch({ type: 'SET_ERROR', error: null })}
+            onScrollToLatest={scrollToLatest}
+          />
 
-      <div className="main-area">
-        <div className="messages-shell">
-          <div
-            ref={messagesAreaRef}
-            className={`messages-area ${showScrollToLatest ? 'messages-area--has-scroll-button' : ''}`}
-          >
-            {state.messages.length === 0 ? (
-              <EmptyState modelCount={state.models.length} />
-            ) : (
-              state.messages.map((msg, i) => <ChatMessageBubble key={msg.id ?? i} message={msg} />)
-            )}
-
-            {state.error && (
-              <ErrorBanner
-                error={state.error}
-                isRetrying={isCurrentSessionStreaming}
-                onRetry={retry}
-                onDismiss={() => dispatch({ type: 'SET_ERROR', error: null })}
-              />
-            )}
-
-            <div ref={messagesEndRef} />
+          <div className="input-area">
+            <InputArea
+              isStreaming={isCurrentSessionStreaming}
+              isCompacting={isCompacting}
+              isGeneratingTitle={isGeneratingTitle}
+              compactingPhases={state.compactingPhases}
+              onStop={handleStop}
+              onSend={handleSend}
+            />
           </div>
 
-          <ScrollToLatestButton
-            visible={showScrollToLatest && state.messages.length > 0}
-            onClick={() => scrollToLatest('smooth')}
+          <StatusBar />
+        </>
+      }
+      approvalModal={
+        state.showApproval && state.pendingCommand ? (
+          <ApprovalModal
+            command={state.pendingCommand}
+            onApprove={handleApprove}
+            onReject={handleReject}
           />
-        </div>
-
-        <div className="input-area">
-          <InputArea
-            isStreaming={isCurrentSessionStreaming}
-            isCompacting={isCompacting}
-            isGeneratingTitle={isGeneratingTitle}
-            compactingPhases={state.compactingPhases}
-            onStop={handleStop}
-            onSend={handleSend}
-          />
-        </div>
-
-        <StatusBar />
-      </div>
-
-      {state.showApproval && state.pendingCommand && (
-        <ApprovalModal
-          command={state.pendingCommand}
-          onApprove={handleApprove}
-          onReject={handleReject}
-        />
-      )}
-
-      <SkillsPanel onPromptAI={handleSkillPrompt} />
-
-      {showSettings && <SettingsModal onClose={handleCloseSettings} />}
-    </div>
+        ) : null
+      }
+      skillsPanel={<SkillsPanel onPromptAI={handleSkillPrompt} />}
+      settingsModal={showSettings ? <SettingsModal onClose={handleCloseSettings} /> : null}
+    />
   );
 }
 
