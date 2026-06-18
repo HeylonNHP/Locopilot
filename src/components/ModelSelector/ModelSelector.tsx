@@ -71,6 +71,8 @@ interface ModelSelectorProps {
   lastClickRef: React.RefObject<{ x: number; y: number } | null>;
   isOpen: boolean;
   onClose: () => void;
+  /** Whether this selector updates the main chat model or the compaction model. */
+  mode?: 'model' | 'compaction';
 }
 
 export default function ModelSelector({
@@ -78,6 +80,7 @@ export default function ModelSelector({
   lastClickRef,
   isOpen,
   onClose,
+  mode = 'model',
 }: ModelSelectorProps) {
   const { state, dispatch } = useChat();
 
@@ -86,6 +89,8 @@ export default function ModelSelector({
   // streaming, defeating useCallback).
   const { models, model, baseUrl, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch } =
     state;
+
+  const activeModel = mode === 'compaction' ? compactionModel : model;
 
   const [search, setSearch] = useState('');
   const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 420 });
@@ -161,7 +166,32 @@ export default function ModelSelector({
 
   const handleSelect = useCallback(
     async (modelName: string) => {
-      if (modelName === model) {
+      if (modelName === activeModel) {
+        onClose();
+        return;
+      }
+
+      if (mode === 'compaction') {
+        dispatch({ type: 'SET_CONFIG', config: { compactionModel: modelName } });
+
+        try {
+          await fetch('/api/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              baseUrl,
+              model,
+              yolo,
+              thinkingEnabled,
+              compactionModel: modelName,
+              chatTimeoutMs,
+              webSearch,
+            }),
+          });
+        } catch {
+          // Silently ignore
+        }
+
         onClose();
         return;
       }
@@ -202,8 +232,10 @@ export default function ModelSelector({
     [
       dispatch,
       onClose,
-      model,
+      activeModel,
+      mode,
       baseUrl,
+      model,
       yolo,
       thinkingEnabled,
       compactionModel,
@@ -236,6 +268,31 @@ export default function ModelSelector({
         />
       </div>
       <div className="model-selector-list">
+        {mode === 'compaction' && (
+          <button
+            key="__same-as-main__"
+            className={`model-selector-item ${activeModel === '' ? 'model-selector-item-active' : ''}`}
+            onClick={() => handleSelect('')}
+            title="Use the currently selected chat model for compaction"
+          >
+            <span className="model-selector-check">
+              {activeModel === '' && (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M3 8.5L6.5 12L13 5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </span>
+            <span className="model-selector-content">
+              <span className="model-selector-name">Same as main model</span>
+            </span>
+          </button>
+        )}
         {filteredModels.length === 0 ? (
           <div className="model-selector-empty">No models found</div>
         ) : (
@@ -245,7 +302,7 @@ export default function ModelSelector({
             return (
               <button
                 key={m.name}
-                className={`model-selector-item ${m.name === model ? 'model-selector-item-active' : ''}`}
+                className={`model-selector-item ${m.name === activeModel ? 'model-selector-item-active' : ''}`}
                 onClick={() => handleSelect(m.name)}
                 title={
                   capabilityBadges.length > 0
@@ -254,7 +311,7 @@ export default function ModelSelector({
                 }
               >
                 <span className="model-selector-check">
-                  {m.name === model && (
+                  {m.name === activeModel && (
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                       <path
                         d="M3 8.5L6.5 12L13 5"

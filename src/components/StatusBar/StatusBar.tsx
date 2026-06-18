@@ -13,6 +13,7 @@ export default function StatusBar() {
   const {
     tokenStats,
     model,
+    compactionModel,
     messages,
     numCtx,
     currentTps,
@@ -23,8 +24,10 @@ export default function StatusBar() {
     models,
   } = state;
   const [showSelector, setShowSelector] = useState(false);
+  const [showCompactionSelector, setShowCompactionSelector] = useState(false);
   const [isDark, setIsDark] = useState(false);
   const modelRef = useRef<HTMLSpanElement>(null);
+  const compactionRef = useRef<HTMLSpanElement>(null);
   const modeRef = useRef<HTMLSpanElement>(null);
   const lastClickRef = useRef<{ x: number; y: number } | null>(null);
   const [showModeSelector, setShowModeSelector] = useState(false);
@@ -49,6 +52,20 @@ export default function StatusBar() {
 
   const handleCloseSelector = useCallback(() => {
     setShowSelector(false);
+  }, []);
+
+  const handleOpenCompactionSelector = useCallback(
+    ({ clientX, clientY }: { clientX: number; clientY: number }) => {
+      if (models.length > 0) {
+        lastClickRef.current = { x: clientX, y: clientY };
+        setShowCompactionSelector(true);
+      }
+    },
+    [models.length]
+  );
+
+  const handleCloseCompactionSelector = useCallback(() => {
+    setShowCompactionSelector(false);
   }, []);
 
   const handleOpenModeSelector = useCallback(({ clientX, clientY }: { clientX: number; clientY: number }) => {
@@ -136,6 +153,33 @@ export default function StatusBar() {
       </span>
       <span>{messages.length} messages</span>
       <span>
+        {model && (
+          <span
+            ref={compactionRef}
+            className="statusbar-compaction"
+            onClick={handleOpenCompactionSelector}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                if (compactionRef.current) {
+                  const rect = compactionRef.current.getBoundingClientRect();
+                  handleOpenCompactionSelector({
+                    clientX: rect.left + rect.width / 2,
+                    clientY: rect.top,
+                  });
+                } else {
+                  handleOpenCompactionSelector({ clientX: 0, clientY: 0 });
+                }
+              }
+            }}
+          >
+            Compaction: {compactionModel || 'Same as main'}
+          </span>
+        )}
+      </span>
+      <span>
         <span
           ref={modeRef}
           className="statusbar-mode"
@@ -168,6 +212,14 @@ export default function StatusBar() {
         lastClickRef={lastClickRef}
         isOpen={showSelector}
         onClose={handleCloseSelector}
+      />
+
+      <ModelSelector
+        anchorRef={compactionRef}
+        lastClickRef={lastClickRef}
+        isOpen={showCompactionSelector}
+        onClose={handleCloseCompactionSelector}
+        mode="compaction"
       />
 
       <CompletionModeSelector

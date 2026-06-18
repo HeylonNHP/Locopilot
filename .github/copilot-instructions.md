@@ -152,6 +152,11 @@ Feature summary:
 
 ## Change History
 
+- 2026-06-18: Added compaction model selector to the status bar
+  - Files: `components/StatusBar/StatusBar.tsx`, `components/StatusBar/StatusBar.scss`, `components/ModelSelector/ModelSelector.tsx`, `.github/copilot-instructions.md`
+  - Summary: Extended `ModelSelector` with an optional `mode` prop (`'model'` | `'compaction'`). In compaction mode it dispatches `SET_CONFIG { compactionModel: modelName }`, persists via `PUT /api/config`, skips the model-info / context-limit fetch, and shows a "Same as main model" option at the top of the list. Added a second clickable label to `StatusBar` displaying `Compaction: {compactionModel || 'Same as main'}`, plus the corresponding open/close state, ref, keyboard activation, and hover styling. The main model selector continues to behave exactly as before.
+  - Intent: Let users quickly view and swap the compaction model from the status bar without opening the full Settings modal, matching the convenience of the main model selector.
+
 - 2026-06-18: Removed dead interrupt-manager code and orphaned aiResponseRenderer
   - Files: `src/tools/interruptManager.ts` (deleted), `src/aiResponseRenderer.ts` (deleted), `src/tools/tools.ts`, `src/tools/impl/runCommandTool.ts`, `src/tools/impl/subAgentTool.ts`, `src/services/chatSession.ts`, `.github/copilot-instructions.md`
   - Summary: Removed the `interruptManager.ts` module entirely — `requestInterrupt()` and `clearInterrupt()` had zero callers, and the handler registry (`registerInterruptHandler`/`unregisterInterruptHandler`/`isInterruptRequested`) was dormant because nothing ever set the interrupt flag. The web UI's actual interrupt path is the HTTP `AbortSignal` (`req.signal`), which is already threaded through `handleToolCall` and `spawn()` separately. Removed the orphaned `aiResponseRenderer.ts` (nothing imported it). Updated `runCommandTool.ts` (removed dead interrupt-handler registration), `subAgentTool.ts` (simplified `isInterruptOrAbort` to only check the signal), `chatSession.ts` (removed dead `isInterruptRequested` checks in the CLI-only `processAITurn`), and `tools.ts` (removed the 5 re-exports from the deleted module).
