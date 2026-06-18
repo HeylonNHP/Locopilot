@@ -150,9 +150,6 @@ export default function StatusBar() {
             Model: {model}
           </span>
         )}
-      </span>
-      <span>{messages.length} messages</span>
-      <span>
         {model && (
           <span
             ref={compactionRef}
@@ -175,10 +172,11 @@ export default function StatusBar() {
               }
             }}
           >
-            Compaction: {compactionModel || 'Same as main'}
+            / {compactionModel || 'Same as main'}
           </span>
         )}
       </span>
+      <span>{messages.length} messages</span>
       <span>
         <span
           ref={modeRef}
