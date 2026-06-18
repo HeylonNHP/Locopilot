@@ -21,7 +21,6 @@ import { clearLiveStatus, updatePhase, updateVram } from '../statusLine';
 import {
   getToolSystemPrompt,
   handleToolCall,
-  isInterruptRequested,
   type ToolCallResult,
 } from '../tools/tools';
 import { compactHistory, printCompactStats } from './compact';
@@ -541,8 +540,7 @@ export async function processAITurn(
 
       if (
         tc.function.name === 'run_command' &&
-        tokenResult.content.includes('(COMMAND FAILED') &&
-        !isInterruptRequested()
+        tokenResult.content.includes('(COMMAND FAILED')
       ) {
         refreshTokenStatus(state, 'Summarizing command error...');
         const errorSummary = await summarizeCommandError(
@@ -564,9 +562,7 @@ export async function processAITurn(
         state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
       }
 
-      if (isInterruptRequested()) {
-        return { shouldContinue: false, wasInterrupted: true, finalStats: null };
-      }
+      // Interrupt check removed — the web UI uses AbortSignal instead.
     }
     return { shouldContinue: true, wasInterrupted: false, finalStats: sessionTokenStats };
   }

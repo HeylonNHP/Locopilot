@@ -44,14 +44,6 @@ import {
   type ToolCallResult,
   toolRegistry,
 } from './toolRegistry';
-export {
-  clearInterrupt,
-  isInterruptRequested,
-  registerInterruptHandler,
-  requestInterrupt,
-  unregisterInterruptHandler,
-} from './interruptManager';
-
 export type { ToolOutputSink } from './toolOutput';
 
 /**

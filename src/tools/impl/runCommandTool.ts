@@ -4,7 +4,7 @@ import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 
 import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { registerInterruptHandler, sanitize, unregisterInterruptHandler } from '../tools';
+import { sanitize } from '../tools';
 import {
   getAgentWorkingDirectory,
   resolveAgentPath,
@@ -341,13 +341,11 @@ export async function runCommand(
   return new Promise<string>((resolve) => {
     let settled = false;
     let returnedPartial = false;
-    let interruptHandlerId = -1;
 
     const finalize = (code: number, result?: string) => {
       if (settled) return;
       settled = true;
 
-      unregisterInterruptHandler(interruptHandlerId);
       if (abortHandler && signal) {
         signal.removeEventListener('abort', abortHandler);
       }
@@ -361,13 +359,6 @@ export async function runCommand(
       }
       resolve(result || buildOutput(entry, true, null));
     };
-
-    // Register interrupt handler
-    interruptHandlerId = registerInterruptHandler((result: string) => {
-      entry.stderr += `${entry.stderr ? '\n' : ''}${result}`;
-      killProcessTree(child);
-      finalize(-1);
-    });
 
     const timer = setTimeout(() => {
       if (settled) return;

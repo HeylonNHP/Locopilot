@@ -45,7 +45,6 @@ import {
 } from '../../services/llm';
 import { sanitizeChatMessage } from '../../services/textUtils';
 import { countMessagesTokens, countTextTokens } from '../../services/tokenizer';
-import { isInterruptRequested } from '../interruptManager';
 import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import {
   type IToolCommand,
@@ -57,9 +56,7 @@ import {
 } from '../toolRegistry';
 
 function isInterruptOrAbort(signal?: AbortSignal): boolean {
-  if (signal?.aborted) return true;
-  // Fallback to global interrupt when no signal is passed.
-  return isInterruptRequested();
+  return signal?.aborted === true;
 }
 
 interface SubAgentSpec {
