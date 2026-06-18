@@ -152,6 +152,13 @@ Feature summary:
 
 ## Change History
 
+- 2026-06-18: Fixed three compaction status-update bugs
+  - Files: `app/api/compact/route.ts`, `app/hooks/useSlashCommands.ts`, `app/hooks/useChatStream.ts`, `app/lib/chatStore.ts`, `.github/copilot-instructions.md`
+  - Bug 1 (manual /compact progress thrown away): Converted `/api/compact` from a plain JSON response to an SSE stream. The server now emits `compact_progress` events live via the `onProgress` callback, followed by a `compact` event with the result. Updated `useSlashCommands.ts` to parse the SSE stream with `EventSourceParserStream` and dispatch `COMPACT_PROGRESS` events as they arrive, so the `InputArea` streaming indicator shows live progress during manual `/compact`.
+  - Bug 2 (auto-compact label gets stuck): Added `dispatch({ type: 'CLEAR_COMPACT_PROGRESS' })` at the top of the `compact` event handler in `useChatStream.ts`, so the streaming indicator switches back to "Streaming..." as soon as compaction finishes and the model resumes generating.
+  - Bug 3 (compaction phases leak across streams/sessions): Updated the `STOP_STREAMING` reducer case in `chatStore.ts` to clear `compactingPhases` when the visible session's stream ends. Guarded with `isVisibleSession` check to avoid clearing phases during the `session_created` placeholder migration (-1 → realId) or when a non-current background session stops. Removed the dead `SET_STREAMING` action type, reducer case, and the orphaned `isStreaming` field from `ChatState` / initial state — these were never dispatched and were leftover from the CLI-to-web-UI migration.
+  - Intent: Ensure compaction progress updates reliably reach the UI for both manual and auto-compaction, and that stale progress text doesn't linger after a stream ends.
+
 - 2026-06-18: Added compaction model selector to the status bar
   - Files: `components/StatusBar/StatusBar.tsx`, `components/StatusBar/StatusBar.scss`, `components/ModelSelector/ModelSelector.tsx`, `.github/copilot-instructions.md`
   - Summary: Extended `ModelSelector` with an optional `mode` prop (`'model'` | `'compaction'`). In compaction mode it dispatches `SET_CONFIG { compactionModel: modelName }`, persists via `PUT /api/config`, skips the model-info / context-limit fetch, and shows a "Same as main model" option at the top of the list. Added a second clickable label to `StatusBar` displaying `Compaction: {compactionModel || 'Same as main'}`, plus the corresponding open/close state, ref, keyboard activation, and hover styling. The main model selector continues to behave exactly as before.

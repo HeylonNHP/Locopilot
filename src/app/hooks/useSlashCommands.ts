@@ -1,5 +1,6 @@
 'use client';
 
+import { EventSourceParserStream } from 'eventsource-parser/stream';
 import { type Dispatch, type SetStateAction, useCallback } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
@@ -329,6 +330,9 @@ export function useSlashCommands({
           const compactSessionId = refs.sessionIdRef.current;
           isCompactingRef.current = true;
           setIsCompacting(true);
+          // Clear any stale phases from previous compactions so the indicator
+          // starts fresh.
+          dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
           try {
             const response = await fetch('/api/compact', {
               method: 'POST',
@@ -343,30 +347,64 @@ export function useSlashCommands({
               }),
             });
 
-            const data = await response.json().catch(() => null);
-            if (!response.ok) throw new Error(data?.error ?? `HTTP ${response.status}`);
-            if (!Array.isArray(data?.messages))
-              throw new Error('Compaction returned an invalid message list.');
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => null);
+              throw new Error(errorData?.error ?? `HTTP ${response.status}`);
+            }
+            if (!response.body) throw new Error('Compaction returned no response body.');
+
+            // Parse the SSE stream for live compaction progress updates.
+            const eventStream = response.body
+              .pipeThrough(new TextDecoderStream())
+              .pipeThrough(new EventSourceParserStream());
+
+            const reader = eventStream.getReader();
+            let compactData: {
+              messages: ChatMessage[];
+              stats: { oldTokenCount?: number; newTokenCount?: number };
+            } | null = null;
+            let errorMessage: string | null = null;
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const event = value.event || 'message';
+              try {
+                const parsed = JSON.parse(value.data);
+                if (event === 'compact_progress' && typeof parsed.message === 'string') {
+                  dispatch({ type: 'COMPACT_PROGRESS', message: parsed.message });
+                } else if (event === 'compact' && Array.isArray(parsed.messages)) {
+                  compactData = parsed;
+                } else if (event === 'error' && typeof parsed.message === 'string') {
+                  errorMessage = parsed.message;
+                }
+              } catch {
+                // Ignore malformed SSE frames
+              }
+            }
+
+            if (errorMessage) throw new Error(errorMessage);
+            if (!compactData) throw new Error('Compaction returned an invalid response.');
 
             dispatch({
               type: 'SET_MESSAGES',
-              messages: data.messages as ChatMessage[],
+              messages: compactData.messages as ChatMessage[],
               ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
             });
-            if (typeof data?.stats?.newTokenCount === 'number') {
+            if (typeof compactData.stats?.newTokenCount === 'number') {
               dispatch({
                 type: 'SET_TOKEN_STATS',
                 stats: {
-                  promptEvalCount: data.stats.newTokenCount,
+                  promptEvalCount: compactData.stats.newTokenCount,
                   evalCount: 0,
-                  totalTokens: data.stats.newTokenCount,
+                  totalTokens: compactData.stats.newTokenCount,
                   tokenLimit: refs.numCtxRef.current,
                 },
                 ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
               });
             }
-            const oldTokens = data.stats?.oldTokenCount;
-            const newTokens = data.stats?.newTokenCount;
+            const oldTokens = compactData.stats?.oldTokenCount;
+            const newTokens = compactData.stats?.newTokenCount;
             if (typeof oldTokens === 'number' && typeof newTokens === 'number') {
               const saved = oldTokens - newTokens;
               const pct = oldTokens > 0 ? ((saved / oldTokens) * 100).toFixed(1) : '0.0';

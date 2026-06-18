@@ -86,7 +86,6 @@ interface ChatState {
   currentSessionId: number | null;
   model: string;
   models: LLmModel[];
-  isStreaming: boolean;
   baseUrl: string;
   numCtx: number;
   requestedNumCtx: number;
@@ -141,7 +140,6 @@ export type ChatAction =
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
   | { type: 'SET_MODELS'; models: LLmModel[] }
   | { type: 'SET_MODEL'; model: string }
-  | { type: 'SET_STREAMING'; isStreaming: boolean }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
   | { type: 'SET_MODEL_CONTEXT_LIMIT'; limit: number | null }
@@ -432,13 +430,6 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'SET_MODEL': {
       return { ...state, model: action.model };
     }
-    case 'SET_STREAMING': {
-      return {
-        ...state,
-        isStreaming: action.isStreaming,
-        ...(action.isStreaming ? {} : { compactingPhases: [] }),
-      };
-    }
     case 'SET_ERROR': {
       return { ...state, error: action.error };
     }
@@ -677,7 +668,21 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'STOP_STREAMING': {
       const nextSet = new Set(state.streamingSessions);
       nextSet.delete(action.sessionId);
-      return { ...state, streamingSessions: nextSet };
+      // Clear stale compaction phases when the visible session's stream
+      // ends, so old progress text doesn't linger into the next interaction
+      // or leak across session switches.  Skip the session_created
+      // placeholder migration (-1 → realId) where streaming continues
+      // under a new id — the currentSessionId has already been updated
+      // to the real id by that point, so the guard below naturally
+      // excludes it.
+      const isVisibleSession =
+        (state.currentSessionId === null && action.sessionId === -1) ||
+        state.currentSessionId === action.sessionId;
+      return {
+        ...state,
+        streamingSessions: nextSet,
+        ...(isVisibleSession ? { compactingPhases: [] } : {}),
+      };
     }
     case 'CLEAR_COMPACT_PROGRESS': {
       return { ...state, compactingPhases: [] };
@@ -694,7 +699,6 @@ const initialState: ChatState = {
   currentSessionId: null,
   model: '',
   models: [],
-  isStreaming: false,
   baseUrl: 'http://localhost:11434',
   numCtx: 131072,
   requestedNumCtx: 131072,

@@ -267,6 +267,11 @@ export function useChatStream(
         }
 
         case 'compact': {
+          // Clear stale compaction phases so the streaming indicator
+          // switches back to "Streaming..." once compaction finishes
+          // and the model resumes generating.
+          dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
+
           // Guard SET_MESSAGES and SET_TOKEN_STATS with the owning session so a
           // compaction that completes after the user has switched sessions cannot
           // overwrite the newly-viewed session's message list or token stats.

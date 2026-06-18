@@ -1,5 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
+import type { SseEventPayloadMap } from '../../../types/sse';
+
 import { DEFAULT_NUM_CTX } from '../../../constants';
 import { compactHistory } from '../../../services/compact';
 import { loadConfig } from '../../../services/configManager';
@@ -26,7 +28,7 @@ function isPersistedChatMessage(value: unknown): value is PersistedChatMessage {
   );
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<Response> {
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -54,78 +56,102 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const typedMessages: PersistedChatMessage[] = messages;
 
-  try {
-    const config = await loadConfig();
-    const effectiveBaseUrl =
-      typeof baseUrl === 'string' && baseUrl.trim().length > 0
-        ? baseUrl.trim()
-        : config?.baseUrl?.trim() || 'http://localhost:11434';
-    const effectiveNumCtx =
-      typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-        ? Math.floor(numCtx)
-        : config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
-          ? Math.floor(config.numCtx)
-          : DEFAULT_NUM_CTX;
-    const effectiveCompactionModel = resolveCompactionModel(
-      typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
-      model.trim()
-    );
+  // ── SSE streaming setup ───────────────────────────────────────────
+  const encoder = new TextEncoder();
 
-    // Strip system and subagent_log messages before compacting — system prompt
-    // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.
-    const subagentLogMessages: SubagentLogMessage[] = typedMessages.filter(
-      (m): m is SubagentLogMessage => m.role === 'subagent_log'
-    );
-
-    const conversationMessages: ChatMessage[] = typedMessages.filter(
-      (m): m is ChatMessage => m.role !== 'system' && m.role !== 'subagent_log'
-    );
-
-    const compactPhases: string[] = [];
-    const result = await compactHistory(
-      effectiveBaseUrl,
-      effectiveCompactionModel,
-      conversationMessages,
-      effectiveNumCtx,
-      (message: string) => {
-        compactPhases.push(message);
-      },
-      1,
-      2,
-      undefined,
-      request.signal
-    );
-
-    const parsedSessionId =
-      typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
-        ? sessionId
-        : null;
-    if (parsedSessionId) {
-      // Use a reducer so the queue reads current DB state inside the
-      // critical section.  Compaction replaces the conversation with
-      // the summarised result plus any subagent_log entries.
-      await enqueueSessionWrite(
-        parsedSessionId,
-        (_currentMessages) => [...result.newMessages, ...subagentLogMessages],
-        {
-          promptEvalCount: result.stats.newTokenCount,
-          evalCount: 0,
+  const stream = new ReadableStream({
+    async start(controller): Promise<void> {
+      function sendEvent<N extends keyof SseEventPayloadMap>(
+        event: N,
+        data: SseEventPayloadMap[N],
+      ): void {
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {
+          // Client disconnected — safe to ignore
         }
-      );
-    }
+      }
 
-    return NextResponse.json({
-      messages: result.newMessages,
-      stats: result.stats,
-      compactionModel: effectiveCompactionModel,
-      phases: compactPhases,
-    });
-  } catch (err) {
-    const fallbackMessage = err instanceof Error ? err.message : 'Unknown error';
-    const message = await getLlmApiErrorMessage(err).catch(() => fallbackMessage);
-    const status =
-      err instanceof Error && err.message.includes('too short to compact') ? 400 : 500;
+      try {
+        const config = await loadConfig();
+        const effectiveBaseUrl =
+          typeof baseUrl === 'string' && baseUrl.trim().length > 0
+            ? baseUrl.trim()
+            : config?.baseUrl?.trim() || 'http://localhost:11434';
+        const effectiveNumCtx =
+          typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
+            ? Math.floor(numCtx)
+            : config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
+              ? Math.floor(config.numCtx)
+              : DEFAULT_NUM_CTX;
+        const effectiveCompactionModel = resolveCompactionModel(
+          typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
+          model.trim()
+        );
 
-    return NextResponse.json({ error: message || fallbackMessage }, { status });
-  }
+        // Strip system and subagent_log messages before compacting — system prompt
+        // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.
+        const subagentLogMessages: SubagentLogMessage[] = typedMessages.filter(
+          (m): m is SubagentLogMessage => m.role === 'subagent_log'
+        );
+
+        const conversationMessages: ChatMessage[] = typedMessages.filter(
+          (m): m is ChatMessage => m.role !== 'system' && m.role !== 'subagent_log'
+        );
+
+        const result = await compactHistory(
+          effectiveBaseUrl,
+          effectiveCompactionModel,
+          conversationMessages,
+          effectiveNumCtx,
+          (message: string) => {
+            sendEvent('compact_progress', { message });
+          },
+          1,
+          2,
+          undefined,
+          request.signal
+        );
+
+        const parsedSessionId =
+          typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
+            ? sessionId
+            : null;
+        if (parsedSessionId) {
+          // Use a reducer so the queue reads current DB state inside the
+          // critical section.  Compaction replaces the conversation with
+          // the summarised result plus any subagent_log entries.
+          await enqueueSessionWrite(
+            parsedSessionId,
+            (_currentMessages) => [...result.newMessages, ...subagentLogMessages],
+            {
+              promptEvalCount: result.stats.newTokenCount,
+              evalCount: 0,
+            }
+          );
+        }
+
+        sendEvent('compact', {
+          messages: result.newMessages,
+          stats: result.stats,
+        });
+      } catch (err) {
+        const fallbackMessage = err instanceof Error ? err.message : 'Unknown error';
+        const message = await getLlmApiErrorMessage(err).catch(() => fallbackMessage);
+        sendEvent('error', { message: message || fallbackMessage });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
 }
