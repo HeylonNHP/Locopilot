@@ -24,7 +24,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const baseUrl = body.baseUrl;
   const compactionModel = body.compactionModel;
   const sessionId = body.sessionId;
-  const think: unknown = body.think;
+  const think: boolean | undefined = body.think as boolean | undefined;
 
   if (typeof model !== 'string' || !model.trim()) {
     return NextResponse.json({ error: 'Model name is required.' }, { status: 400 });

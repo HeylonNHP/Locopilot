@@ -68,8 +68,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 }
 
 interface PutBody {
-  name: unknown;
-  action: unknown;
+  name: string;
+  action: 'enable' | 'disable';
 }
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {

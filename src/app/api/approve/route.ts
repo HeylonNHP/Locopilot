@@ -19,9 +19,12 @@ import { type ApprovalDecision, resolveApproval } from '../../lib/approvalRegist
 export const dynamic = 'force-dynamic';
 
 interface ApproveBody {
-  requestId?: unknown;
-  approved?: unknown;
-  decision?: unknown;
+  requestId?: string;
+  approved?: boolean;
+  decision?: {
+    approved: boolean;
+    grantedTools?: string[];
+  };
 }
 
 function isString(value: unknown): value is string {

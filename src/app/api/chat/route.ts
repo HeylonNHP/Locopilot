@@ -139,15 +139,15 @@ export async function POST(req: NextRequest): Promise<Response> {
         );
     }
 
-    const messages: unknown = body.messages;
-    const model: unknown = body.model;
-    const numCtx: unknown = body.numCtx;
-    const sessionId: unknown = body.sessionId;
-    const baseUrl: unknown = body.baseUrl;
-    const think: unknown = body.think;
-    const chatTimeoutMs: unknown = body.chatTimeoutMs;
-    const completionMode: unknown = body.completionMode;
-    const maxPromptLoopIterations: unknown = body.maxPromptLoopIterations;
+    const messages: ClientChatMessage[] = body.messages as ClientChatMessage[];
+    const model: string = body.model as string;
+    const numCtx: number | undefined = body.numCtx as number | undefined;
+    const sessionId: number | undefined = body.sessionId as number | undefined;
+    const baseUrl: string | undefined = body.baseUrl as string | undefined;
+    const think: boolean | undefined = body.think as boolean | undefined;
+    const chatTimeoutMs: number | undefined = body.chatTimeoutMs as number | undefined;
+    const completionMode: string | undefined = body.completionMode as string | undefined;
+    const maxPromptLoopIterations: number | undefined = body.maxPromptLoopIterations as number | undefined;
 
     // -- Validation ------------------------------------------------
     if (typeof model !== 'string' || !model.trim()) {
