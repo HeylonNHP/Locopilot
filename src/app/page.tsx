@@ -41,9 +41,15 @@ function HomeInner() {
   const refs = useStableRefs(state);
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
 
+  const isCurrentSessionStreaming =
+    state.currentSessionId === null
+      ? state.streamingSessions.has(-1)
+      : state.streamingSessions.has(state.currentSessionId);
+
   const { showScrollToLatest, scrollToLatest, messagesAreaRef, messagesEndRef } = useScrollManager({
     messages: state.messages,
     currentSessionId: state.currentSessionId,
+    isStreaming: isCurrentSessionStreaming,
   });
 
   // ── URL param: restore session from ?session=<id> on mount; keep URL in sync ──
@@ -54,11 +60,6 @@ function HomeInner() {
     abortControllersRef,
     loadSessions
   );
-
-  const isCurrentSessionStreaming =
-    state.currentSessionId === null
-      ? state.streamingSessions.has(-1)
-      : state.streamingSessions.has(state.currentSessionId);
 
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
