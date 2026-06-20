@@ -332,7 +332,7 @@ export class PatchFileTool {
     }
     let fileStat;
     try {
-      fileStat = await stat(absPath, { signal } as unknown as Parameters<typeof stat>[1]);
+      fileStat = await stat(absPath, { signal });
     } catch (err) {
       const errorMsg = `[patch_file error: unable to access file: ${err instanceof Error ? err.message : String(err)}]`;
       return errorMsg;

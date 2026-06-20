@@ -1,4 +1,3 @@
-import type { StatOptions } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 
 import type { ToolSchema } from '../../tools/tools';
@@ -104,7 +103,7 @@ export class ReadFileTool {
     const absPath = resolveAgentPath(this.scope, rawPath);
     let fileStat;
     try {
-      fileStat = await stat(absPath, { signal } as unknown as StatOptions);
+      fileStat = await stat(absPath, { signal });
     } catch (err) {
       const errorMsg = `[read_file error: unable to access file: ${err instanceof Error ? err.message : String(err)}]`;
       return errorMsg;

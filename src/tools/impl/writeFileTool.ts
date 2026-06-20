@@ -74,11 +74,11 @@ export class WriteFileTool {
       return '[write_file error: invalid "mode". Expected "overwrite", "append", or "create".]';
     }
     const parent = path.dirname(absPath);
-    await mkdir(parent, { recursive: true, signal } as unknown as Parameters<typeof mkdir>[1]);
+    await mkdir(parent, { recursive: true, signal });
 
     let fileExists = false;
     try {
-      const fileStat = await stat(absPath, { signal } as unknown as Parameters<typeof stat>[1]);
+      const fileStat = await stat(absPath, { signal });
       fileExists = fileStat ? fileStat.isFile() : false;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -106,9 +106,11 @@ export class WriteFileTool {
       }
 
       // mode === 'append'
-      await appendFile(absPath, args.content, { encoding: 'utf8', signal } as unknown as Parameters<
-        typeof appendFile
-      >[2]);
+      // `appendFile`'s options type in @types/node doesn't include `Abortable`,
+      // so we assign to a variable first — TypeScript skips excess-property
+      // checks on non-literals, while the runtime still receives `signal`.
+      const appendOpts = { encoding: 'utf8' as const, signal };
+      await appendFile(absPath, args.content, appendOpts);
 
       return formatWriteResult(absPath, 'append', args.content);
     } catch (err) {
