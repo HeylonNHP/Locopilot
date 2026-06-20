@@ -54,6 +54,7 @@ import {
   type ToolCallResult,
   toolRegistry,
 } from '../toolRegistry';
+import { WorkingDirectoryScope } from '../workingDirectory';
 
 function isInterruptOrAbort(signal?: AbortSignal): boolean {
   return signal?.aborted === true;
@@ -403,6 +404,14 @@ async function runSingleAgent(
 ): Promise<string> {
   const orcPrompt: ChatMessage = { role: 'user', content: agent.prompt };
   const labeledOutput = makeLabeledSink(output, agent.id);
+  // Create a per-sub-agent working-directory scope so each agent's `cd`
+  // commands and relative path resolutions are isolated from the parent
+  // and from sibling sub-agents.
+  const agentScope = new WorkingDirectoryScope();
+  const agentContext: RequestContext = {
+    ...(context ?? ({} as RequestContext)),
+    workingDirectoryScope: agentScope,
+  };
   const messages: ChatMessage[] = [
     { role: 'system', content: buildSubAgentSystemPrompt(skillSummary) },
     orcPrompt,
@@ -514,7 +523,7 @@ async function runSingleAgent(
         toolCall,
         labeledOutput,
         onProgress,
-        context,
+        agentContext,
         signal,
         subAgentMcpApprovals
       );

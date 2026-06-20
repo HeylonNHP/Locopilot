@@ -15,6 +15,7 @@ import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
 import type { ToolDefinition } from '../services/llm';
+import type { WorkingDirectoryScope } from './workingDirectory';
 
 import {
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
@@ -74,6 +75,12 @@ export interface RequestContext {
   model?: string;
   /** Context window size for the current request (top-level, used by tools like read_pdf even outside sub-agents) */
   numCtx?: number;
+  /**
+   * Per-request identity token for working-directory tracking. Created
+   * once per HTTP request (or sub-agent run) and threaded through to
+   * tools that resolve relative paths via `resolveAgentPath`.
+   */
+  workingDirectoryScope?: WorkingDirectoryScope;
 }
 
 export interface ToolWebSearchConfig {
@@ -256,29 +263,31 @@ async function runFetchUrl(
 async function runReadFile(
   args: ReadFileToolArgs,
   output: ToolOutputSink = noopToolOutputSink,
+  scope: WorkingDirectoryScope | undefined,
   model?: string,
   numCtx?: number,
   signal?: AbortSignal
 ): Promise<string> {
-  const tool = new ReadFileTool({ output, model, numCtx });
+  const tool = new ReadFileTool({ output, scope, model, numCtx });
   return tool.run(args, signal);
 }
 
 async function runPatchFile(
   args: PatchFileToolArgs,
   output: ToolOutputSink = noopToolOutputSink,
+  scope: WorkingDirectoryScope | undefined,
   signal?: AbortSignal
 ): Promise<string> {
-  const tool = new PatchFileTool({ output });
+  const tool = new PatchFileTool({ output, scope });
   return tool.run(args, signal);
 }
 
 async function runWriteFile(
   args: WriteFileToolArgs,
-  output: ToolOutputSink = noopToolOutputSink,
+  scope: WorkingDirectoryScope | undefined,
   signal?: AbortSignal
 ): Promise<string> {
-  const tool = new WriteFileTool({ output });
+  const tool = new WriteFileTool({ scope });
   return tool.run(args, signal);
 }
 
@@ -300,11 +309,12 @@ function runFetchImage(
 async function runReadPdf(
   args: ReadPdfToolArgs,
   output: ToolOutputSink = noopToolOutputSink,
+  scope: WorkingDirectoryScope | undefined,
   model?: string,
   numCtx?: number,
   signal?: AbortSignal
 ): Promise<ToolCallResult> {
-  const tool = new ReadPdfTool({ output, model, numCtx });
+  const tool = new ReadPdfTool({ output, scope, model, numCtx });
   return tool.run(args, signal);
 }
 
@@ -342,6 +352,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
             onProgress,
             cwd,
             output,
+            context?.workingDirectoryScope,
             context?.yoloMode ?? false,
             signal
           ),
@@ -495,6 +506,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
               line_count: args.line_count,
             },
             output,
+            context?.workingDirectoryScope,
             context?.subAgent?.model ?? context?.model,
             context?.subAgent?.numCtx ?? context?.numCtx,
             signal
@@ -522,6 +534,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
               patches: args.patches,
             },
             output,
+            context?.workingDirectoryScope,
             signal
           ),
         };
@@ -531,7 +544,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
   [
     'write_file',
     {
-      async execute(args, _onProgress, output = noopToolOutputSink, context, signal) {
+      async execute(args, _onProgress, _output = noopToolOutputSink, context, signal) {
         const permErr = checkToolAllowed('write_file', context);
         if (permErr) return { content: permErr };
         if (typeof args.path !== 'string' || args.path.trim().length === 0) {
@@ -547,7 +560,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
               content: args.content,
               mode: args.mode,
             },
-            output,
+            context?.workingDirectoryScope,
             signal
           ),
         };
@@ -699,6 +712,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
         return runReadPdf(
           pdfArgs,
           output,
+          context?.workingDirectoryScope,
           context?.subAgent?.model ?? context?.model,
           context?.subAgent?.numCtx ?? context?.numCtx,
           signal

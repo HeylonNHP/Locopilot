@@ -3,8 +3,7 @@ import path from 'node:path';
 
 import type { ToolSchema } from '@/tools/tools';
 
-import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { resolveAgentPath } from '../workingDirectory';
+import { resolveAgentPath, type WorkingDirectoryScope } from '../workingDirectory';
 
 export const writeFileToolSchema: ToolSchema = {
   name: 'write_file',
@@ -36,7 +35,7 @@ export interface WriteFileToolArgs {
 }
 
 export interface WriteFileToolOptions {
-  output?: ToolOutputSink;
+  scope?: WorkingDirectoryScope | undefined;
 }
 
 function isValidMode(value: unknown): value is 'overwrite' | 'append' | 'create' {
@@ -44,10 +43,10 @@ function isValidMode(value: unknown): value is 'overwrite' | 'append' | 'create'
 }
 
 export class WriteFileTool {
-  private readonly output: ToolOutputSink;
+  private readonly scope: WorkingDirectoryScope | undefined;
 
   constructor(options: WriteFileToolOptions = {}) {
-    this.output = options.output ?? noopToolOutputSink;
+    this.scope = options.scope;
   }
   async run(args: WriteFileToolArgs, signal?: AbortSignal): Promise<string> {
     const rawPath = (args.path ?? '').trim();
@@ -55,7 +54,7 @@ export class WriteFileTool {
       return '[write_file error: missing required argument "path".]';
     }
 
-    const absPath = resolveAgentPath(this.output, rawPath);
+    const absPath = resolveAgentPath(this.scope, rawPath);
 
     if (typeof args.content !== 'string') {
       return '[write_file error: missing required argument "content".]';

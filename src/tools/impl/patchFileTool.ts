@@ -3,7 +3,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import type { ToolSchema } from '../../tools/tools';
 
 import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { resolveAgentPath } from '../workingDirectory';
+import { resolveAgentPath, type WorkingDirectoryScope } from '../workingDirectory';
 
 export const patchFileToolSchema: ToolSchema = {
   name: 'patch_file',
@@ -49,6 +49,7 @@ export interface PatchFileToolArgs {
 
 export interface PatchFileToolOptions {
   output?: ToolOutputSink;
+  scope?: WorkingDirectoryScope | undefined;
 }
 
 interface NormalizedText {
@@ -305,9 +306,11 @@ function applyPatch(content: string, match: PatchMatch): string {
 
 export class PatchFileTool {
   private readonly output: ToolOutputSink;
+  private readonly scope: WorkingDirectoryScope | undefined;
 
   constructor(options: PatchFileToolOptions = {}) {
     this.output = options.output ?? noopToolOutputSink;
+    this.scope = options.scope;
   }
 
   private log(message: string): void {
@@ -321,7 +324,7 @@ export class PatchFileTool {
       return errorMsg;
     }
 
-    const absPath = resolveAgentPath(this.output, rawPath);
+    const absPath = resolveAgentPath(this.scope, rawPath);
 
     if (!Array.isArray(args.patches) || args.patches.length === 0) {
       const errorMsg = '[patch_file error: missing required argument "patches".]';

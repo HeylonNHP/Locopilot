@@ -15,7 +15,7 @@ import {
 } from '../../constants';
 import { countTextTokens } from '../../services/tokenizer';
 import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { resolveAgentPath } from '../workingDirectory';
+import { resolveAgentPath, type WorkingDirectoryScope } from '../workingDirectory';
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB — warn when no range provided
 const MAX_PAGES_PER_CALL = 50;
@@ -58,17 +58,20 @@ export interface ReadPdfToolArgs {
 
 export interface ReadPdfToolOptions {
   output?: ToolOutputSink;
+  scope?: WorkingDirectoryScope | undefined;
   model?: string | undefined;
   numCtx?: number | undefined;
 }
 
 export class ReadPdfTool {
   private readonly output: ToolOutputSink;
+  private readonly scope: WorkingDirectoryScope | undefined;
   private readonly model: string | undefined;
   private readonly numCtx: number | undefined;
 
   constructor(options: ReadPdfToolOptions = {}) {
     this.output = options.output ?? noopToolOutputSink;
+    this.scope = options.scope;
     this.model = options.model;
     this.numCtx = options.numCtx;
   }
@@ -85,7 +88,7 @@ export class ReadPdfTool {
 
     let absPath: string;
     try {
-      absPath = resolveAgentPath(this.output, rawPath);
+      absPath = resolveAgentPath(this.scope, rawPath);
     } catch (err) {
       return {
         content: `[read_pdf error: invalid path: ${err instanceof Error ? err.message : String(err)}]`,

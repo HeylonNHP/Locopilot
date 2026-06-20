@@ -6,7 +6,7 @@ import type { ToolSchema } from '../../tools/tools';
 import { READ_FILE_TOKEN_CRITICAL_PCT, READ_FILE_TOKEN_WARN_PCT } from '../../constants';
 import { countTextTokens } from '../../services/tokenizer';
 import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { resolveAgentPath } from '../workingDirectory';
+import { resolveAgentPath, type WorkingDirectoryScope } from '../workingDirectory';
 
 export const readFileToolSchema: ToolSchema = {
   name: 'read_file',
@@ -60,6 +60,7 @@ export interface ReadFileToolArgs {
 
 export interface ReadFileToolOptions {
   output?: ToolOutputSink;
+  scope?: WorkingDirectoryScope | undefined;
   model?: string | undefined;
   numCtx?: number | undefined;
 }
@@ -78,11 +79,13 @@ function isStrictlyPositiveInteger(value: unknown): value is number {
 
 export class ReadFileTool {
   private readonly output: ToolOutputSink;
+  private readonly scope: WorkingDirectoryScope | undefined;
   private readonly model: string | undefined;
   private readonly numCtx: number | undefined;
 
   constructor(options: ReadFileToolOptions = {}) {
     this.output = options.output ?? noopToolOutputSink;
+    this.scope = options.scope;
     this.model = options.model;
     this.numCtx = options.numCtx;
   }
@@ -98,7 +101,7 @@ export class ReadFileTool {
       return errorMsg;
     }
 
-    const absPath = resolveAgentPath(this.output, rawPath);
+    const absPath = resolveAgentPath(this.scope, rawPath);
     let fileStat;
     try {
       fileStat = await stat(absPath, { signal } as unknown as StatOptions);

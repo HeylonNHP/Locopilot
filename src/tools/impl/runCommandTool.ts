@@ -9,6 +9,7 @@ import {
   getAgentWorkingDirectory,
   resolveAgentPath,
   setAgentWorkingDirectory,
+  type WorkingDirectoryScope,
 } from '../workingDirectory';
 
 const isWindows = os.platform() === 'win32';
@@ -247,16 +248,16 @@ export async function runCommand(
   onProgress?: (message: string) => void,
   cwd?: string,
   output: ToolOutputSink = noopToolOutputSink,
+  scope?: WorkingDirectoryScope,
   yoloMode: boolean = false,
   signal?: AbortSignal
 ): Promise<string> {
   const effectiveShell = getEffectiveShell(shell, output);
   const approvedYolo = yoloMode;
-  const agentOutput = output ?? noopToolOutputSink;
   const trimmedCwd = cwd?.trim();
   const workingDirectory = trimmedCwd
-    ? resolveAgentPath(agentOutput, trimmedCwd)
-    : getAgentWorkingDirectory(agentOutput);
+    ? resolveAgentPath(scope, trimmedCwd)
+    : getAgentWorkingDirectory(scope);
 
   const workdirNonce = crypto.randomUUID
     ? crypto.randomUUID()
@@ -402,7 +403,7 @@ export async function runCommand(
       if (detectedWorkingDirectory) {
         stdoutLines.splice(markerLineIndex, 1);
         entry.stdout = stdoutLines.join('\n').trimEnd();
-        setAgentWorkingDirectory(agentOutput, detectedWorkingDirectory);
+        setAgentWorkingDirectory(scope, detectedWorkingDirectory);
       }
 
       output.writeLine(`\n  Process ${processId} exited with code ${code}.\n`);

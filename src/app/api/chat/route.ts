@@ -50,6 +50,7 @@ import { generateFallbackTitle } from '@/services/titleUtils';
 import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
 import { enterRequestScope } from '@/tools/impl/runCommandTool';
 import { handleToolCall, type RequestContext, sanitize, type ToolOutputSink, TOOLS } from '@/tools/tools';
+import { WorkingDirectoryScope } from '@/tools/workingDirectory';
 
 import {
   type ChatMessage,
@@ -396,6 +397,12 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // resolves an approval_request event for a specific mcp_call.
                 const mcpApprovalsSet = new Set<string>();
 
+                // Per-request working-directory scope — a stable identity token
+                // so that `run_command`'s `cd` tracking persists across all
+                // tool calls within this HTTP request (previously broken because
+                // fresh ToolOutputSink objects were created per tool call).
+                const workingDirectoryScope = new WorkingDirectoryScope();
+
                 // Load runtime tool configuration from disk so that web search
                 // and YOLO settings reflect the latest user preferences.
                 // Build per-request context from config (no global state setters).
@@ -466,6 +473,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         mcpApprovals: [...mcpApprovalsSet],
                         model: model as string,
                         numCtx: effectiveNumCtx,
+                        workingDirectoryScope,
                         webSearch: {
                             maxQueries: config?.webSearch?.maxQueries ?? 3,
                             resultsPerQuery: config?.webSearch?.resultsPerQuery ?? 3,
@@ -501,6 +509,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         mcpApprovals: [...mcpApprovalsSet],
                         model: model as string,
                         numCtx: effectiveNumCtx,
+                        workingDirectoryScope,
                         webSearch: {
                             maxQueries: 3,
                             resultsPerQuery: 3,
