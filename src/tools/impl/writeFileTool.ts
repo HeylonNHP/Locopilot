@@ -1,7 +1,7 @@
 import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ToolSchema } from '../../tools/tools';
+import type { ToolSchema } from '@/tools/tools';
 
 import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { resolveAgentPath } from '../workingDirectory';
@@ -49,30 +49,21 @@ export class WriteFileTool {
   constructor(options: WriteFileToolOptions = {}) {
     this.output = options.output ?? noopToolOutputSink;
   }
-
-  private log(message: string): void {
-    this.output.writeLine(message);
-  }
-
   async run(args: WriteFileToolArgs, signal?: AbortSignal): Promise<string> {
     const rawPath = (args.path ?? '').trim();
     if (!rawPath) {
-      const errorMsg = '[write_file error: missing required argument "path".]';
-      return errorMsg;
+      return '[write_file error: missing required argument "path".]';
     }
 
     const absPath = resolveAgentPath(this.output, rawPath);
 
     if (typeof args.content !== 'string') {
-      const errorMsg = '[write_file error: missing required argument "content".]';
-      return errorMsg;
+      return '[write_file error: missing required argument "content".]';
     }
 
     const mode = args.mode ? args.mode.trim().toLowerCase() : 'overwrite';
     if (!isValidMode(mode)) {
-      const errorMsg =
-        '[write_file error: invalid "mode". Expected "overwrite", "append", or "create".]';
-      return errorMsg;
+      return '[write_file error: invalid "mode". Expected "overwrite", "append", or "create".]';
     }
     const parent = path.dirname(absPath);
     await mkdir(parent, { recursive: true, signal } as unknown as Parameters<typeof mkdir>[1]);
@@ -83,67 +74,62 @@ export class WriteFileTool {
       fileExists = fileStat ? fileStat.isFile() : false;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        const errorMsg = `[write_file error: unable to access path: ${err instanceof Error ? err.message : String(err)}]`;
-        return errorMsg;
+        return `[write_file error: unable to access path: ${err instanceof Error ? err.message : String(err)}]`;
       }
     }
 
     try {
       if (mode === 'create') {
         if (fileExists) {
-          const warning = [
+          return [
             'write_file_warning:',
             `path: ${absPath}`,
             'action: create',
             'warning: file already exists. Use mode "overwrite" to replace it, or mode "append" to add to it.',
           ].join('\n');
-          return warning;
         }
         await writeFile(absPath, args.content, { encoding: 'utf8', flag: 'wx', signal });
-        const result = [
+        return [
           'write_file_result:',
           `path: ${absPath}`,
           'action: create',
           `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
         ].join('\n');
-        return result;
       }
 
       if (mode === 'overwrite') {
         await writeFile(absPath, args.content, { encoding: 'utf8', signal });
-        const result = [
+        return [
           'write_file_result:',
           `path: ${absPath}`,
           'action: overwrite',
           `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
         ].join('\n');
-        return result;
       }
 
       // mode === 'append'
-      await appendFile(absPath, args.content, { encoding: 'utf8', signal } as unknown as Parameters<typeof appendFile>[2]);
-      const result = [
+      await appendFile(absPath, args.content, { encoding: 'utf8', signal } as unknown as Parameters<
+        typeof appendFile
+      >[2]);
+
+      return [
         'write_file_result:',
         `path: ${absPath}`,
         'action: append',
         `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
       ].join('\n');
-      return result;
     } catch (err) {
-      const errorMsg = `[write_file error: failed to write file: ${err instanceof Error ? err.message : String(err)}]`;
-      return errorMsg;
+      return `[write_file error: failed to write file: ${err instanceof Error ? err.message : String(err)}]`;
     }
   }
 }
 
 export function getToolPrompt(): string {
-  const s = writeFileToolSchema;
-  const p = s.parameters.properties;
   return (
-    `8. ${s.name}(path, content, mode?)\n` +
-    `   ${s.description}\n\n` +
-    `   - path: ${p.path!.description}\n` +
-    `   - content: ${p.content!.description}\n` +
-    `   - mode: ${p.mode!.description}\n`
+    `8. ${writeFileToolSchema.name}(path, content, mode?)\n` +
+    `   ${writeFileToolSchema.description}\n\n` +
+    `   - path: ${writeFileToolSchema.parameters.properties.path!.description}\n` +
+    `   - content: ${writeFileToolSchema.parameters.properties.content!.description}\n` +
+    `   - mode: ${writeFileToolSchema.parameters.properties.mode!.description}\n`
   );
 }
