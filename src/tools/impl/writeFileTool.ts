@@ -42,6 +42,15 @@ function isValidMode(value: unknown): value is 'overwrite' | 'append' | 'create'
   return value === 'overwrite' || value === 'append' || value === 'create';
 }
 
+function formatWriteResult(absPath: string, action: string, content: string): string {
+  return [
+    'write_file_result:',
+    `path: ${absPath}`,
+    `action: ${action}`,
+    `bytes_written: ${Buffer.byteLength(content, 'utf8')}`,
+  ].join('\n');
+}
+
 export class WriteFileTool {
   private readonly scope: WorkingDirectoryScope | undefined;
 
@@ -88,22 +97,12 @@ export class WriteFileTool {
           ].join('\n');
         }
         await writeFile(absPath, args.content, { encoding: 'utf8', flag: 'wx', signal });
-        return [
-          'write_file_result:',
-          `path: ${absPath}`,
-          'action: create',
-          `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
-        ].join('\n');
+        return formatWriteResult(absPath, 'create', args.content);
       }
 
       if (mode === 'overwrite') {
         await writeFile(absPath, args.content, { encoding: 'utf8', signal });
-        return [
-          'write_file_result:',
-          `path: ${absPath}`,
-          'action: overwrite',
-          `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
-        ].join('\n');
+        return formatWriteResult(absPath, 'overwrite', args.content);
       }
 
       // mode === 'append'
@@ -111,12 +110,7 @@ export class WriteFileTool {
         typeof appendFile
       >[2]);
 
-      return [
-        'write_file_result:',
-        `path: ${absPath}`,
-        'action: append',
-        `bytes_written: ${Buffer.byteLength(args.content, 'utf8')}`,
-      ].join('\n');
+      return formatWriteResult(absPath, 'append', args.content);
     } catch (err) {
       return `[write_file error: failed to write file: ${err instanceof Error ? err.message : String(err)}]`;
     }
