@@ -1,4 +1,16 @@
-import type { ToolSchema } from '../../tools/tools';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+
+import type { ToolSchema } from '@/tools/tools';
+
+import type { ToolOutputSink } from '../toolOutput';
+
+import {
+  cleanText,
+  DEFAULT_USER_AGENT,
+  type ExtractedLink,
+  fetchAndExtract,
+} from '../web/htmlExtractor';
 
 export const webSearchToolSchema: ToolSchema = {
   name: 'web_search',
@@ -39,20 +51,52 @@ export const webSearchToolSchema: ToolSchema = {
   },
 };
 
-import axios from 'axios';
-import * as cheerio from 'cheerio';
-
-import type { ToolOutputSink } from '../toolOutput';
-
-import {
-  cleanText,
-  DEFAULT_USER_AGENT,
-  type ExtractedLink,
-  fetchAndExtract,
-} from '../web/htmlExtractor';
-
 const DUCKDUCKGO_HTML_SEARCH_URL = 'https://html.duckduckgo.com/html/';
 const DDG_REGION = 'wt-wt'; // All regions
+
+/**
+ * Human-readable names for DuckDuckGo's internal form parameters.
+ *
+ * DDG's HTML search endpoint uses cryptic single-letter / abbreviated field
+ * names in its POST body.  These constants map each one to a self-documenting
+ * name so the intent is clear at the call site.  The wire format is unchanged.
+ *
+ * References:
+ *   - https://docs.searxng.org/dev/engines/online/duckduckgo.html
+ *   - https://github.com/deedy5/duckduckgo_search
+ */
+const DDG = {
+  PARAM: {
+    /** Search query string */
+    QUERY: 'q',
+    /** "Beginning" — empty string for first page; omitted on subsequent pages */
+    BEGINNING: 'b',
+    /** Validation Query Digest — anti-bot token required for pagination */
+    VALIDATION_TOKEN: 'vqd',
+    /** Search offset for pagination (page 2 = 10, page 3+ = 10 + (n-2)*15) */
+    OFFSET: 's',
+    /** Display count — always offset + 1 */
+    DISPLAY_COUNT: 'dc',
+    /** Continuation params from previous page response */
+    NEXT_PARAMS: 'nextParams',
+    /** Backend identifier ("d.js" = web search) */
+    API_ENDPOINT: 'api',
+    /** Output format ("json") */
+    OUTPUT_FORMAT: 'o',
+    /** Version indicator ("l") */
+    VERSION: 'v',
+    /** Region / keyboard language code */
+    REGION: 'kl',
+  } as const,
+  /** Web search backend */
+  API_WEB_SEARCH: 'd.js',
+  /** JSON output format */
+  OUTPUT_JSON: 'json',
+  /** Latest version indicator */
+  VERSION_LATEST: 'l',
+  /** All regions (worldwide) */
+  REGION_WORLDWIDE: 'wt-wt',
+} as const;
 
 export interface WebSearchSettings {
   maxQueries: number;
@@ -299,9 +343,9 @@ export class WebSearchTool {
 
     // First page via POST (DDG HTML endpoint expects POST even for the intro page)
     const firstPageData = new URLSearchParams({
-      q: query,
-      b: '',
-      kl: DDG_REGION,
+      [DDG.PARAM.QUERY]: query,
+      [DDG.PARAM.BEGINNING]: '',
+      [DDG.PARAM.REGION]: DDG_REGION,
     }).toString();
 
     const firstResponse = await axios.post<string>(DUCKDUCKGO_HTML_SEARCH_URL, firstPageData, {
@@ -350,15 +394,15 @@ export class WebSearchTool {
     while (results.length < limit) {
       const offset = pageNum === 2 ? 10 : 10 + (pageNum - 2) * 15;
       const pageData = new URLSearchParams({
-        q: query,
-        vqd,
-        s: String(offset),
-        dc: String(offset + 1),
-        nextParams: '',
-        api: 'd.js',
-        o: 'json',
-        v: 'l',
-        kl: DDG_REGION,
+        [DDG.PARAM.QUERY]: query,
+        [DDG.PARAM.VALIDATION_TOKEN]: vqd,
+        [DDG.PARAM.OFFSET]: String(offset),
+        [DDG.PARAM.DISPLAY_COUNT]: String(offset + 1),
+        [DDG.PARAM.NEXT_PARAMS]: '',
+        [DDG.PARAM.API_ENDPOINT]: DDG.API_WEB_SEARCH,
+        [DDG.PARAM.OUTPUT_FORMAT]: DDG.OUTPUT_JSON,
+        [DDG.PARAM.VERSION]: DDG.VERSION_LATEST,
+        [DDG.PARAM.REGION]: DDG_REGION,
       }).toString();
 
       let pageResponse;
