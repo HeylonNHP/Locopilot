@@ -289,8 +289,8 @@ export class WebSearchTool {
 
     // Try the newer DDG HTML structure first (div#links > div.web-result),
     // then fall back to the legacy .result selector.
-    const resultElements =
-      $('div#links div.web-result').length > 0 ? $('div#links div.web-result') : $('.result');
+    const newerResults = $('div#links div.web-result');
+    const resultElements = newerResults.length > 0 ? newerResults : $('.result');
 
     resultElements.each((_, element) => {
       if (results.length >= limit) return;
