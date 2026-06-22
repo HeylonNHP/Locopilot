@@ -329,12 +329,6 @@ export class ContentCompactor {
       `Web content compaction complete: ${originalLength} -> ${finalLength} chars`
     );
   }
-
-  getLastWebCompactionDebug(): string[] {
-    const last = this.debugLog.at(-1);
-    return last ? [...last.lines] : [];
-  }
-
   /**
    * Creates a new ContentCompactor instance with the provided settings.
    */
