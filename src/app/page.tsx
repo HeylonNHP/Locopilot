@@ -16,6 +16,7 @@ import { useChatStream } from './hooks/useChatStream';
 import { useDataLoaders } from './hooks/useDataLoaders';
 import { useScrollManager } from './hooks/useScrollManager';
 import { useSendHandler } from './hooks/useSendHandler';
+import { useDocumentTitle } from './hooks/useDocumentTitle';
 import { useSessionActions } from './hooks/useSessionActions';
 import { useSessionUrlParam } from './hooks/useSessionUrlParam';
 import { useSlashCommands } from './hooks/useSlashCommands';
@@ -51,6 +52,9 @@ function HomeInner() {
     currentSessionId: state.currentSessionId,
     isStreaming: isCurrentSessionStreaming,
   });
+
+  // ── Keep the browser tab title in sync with the active conversation ──
+  useDocumentTitle(state.currentSessionId, state.sessions);
 
   // ── URL param: restore session from ?session=<id> on mount; keep URL in sync ──
   useSessionUrlParam({ onLoadSessionMessages: loadSessionMessages });
