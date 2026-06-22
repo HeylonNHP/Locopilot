@@ -65,14 +65,6 @@ const MIN_RETRY_OUTPUT_SCALE = 0.8;
 const MIN_CHARS_PER_TOKEN = 2;
 const MAX_CHARS_PER_TOKEN = 6;
 
-interface WebCompactionDebugEntry {
-  id: number;
-  lines: string[];
-  timestamp: number;
-}
-
-const MAX_DEBUG_ENTRIES = 10;
-
 // Per-request scoped storage for the latest web-compaction debug output.
 // This lets callers like /dump and /slash-commands access debug data
 // without holding the compactor instance, while keeping data isolated
@@ -147,8 +139,6 @@ export class ContentCompactor {
   private readonly settings: WebExtractionSettings;
   private readonly baseUrl: string;
   private debugLines: string[] = [];
-  private debugLog: WebCompactionDebugEntry[] = [];
-  private nextDebugId = 1;
 
   constructor(options: ContentCompactorOptions) {
     this.settings = options.settings;
@@ -199,16 +189,6 @@ export class ContentCompactor {
       this.logCompactionComplete(content.length, finalResult.length);
       return finalResult;
     } finally {
-      this.debugLog.push({
-        id: this.nextDebugId++,
-        lines: [...this.debugLines],
-        timestamp: Date.now(),
-      });
-      if (this.debugLog.length > MAX_DEBUG_ENTRIES) {
-        this.debugLog.shift();
-      }
-      // Publish the latest debug lines into the request-scoped store
-      // so callers like /dump can read them without holding the instance.
       compactionDebugStore.enterWith([...this.debugLines]);
     }
   }
@@ -262,22 +242,18 @@ export class ContentCompactor {
 
   private async streamCompactionResponse(params: StreamChatParams): Promise<string> {
     let compactedText = '';
-    try {
-      for await (const chunk of sendLlmChatStream(this.baseUrl, params)) {
-        const thinking = chunk.message?.thinking ?? '';
-        if (thinking.length > 0) {
-          this.recordDebugLine(`Web content compaction thinking chunk:\n${thinking}`);
-        }
-
-        const content = chunk.message?.content ?? '';
-        if (!content) {
-          continue;
-        }
-        compactedText += content;
-        this.logCompactionProgress(compactedText.length);
+    for await (const chunk of sendLlmChatStream(this.baseUrl, params)) {
+      const thinking = chunk.message?.thinking ?? '';
+      if (thinking.length > 0) {
+        this.recordDebugLine(`Web content compaction thinking chunk:\n${thinking}`);
       }
-    } finally {
-      this.clearCompactionProgressLine();
+
+      const content = chunk.message?.content ?? '';
+      if (!content) {
+        continue;
+      }
+      compactedText += content;
+      this.recordDebugLine(`Web content compaction generating: ${compactedText.length} chars`);
     }
 
     const trimmed = compactedText.trim();
@@ -298,22 +274,8 @@ export class ContentCompactor {
     this.logCompactionLine(`Web content compaction attempt ${attempt}: ${currentLength} chars`);
   }
 
-  private logCompactionProgress(currentLength: number): void {
-    const line = `Web content compaction generating: ${currentLength} chars`;
-    this.recordDebugLine(line);
-
-    if (process.stdout.isTTY) {
-      this.output.clearInline();
-      this.output.writeInline(line);
-      return;
-    }
-
-    this.output.writeLine(line);
-  }
-
   private logCompactionLine(message: string): void {
     this.recordDebugLine(message);
-    this.clearCompactionProgressLine();
     this.output.writeLine(message);
   }
 
@@ -321,15 +283,12 @@ export class ContentCompactor {
     this.debugLines.push(line);
   }
 
-  private clearCompactionProgressLine(): void {
-    this.output.clearInline();
-  }
-
   private logCompactionComplete(originalLength: number, finalLength: number): void {
     this.logCompactionLine(
       `Web content compaction complete: ${originalLength} -> ${finalLength} chars`
     );
   }
+
   /**
    * Creates a new ContentCompactor instance with the provided settings.
    */
