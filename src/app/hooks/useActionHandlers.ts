@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { type Dispatch, type MutableRefObject, useCallback } from 'react';
 
 import type { ChatAction } from '@/app/lib/chatStore';
 
@@ -11,11 +11,11 @@ import { type Attachment } from '@/components/ChatInput';
  * previously defined inline in HomeInner.
  */
 export function useActionHandlers(
-  abortControllersRef: React.MutableRefObject<Map<number, AbortController>>,
+  abortControllersRef: MutableRefObject<Map<number, AbortController>>,
   currentSessionId: number | null,
   isCurrentSessionStreaming: boolean,
   handleSend: (message: string, attachments: Attachment[]) => Promise<void>,
-  dispatch: React.Dispatch<ChatAction>
+  dispatch: Dispatch<ChatAction>
 ) {
   const handleStop = useCallback(() => {
     const controller = abortControllersRef.current.get(currentSessionId ?? -1);
