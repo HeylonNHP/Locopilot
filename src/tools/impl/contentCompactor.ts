@@ -346,31 +346,3 @@ export class ContentCompactor {
     return this.settings.output ?? noopToolOutputSink;
   }
 }
-
-/**
- * Standalone function to compact content using default settings.
- * Useful for one-off compaction needs.
- */
-export async function compactContent(
-  content: string,
-  charLimit: number,
-  timeoutMs: number = 30000,
-  baseUrl: string, // REQUIRED - must be provided by caller
-  compactionModel: string
-): Promise<string> {
-  if (content.length <= charLimit) {
-    return content;
-  }
-
-  const compactor = new ContentCompactor({
-    settings: {
-      requestTimeoutMs: timeoutMs,
-      perPageCharLimit: charLimit,
-      baseUrl, // REQUIRED - no defaults
-      compactionModel,
-    },
-    baseUrl,
-  });
-
-  return compactor.compactIfNeeded(content);
-}
