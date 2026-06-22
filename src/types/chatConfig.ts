@@ -3,8 +3,10 @@ import type { SessionTokenStats } from '@/services/history';
 import type { ChatMessage } from '../services/llm';
 
 export type CompletionMode = 'normal' | 'prompt-loop';
+export type LlmProvider = 'ollama' | 'openai-compatible';
 
 export interface Config {
+  provider?: LlmProvider;
   baseUrl: string;
   lastModel?: string;
   compactionModel?: string;
