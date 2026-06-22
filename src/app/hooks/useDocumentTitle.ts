@@ -27,10 +27,6 @@ export function useDocumentTitle(
     const session = sessions.find((s) => s.id === currentSessionId);
     const name = session?.name?.trim();
 
-    if (name) {
-      document.title = `${name} — ${APP_TITLE}`;
-    } else {
-      document.title = `Session ${currentSessionId} — ${APP_TITLE}`;
-    }
+    document.title = name ? `${name} — ${APP_TITLE}` : `Session ${currentSessionId} — ${APP_TITLE}`;
   }, [currentSessionId, sessions]);
 }
