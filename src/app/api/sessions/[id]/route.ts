@@ -2,7 +2,7 @@
 // DELETE /api/sessions/[id] - delete a session
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { deleteSession, listSessions, loadSessionMessages } from '@/history';
+import { deleteSession, listSessions, loadSessionMessages } from '@/services/history';
 import { type ChatMessage } from '@/services/llm';
 import { countMessagesTokens } from '@/services/tokenizer';
 

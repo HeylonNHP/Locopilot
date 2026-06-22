@@ -36,11 +36,11 @@ import {
   DEFAULT_SESSION_NAME,
   MCP_TOOL_SEARCH_THRESHOLD,
 } from '@/constants';
-import { createSession, getSessionName, renameSession, sessionExists } from '@/history';
 import { getMCPServerConfig, getMCPToolCount, getMergedMCPToolDefinitions, getMergedMCPToolDefinitionsForSearch } from '@/mcp';
 import { createSystemPrompt } from '@/services/chatSession';
 import { compactHistory } from '@/services/compact';
 import { loadConfig } from '@/services/configManager';
+import { createSession, getSessionName, renameSession, sessionExists } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { checkCompleteness } from '@/services/promptLoop';
 import { discoverSkills, getAllowedToolsFromSkills, getEnabledSkills, loadSkillState } from '@/services/skillManager';

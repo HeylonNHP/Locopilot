@@ -19,8 +19,8 @@ import {
   type ChatMessage,
   type PersistedChatMessage,
   type SubagentLogMessage,
-} from './services/llm';
-import { sanitizeChatMessage } from './services/textUtils';
+} from './llm';
+import { sanitizeChatMessage } from './textUtils';
 
 // ---------------------------------------------------------------------------
 // Types

@@ -16,8 +16,6 @@ import {
   COMPACT_WARNING_THRESHOLD_PCT,
   COMPACT_WARNING_TOKEN_INTERVAL,
 } from '../constants';
-import { type SessionTokenStats, updateSessionMessages, updateSessionModel } from '../history';
-import { clearLiveStatus, updatePhase, updateVram } from '../statusLine';
 import {
   getToolSystemPrompt,
   handleToolCall,
@@ -26,6 +24,7 @@ import {
 import { compactHistory, printCompactStats } from './compact';
 import { saveConfig as persistConfig } from './configManager';
 import { summarizeCommandError } from './errorSummary';
+import { type SessionTokenStats, updateSessionMessages, updateSessionModel } from './history';
 import {
   type ChatMessage,
   fetchLlmModelInfo,
@@ -42,6 +41,7 @@ import {
   invalidateSkillCache,
   loadSkillState,
 } from './skillManager';
+import { clearLiveStatus, updatePhase, updateVram } from './statusLine';
 import { sanitizeChatMessage } from './textUtils';
 import { countMessagesTokens } from './tokenizer';
 

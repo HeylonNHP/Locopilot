@@ -1,4 +1,4 @@
-import type { SessionTokenStats } from '@/history';
+import type { SessionTokenStats } from '@/services/history';
 
 import type { ChatMessage } from '../services/llm';
 

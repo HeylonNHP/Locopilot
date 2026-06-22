@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { DEFAULT_NUM_CTX } from '../../../constants';
-import { listSessions } from '../../../history';
 import { loadConfig } from '../../../services/configManager';
+import { listSessions } from '../../../services/history';
 import {
   buildConversationDumpMarkdown,
   buildDumpFileName,

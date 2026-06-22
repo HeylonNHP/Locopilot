@@ -2,8 +2,8 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 import { enqueueSessionRename } from '@/app/lib/sessionWriteQueue';
 import { DEFAULT_NUM_CTX } from '@/constants';
-import { listSessions, loadSessionMessages } from '@/history';
 import { loadConfig } from '@/services/configManager';
+import { listSessions, loadSessionMessages } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { generateSessionTitle } from '@/services/titleGeneration';
 
