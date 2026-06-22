@@ -35,7 +35,6 @@ import { getToolPrompt as getWriteFilePrompt, writeFileToolSchema } from './impl
 
 // Keep defaultShell export (used in runCommandToolSchema via defaultShell() call)
 export { defaultShell } from './impl/runCommandTool';
-import { buildToolUseNudge } from '@/services/toolUseNudge';
 
 import { noopToolOutputSink, type ToolOutputSink } from './toolOutput';
 import {
@@ -207,13 +206,6 @@ export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean
     `Skills: Use \`load_skill(skill_name)\` to retrieve full instructions for any skill listed under "Available Skills" above. ` +
     `Only call load_skill when a skill is clearly relevant to the current task.`
   );
-}
-// Automatic nudging was removed in favour of a manual `/nudge` command.
-// The manual nudge is implemented in `index.ts` and the user-facing
-// reminder text is provided by `getToolUseNudge()` below.
-
-export function getToolUseNudge(yoloMode: boolean): string {
-  return buildToolUseNudge(yoloMode);
 }
 
 export async function handleToolCall(
