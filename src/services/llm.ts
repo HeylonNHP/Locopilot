@@ -1,16 +1,13 @@
+import type { LlmProvider } from '@/types/chatConfig';
+
 import type {
   ChatApiResponse,
-  
   ChatParams,
   LlmAdapter,
   LlmModel,
   LlmModelInfo,
   LlmTurnStats,
-  
   StreamChatParams,
-  
-  
-  
 } from './adapters/llmAdapter';
 
 import { ollamaAdapter } from './adapters/ollamaAdapter';
@@ -37,6 +34,16 @@ export function getLlmAdapter(): LlmAdapter {
  */
 export function setLlmAdapter(adapter: LlmAdapter): void {
   activeAdapter = adapter;
+}
+
+export function selectLlmAdapter(_provider?: LlmProvider): LlmAdapter {
+  return ollamaAdapter;
+}
+
+export function configureLlmAdapter(provider?: LlmProvider): LlmAdapter {
+  const adapter = selectLlmAdapter(provider);
+  setLlmAdapter(adapter);
+  return adapter;
 }
 
 export function validateLlmConnection(baseUrl: string, timeoutMs?: number): Promise<void> {

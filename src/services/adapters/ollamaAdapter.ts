@@ -207,7 +207,6 @@ async function sendOllamaChat(
   if (signal) config.signal = signal;
 
   if (onChunk) {
-    // Use streaming internally to provide progress but return full response
     const streamParams: StreamChatParams = { ...params, ...(signal ? { signal } : {}) };
     if (timeoutMs !== undefined) streamParams.timeoutMs = timeoutMs;
     const fullMessage: ChatMessage = { role: 'assistant', content: '' };
@@ -289,7 +288,6 @@ async function getOllamaApiErrorMessage(error: unknown): Promise<string> {
     if (error.response?.data) {
       const data = error.response.data;
 
-      // If it's a stream, try to read it
       if (data instanceof Readable) {
         try {
           const chunks: Buffer[] = [];
@@ -307,7 +305,6 @@ async function getOllamaApiErrorMessage(error: unknown): Promise<string> {
           // Fallback to error.message if reading stream fails
         }
       } else if (typeof data === 'object' && data && 'error' in data) {
-        // If it's already an object (non-streaming requests)
         return `${error.message}: ${String((data as { error: unknown }).error)}`;
       } else if (typeof data === 'string' && data.trim()) {
         return `${error.message}: ${data.trim()}`;
