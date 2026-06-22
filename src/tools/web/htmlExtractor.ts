@@ -18,6 +18,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import type { ToolOutputSink } from '../toolOutput';
 
 import { ContentCompactor } from '../impl/contentCompactor';
+import { type ExtractedLink, extractLinks } from './linkExtractor';
 import { buildWebRequestHeaders } from './webRequestHeaders';
 
 export interface WebExtractionSettings {
@@ -34,10 +35,7 @@ export interface ExtractResult {
   text: string;
 }
 
-export interface ExtractedLink {
-  url: string;
-  text: string;
-}
+
 
 /**
  * Threshold for Readability extraction; if the resulting text is shorter
@@ -45,7 +43,6 @@ export interface ExtractedLink {
  */
 const MIN_READABILITY_LENGTH = 200;
 export const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
-const MAX_LINKS = 50;
 const MIN_BROWSER_FALLBACK_TEXT_LENGTH = 300;
 const BROWSER_RENDER_TIMEOUT_MS = 15_000;
 
@@ -272,37 +269,7 @@ async function renderWithPlaywright(
  * Extracts unique, absolute http/https links from an HTML page.
  * Relative hrefs are resolved against `baseUrl`.
  */
-export function extractLinks(html: string, baseUrl: string): ExtractedLink[] {
-  try {
-    const $ = cheerio.load(html);
-    const seen = new Set<string>();
-    const links: ExtractedLink[] = [];
 
-    $('a[href]').each((_, el) => {
-      if (links.length >= MAX_LINKS) return;
-      const href = $(el).attr('href')?.trim() ?? '';
-      if (!href) return;
-
-      let resolved: string;
-      try {
-        resolved = new URL(href, baseUrl).toString();
-      } catch {
-        return;
-      }
-
-      if (!/^https?:\/\//i.test(resolved)) return;
-      if (seen.has(resolved)) return;
-      seen.add(resolved);
-
-      const text = cleanText($(el).text()) || resolved;
-      links.push({ url: resolved, text });
-    });
-
-    return links;
-  } catch {
-    return [];
-  }
-}
 
 export interface FetchAndExtractOptions {
   usePlaywright?: boolean;
@@ -318,12 +285,14 @@ export interface FetchAndExtractOptions {
 }
 
 /**
- * Common fetch + extraction logic shared by web tools.
+ * Fetches a webpage from the given URL, extracts its main content, title, final URL, and links,
+ * and optionally applies Playwright rendering or text compaction if needed.
  *
- * @param url - The URL to fetch
- * @param settings - Extraction settings
- * @param options - Additional options
- * @param options.usePlaywright - If true, always use Playwright for rendering (useful for JavaScript-heavy pages)
+ * @param {string} url - The URL of the webpage to fetch and extract content from.
+ * @param {WebExtractionSettings} settings - The settings used for web extraction, including request timeout and cookie headers.
+ * @param {FetchAndExtractOptions} [options={}] - Optional parameters that specify extraction preferences such as Playwright usage and full content extraction.
+ * @param {AbortSignal} [signal] - Optional signal to abort the request, typically used for canceling a fetch operation.
+ * @return {Promise<{ title: string; text: string; finalUrl: string; links: ExtractedLink[] }>} A promise that resolves to an object containing the extracted title, main text, final URL, and list of links.
  */
 export async function fetchAndExtract(
   url: string,

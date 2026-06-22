@@ -4,11 +4,11 @@ import * as cheerio from 'cheerio';
 import type { ToolSchema } from '@/tools/tools';
 
 import type { ToolOutputSink } from '../toolOutput';
+import type { ExtractedLink } from '../web/linkExtractor';
 
 import {
   cleanText,
   DEFAULT_USER_AGENT,
-  type ExtractedLink,
   fetchAndExtract,
 } from '../web/htmlExtractor';
 
