@@ -12,7 +12,7 @@ import {
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
   OLLAMA_CONNECT_TIMEOUT_MS,
 } from '../constants';
-import { validateLlmConnection } from './llm';
+import { configureLlmAdapter, validateLlmConnection } from './llm';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const CONFIG_TMP_PATH = `${CONFIG_PATH  }.tmp`;
@@ -85,8 +85,11 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
       const port = await input({ message: 'Enter Ollama port:', default: '11434' });
       config = {
         baseUrl: `http://${host}:${port}`,
+        provider: 'ollama',
       };
     }
+
+    configureLlmAdapter(config.provider);
 
     try {
       await validateLlmConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
