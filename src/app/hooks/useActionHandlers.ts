@@ -36,7 +36,7 @@ export function useActionHandlers(
         });
         return;
       }
-      handleSend(message, []);
+      void handleSend(message, []);
     },
     [isCurrentSessionStreaming, handleSend, dispatch]
   );
