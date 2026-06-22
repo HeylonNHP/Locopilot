@@ -8,9 +8,9 @@ import type { ExtractedLink } from '../web/linkExtractor';
 
 import {
   cleanText,
-  DEFAULT_USER_AGENT,
   fetchAndExtract,
 } from '../web/htmlExtractor';
+import { DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
 
 export const webSearchToolSchema: ToolSchema = {
   name: 'web_search',

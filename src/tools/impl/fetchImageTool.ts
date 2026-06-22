@@ -25,7 +25,7 @@ import imageType from 'image-type';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULT_USER_AGENT } from '../web/htmlExtractor';
+import { DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
 
 /**
  * Detects the actual image format from the file's magic bytes using the `image-type` library.
