@@ -1,17 +1,19 @@
 'use client';
 
-import { type Dispatch, type MutableRefObject, useCallback } from 'react';
+import { type Dispatch, useCallback } from 'react';
 
 import type { ChatAction } from '@/app/lib/chatStore';
 
 import { type Attachment } from '@/components/ChatInput';
+
+import type { WritableRef } from './useStableRefs';
 
 /**
  * Groups the `handleStop` and `handleSkillPrompt` callbacks that were
  * previously defined inline in HomeInner.
  */
 export function useActionHandlers(
-  abortControllersRef: MutableRefObject<Map<number, AbortController>>,
+  abortControllersRef: WritableRef<Map<number, AbortController>>,
   currentSessionId: number | null,
   isCurrentSessionStreaming: boolean,
   handleSend: (message: string, attachments: Attachment[]) => Promise<void>,
