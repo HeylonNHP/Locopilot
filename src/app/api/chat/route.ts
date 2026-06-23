@@ -923,6 +923,22 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 try { toolArgs = JSON.parse(toolArgs); } catch { /* keep string as-is on parse failure */ }
                             }
 
+                            // If toolArgs is still a string after the parse attempt, the LLM
+                            // produced malformed JSON arguments. Skip this tool call with an
+                            // error result so the model can correct itself, and so the
+                            // malformed data never reaches the approval gates or handleToolCall.
+                            if (typeof toolArgs === 'string') {
+                                const errorMsg = `[Error: Tool "${toolName}" received malformed JSON arguments that could not be parsed. The model should retry with valid JSON.]`;
+                                sendEvent('tool_result', {
+                                    name: toolName,
+                                    result: errorMsg,
+                                    duration: 0,
+                                });
+                                currentMessages.push({ role: 'tool', content: errorMsg, tool_call_id: tc.id });
+                                pendingAppends.push({ role: 'tool', content: errorMsg, tool_call_id: tc.id });
+                                continue;
+                            }
+
                             sendEvent('tool_call', {
                                 name: toolName,
                                 arguments: toolArgs,
