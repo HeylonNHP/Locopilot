@@ -224,15 +224,15 @@ export class ContentCompactor {
       attempt
     );
 
+    // Note: no think/reasoning_effort flag (Airia rejects it with tools, causing 400).
+    // Also omit temperature — gpt-5-nano on Airia rejects temperature:0, defaults are fine.
     const params: StreamChatParams = {
       model,
       messages,
       tools: [],
       numCtx,
-      think: false,
       timeoutMs: this.settings.requestTimeoutMs,
       options: {
-        temperature: 0,
         num_predict: numPredict,
       },
     };

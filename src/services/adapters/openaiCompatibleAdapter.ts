@@ -783,6 +783,21 @@ async function getOpenAICompatibleApiErrorMessage(error: unknown): Promise<strin
       }
     }
 
+    // If data is an HTTP Response object (raw stream), extract the error from it.
+    if (typeof data === 'object' && data !== null) {
+      const obj = data as Record<string, unknown>;
+      if ('error' in obj) {
+        const errMsg = obj.error;
+        if (typeof errMsg === 'string') return `OpenAI-compatible API error (${status}): ${errMsg}`;
+        if (typeof errMsg === 'object' && errMsg !== null) {
+          const inner = (errMsg as Record<string, unknown>).message;
+          if (typeof inner === 'string') {
+            return `OpenAI-compatible API error (${status}): ${inner}`;
+          }
+        }
+      }
+    }
+
     return status
       ? `OpenAI-compatible API error (${status}): ${error.message}`
       : error.message;

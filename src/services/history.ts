@@ -90,6 +90,7 @@ addColumnIfMissing("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAU
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("ALTER TABLE messages_staging ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''");
 
 // ---------------------------------------------------------------------------
 // Prepared statements (created once, reused on every call)

@@ -463,8 +463,8 @@ export const toolRegistry = new Map<string, IToolCommand>([
             },
             onProgress,
             output,
-            context?.subAgent?.model ?? context?.model,
-            context?.subAgent?.numCtx ?? context?.numCtx,
+            context?.model,  // Use parent's Airia model, not the subagent's local model
+            context?.numCtx,
             signal
           ),
         };
