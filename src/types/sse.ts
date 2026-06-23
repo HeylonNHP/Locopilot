@@ -25,7 +25,7 @@ export interface SseEventPayloadMap {
   thinking: { content: string };
   chunk: { content: string };
   tool_call: { name: string; arguments: ToolCallArguments | Record<string, unknown> };
-  tool_result: { name: string; result: string; duration: number };
+  tool_result: { name: string; result: string; duration: number; toolCallId?: string };
   tool_progress: { name: string; message: string };
   subagent_output: { agentId: string; message: string };
   subagent_chunk: { agentId: string; type: 'thinking' | 'content'; text: string };

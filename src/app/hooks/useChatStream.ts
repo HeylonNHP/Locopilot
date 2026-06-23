@@ -189,6 +189,7 @@ export function useChatStream(
               role: 'tool',
               content: `✅ **${data.name ?? ''}** (${data.duration ?? 0}ms)\n\n\`\`\`\n${data.result ?? ''}\n\`\`\``,
               ...(data.name === undefined ? {} : { name: data.name }),
+              ...(data.toolCallId === undefined ? {} : { tool_call_id: data.toolCallId }),
             },
           });
           break;

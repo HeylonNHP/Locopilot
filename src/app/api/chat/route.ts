@@ -1157,6 +1157,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 name: toolName,
                                 result: result.content,
                                 duration,
+                                toolCallId: tc.id,
                             });
 
                             const toolMessage: ChatMessage = {
