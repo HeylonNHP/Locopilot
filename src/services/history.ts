@@ -89,6 +89,7 @@ addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_total_tokens INTEGER');
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("ALTER TABLE messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''");
 
 // ---------------------------------------------------------------------------
 // Prepared statements (created once, reused on every call)
@@ -121,7 +122,7 @@ const stmtDeleteSession = db.prepare<[number]>('DELETE FROM sessions WHERE id = 
 const stmtDeleteMessages = db.prepare<[number]>('DELETE FROM messages WHERE session_id = ?');
 
 const stmtLoadMessages = db.prepare<[number]>(
-  'SELECT role, content, thinking, tool_calls, images, subagent_id FROM messages WHERE session_id = ? ORDER BY id ASC'
+  'SELECT role, content, thinking, tool_calls, images, subagent_id, tool_call_id FROM messages WHERE session_id = ? ORDER BY id ASC'
 );
 
 const stmtSearchSessions = db.prepare<[string, string]>(
@@ -214,15 +215,16 @@ export function updateSessionMessages(
         '(id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, ' +
         "role TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', " +
         "thinking TEXT NOT NULL DEFAULT '', tool_calls TEXT NOT NULL DEFAULT '[]', " +
-        "images TEXT NOT NULL DEFAULT '[]', subagent_id TEXT NOT NULL DEFAULT '')"
+        "images TEXT NOT NULL DEFAULT '[]', subagent_id TEXT NOT NULL DEFAULT '', " +
+        "tool_call_id TEXT NOT NULL DEFAULT '')"
     );
     const stmtDeleteStaging = db.prepare<[number]>(
       'DELETE FROM messages_staging WHERE session_id = ?'
     );
     stmtDeleteStaging.run(sessionId);
 
-    const stmtInsertStaging = db.prepare<[number, string, string, string, string, string, string]>(
-      'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    const stmtInsertStaging = db.prepare<[number, string, string, string, string, string, string, string]>(
+      'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     );
     for (const msg of persistableMessages) {
       const sanitizedMessage = sanitizeChatMessage(msg);
@@ -244,15 +246,19 @@ export function updateSessionMessages(
         sanitizedMessage.role === 'subagent_log'
           ? '[]'
           : JSON.stringify((sanitizedMessage as ChatMessage).images ?? []);
-      stmtInsertStaging.run(sessionId, role, content, thinking, toolCalls, images, subagentId);
+      const toolCallId =
+        sanitizedMessage.role === 'tool'
+          ? (sanitizedMessage as ChatMessage).tool_call_id ?? ''
+          : '';
+      stmtInsertStaging.run(sessionId, role, content, thinking, toolCalls, images, subagentId, toolCallId);
     }
 
     // Atomic swap: delete originals only after staging is complete,
     // then move staged rows into the real table.
     stmtDeleteMessages.run(sessionId);
     const stmtCopyStaging = db.prepare<[number]>(
-      'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id) ' +
-        'SELECT session_id, role, content, thinking, tool_calls, images, subagent_id ' +
+      'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id) ' +
+        'SELECT session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id ' +
         'FROM messages_staging WHERE session_id = ?'
     );
     stmtCopyStaging.run(sessionId);
@@ -291,6 +297,7 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     tool_calls: string;
     images: string;
     subagent_id: string;
+    tool_call_id: string;
   }[];
 
   return rows.map((row) => {
@@ -332,6 +339,9 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     }
     if (images && images.length > 0) {
       msg.images = images;
+    }
+    if (row.tool_call_id) {
+      msg.tool_call_id = row.tool_call_id;
     }
     return sanitizeChatMessage(msg);
   });
