@@ -87,6 +87,7 @@ export function sanitizeChatMessage(message: PersistedChatMessage): PersistedCha
 
   if (message.tool_calls && message.tool_calls.length > 0) {
     sanitizedMessage.tool_calls = message.tool_calls.map((toolCall) => ({
+      id: toolCall.id,
       function: {
         name: stripSpecialTokens(toolCall.function.name),
         arguments: stripSpecialTokensFromValue(

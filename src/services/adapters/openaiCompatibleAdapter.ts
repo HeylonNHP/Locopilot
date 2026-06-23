@@ -214,8 +214,10 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
     }
     if (message.tool_calls) {
       (base as { tool_calls: OpenAIToolCall[] }).tool_calls = message.tool_calls.map(
-        (toolCall) => ({
-          id: toolCall.id,
+        (toolCall, idx) => ({
+          // OpenAI requires tool_calls[].id — generate a fallback if the
+          // stored message is missing one (e.g. older history entries).
+          id: toolCall.id || `call_fallback_${idx}`,
           type: 'function' as const,
           function: {
             name: toolCall.function.name,
