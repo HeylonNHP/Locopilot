@@ -1,5 +1,4 @@
-import type { LlmProvider } from '@/types/chatConfig';
-
+import type { LlmProvider } from '../types/chatConfig';
 import type {
   ChatApiResponse,
   ChatParams,
@@ -11,33 +10,27 @@ import type {
 } from './adapters/llmAdapter';
 
 import { ollamaAdapter } from './adapters/ollamaAdapter';
+import { openaiCompatibleAdapter } from './adapters/openaiCompatibleAdapter';
 
-/**
- * The active adapter is a module-level singleton. Changing it at runtime
- * (via setLlmAdapter) while concurrent HTTP requests are in-flight could
- * cause those requests to unexpectedly switch to a different LLM backend
- * mid-stream. Currently the adapter is set once at startup and never
- * changed, so this is only a latent risk for multi-WebUI concurrency.
- */
 let activeAdapter: LlmAdapter = ollamaAdapter;
 
 export function getLlmAdapter(): LlmAdapter {
   return activeAdapter;
 }
 
-/**
- * Swap the active LLM adapter at runtime.
- *
- * NOTE: This is not thread-safe — do not call while HTTP requests are
- * in-flight, as they would see the new adapter mid-stream. Currently
- * only called once at startup.
- */
 export function setLlmAdapter(adapter: LlmAdapter): void {
   activeAdapter = adapter;
 }
 
-export function selectLlmAdapter(_provider?: LlmProvider): LlmAdapter {
-  return ollamaAdapter;
+export function selectLlmAdapter(provider?: LlmProvider): LlmAdapter {
+  switch (provider) {
+    case 'openai-compatible': {
+      return openaiCompatibleAdapter;
+    }
+    default: {
+      return ollamaAdapter;
+    }
+  }
 }
 
 export function configureLlmAdapter(provider?: LlmProvider): LlmAdapter {
@@ -65,11 +58,7 @@ export function getLlmModelContextLimit(modelInfo: LlmModelInfo): number | null 
 export function getLlmModelVisionSupport(info: LlmModelInfo): boolean {
   if (Array.isArray(info.capabilities)) {
     const capabilities = new Set(info.capabilities.map(String));
-    return (
-      capabilities.has('vision') ||
-      capabilities.has('multimodal') ||
-      capabilities.has('image')
-    );
+    return capabilities.has('vision') || capabilities.has('multimodal') || capabilities.has('image');
   }
   return false;
 }
@@ -99,10 +88,7 @@ export function getLlmTurnStats(response: ChatApiResponse): LlmTurnStats | null 
   return activeAdapter.getTurnStats(response);
 }
 
-export function fetchLlmRunningModelVram(
-  baseUrl: string,
-  modelName: string
-): Promise<number | null> {
+export function fetchLlmRunningModelVram(baseUrl: string, modelName: string): Promise<number | null> {
   if (!activeAdapter.fetchRunningModelVram) {
     return Promise.resolve(null);
   }
@@ -110,4 +96,15 @@ export function fetchLlmRunningModelVram(
 }
 
 export type { LlmTurnStats, StreamChatParams } from './adapters/llmAdapter';
-export {type ChatApiResponse, type ChatMessage, type ChatParams, type LlmAdapter, type LlmModel, type LlmModelInfo, type PersistedChatMessage, type SubagentLogMessage, type ToolCall, type ToolDefinition} from './adapters/llmAdapter';
+export {
+  type ChatApiResponse,
+  type ChatMessage,
+  type ChatParams,
+  type LlmAdapter,
+  type LlmModel,
+  type LlmModelInfo,
+  type PersistedChatMessage,
+  type SubagentLogMessage,
+  type ToolCall,
+  type ToolDefinition,
+} from './adapters/llmAdapter';

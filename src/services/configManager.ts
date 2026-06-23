@@ -15,13 +15,9 @@ import {
 import { configureLlmAdapter, validateLlmConnection } from './llm';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
-const CONFIG_TMP_PATH = `${CONFIG_PATH  }.tmp`;
+const CONFIG_TMP_PATH = `${CONFIG_PATH}.tmp`;
 let configWriteQueue: Promise<void> = Promise.resolve();
 
-/**
- * Loads configuration from config.json if it exists.
- * @returns Promise resolving to Config object or null if file doesn't exist
- */
 export async function loadConfig(): Promise<Config | null> {
   try {
     await access(CONFIG_PATH);
@@ -35,16 +31,11 @@ export async function loadConfig(): Promise<Config | null> {
   }
 }
 
-/**
- * Saves configuration to config.json using an atomic write (tmp + rename)
- * with a promise-chain queue so concurrent saves are serialised.
- */
 export async function saveConfig(config: Config): Promise<void> {
   const task = async () => {
     await writeFile(CONFIG_TMP_PATH, JSON.stringify(config, null, 2));
     await rename(CONFIG_TMP_PATH, CONFIG_PATH);
   };
-  // Chain onto the previous save so concurrent calls are serialised
   configWriteQueue = configWriteQueue.then(task, task);
   return configWriteQueue;
 }
@@ -66,15 +57,8 @@ export function handleUnexpectedError(err: unknown): void {
   process.exit(1);
 }
 
-/**
- * Sets up Ollama connection configuration.
- * Prompts for host and port if needed, validates connection, and saves config.
- * @param initialConfig - Optional initial configuration
- * @returns Promise resolving to the final configuration
- */
 export async function setupOllama(initialConfig: Config | null): Promise<Config> {
   let config = initialConfig;
-
   while (true) {
     if (!config) {
       logger.info('Config', 'Initial Configuration Required');
@@ -88,9 +72,7 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
         provider: 'ollama',
       };
     }
-
     configureLlmAdapter(config.provider);
-
     try {
       await validateLlmConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
       await saveConfig(config);
@@ -98,7 +80,6 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
     } catch {
       logger.error('Config', `Could not connect to Ollama at ${config.baseUrl}`);
       logger.warn('Config', 'Please check if Ollama is running and the address is correct.');
-
       const action = await select({
         message: 'What would you like to do?',
         choices: [
@@ -107,7 +88,6 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
           { name: 'Exit', value: 'exit' },
         ],
       });
-
       if (action === 'exit' || action === null) {
         // User chose to quit the interactive setup; terminate the CLI cleanly.
         // eslint-disable-next-line unicorn/no-process-exit
@@ -117,17 +97,10 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
         config = null;
         continue;
       }
-      // if retry, loop will continue with existing config
     }
   }
 }
 
-/**
- * Configures model and context settings.
- * @param config - The application configuration
- * @param models - Array of available model names
- * @returns Promise resolving to object with model and numCtx
- */
 export async function configureModelAndContext(
   config: Config,
   models: string[]
@@ -135,28 +108,24 @@ export async function configureModelAndContext(
   let selectedModel =
     config.lastModel && models.includes(config.lastModel) ? config.lastModel : null;
   const selectedNumCtx = config.numCtx ?? DEFAULT_NUM_CTX;
-
   const savedWebSearch = config.webSearch;
   const selectedWebSearchMaxQueries = savedWebSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES;
   const selectedWebSearchResultsPerQuery =
     savedWebSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY;
   const selectedWebSearchPerPageCharLimit =
     savedWebSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT;
-
   if (!selectedModel) {
     selectedModel = await select({
       message: 'Select a model to chat with:',
       choices: models.map((m: string) => ({ name: m, value: m })),
       pageSize: 10,
     });
-
     if (selectedModel === null) {
       // User cancelled model selection; terminate the CLI cleanly.
       // eslint-disable-next-line unicorn/no-process-exit
       process.exit(0);
     }
   }
-
   config.lastModel = selectedModel;
   config.numCtx = selectedNumCtx;
   config.webSearch = {
