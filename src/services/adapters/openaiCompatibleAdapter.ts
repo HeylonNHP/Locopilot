@@ -198,7 +198,32 @@ function stripImagesFromMessages(messages: ChatMessage[]): ChatMessage[] {
 }
 
 function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
-  return messages.map((message) => {
+  const result: OpenAIMessage[] = [];
+
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i]!;
+
+    // OpenAI requires that a 'tool' message follows an assistant message
+    // that has tool_calls. If the preceding message is not such an assistant
+    // (e.g. the assistant's tool-call message was lost from history),
+    // convert the orphaned tool message to a 'user' message so the API
+    // doesn't reject the request with a 400.
+    if (message.role === 'tool') {
+      const prev = i > 0 ? messages[i - 1] : undefined;
+      const prevHasToolCalls =
+        prev?.role === 'assistant' &&
+        !!prev.tool_calls &&
+        prev.tool_calls.length > 0;
+      if (!prevHasToolCalls) {
+        // Orphaned tool message — convert to user so it's still sent as context.
+        result.push({
+          role: 'user',
+          content: message.content || '',
+        });
+        continue;
+      }
+    }
+
     // OpenAI requires content: null for assistant messages that only have tool_calls.
     const hasToolCalls = !!message.tool_calls && message.tool_calls.length > 0;
     const content: string | null =
@@ -227,8 +252,10 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
       );
     }
 
-    return base;
-  });
+    result.push(base);
+  }
+
+  return result;
 }
 
 /**
