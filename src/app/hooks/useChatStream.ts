@@ -52,7 +52,7 @@ export function useChatStream(
   abortControllersRef: WritableRef<Map<number, AbortController>>,
   loadSessions: () => Promise<void>
 ) {
-  const { state, dispatch } = useChat();
+  const { dispatch } = useChat();
 
   // --- Background-stream buffering ------------------------------------------
   // When the user switches to a different session while a stream is active,

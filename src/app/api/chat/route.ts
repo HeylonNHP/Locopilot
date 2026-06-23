@@ -986,123 +986,102 @@ export async function POST(req: NextRequest): Promise<Response> {
                             }
                             // ────────────────────────────────────────────────────────────
 
-                            // ── Approval gate for mcp_call (skipped in YOLO mode or when
-                            //    the namespaced target is in the per-server autoApprove
-                            //    list). Phase 1 keeps the gate inline; Phase 2 should
-                            //    unify this with the run_command flow + generalise
-                            //    approvalRegistry to any tool name. ────────────────
+                            // ── Approval gate for mcp_call (skipped in YOLO mode). ──
                             if (toolName === 'mcp_call' && !effectiveYolo) {
-                                // Parse the requested target up-front so we can
-                                // apply the autoApprove / already-approved
-                                // short-circuits before doing any UI work.
                                 const requestedServer = typeof toolArgs?.server === 'string' ? toolArgs.server : '';
                                 const requestedTool = typeof toolArgs?.tool === 'string' ? toolArgs.tool : '';
                                 const namespacedTarget = requestedServer && requestedTool
                                     ? `mcp__${requestedServer}__${requestedTool}`
                                     : null;
 
-                                if (namespacedTarget) {
-                                    // A6: if the user already approved this
-                                    // namespaced target earlier in the same
-                                    // request (e.g. it was the first tool
-                                    // call in a multi-step plan), skip the
-                                    // prompt and proceed directly.
-                                    if (mcpApprovalsSet.has(namespacedTarget)) {
-                                        // Proceed without re-prompting.
-                                    } else {
-                                        // A5: honour the server's `autoApprove`
-                                        // list. If the tool is on the list, the
-                                        // user has already pre-authorised it
-                                        // (and the dispatcher enforces the same
-                                        // check, so the call will not be
-                                        // rejected by the dispatcher).
-                                        let autoApproved = false;
+                                // A6 shortcut: already approved in this request.
+                                if (namespacedTarget && mcpApprovalsSet.has(namespacedTarget)) {
+                                    // Proceed without re-prompting.
+                                } else {
+                                    let autoApproved = false;
+
+                                    // A5 shortcut: on the server's autoApprove list.
+                                    if (namespacedTarget) {
                                         try {
                                             const serverCfg = await getMCPServerConfig(requestedServer);
                                             if (serverCfg?.autoApprove?.includes(requestedTool)) {
                                                 autoApproved = true;
                                             }
                                         } catch {
-                                            // Best-effort: if config lookup
-                                            // fails, fall through to the prompt.
+                                            // Best-effort: fall through to the prompt.
                                         }
 
                                         if (autoApproved) {
                                             mcpApprovalsSet.add(namespacedTarget);
                                             requestContext.mcpApprovals = [...mcpApprovalsSet];
-                                        } else {
-                                            const requestId = randomUUID();
-
-                                            const abortPromise = new Promise<ApprovalDecision>((resolve) => {
-                                                if (req.signal.aborted) { resolve({ approved: false }); return; }
-                                                req.signal.addEventListener('abort', () => resolve({ approved: false }), { once: true });
-                                            });
-
-                                            sendEvent('approval_request', {
-                                                requestId,
-                                                toolName,
-                                                toolCallName: namespacedTarget,
-                                                args: toolArgs,
-                                            });
-
-                                            const decision = await Promise.race([
-                                                waitForApproval(requestId, {
-                                                    toolName,
-                                                    risk: 'mcp',
-                                                    args: { server: requestedServer, tool: requestedTool, toolArgs },
-                                                }),
-                                                abortPromise,
-                                            ]);
-
-                                            resolveApproval(requestId, { approved: false });
-
-                                            if (!decision.approved) {
-                                                const rejectedResult = '[MCP call rejected by user]';
-                                                sendEvent('tool_result', {
-                                                    name: toolName,
-                                                    result: rejectedResult,
-                                                    duration: 0,
-                                                });
-                                                currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
-                                                pendingAppends.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
-                                                continue;
-                                            }
-
-                                            // H1 bug-hunt fix: when the user
-                                            // approves, the decision may carry
-                                            // a `grantedTools` list of
-                                            // additional namespaced targets the
-                                            // user wants to pre-authorise.
-                                            // `/api/approve` already filtered
-                                            // the list to well-formed
-                                            // `mcp__<server>__<tool>` names;
-                                            // here we additionally verify the
-                                            // server is actually configured so a
-                                            // client can't pre-authorise tools
-                                            // for a server that doesn't exist.
-                                            const granted = decision.grantedTools ?? [];
-                                            for (const grantedName of granted) {
-                                                const grantedServer = grantedName.slice(
-                                                    'mcp__'.length,
-                                                    grantedName.lastIndexOf('__'),
-                                                );
-                                                try {
-                                                    const grantedCfg = await getMCPServerConfig(grantedServer);
-                                                    if (grantedCfg) {
-                                                        mcpApprovalsSet.add(grantedName);
-                                                    }
-                                                } catch {
-                                                    // Best-effort: skip namespaced
-                                                    // targets we can't verify.
-                                                }
-                                            }
-
-                                            // Always record the immediate call
-                                            // for any future repeat in this
-                                            // request.
-                                            mcpApprovalsSet.add(namespacedTarget);
-                                            requestContext.mcpApprovals = [...mcpApprovalsSet];
                                         }
+                                    }
+
+                                    // Always show the approval UI (prompt or
+                                    // autoApproved).  This is the critical fix:
+                                    // the previous outer `if (namespacedTarget)`
+                                    // silently bypassed the gate when the LLM
+                                    // sent `mcp_call` with no/malformed args.
+                                    // Now every `mcp_call` hits the gate, and
+                                    // the UI surfaces validation errors to the
+                                    // LLM when `namespacedTarget` is null.
+                                    const requestId = randomUUID();
+
+                                    const abortPromise = new Promise<ApprovalDecision>((resolve) => {
+                                        if (req.signal.aborted) { resolve({ approved: false }); return; }
+                                        req.signal.addEventListener('abort', () => resolve({ approved: false }), { once: true });
+                                    });
+
+                                    sendEvent('approval_request', {
+                                        requestId,
+                                        toolName,
+                                        toolCallName: namespacedTarget ?? 'mcp__unknown__unknown',
+                                        args: toolArgs ?? {},
+                                    });
+
+                                    const decision = await Promise.race([
+                                        waitForApproval(requestId, {
+                                            toolName,
+                                            risk: 'mcp',
+                                            args: { server: requestedServer, tool: requestedTool, toolArgs },
+                                        }),
+                                        abortPromise,
+                                    ]);
+
+                                    resolveApproval(requestId, { approved: false });
+
+                                    if (!decision.approved) {
+                                        const rejectedResult = '[MCP call rejected by user]';
+                                        sendEvent('tool_result', {
+                                            name: toolName,
+                                            result: rejectedResult,
+                                            duration: 0,
+                                        });
+                                        currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                        pendingAppends.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                        continue;
+                                    }
+
+                                    // When the user approves, record the call and
+                                    // any granted pre-authorisations.
+                                    if (namespacedTarget) {
+                                        const granted = decision.grantedTools ?? [];
+                                        for (const grantedName of granted) {
+                                            const grantedServer = grantedName.slice(
+                                                'mcp__'.length,
+                                                grantedName.lastIndexOf('__'),
+                                            );
+                                            try {
+                                                const grantedCfg = await getMCPServerConfig(grantedServer);
+                                                if (grantedCfg) {
+                                                    mcpApprovalsSet.add(grantedName);
+                                                }
+                                            } catch {
+                                                // Best-effort: skip unverifiable targets.
+                                            }
+                                        }
+                                        mcpApprovalsSet.add(namespacedTarget);
+                                        requestContext.mcpApprovals = [...mcpApprovalsSet];
                                     }
                                 }
                             }

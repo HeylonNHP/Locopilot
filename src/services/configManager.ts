@@ -2,7 +2,7 @@ import { input, select } from '@inquirer/prompts';
 import { access, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Config } from '../types/chatConfig';
+import type { Config, LlmProvider } from '../types/chatConfig';
 
 import { logger } from '../app/lib/logger';
 import {
@@ -12,6 +12,7 @@ import {
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
   OLLAMA_CONNECT_TIMEOUT_MS,
 } from '../constants';
+import { clearApiKey, setApiKey } from './adapters/openaiCompatibleAdapter';
 import { configureLlmAdapter, validateLlmConnection } from './llm';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
@@ -57,8 +58,20 @@ export function handleUnexpectedError(err: unknown): void {
   process.exit(1);
 }
 
-export async function setupOllama(initialConfig: Config | null): Promise<Config> {
-  let config = initialConfig;
+export async function setupOllama(
+  initialConfig: Config | null,
+  provider?: LlmProvider,
+): Promise<Config> {
+  if (provider === 'openai-compatible') {
+    return setupOpenAICompatible({
+      baseUrl: initialConfig?.baseUrl ?? '',
+      provider: 'openai-compatible',
+      apiKey: initialConfig?.apiKey ?? '',
+    });
+  }
+
+  let config = initialConfig ?? null;
+
   while (true) {
     if (!config) {
       logger.info('Config', 'Initial Configuration Required');
@@ -72,6 +85,7 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
         provider: 'ollama',
       };
     }
+    setApiKey(config.apiKey ?? '');
     configureLlmAdapter(config.provider);
     try {
       await validateLlmConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
@@ -98,6 +112,59 @@ export async function setupOllama(initialConfig: Config | null): Promise<Config>
         continue;
       }
     }
+  }
+}
+
+async function setupOpenAICompatible(initial: Config): Promise<Config> {
+  let config = { ...initial };
+
+  while (true) {
+    if (!config.baseUrl) {
+      const baseUrl = await input({
+        message: 'Enter API base URL (e.g., https://api.openai.com/v1):',
+      });
+      config.baseUrl = baseUrl.trim();
+    }
+
+    const apiKey = await input({
+      message: 'Enter API key:',
+      transformer: () => '',
+    });
+
+    if (!apiKey.trim()) {
+      logger.error('Config', 'API key cannot be empty.');
+      config = { ...config, baseUrl: '' };
+      clearApiKey();
+      continue;
+    }
+
+    setApiKey(apiKey.trim());
+    configureLlmAdapter('openai-compatible');
+
+    try {
+      await validateLlmConnection(config.baseUrl, OLLAMA_CONNECT_TIMEOUT_MS);
+    } catch {
+      logger.error('Config', `Could not connect to ${config.baseUrl}`);
+      logger.warn('Config', 'Please check the URL and API key.');
+      const action = await select({
+        message: 'What would you like to do?',
+        choices: [
+          { name: 'Retry', value: 'retry' },
+          { name: 'Edit configuration', value: 'edit' },
+          { name: 'Exit', value: 'exit' },
+        ],
+      });
+      if (action === 'exit' || action === null) {
+        // eslint-disable-next-line unicorn/no-process-exit
+        process.exit(0);
+      }
+      config = { ...config, baseUrl: '' };
+      clearApiKey();
+      continue;
+    }
+
+    await saveConfig(config);
+    return config;
   }
 }
 

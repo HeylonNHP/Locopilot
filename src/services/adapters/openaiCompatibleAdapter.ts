@@ -588,58 +588,84 @@ async function* sendOpenAICompatibleChatStream(
       config,
     );
   } catch (err) {
-  // Debug: log truncated payload on 400 for diagnosis.
-  // Keep this safe: err.response.data may be a stream/object with circular
-  // references when responseType is 'stream', so never JSON.stringify it raw.
-  if (axios.isAxiosError(err) && err.response?.status === 400) {
-    console.error('=== OPENAI ADAPTER 400 ERROR ===');
-    console.error('URL:', `${normalizedBaseUrl}/v1/chat/completions`);
-    // Log just the structure (keys and lengths) to avoid circular refs.
-    const summary: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(payload)) {
-      if (k === 'messages') {
-        summary.messages = `[${(v as unknown[]).length} messages]`;
-      } else if (k === 'tools') {
-        summary.tools = `[${(v as unknown[]).length} tools]`;
-      } else {
-        summary[k] = v;
-      }
-    }
-    console.error('Payload summary:', JSON.stringify(summary, null, 2));
-    // Surface the most common incompatible-field combinations.
-    if (payload.reasoning_effort !== undefined && (payload.tools?.length ?? 0) > 0) {
-      console.error(
-        'PROBABLE CAUSE: reasoning_effort is set while tools are present. ' +
-          'Many providers (including Airia) reject this combination.'
-      );
-    }
-    try {
-      await writeFile('debug_400_payload.json', JSON.stringify(payload, null, 2));
-      console.error('Full payload saved to:', 'debug_400_payload.json');
-    } catch {
-      // Ignore file write errors in debug logging.
-    }
-    if (err.response?.data) {
-      const data = err.response.data;
-      if (typeof data === 'string') {
-        console.error('Response:', data.slice(0, 2000));
-      } else if (data && typeof data === 'object') {
-        // Streams / axios objects can be circular; pull out safe fields only.
-        const safeData: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
-          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null) {
-            safeData[k] = v;
-          } else if (Array.isArray(v)) {
-            safeData[k] = `[${v.length} items]`;
-          } else if (typeof v === 'object') {
-            safeData[k] = '[object]';
+    // On 400, try to read the error stream to surface the real API message
+    // to the UI and to disk.  With responseType: 'stream', err.response.data
+    // is a ReadableStream — the standard OpenAI error body is in there.
+    if (axios.isAxiosError(err) && err.response?.status === 400) {
+      let apiMessage = '';
+      try {
+        const stream = err.response.data as NodeJS.ReadableStream;
+        // Read the first chunk (the error body is typically small).
+        const chunk = await new Promise<Buffer>((resolve, reject) => {
+          const onData = (data: Buffer) => {
+            cleanup();
+            resolve(data);
+          };
+          const onEnd = () => {
+            cleanup();
+            resolve(Buffer.from(''));
+          };
+          const onError = (e: Error) => {
+            cleanup();
+            reject(e);
+          };
+          const cleanup = () => {
+            stream.off('data', onData);
+            stream.off('end', onEnd);
+            stream.off('error', onError);
+          };
+          stream.once('data', onData);
+          stream.once('end', onEnd);
+          stream.once('error', onError);
+        });
+        if (chunk.length > 0) {
+          const text = chunk.toString('utf8');
+          // Try standard OpenAI error shape: { error: { message } }
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed?.error?.message) {
+              apiMessage = parsed.error.message;
+            } else if (parsed?.message) {
+              apiMessage = parsed.message;
+            }
+          } catch {
+            // Not JSON — use the raw text (truncated).
+            apiMessage = text.slice(0, 500);
           }
         }
-        console.error('Response:', JSON.stringify(safeData, null, 2).slice(0, 2000));
+      } catch {
+        // Best-effort: if reading the stream fails, fall through.
       }
+
+      // Attach the real message to the error so getLlmApiErrorMessage
+      // and disk logging both see it.
+      if (apiMessage) {
+        err.message = `OpenAI-compatible API error (400): ${apiMessage}`;
+      }
+
+      // Debug logging (kept simple — no circular-ref risk since we
+      // already consumed the stream above).
+      console.error('=== OPENAI ADAPTER 400 ERROR ===');
+      console.error('URL:', `${normalizedBaseUrl}/v1/chat/completions`);
+      console.error('API message:', apiMessage || '(none)');
+      try {
+        await writeFile(
+          'debug_400_payload.json',
+          JSON.stringify(
+            {
+              request: payload,
+              response: { message: apiMessage || null },
+            },
+            null,
+            2,
+          ),
+        );
+        console.error('Debug data saved to:', 'debug_400_payload.json');
+      } catch {
+        // Ignore file write errors in debug logging.
+      }
+      console.error('=== END 400 DEBUG ===');
     }
-    console.error('=== END 400 DEBUG ===');
-  }
     throw err;
   }
 
