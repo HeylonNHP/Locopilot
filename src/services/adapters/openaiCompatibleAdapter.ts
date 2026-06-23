@@ -236,6 +236,14 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
 
     if (message.tool_call_id) {
       (base as { tool_call_id: string }).tool_call_id = message.tool_call_id;
+    } else if (message.role === 'tool') {
+      // tool_call_id is not persisted in the session database, so it may
+      // be missing when loading history. Use the id from the preceding
+      // assistant message's tool_calls as a fallback.
+      const prev = i > 0 ? messages[i - 1] : undefined;
+      const prevToolCalls = prev?.role === 'assistant' ? prev.tool_calls : undefined;
+      const fallbackId = prevToolCalls?.[0]?.id || 'call_fallback_0';
+      (base as { tool_call_id: string }).tool_call_id = fallbackId;
     }
     if (message.tool_calls) {
       (base as { tool_calls: OpenAIToolCall[] }).tool_calls = message.tool_calls.map(
