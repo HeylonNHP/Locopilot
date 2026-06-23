@@ -7,6 +7,8 @@ export type LlmProvider = 'ollama' | 'openai-compatible';
 
 export interface Config {
   provider?: LlmProvider;
+  /** API key for OpenAI-compatible providers. Ignored by Ollama. */
+  apiKey?: string;
   baseUrl: string;
   lastModel?: string;
   compactionModel?: string;

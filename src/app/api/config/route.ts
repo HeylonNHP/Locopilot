@@ -57,6 +57,11 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       webSearch: updatedWebSearch,
     };
 
+    // Scrub empty API-key strings so they don't get persisted.
+    if (updatedConfig.apiKey !== undefined && updatedConfig.apiKey.trim() === '') {
+      delete updatedConfig.apiKey;
+    }
+
     await saveConfig(updatedConfig);
     return NextResponse.json({ config: updatedConfig });
   } catch (err) {

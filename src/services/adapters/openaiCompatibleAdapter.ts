@@ -1,4 +1,5 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
+import { writeFile } from 'node:fs/promises';
 
 import type {
   ChatApiResponse,
@@ -43,7 +44,7 @@ type OpenAIMessage =
   | { role: 'tool'; content: string; tool_call_id: string }
   | {
       role: 'assistant';
-      content: string;
+      content: string | null;
       tool_calls: Array<{
         id: string;
         type: 'function';
@@ -198,9 +199,14 @@ function stripImagesFromMessages(messages: ChatMessage[]): ChatMessage[] {
 
 function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
   return messages.map((message) => {
+    // OpenAI requires content: null for assistant messages that only have tool_calls.
+    const hasToolCalls = !!message.tool_calls && message.tool_calls.length > 0;
+    const content: string | null =
+      hasToolCalls && !message.content?.trim() ? null : message.content;
+
     const base: OpenAIMessage = {
       role: message.role,
-      content: message.content,
+      content,
     } as OpenAIMessage;
 
     if (message.tool_call_id) {
@@ -224,6 +230,40 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
 }
 
 /**
+ * Recursively strip `description` fields from a tool parameter schema object.
+ * Some providers (e.g. Airia) reject description fields inside nested
+ * items.properties, even though they are valid JSON Schema.
+ */
+function stripDescriptions(obj: unknown): unknown {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) return obj.map(stripDescriptions);
+  if (typeof obj === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      if (key === 'description') continue; // strip description fields
+      result[key] = stripDescriptions(value);
+    }
+    return result;
+  }
+  return obj;
+}
+
+/**
+ * Strip description fields from all tool definitions in the array.
+ */
+function stripToolDescriptions(tools: OpenAITool[]): OpenAITool[] {
+  return tools.map((tool) => ({
+    type: tool.type,
+    function: {
+      name: tool.function.name,
+      description: tool.function.description ?? '',
+      parameters: stripDescriptions(tool.function.parameters) as Record<string, unknown>,
+      ...(tool.function.strict === undefined ? {} : { strict: tool.function.strict }),
+    },
+  }));
+}
+
+/**
  * Build the request payload for /v1/chat/completions.
  * Only includes fields that are present and meaningful.
  */
@@ -239,7 +279,9 @@ function buildChatPayload(params: ChatParams, stream: boolean): OpenAIChatComple
 
   // Only include tools when there are actually tools to send.
   if (params.tools && params.tools.length > 0) {
-    payload.tools = params.tools as OpenAITool[];
+    // Strip description fields from nested schema objects — some providers
+    // (e.g. Airia) reject descriptions inside items.properties.
+    payload.tools = stripToolDescriptions(params.tools as OpenAITool[]);
   }
 
   // Standard generation parameters — passed through from params.options
@@ -278,8 +320,16 @@ function buildChatPayload(params: ChatParams, stream: boolean): OpenAIChatComple
   }
 
   // OpenAI-compatible reasoning effort (e.g. for o-series models).
-  if (params.think !== undefined) {
+  // Skip when tools are present — most providers reject reasoning_effort
+  // alongside function tools (Airia returns 400 for this combination).
+  if (params.think !== undefined && (!params.tools || params.tools.length === 0)) {
     payload.reasoning_effort = params.think ? 'medium' : 'low';
+  }
+
+  // Defensive: some callers set reasoning parameters independently of tools.
+  // If tools are present, drop reasoning_effort to avoid provider 400s.
+  if (payload.reasoning_effort !== undefined && payload.tools && payload.tools.length > 0) {
+    delete payload.reasoning_effort;
   }
 
   // Response format (JSON mode, structured output, etc.).
@@ -491,11 +541,70 @@ async function* sendOpenAICompatibleChatStream(
   if (params.signal) config.signal = params.signal;
   if (params.timeoutMs !== undefined) config.timeout = params.timeoutMs;
 
-  const response = await client.post<NodeJS.ReadableStream>(
-    `${normalizedBaseUrl}/v1/chat/completions`,
-    buildChatPayload(params, true),
-    config,
-  );
+  const payload = buildChatPayload(params, true);
+
+  let response;
+  try {
+    response = await client.post<NodeJS.ReadableStream>(
+      `${normalizedBaseUrl}/v1/chat/completions`,
+      payload,
+      config,
+    );
+  } catch (err) {
+  // Debug: log truncated payload on 400 for diagnosis.
+  // Keep this safe: err.response.data may be a stream/object with circular
+  // references when responseType is 'stream', so never JSON.stringify it raw.
+  if (axios.isAxiosError(err) && err.response?.status === 400) {
+    console.error('=== OPENAI ADAPTER 400 ERROR ===');
+    console.error('URL:', `${normalizedBaseUrl}/v1/chat/completions`);
+    // Log just the structure (keys and lengths) to avoid circular refs.
+    const summary: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(payload)) {
+      if (k === 'messages') {
+        summary.messages = `[${(v as unknown[]).length} messages]`;
+      } else if (k === 'tools') {
+        summary.tools = `[${(v as unknown[]).length} tools]`;
+      } else {
+        summary[k] = v;
+      }
+    }
+    console.error('Payload summary:', JSON.stringify(summary, null, 2));
+    // Surface the most common incompatible-field combinations.
+    if (payload.reasoning_effort !== undefined && (payload.tools?.length ?? 0) > 0) {
+      console.error(
+        'PROBABLE CAUSE: reasoning_effort is set while tools are present. ' +
+          'Many providers (including Airia) reject this combination.'
+      );
+    }
+    try {
+      await writeFile('debug_400_payload.json', JSON.stringify(payload, null, 2));
+      console.error('Full payload saved to:', 'debug_400_payload.json');
+    } catch {
+      // Ignore file write errors in debug logging.
+    }
+    if (err.response?.data) {
+      const data = err.response.data;
+      if (typeof data === 'string') {
+        console.error('Response:', data.slice(0, 2000));
+      } else if (data && typeof data === 'object') {
+        // Streams / axios objects can be circular; pull out safe fields only.
+        const safeData: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+          if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null) {
+            safeData[k] = v;
+          } else if (Array.isArray(v)) {
+            safeData[k] = `[${v.length} items]`;
+          } else if (typeof v === 'object') {
+            safeData[k] = '[object]';
+          }
+        }
+        console.error('Response:', JSON.stringify(safeData, null, 2).slice(0, 2000));
+      }
+    }
+    console.error('=== END 400 DEBUG ===');
+  }
+    throw err;
+  }
 
   // Accumulate tool call fragments across chunks by index.
   const toolCallAccumulator = new Map<
@@ -587,12 +696,13 @@ async function* sendOpenAICompatibleChatStream(
               : {}),
           },
           // Attach token counts on the final chunk if available.
-          ...(isDone && parsed.usage?.prompt_tokens === undefined
-            ? {}
-            : { prompt_eval_count: parsed.usage!.prompt_tokens }),
-          ...(isDone && parsed.usage?.completion_tokens === undefined
-            ? {}
-            : { eval_count: parsed.usage!.completion_tokens }),
+          // Only include when usage is non-null and the value is defined.
+          ...(isDone && parsed.usage?.prompt_tokens !== undefined
+            ? { prompt_eval_count: parsed.usage.prompt_tokens }
+            : {}),
+          ...(isDone && parsed.usage?.completion_tokens !== undefined
+            ? { eval_count: parsed.usage.completion_tokens }
+            : {}),
         };
 
         yield chunk;

@@ -54,6 +54,7 @@ import { WorkingDirectoryScope } from '@/tools/workingDirectory';
 
 import {
   type ChatMessage,
+  configureLlmAdapterAndAuth,
   fetchLlmModelInfo,
   getLlmApiErrorMessage,
   getLlmModelVisionSupport,
@@ -445,6 +446,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 let config: Config | null = null;
                 try {
                     config = await loadConfig();
+                    configureLlmAdapterAndAuth(config?.provider, config?.apiKey);
                     if (config) {
                         if (typeof config.yolo === 'boolean') {
                             effectiveYolo = config.yolo;

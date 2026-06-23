@@ -7,7 +7,7 @@ import { listSessions, loadSessionMessages } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { generateSessionTitle } from '@/services/titleGeneration';
 
-import { type ChatMessage, getLlmApiErrorMessage } from '../../../services/llm';
+import { type ChatMessage, configureLlmAdapterAndAuth, getLlmApiErrorMessage } from '../../../services/llm';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,6 +61,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const config = await loadConfig();
+    configureLlmAdapterAndAuth(config?.provider, config?.apiKey);
     const effectiveBaseUrl =
       typeof baseUrl === 'string' && baseUrl.trim().length > 0
         ? baseUrl.trim()

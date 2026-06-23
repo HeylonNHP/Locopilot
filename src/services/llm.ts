@@ -10,7 +10,11 @@ import type {
 } from './adapters/llmAdapter';
 
 import { ollamaAdapter } from './adapters/ollamaAdapter';
-import { openaiCompatibleAdapter } from './adapters/openaiCompatibleAdapter';
+import {
+  clearApiKey as clearOpenAIApiKey,
+  openaiCompatibleAdapter,
+  setApiKey as setOpenAIApiKey,
+} from './adapters/openaiCompatibleAdapter';
 
 let activeAdapter: LlmAdapter = ollamaAdapter;
 
@@ -36,6 +40,21 @@ export function selectLlmAdapter(provider?: LlmProvider): LlmAdapter {
 export function configureLlmAdapter(provider?: LlmProvider): LlmAdapter {
   const adapter = selectLlmAdapter(provider);
   setLlmAdapter(adapter);
+  return adapter;
+}
+
+/**
+ * Configure the active adapter and its authentication key in one call.
+ * This should be invoked once per request after loading config so the
+ * correct provider and credentials are always in scope.
+ */
+export function configureLlmAdapterAndAuth(provider?: LlmProvider, apiKey?: string): LlmAdapter {
+  const adapter = configureLlmAdapter(provider);
+  if (provider === 'openai-compatible' && apiKey) {
+    setOpenAIApiKey(apiKey);
+  } else {
+    clearOpenAIApiKey();
+  }
   return adapter;
 }
 

@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import type { Config } from '../../../types/chatConfig';
 
-import { fetchLlmModelInfo, fetchLlmModels } from '../../../services/llm';
+import { configureLlmAdapterAndAuth, fetchLlmModelInfo, fetchLlmModels } from '../../../services/llm';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 
@@ -25,10 +25,12 @@ export async function GET(): Promise<NextResponse> {
     const config = await loadConfig();
     if (!config?.baseUrl) {
       return NextResponse.json(
-        { error: 'Ollama base URL not configured. Please set up config first.' },
+        { error: 'LLM base URL not configured. Please set up config first.' },
         { status: 400 }
       );
     }
+
+    configureLlmAdapterAndAuth(config.provider, config.apiKey);
 
     const models = await fetchLlmModels(config.baseUrl);
     const modelsWithCapabilities = await Promise.all(

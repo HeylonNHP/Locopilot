@@ -7,6 +7,7 @@ import { compactHistory } from '../../../services/compact';
 import { loadConfig } from '../../../services/configManager';
 import {
   type ChatMessage,
+  configureLlmAdapterAndAuth,
   getLlmApiErrorMessage,
   type PersistedChatMessage,
   type SubagentLogMessage,
@@ -76,6 +77,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
       try {
         const config = await loadConfig();
+        configureLlmAdapterAndAuth(config?.provider, config?.apiKey);
         const effectiveBaseUrl =
           typeof baseUrl === 'string' && baseUrl.trim().length > 0
             ? baseUrl.trim()

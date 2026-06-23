@@ -54,6 +54,7 @@ File:
 Current state:
 - `selectLlmAdapter()` now **actually switches on the provider** — returns `openaiCompatibleAdapter` for `'openai-compatible'`, falls back to `ollamaAdapter` for everything else.
 - `configureLlmAdapter(provider)` calls `selectLlmAdapter` and sets the active adapter.
+- `configureLlmAdapterAndAuth(provider, apiKey)` also configures the adapter **and** sets/clears the OpenAI API key in one call.
 - The switch statement uses proper case braces and has no redundant cases (satisfies `unicorn/switch-case-braces`).
 
 Why this matters:
@@ -91,19 +92,98 @@ This is a complete adapter implementing the `LlmAdapter` interface for any OpenA
 - The `sendChat` method with `onChunk` callback accumulates `content`, `thinking`, and `tool_calls` across chunks (matching the Ollama adapter pattern).
 - The `sendChatStream` generator yields each SSE chunk as a `ChatApiResponse`, with `done: true` and `done_reason` set on the final chunk.
 
-### 5) Fixed regressions from earlier work
+### 5) Wired provider selection and auth into every API route (Step A + Step C)
+
+Files changed:
+- `C:\git\Locopilot-dev\src\services\llm.ts`
+- `C:\git\Locopilot-dev\src\types\chatConfig.ts`
+- `C:\git\Locopilot-dev\src\app\api\config\route.ts`
+- `C:\git\Locopilot-dev\src\app\api\models\route.ts`
+- `C:\git\Locopilot-dev\src\app\api\chat\route.ts`
+- `C:\git\Locopilot-dev\src\app\api\compact\route.ts`
+- `C:\git\Locopilot-dev\src\app\api\title\route.ts`
+
+What changed:
+- Added `apiKey?: string` to the `Config` interface.
+- Added `configureLlmAdapterAndAuth(provider, apiKey)` helper in `llm.ts`.
+- Every route that talks to the LLM now:
+  1. Loads config with `loadConfig()`.
+  2. Calls `configureLlmAdapterAndAuth(config?.provider, config?.apiKey)` before any LLM call.
+  3. Uses the active adapter for chat, model listing, compaction, title generation, etc.
+- The config PUT endpoint persists `apiKey` and scrubs empty strings so they aren't saved.
+- The models route error message is now provider-agnostic ("LLM base URL not configured" instead of "Ollama base URL").
+
+Why this matters:
+- The app now reads provider and API key from config at request time and routes to the right backend.
+- OpenAI-compatible endpoints actually work end-to-end once config is set.
+- No route accidentally falls back to the stale module-level Ollama adapter.
+
+### 6) Fixed regressions from earlier work
 
 File:
 - `C:\git\Locopilot-dev\src\services\configManager.ts`
 
 An earlier attempt (GPT 5.4-mini) had stripped all `// eslint-disable-next-line unicorn/no-process-exit` comments from this file, causing 4 build errors. These have been restored.
 
-### 6) Removed unnecessary `raw?: unknown` from ChatApiResponse
+### 7) Removed unnecessary `raw?: unknown` from ChatApiResponse
 
 File:
 - `C:\git\Locopilot-dev\src\services\adapters\llmAdapter.ts`
 
 The `raw?: unknown` field was added to stash the raw OpenAI response for token stats extraction, but it was redundant — `toChatApiResponse()` already maps `usage.prompt_tokens` → `prompt_eval_count` and `usage.completion_tokens` → `eval_count` directly onto `ChatApiResponse`. The adapter's `getTurnStats` now reads from `ChatApiResponse` directly, matching the Ollama adapter pattern. Removed one unnecessary `unknown` type.
+
+### 8) Fixed Airia API 400 error — strip nested descriptions from tool schemas
+
+File:
+- `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
+
+**Root cause:** The Airia API gateway rejects `description` fields inside nested `items.properties` in tool parameter JSON Schemas. The `run_subagents` tool has descriptions on its nested `id` and `prompt` properties, which caused every chat request to fail with HTTP 400 "Invalid request body format".
+
+**Fix:** Added `stripDescriptions()` — a recursive function that removes all `description` keys from a schema object — and `stripToolDescriptions()` which applies it to every tool's `parameters` before sending. The top-level `function.description` is preserved (it's standard and supported).
+
+**Verified:** Tested against the live Airia API with a payload containing the `run_subagents` tool (with nested descriptions). Previously returned 400; now returns a successful streaming response.
+
+### 9) Fixed Airia API 400 error — never send `reasoning_effort` with function tools
+
+File:
+- `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
+
+**Root cause:** The Airia API gateway rejects the combination of `reasoning_effort` and `tools` in the same `/v1/chat/completions` request:
+
+```json
+{
+  "error": {
+    "message": "Function tools with reasoning_effort are not supported for gpt-5.4-mini in /v1/chat/completions. Please use /v1/responses instead.",
+    "type": "invalid_request_error",
+    "param": "reasoning_effort"
+  }
+}
+```
+
+**Fix:** `buildChatPayload()` now only adds `reasoning_effort` when **no tools** are present. It also has a defensive post-check that deletes `reasoning_effort` from the payload if tools were somehow included.
+
+**Verified:**
+- Tested the exact failing payload (`tools` + `reasoning_effort: "medium"`) against the live Airia API — it reproduces the 400.
+- Tested the corrected payload (`tools` without `reasoning_effort`) against the same endpoint — it streams successfully.
+- Added explicit 400 debug logging that prints the payload summary and flags `reasoning_effort` + tools as the probable cause.
+
+### 10) Fixed circular JSON crash that masked the real 400 error
+
+File:
+- `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
+
+**Root cause:** When a streaming request fails, `err.response.data` can be an axios response stream containing circular references (`TLSSocket` → `ClientRequest` → `Agent` → ...). The 400 debug logging was calling `JSON.stringify(data)` on it, which threw `TypeError: Converting circular structure to JSON`. That secondary error replaced the actual 400 and propagated up through the sub-agent web search path, making it look like content compaction had failed.
+
+**Fix:** Replaced raw `JSON.stringify` with a safe extractor that only copies primitive / array / object-type labels. Also saves the full request payload to `debug_400_payload.json` for direct inspection and curl reproduction.
+
+### 11) Fixed `/api/models/[name]/info` using the wrong adapter
+
+File:
+- `C:\git\Locopilot-dev\src\app\api\models\[name]\info\route.ts`
+
+**Root cause:** This route was not calling `configureLlmAdapterAndAuth()`, so it kept using the default Ollama adapter against the configured OpenAI-compatible base URL, returning HTTP 500.
+
+**Fix:** Added `configureLlmAdapterAndAuth(config.provider, config.apiKey)` before `fetchLlmModelInfo()`. Also updated the "Ollama base URL not configured" error message to "LLM base URL not configured".
 
 ## What Was Verified
 
@@ -114,47 +194,18 @@ The `raw?: unknown` field was added to stash the raw OpenAI response for token s
 
 The app can now:
 
-1. **Select the OpenAI-compatible adapter at runtime** via `configureLlmAdapter('openai-compatible')`.
-2. **Send requests to any OpenAI-compatible endpoint** using the new adapter.
-3. **Stream responses** with proper tool call accumulation across SSE chunks.
-4. **Authenticate** via `setApiKey()` for providers that require a Bearer token.
+1. **Select the OpenAI-compatible adapter at runtime** via config `"provider": "openai-compatible"`.
+2. **Authenticate with an API key** by setting `"apiKey": "sk-..."` in `config.json`.
+3. **Send requests to any OpenAI-compatible endpoint** using the new adapter.
+4. **Stream responses** with proper tool call accumulation across SSE chunks.
 5. **Continue using Ollama** as the default when no provider is specified.
+6. **List models, compact history, and generate titles** through the correct provider adapter.
 
-What's still missing for full runtime switching:
-- The provider is not yet read from config at startup (Step A wiring).
-- The UI doesn't expose provider selection yet.
+What's still missing for full user-facing OpenAI support:
+- The UI doesn't expose provider selection or an API-key field yet.
+- The UI doesn't handle providers that don't support model listing (manual model entry).
 
 ## Intended Next Steps
-
-### Step A: Wire provider selection into startup (remaining work)
-
-Use `provider` from config when the app initializes and call `configureLlmAdapter(provider)` once.
-
-Expected result:
-- The runtime chooses a backend based on config, not hardcoded assumptions.
-
-Files likely involved:
-- `C:\git\Locopilot-dev\src\services\configManager.ts`
-- `C:\git\Locopilot-dev\src\services\llm.ts`
-- possibly initialization code in the app entry path
-
-### Step C: Extend config for auth (partially done)
-
-OpenAI-compatible endpoints usually need an API key.
-
-What's done:
-- The adapter exports `setApiKey()` and `clearApiKey()` functions.
-
-What remains:
-- Add `apiKey` field to the `Config` interface in `chatConfig.ts`.
-- Wire config → `setApiKey()` during startup.
-- Add API key input to UI settings.
-
-Files likely involved:
-- `C:\git\Locopilot-dev\src\types\chatConfig.ts`
-- `C:\git\Locopilot-dev\src\app\api\config\route.ts`
-- `C:\git\Locopilot-dev\src\services\configManager.ts`
-- UI settings components
 
 ### Step D: Update model discovery UX
 
@@ -183,6 +234,14 @@ Files likely involved:
 - `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
 - possibly `C:\git\Locopilot-dev\src\services\adapters\llmAdapter.ts`
 
+### Step F: Add UI settings for provider and API key
+
+Expose the new config fields in the settings modal so users can switch providers without hand-editing `config.json`.
+
+Files likely involved:
+- `C:\git\Locopilot-dev\src\components\SettingsModal\SettingsModal.tsx`
+- `C:\git\Locopilot-dev\src\app\api\config\route.ts`
+
 ## Notes on Design Direction
 
 A good long-term shape is:
@@ -198,8 +257,6 @@ This avoids spreading provider-specific conditionals across the codebase.
 
 If picking up later, the next practical implementation step is:
 
-1. Read provider from loaded config during startup.
-2. Call `configureLlmAdapter(config.provider)` once.
-3. If provider is `'openai-compatible'`, call `setApiKey(config.apiKey)`.
-4. Keep Ollama as the default when provider is missing.
-5. Re-run `npm run build`.
+1. Add provider/API-key inputs to `SettingsModal.tsx`.
+2. Update `ModelSelector` to allow manual model entry when model listing fails.
+3. Re-run `npm run build`.
