@@ -22,9 +22,27 @@ export interface ChatMessage {
   images?: string[];
 }
 
+/**
+ * Generate a UUID v4 string that works in all browser contexts.
+ * `crypto.randomUUID()` throws in non-secure contexts (plain HTTP),
+ * so we fall back to a Math.random()-based v4 UUID when needed.
+ */
+function randomId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    // Fallback for non-secure contexts (plain HTTP) where
+    // crypto.randomUUID() throws a TypeError.
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replaceAll(/[xy]/g, (c) => {
+      const r = Math.trunc(Math.random() * 16);
+      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
+  }
+}
+
 /** Return a copy of msg with a stable `id` field if it doesn't already have one. */
 function withId(msg: ChatMessage): ChatMessage {
-  return msg.id === undefined ? { ...msg, id: crypto.randomUUID() } : msg;
+  return msg.id === undefined ? { ...msg, id: randomId() } : msg;
 }
 
 export interface Session {
