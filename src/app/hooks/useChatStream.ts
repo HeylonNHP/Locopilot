@@ -7,7 +7,7 @@ import type { SseEventPayloadMap } from '@/types/sse';
 
 import { type ChatMessage, type DoneReason, useChat } from '@/app/lib/chatStore';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
-import { DEFAULT_SESSION_NAME } from '@/constants';
+import { DEFAULT_NUM_CTX, DEFAULT_SESSION_NAME } from '@/constants';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
@@ -291,7 +291,7 @@ export function useChatStream(
                 promptEvalCount: data.stats.newTokenCount,
                 evalCount: 0,
                 totalTokens: data.stats.newTokenCount,
-                tokenLimit: data.tokenLimit ?? refs.numCtxRef.current ?? state.numCtx,
+                tokenLimit: data.tokenLimit ?? refs.numCtxRef.current ?? DEFAULT_NUM_CTX,
               },
               ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
             });
