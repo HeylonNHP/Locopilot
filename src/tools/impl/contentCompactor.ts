@@ -232,9 +232,7 @@ export class ContentCompactor {
       tools: [],
       numCtx,
       timeoutMs: this.settings.requestTimeoutMs,
-      options: {
-        num_predict: numPredict,
-      },
+      maxOutputTokens: numPredict,
     };
 
     return await this.streamCompactionResponse(params);

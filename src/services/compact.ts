@@ -120,8 +120,8 @@ async function measureConversationTokens(
         messages,
         tools: [],
         numCtx: measurementCtx,
+        maxOutputTokens: 1, // Minimize generation overhead during measurement.
         options: {
-          num_predict: 1, // Set to 1 to minimize generation overhead
           temperature: 0,
         },
       },
@@ -334,9 +334,9 @@ async function distillToolMessages(
         ],
         tools: [],
         numCtx,
+        maxOutputTokens: TOOL_DISTILL_NUM_PREDICT,
         options: {
           temperature: 0,
-          num_predict: TOOL_DISTILL_NUM_PREDICT,
         },
       },
       (chunk) => {
@@ -565,19 +565,19 @@ export async function compactHistory(
     },
   ];
 
-  const streamSummary = async (msgs: ChatMessage[], numPredict?: number): Promise<string> => {
-    let text = '';
-    for await (const chunk of sendLlmChatStream(baseUrl, {
-      model,
-      messages: msgs,
-      tools: [],
-      numCtx,
-      options: {
-        temperature: 0,
-        ...(numPredict === undefined ? {} : { num_predict: numPredict }),
-      },
-      ...(signal ? { signal } : {}),
-    })) {
+    const streamSummary = async (msgs: ChatMessage[], numPredict?: number): Promise<string> => {
+      let text = '';
+      for await (const chunk of sendLlmChatStream(baseUrl, {
+        model,
+        messages: msgs,
+        tools: [],
+        numCtx,
+        ...(numPredict === undefined ? {} : { maxOutputTokens: numPredict }),
+        options: {
+          temperature: 0,
+        },
+        ...(signal ? { signal } : {}),
+      })) {
       const content = chunk.message?.content ?? '';
       if (content.length > 0) {
         text += content;

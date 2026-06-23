@@ -132,6 +132,15 @@ Feature summary:
   - When adding tools, document their security profile and confirmation UX.
   - Ensure all new features align with the "Local, Private, Safe" philosophy.
 
+- **Adapter mapping convention**:
+  - Canonical request concepts belong on `ChatParams` / `StreamChatParams` as typed fields (e.g. `maxOutputTokens`), not buried inside `options`.
+  - Each adapter is responsible for translating canonical fields into provider-native request fields:
+    - Ollama: `maxOutputTokens` → `options.num_predict`
+    - OpenAI-compatible: `maxOutputTokens` → `max_completion_tokens`
+  - Keep provider-specific parameter names out of callers. Legacy `options.*` passthrough may remain as a fallback, but new code should prefer the canonical field.
+  - Document the mapping in both JSDoc on `ChatParams` and in `OPENAI_COMPATIBILITY_MIGRATION.md`.
+  - When adding a new provider, implement the same canonical fields so callers stay provider-agnostic.
+
 - **Web search tool** (`web_search`):
   - Changed `queries` parameter from `string` to `array` in the tool schema to encourage LLMs to provide multiple explicit queries properly.
   - Updated `parseQueriesInput` in `tools.ts` to handle actual arrays, JSON-encoded arrays, and strings separated by newlines, commas, or semicolons.
@@ -151,6 +160,11 @@ Feature summary:
   - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
+
+- 2026-06-24: Canonical `maxOutputTokens` output-token cap across adapters
+  - Files: `services/adapters/llmAdapter.ts`, `services/adapters/ollamaAdapter.ts`, `services/adapters/openaiCompatibleAdapter.ts`, `services/compact.ts`, `tools/impl/contentCompactor.ts`, `OPENAI_COMPATIBILITY_MIGRATION.md`, `.github/copilot-instructions.md`
+  - Summary: Added a provider-agnostic `maxOutputTokens` field to `ChatParams` / `StreamChatParams`. The Ollama adapter maps it to `options.num_predict`; the OpenAI-compatible adapter maps it to `max_completion_tokens`. Migrated all internal callers that were capping output tokens (`measureConversationTokens`, tool distillation, conversation summary streaming, web content compaction) from `options.num_predict` to the canonical field. Legacy `options.num_predict` / `options.max_tokens` / `options.max_completion_tokens` remain as fallback-only passthroughs. The web content compactor still hard-truncates its final result to the configured per-page character limit as a safety net.
+  - Intent: Fix the bug where OpenAI-compatible endpoints ignored the requested output-token cap during compaction/summarization because `num_predict` is an Ollama-specific option. By centralizing the translation inside the adapters, callers stay provider-agnostic and future adapters only need to implement the mapping once.
 
 - 2026-06-20: Decoupled working-directory tracking from ToolOutputSink
   - Files: `tools/workingDirectory.ts`, `tools/toolRegistry.ts`, `tools/impl/writeFileTool.ts`, `tools/impl/readFileTool.ts`, `tools/impl/patchFileTool.ts`, `tools/impl/readPdfTool.ts`, `tools/impl/runCommandTool.ts`, `tools/impl/subAgentTool.ts`, `app/api/chat/route.ts`, `.github/copilot-instructions.md`

@@ -115,16 +115,23 @@ function buildChatPayload(params: ChatParams, stream: boolean) {
   const messages =
     params.visionSupported === false ? stripImagesFromMessages(params.messages) : params.messages;
 
+  const options: Record<string, unknown> = {
+    num_ctx: params.numCtx,
+    ...params.options,
+  };
+
+  // Map the canonical output-token limit to Ollama's native option.
+  if (params.maxOutputTokens !== undefined) {
+    options.num_predict = params.maxOutputTokens;
+  }
+
   const payload: Record<string, unknown> = {
     model: params.model,
     messages,
     tools: params.tools,
     stream,
     think: params.think,
-    options: {
-      num_ctx: params.numCtx,
-      ...params.options,
-    },
+    options,
   };
 
   if (params.format !== undefined) {

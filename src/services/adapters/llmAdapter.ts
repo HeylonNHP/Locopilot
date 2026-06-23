@@ -65,6 +65,16 @@ export interface ChatParams {
    * Undefined means unknown and preserves any existing image data.
    */
   visionSupported?: boolean;
+  /**
+   * Canonical maximum number of tokens the model may generate.
+   * Each adapter maps this to its provider-specific field:
+   *   - Ollama          → options.num_predict
+   *   - OpenAI-compatible → max_completion_tokens
+   *
+   * Prefer this over setting `options.num_predict` / `options.max_tokens`
+   * directly; the adapter guarantees correct translation.
+   */
+  maxOutputTokens?: number;
   options?: Record<string, unknown>;
   signal?: AbortSignal;
   format?: string | Record<string, unknown>;

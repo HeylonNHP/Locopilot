@@ -18,6 +18,15 @@ The application should be able to:
 
 In practical terms, the app should no longer assume that every LLM backend behaves like Ollama.
 
+### Mapping the canonical output-token limit
+
+The `ChatParams` / `StreamChatParams` interfaces define a provider-agnostic `maxOutputTokens` field. Adapters translate it as follows:
+
+- **Ollama adapter** (`ollamaAdapter.ts`): `maxOutputTokens` → `options.num_predict`
+- **OpenAI-compatible adapter** (`openaiCompatibleAdapter.ts`): `maxOutputTokens` → `max_completion_tokens`
+
+Callers (e.g. web content compaction, history compaction/distillation, token measurement) should set `maxOutputTokens` instead of passing `options.num_predict`, `options.max_tokens`, or `options.max_completion_tokens`. The canonical field is always preferred; the legacy `options.*` keys remain available as a fallback for external/unconverted code.
+
 ## What Has Already Been Done
 
 ### 1) Added a provider field to config
@@ -82,7 +91,8 @@ This is a complete adapter implementing the `LlmAdapter` interface for any OpenA
 | **Auth** | `setApiKey(apiKey)` / `clearApiKey()` — configures a module-level axios instance with `Authorization: Bearer` header |
 | **Reasoning effort** | Maps `params.think` → `reasoning_effort: 'low' | 'medium'` |
 | **Stream options** | Sends `stream_options: { include_usage: true }` to get token counts in streaming |
-| **Standard params passthrough** | Forwards `max_tokens`, `max_completion_tokens`, `temperature`, `top_p`, `stop`, `seed`, `frequency_penalty`, `presence_penalty`, `logit_bias`, `user` from `params.options` |
+| **Output token cap** | Maps the canonical `params.maxOutputTokens` field to `max_completion_tokens`. Legacy `options.max_tokens` / `options.max_completion_tokens` are fallback-only. |
+| **Standard params passthrough** | Forwards `temperature`, `top_p`, `stop`, `seed`, `frequency_penalty`, `presence_penalty`, `logit_bias`, `user` from `params.options` |
 | **Response format** | Passes through `params.format` as `response_format` |
 | **Provider extras** | Passes through `params.options.extra_body` for provider-specific parameters |
 

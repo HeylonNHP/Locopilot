@@ -324,12 +324,6 @@ function buildChatPayload(params: ChatParams, stream: boolean): OpenAIChatComple
   // Standard generation parameters — passed through from params.options
   // so the caller can set them without changing the adapter interface.
   if (params.options) {
-    if (params.options.max_tokens !== undefined) {
-      payload.max_tokens = params.options.max_tokens as number;
-    }
-    if (params.options.max_completion_tokens !== undefined) {
-      payload.max_completion_tokens = params.options.max_completion_tokens as number;
-    }
     if (params.options.temperature !== undefined) {
       payload.temperature = params.options.temperature as number;
     }
@@ -354,6 +348,17 @@ function buildChatPayload(params: ChatParams, stream: boolean): OpenAIChatComple
     if (params.options.user !== undefined) {
       payload.user = params.options.user as string;
     }
+  }
+
+  // Canonical output-token limit. This maps to max_completion_tokens so it
+  // works for both reasoning and non-reasoning OpenAI-compatible models.
+  // The canonical field takes precedence; legacy options are fallbacks.
+  if (params.maxOutputTokens !== undefined) {
+    payload.max_completion_tokens = params.maxOutputTokens;
+  } else if (params.options?.max_completion_tokens !== undefined) {
+    payload.max_completion_tokens = params.options.max_completion_tokens as number;
+  } else if (params.options?.max_tokens !== undefined) {
+    payload.max_tokens = params.options.max_tokens as number;
   }
 
   // OpenAI-compatible reasoning effort (e.g. for o-series models).
