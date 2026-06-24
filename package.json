@@ -41,7 +41,7 @@
     "isomorphic-dompurify": "^3.13.0",
     "jsdom": "^28.1.0",
     "marked": "^15.0.12",
-    "next": "^15.5.18",
+    "next": "^15.4.2",
     "pdf-parse": "^2.4.5",
     "playwright": "^1.59.1",
     "react": "^19.0.0",

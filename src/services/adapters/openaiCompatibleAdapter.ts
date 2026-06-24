@@ -124,6 +124,7 @@ interface OpenAIChatCompletionResponse {
     message: {
       role: 'assistant';
       content: string | null;
+      reasoning_content?: string | null;
       tool_calls?: OpenAIToolCall[];
     };
   }>;
@@ -154,6 +155,7 @@ interface OpenAIChatCompletionChunk {
     delta: {
       role?: 'assistant';
       content?: string | null;
+      reasoning_content?: string | null;
       tool_calls?: OpenAIToolCallDelta[];
     };
   }>;
@@ -440,6 +442,7 @@ function finalizeToolCalls(accumulator: Map<number, PartialToolCall>): ToolCall[
 function toChatApiResponse(response: OpenAIChatCompletionResponse): ChatApiResponse {
   const choice = response.choices[0];
   const content = choice?.message.content ?? '';
+  const reasoningContent = choice?.message.reasoning_content ?? '';
   const toolCalls: ToolCall[] | undefined = choice?.message.tool_calls?.map((toolCall) => ({
     id: toolCall.id,
     function: {
@@ -458,6 +461,9 @@ function toChatApiResponse(response: OpenAIChatCompletionResponse): ChatApiRespo
     message: {
       role: 'assistant',
       content,
+      ...(reasoningContent
+        ? { thinking: reasoningContent }
+        : {}),
       ...(toolCalls && toolCalls.length > 0
         ? { tool_calls: toolCalls as unknown as [ToolCall, ...ToolCall[]] }
         : {}),
@@ -740,6 +746,7 @@ async function* sendOpenAICompatibleChatStream(
 
         // Build the message for this chunk.
         const content = delta.content ?? '';
+        const reasoningContent = delta.reasoning_content ?? '';
         const isDone = choice?.finish_reason !== null && choice?.finish_reason !== undefined;
         const doneReason = choice?.finish_reason ?? undefined;
 
@@ -759,6 +766,7 @@ async function* sendOpenAICompatibleChatStream(
           message: {
             role: 'assistant',
             content,
+            ...(reasoningContent ? { thinking: reasoningContent } : {}),
             ...(toolCalls && toolCalls.length > 0
               ? { tool_calls: toolCalls as unknown as [ToolCall, ...ToolCall[]] }
               : {}),

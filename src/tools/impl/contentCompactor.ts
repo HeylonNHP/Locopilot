@@ -224,34 +224,92 @@ export class ContentCompactor {
       attempt
     );
 
-    // Note: no think/reasoning_effort flag (Airia rejects it with tools, causing 400).
-    // Also omit temperature — gpt-5-nano on Airia rejects temperature:0, defaults are fine.
+    // Force reasoning OFF for compaction. Models like gpt-5-nano otherwise
+    // burn the entire maxOutputTokens budget on hidden chain-of-thought
+    // (reasoning_tokens == maxOutputTokens) and stream zero visible content,
+    // so compaction fails. `think: false` makes the adapter set
+    // reasoning_effort="low" on the request, which suppresses the
+    // hidden reasoning and produces real output tokens.
     const params: StreamChatParams = {
       model,
       messages,
       tools: [],
       numCtx,
+      think: false,
       timeoutMs: this.settings.requestTimeoutMs,
       maxOutputTokens: numPredict,
     };
+
+    this.output.writeLine(
+      `Web content compaction prompt: model=${model} numCtx=${numCtx} maxOutputTokens=${numPredict} (~${numPredict * 4} chars) promptTokens=${countMessagesTokens(messages, model)}`
+    );
 
     return await this.streamCompactionResponse(params);
   }
 
   private async streamCompactionResponse(params: StreamChatParams): Promise<string> {
+    try {
+      return await this.runCompactionStream(params);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Some providers reject `reasoning_effort` for non-reasoning models
+      // (e.g. Airia returning 400 for gpt-5-nano). Retry once with the
+      // thinking flag dropped so the adapter omits `reasoning_effort`.
+      if (params.think === false && /400|reasoning|unsupported/i.test(message)) {
+        this.recordDebugLine(
+          `Web content compaction: provider rejected reasoning_effort (${message}); retrying without it.`
+        );
+        const fallbackParams: StreamChatParams = { ...params };
+        delete (fallbackParams as { think?: boolean }).think;
+        return await this.runCompactionStream(fallbackParams);
+      }
+      throw err;
+    }
+  }
+
+  private async runCompactionStream(params: StreamChatParams): Promise<string> {
     let compactedText = '';
+    let reasoningText = '';
+    let chunkCount = 0;
+    let lastChunkDebug = 'none';
     for await (const chunk of sendLlmChatStream(this.baseUrl, params)) {
+      chunkCount += 1;
       const thinking = chunk.message?.thinking ?? '';
+      const content = chunk.message?.content ?? '';
+      const toolCalls = chunk.message?.tool_calls;
+      lastChunkDebug = JSON.stringify({
+        hasContent: content.length > 0,
+        contentLen: content.length,
+        hasThinking: thinking.length > 0,
+        thinkingLen: thinking.length,
+        hasToolCalls: (toolCalls?.length ?? 0) > 0,
+        done: chunk.done,
+        doneReason: chunk.done_reason,
+        model: chunk.model,
+      });
+
       if (thinking.length > 0) {
         this.recordDebugLine(`Web content compaction thinking chunk:\n${thinking}`);
+        reasoningText += thinking;
       }
 
-      const content = chunk.message?.content ?? '';
       if (!content) {
         continue;
       }
       compactedText += content;
       this.recordDebugLine(`Web content compaction generating: ${compactedText.length} chars`);
+    }
+
+    this.recordDebugLine(`Web content compaction stream ended: ${chunkCount} chunks, last chunk ${lastChunkDebug}`);
+
+    // Some providers/models (e.g. OpenAI-compatible reasoning models) stream
+    // their output as `reasoning_content` with an empty `content` field.
+    // Preserve that output as the compacted text so compaction doesn't fail.
+    if (!compactedText.trim() && reasoningText.trim()) {
+      this.recordDebugLine(
+        'Web content compaction: model returned reasoning content only; using it as compacted text.'
+      );
+      return reasoningText.trim();
     }
 
     const trimmed = compactedText.trim();
