@@ -1142,14 +1142,27 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 clearInline(): void {},
                             };
 
-                            // Execute the tool via the registry.
-                            const result = shouldSurfaceToolProgress
-                                ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput, requestContext, req.signal)
-                                : toolName === 'run_subagents'
-                                    ? await handleToolCall(toolName, toolArgs, undefined, subagentOutputSink, requestContext, req.signal)
-                                    : toolName === 'run_command'
-                                        ? await handleToolCall(toolName, toolArgs, runCommandProgress, nullOutputSink, requestContext, req.signal)
-                                        : await handleToolCall(toolName, toolArgs, undefined, nullOutputSink, requestContext, req.signal);
+                            // Execute the tool via the registry. Wrap each call so an
+                            // exception never leaves a tool_call_id without a matching
+                            // tool response, which would break the OpenAI message ordering
+                            // contract on the next turn.
+                            let result: { content: string; images?: string[] };
+                            try {
+                                result = shouldSurfaceToolProgress
+                                    ? await handleToolCall(toolName, toolArgs, undefined, webToolOutput, requestContext, req.signal)
+                                    : toolName === 'run_subagents'
+                                        ? await handleToolCall(toolName, toolArgs, undefined, subagentOutputSink, requestContext, req.signal)
+                                        : toolName === 'run_command'
+                                            ? await handleToolCall(toolName, toolArgs, runCommandProgress, nullOutputSink, requestContext, req.signal)
+                                            : await handleToolCall(toolName, toolArgs, undefined, nullOutputSink, requestContext, req.signal);
+                            } catch (err) {
+                                const errorContent = err instanceof Error ? err.message : String(err);
+                                result = { content: `[Tool error: ${errorContent}]` };
+                                sendEvent('tool_progress', {
+                                    name: toolName,
+                                    message: sanitize(errorContent),
+                                });
+                            }
 
                             const duration = Date.now() - startTime;
 
