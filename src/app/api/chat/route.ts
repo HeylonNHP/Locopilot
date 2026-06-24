@@ -376,9 +376,9 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Defensive: some tool responses may have been lost (e.g. a request
             // was interrupted mid-tool-loop). OpenAI requires every assistant
             // tool_call to be immediately followed by tool messages responding
-            // to each tool_call_id. Walk the history and insert synthesized
-            // error responses for any missing ids directly after the assistant
-            // message that emitted them.
+            // to each tool_call_id. Walk the history, assign missing ids to
+            // orphaned tool responses in the same block, and insert synthesized
+            // error responses for any ids that are still missing.
             const normalizedMessages: ChatMessage[] = [];
             for (let i = 0; i < currentMessages.length; i += 1) {
                 const msg = currentMessages[i]!;
@@ -387,25 +387,35 @@ export async function POST(req: NextRequest): Promise<Response> {
                 if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
                     const expectedIds = msg.tool_calls.map((tc) => tc.id);
                     const respondedIds = new Set<string>();
+                    const orphanToolMessages: ChatMessage[] = [];
                     let j = i + 1;
                     while (j < currentMessages.length && currentMessages[j]?.role === 'tool') {
                         const toolMsg = currentMessages[j]!;
                         if (toolMsg.tool_call_id) {
                             respondedIds.add(toolMsg.tool_call_id);
+                        } else {
+                            orphanToolMessages.push(toolMsg);
                         }
                         j += 1;
                     }
 
-                    for (const toolId of expectedIds) {
-                        if (!respondedIds.has(toolId)) {
-                            const missingToolMessage: ChatMessage = {
-                                role: 'tool',
-                                content: '[Tool response missing: the tool call was recorded but no result was produced.]',
-                                tool_call_id: toolId,
-                            };
-                            normalizedMessages.push(missingToolMessage);
-                            pendingAppends.push(missingToolMessage);
-                        }
+                    // Assign each orphan tool message a missing tool_call_id
+                    // in order, without removing or re-ordering messages.
+                    const missingIds = expectedIds.filter((id) => !respondedIds.has(id));
+                    for (const orphan of orphanToolMessages) {
+                        const missingId = missingIds.shift();
+                        if (!missingId) break;
+                        orphan.tool_call_id = missingId;
+                    }
+
+                    for (const toolId of missingIds) {
+                        const missingToolMessage: ChatMessage = {
+                            role: 'tool',
+                            content: '[Tool response missing: the tool call was recorded but no result was produced.]',
+                            tool_call_id: toolId,
+                        };
+                        normalizedMessages.push(missingToolMessage);
+                        pendingAppends.push(missingToolMessage);
                     }
                 }
             }

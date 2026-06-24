@@ -683,7 +683,16 @@ export function useChatStream(
       bufferedEventsRef.current.delete(sessionId);
 
       const bodyObj = {
-        messages: [...currentMessages, userMessage].filter((m) => m.role !== 'system'),
+        messages: [...currentMessages, userMessage].filter((m) => {
+          if (m.role === 'system') return false;
+          // Drop display-only tool messages created by the 'tool_call' and
+          // 'tool_progress' SSE handlers. Those messages have no tool_call_id
+          // and are not part of the LLM protocol. Keep real tool results, even
+          // legacy rows whose tool_call_id is an empty string (the backend
+          // normalization pass will assign them a missing id if needed).
+          if (m.role === 'tool' && (m.tool_call_id === null || m.tool_call_id === undefined)) return false;
+          return true;
+        }),
         model: refs.modelRef.current,
         numCtx: refs.numCtxRef.current,
         baseUrl: refs.baseUrlRef.current,

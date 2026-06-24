@@ -20,6 +20,8 @@ export interface ChatMessage {
   subagentId?: string;
   /** Base64-encoded image data for vision-capable models. */
   images?: string[];
+  /** OpenAI-compatible: identifies which tool call this result answers. */
+  tool_call_id?: string;
 }
 
 /**
