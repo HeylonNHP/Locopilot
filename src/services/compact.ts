@@ -15,8 +15,6 @@
  * first pass still leaves the history too large for the model.
  */
 
-import chalk from 'chalk';
-
 import {
   type ChatMessage,
   getLlmTurnStats,
@@ -806,24 +804,4 @@ export async function compactHistory(
   };
 }
 
-/**
- * Prints a human-readable compaction report to the terminal.
- */
-export function printCompactStats(stats: CompactResult['stats']): void {
-  const tokensSaved = stats.oldTokenCount - stats.newTokenCount;
-  const ratio =
-    stats.oldTokenCount > 0 ? ((tokensSaved / stats.oldTokenCount) * 100).toFixed(1) : '0.0';
 
-  // eslint-disable-next-line no-console
-  console.log(chalk.green('\n── Compaction complete ──────────────────────────'));
-  // eslint-disable-next-line no-console
-  console.log(
-    chalk.white('  Tokens   : ') +
-      chalk.red(String(stats.oldTokenCount)) +
-      chalk.white(' → ') +
-      chalk.green(String(stats.newTokenCount)) +
-      chalk.dim(` (−${tokensSaved} tokens, ${ratio}% reduction)`)
-  );
-  // eslint-disable-next-line no-console
-  console.log(chalk.green('─────────────────────────────────────────────────\n'));
-}

@@ -1,4 +1,3 @@
-import { confirm } from '@inquirer/prompts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
@@ -71,14 +70,6 @@ const requestProcessState = new AsyncLocalStorage<RequestProcessState>();
 // Global fallback registry for direct module usage in tests
 const globalFallbackRegistry = new Map<number, ProcessEntry>();
 let globalFallbackNextId = 1;
-
-// Swappable command confirmation function (default: Inquirer confirm prompt)
-let confirmCommand: (msg: string) => Promise<boolean> = async (msg) =>
-  confirm({ message: msg, default: false });
-
-export function setCommandConfirmationPrompt(fn: (msg: string) => Promise<boolean>): void {
-  confirmCommand = fn;
-}
 
 interface ProcessEntry {
   process: ChildProcess;
@@ -270,23 +261,6 @@ export async function runCommand(
   output.writeLine(`\n─── ${approvedYolo ? 'Executing' : 'Requesting'} Terminal Command ───`);
   output.writeLine(`  Shell:   ${effectiveShell}`);
   output.writeLine(`  Command: ${command}\n`);
-
-  let approved = approvedYolo;
-  if (!approved) {
-    try {
-      approved = await confirmCommand('Allow this command to run?');
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === 'ExitPromptError') {
-        return '[Command rejected: user exited prompt]';
-      }
-      throw err;
-    }
-  }
-
-  if (!approved) {
-    output.writeLine('  Command rejected by user.\n');
-    return '[Command was rejected by the user.]';
-  }
 
   const store = requestProcessState.getStore();
   const processId = store ? store.nextId++ : globalFallbackNextId++;
