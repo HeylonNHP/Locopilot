@@ -378,7 +378,6 @@ class MCPClientManager {
     // exists so the UI can show the "Connecting..." pill.
     emitMCPEvent({ kind: 'state', serverName });
 
-    try {
       // Pass the AbortSignal into client.connect() so the SDK
       // tears down the handshake cleanly if the user aborts /
       // disconnects while we're still initialising.
@@ -387,47 +386,8 @@ class MCPClientManager {
       // (getter is `string | undefined` but the interface declares
       // `sessionId?: string`). All three concrete classes do
       // structurally implement the interface at runtime.
+    try {
       await client.connect(transport as unknown as Transport, { signal: abortController.signal });
-      if (abortController.signal.aborted) {
-        // disconnect() won the race — close everything and bail.
-        try {
-          await client.close();
-        } catch {
-          /* ignore */
-        }
-        try {
-          await transport.close();
-        } catch {
-          /* ignore */
-        }
-        throw new MCPConnectionError(
-          `MCP server "${serverName}" connection was aborted before completion`,
-          serverName
-        );
-      }
-
-      const listResult = await client.listTools(undefined, { signal: abortController.signal });
-      const tools: MCPToolInfo[] = listResult.tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: {
-          type: 'object' as const,
-          ...(t.inputSchema && typeof t.inputSchema === 'object' ? t.inputSchema : {}),
-        },
-      }));
-
-      const handle: MCPClientHandle = {
-        name: serverName,
-        config,
-        client,
-        status: 'connected',
-        tools,
-        lastConnectedAt: Date.now(),
-      };
-      this.handles.set(serverName, handle);
-      placeholder.setHandle(handle);
-      emitMCPEvent({ kind: 'state', serverName });
-      return handle;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // Phase 3.5: a 401 from the MCP server surfaces as
@@ -512,6 +472,47 @@ class MCPClientManager {
       }
       throw new MCPConnectionError(message, serverName);
     }
+
+    if (abortController.signal.aborted) {
+      // disconnect() won the race — close everything and bail.
+      try {
+        await client.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        await transport.close();
+      } catch {
+        /* ignore */
+      }
+      throw new MCPConnectionError(
+        `MCP server "${serverName}" connection was aborted before completion`,
+        serverName
+      );
+    }
+
+    const listResult = await client.listTools(undefined, { signal: abortController.signal });
+    const tools: MCPToolInfo[] = listResult.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: {
+        type: 'object' as const,
+        ...(t.inputSchema && typeof t.inputSchema === 'object' ? t.inputSchema : {}),
+      },
+    }));
+
+    const handle: MCPClientHandle = {
+      name: serverName,
+      config,
+      client,
+      status: 'connected',
+      tools,
+      lastConnectedAt: Date.now(),
+    };
+    this.handles.set(serverName, handle);
+    placeholder.setHandle(handle);
+    emitMCPEvent({ kind: 'state', serverName });
+    return handle;
   }
 
   /**
