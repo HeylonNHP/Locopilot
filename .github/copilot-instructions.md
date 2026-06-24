@@ -142,6 +142,12 @@ Feature summary:
   - When adding a new provider, implement the same canonical fields so callers stay provider-agnostic.
 
 - **Web search tool** (`web_search`):
+
+- **App Router 404 / `_document` build error** (known Next.js 15.5 upstream bug — see vercel/next.js#90349):
+  - Next.js 15.5 always generates an internal Pages Router `_error`/`_document` fallback for `/404` and `/500`, even in pure App Router projects with no `pages/` directory. During static generation this throws `<Html> should not be imported outside of pages/_document`.
+  - Correct App Router conventions that should still be followed: include `src/app/not-found.tsx`; `src/app/error.tsx` must not render `<html>` or `<body>` (only `layout.tsx` and `global-error.tsx` may own those tags).
+  - Workarounds that do NOT work cleanly: adding a `pages/` directory triggers a separate Next.js 15.5 validator bug (`.next/types/validator.ts` hardcodes wrong `.js` paths when `src/` is used). Setting `typedRoutes: false` does not disable the validator.
+  - **Current status**: `npm run build` still fails at the static-page-generation step with this error. `tsc --noEmit` and `npm run dev` are unaffected. This is tracked as a pre-existing upstream bug.
   - Changed `queries` parameter from `string` to `array` in the tool schema to encourage LLMs to provide multiple explicit queries properly.
   - Updated `parseQueriesInput` in `tools.ts` to handle actual arrays, JSON-encoded arrays, and strings separated by newlines, commas, or semicolons.
   - Updated tool description and system prompt to explicitly encourage using 2-3 queries for complex tasks.
@@ -160,6 +166,11 @@ Feature summary:
   - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
+
+- 2026-06-24: Corrected App Router error-handling conventions (pre-existing Next.js 15.5 build bug remains)
+  - Files: `src/app/not-found.tsx` (new), `src/app/error.tsx`, `.github/copilot-instructions.md`
+  - Summary: Added `src/app/not-found.tsx` and removed `<html>`/`<body>` from `src/app/error.tsx` to follow correct App Router conventions. However, the underlying `npm run build` failure (`<Html> should not be imported outside of pages/_document` during prerendering of `/404` and `/500`) is a known Next.js 15.5 upstream bug (vercel/next.js#90349) that cannot be cleanly worked around without triggering a separate validator bug. `tsc --noEmit` and `npm run dev` are unaffected.
+  - Intent: Follow correct App Router conventions while documenting the upstream bug so it is not re-investigated.
 
 - 2026-06-24: Canonical `maxOutputTokens` output-token cap across adapters
   - Files: `services/adapters/llmAdapter.ts`, `services/adapters/ollamaAdapter.ts`, `services/adapters/openaiCompatibleAdapter.ts`, `services/compact.ts`, `tools/impl/contentCompactor.ts`, `OPENAI_COMPATIBILITY_MIGRATION.md`, `.github/copilot-instructions.md`
