@@ -768,19 +768,3 @@ export function useChat() {
   return useContext(ChatContext);
 }
 
-export function getActiveSessionState(state: ChatState): SessionState {
-  if (state.currentSessionId !== null) {
-    return (
-      state.sessionStates.get(state.currentSessionId) ?? {
-        messages: [],
-        error: null,
-        tokenStats: null,
-        currentTps: null,
-        compactingPhases: [],
-        pendingApproval: null,
-        lastDoneReason: undefined,
-      }
-    );
-  }
-  return state.newSessionState;
-}

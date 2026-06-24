@@ -104,10 +104,3 @@ export function emitMCPEvent(event: MCPEvent): void {
   }
 }
 
-/**
- * Test-only: wipe the bus. Not exported from `mcp/index.ts`.
- */
-export function __resetMCPEventsForTests(): void {
-  const g = globalThis as unknown as Record<string, unknown>;
-  delete g[GLOBAL_KEY];
-}

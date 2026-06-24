@@ -12,7 +12,8 @@
  * the same public surface.
  */
 
-import type { ToolDefinition } from '../services/adapters/llmAdapter';
+import type { ToolDefinition } from '@/services/adapters/llmAdapter';
+
 import type { MCPServerConfig } from './types';
 
 import { getClientManager } from './clientManager';
@@ -71,7 +72,6 @@ export {
   MCPConfigError,
   MCPConnectionError,
   type MCPConnectionStatus,
-  MCPProtocolError,
   type MCPToolInfo,
 } from './types';
 
@@ -353,14 +353,4 @@ export async function reauthenticateMCPServer(
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, reason: message };
   }
-}
-
-/**
- * Graceful shutdown: closes every open MCP client. Wired to process
- * signal handlers in `getClientManager()`, and exported here so
- * tests and the MCP API route can trigger it deterministically.
- */
-export async function shutdownMCP(): Promise<void> {
-  const manager = getClientManager();
-  await manager.closeAll();
 }

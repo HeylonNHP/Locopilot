@@ -27,7 +27,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
-import { logger } from '../app/lib/logger';
+import { logger } from '@/app/lib/logger';
+
 import { expandEnvRefsInRecord } from './envExpansion';
 import { emitMCPEvent } from './events';
 import { buildOAuthProvider, consumeAuthorizationCode } from './oauthProvider';
@@ -184,11 +185,6 @@ class MCPClientManager {
   setRootConfig(config: MCPRootConfig): void {
     this.rootConfig = config;
   }
-
-  getRootConfig(): MCPRootConfig {
-    return this.rootConfig;
-  }
-
   /**
    * Lazily connect to the named server. Idempotent: returns the
    * existing handle if already connected, or awaits the in-flight
@@ -805,15 +801,6 @@ class MCPClientManager {
     const config = handle?.config ?? this.rootConfig.mcpServers[serverName];
     const seconds = config?.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
     return Math.max(1, Math.floor(seconds * 1000));
-  }
-
-  /**
-   * Test-only: wipe all in-memory state.
-   */
-  __resetForTests(): void {
-    this.handles = new Map();
-    this.inFlight = new Map();
-    this.rootConfig = { mcpServers: {} };
   }
 }
 

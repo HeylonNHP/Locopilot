@@ -220,12 +220,3 @@ export function stopMCPConfigWatcher(): void {
   state.started = false;
 }
 
-/**
- * Test-only: reset the module-level state. Not exported from
- * `mcp/index.ts`.
- */
-export function __resetMCPConfigWatcherForTests(): void {
-  stopMCPConfigWatcher();
-  const g = globalThis as unknown as Record<string, unknown>;
-  delete g[GLOBAL_KEY];
-}

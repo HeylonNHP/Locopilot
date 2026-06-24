@@ -1,6 +1,3 @@
-import { writeFile } from 'node:fs/promises';
-import path from 'node:path';
-
 import type { ChatMessage } from './llm';
 
 export interface ConversationDumpInput {
@@ -14,11 +11,6 @@ export interface ConversationDumpInput {
   messages: ChatMessage[];
   config?: unknown;
   webCompactionDebug?: string[];
-}
-
-export interface ConversationDumpResult {
-  filePath: string;
-  fileName: string;
 }
 
 function normalizeLineEndings(text: string): string {
@@ -274,14 +266,3 @@ export function buildConversationDumpMarkdown(input: ConversationDumpInput): str
   return sections.join('\n');
 }
 
-export async function writeConversationHistoryDump(
-  input: ConversationDumpInput
-): Promise<ConversationDumpResult> {
-  const fileName = buildDumpFileName(input);
-  const filePath = path.join(process.cwd(), fileName);
-  const markdown = buildConversationDumpMarkdown(input);
-
-  await writeFile(filePath, markdown, 'utf8');
-
-  return { filePath, fileName };
-}

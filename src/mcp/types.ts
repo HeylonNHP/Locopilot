@@ -277,13 +277,4 @@ export class MCPConnectionError extends Error {
   }
 }
 
-/** Thrown for protocol-level errors (invalid JSON-RPC, unexpected response, etc.). */
-export class MCPProtocolError extends Error {
-  constructor(
-    message: string,
-    public readonly serverName?: string
-  ) {
-    super(message);
-    this.name = 'MCPProtocolError';
-  }
-}
+
