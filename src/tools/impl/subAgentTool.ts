@@ -493,16 +493,21 @@ async function runSingleAgent(
     output.writeAgentChunk?.(agent.id, 'content', '\n');
 
     const assistantMessage = sanitizeChatMessage(response.message);
-    messages.push(assistantMessage);
 
     if (assistantMessage.content.trim().length > 0) {
       finalContent = assistantMessage.content.trim();
     }
 
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+      messages.push(assistantMessage);
       onProgress?.(`Sub-agent ${agent.id}: completed`);
       break;
     }
+
+    // Collect every tool response before appending anything. This keeps the
+    // assistant message and its matching tool messages contiguous in history,
+    // satisfying the OpenAI message-ordering contract.
+    const toolResults: ChatMessage[] = [];
 
     for (const toolCall of assistantMessage.tool_calls) {
       if (isInterruptOrAbort(signal)) {
@@ -513,21 +518,38 @@ async function runSingleAgent(
 
       const fingerprint = `${toolCall.function.name}:${JSON.stringify(toolCall.function.arguments)}`;
       if (toolCallFingerprints.has(fingerprint)) {
-        messages.push({ role: 'user', content: CIRCUIT_BREAKER_NOTICE });
+        // The model is repeating an identical tool call. We must still emit a
+        // tool response for this tool_call_id to keep the OpenAI message ordering
+        // contract valid; use the circuit-breaker notice as the tool result.
+        toolResults.push(
+          sanitizeChatMessage({
+            role: 'tool',
+            content: CIRCUIT_BREAKER_NOTICE,
+            tool_call_id: toolCall.id,
+          })
+        );
         continue;
       }
       toolCallFingerprints.add(fingerprint);
 
-      const toolResult = await executeNestedToolCall(
-        agent.id,
-        toolCall,
-        labeledOutput,
-        onProgress,
-        agentContext,
-        signal,
-        subAgentMcpApprovals
-      );
-      messages.push(
+      let toolResult: ToolCallResult;
+      try {
+        toolResult = await executeNestedToolCall(
+          agent.id,
+          toolCall,
+          labeledOutput,
+          onProgress,
+          agentContext,
+          signal,
+          subAgentMcpApprovals
+        );
+      } catch (err) {
+        const errorContent = err instanceof Error ? err.message : String(err);
+        toolResult = { content: `[Sub-agent tool error: ${errorContent}]` };
+        labeledOutput.writeLine(`Sub-agent tool error: ${errorContent}`);
+      }
+
+      toolResults.push(
         sanitizeChatMessage({
           role: 'tool',
           content: toolResult.content,
@@ -536,6 +558,25 @@ async function runSingleAgent(
         })
       );
     }
+
+    // Push the assistant message and all of its tool responses as an atomic
+    // block so no other message can be inserted between them.
+    // If the loop was interrupted (e.g. abort signal), some tool_calls may not
+    // have a collected result. Synthesize error responses for any missing ids
+    // so the OpenAI message-ordering contract is always satisfied.
+    const respondedToolIds = new Set(toolResults.map((m) => m.tool_call_id));
+    for (const tc of assistantMessage.tool_calls) {
+      if (!respondedToolIds.has(tc.id)) {
+        toolResults.push(
+          sanitizeChatMessage({
+            role: 'tool',
+            content: '[Tool response missing: the tool call was interrupted before a result was produced.]',
+            tool_call_id: tc.id,
+          })
+        );
+      }
+    }
+    messages.push(assistantMessage, ...toolResults);
   }
 
   return finalContent;

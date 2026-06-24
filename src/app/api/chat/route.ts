@@ -364,6 +364,44 @@ export async function POST(req: NextRequest): Promise<Response> {
                 ...originalClientMessages.filter((m): m is ChatMessage => m.role !== 'subagent_log'),
             ];
 
+            // Defensive: some tool responses may have been lost (e.g. a request
+            // was interrupted mid-tool-loop). OpenAI requires every assistant
+            // tool_call to be immediately followed by tool messages responding
+            // to each tool_call_id. Walk the history and insert synthesized
+            // error responses for any missing ids directly after the assistant
+            // message that emitted them.
+            const normalizedMessages: ChatMessage[] = [];
+            for (let i = 0; i < currentMessages.length; i += 1) {
+                const msg = currentMessages[i]!;
+                normalizedMessages.push(msg);
+
+                if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+                    const expectedIds = msg.tool_calls.map((tc) => tc.id);
+                    const respondedIds = new Set<string>();
+                    let j = i + 1;
+                    while (j < currentMessages.length && currentMessages[j]?.role === 'tool') {
+                        const toolMsg = currentMessages[j]!;
+                        if (toolMsg.tool_call_id) {
+                            respondedIds.add(toolMsg.tool_call_id);
+                        }
+                        j += 1;
+                    }
+
+                    for (const toolId of expectedIds) {
+                        if (!respondedIds.has(toolId)) {
+                            const missingToolMessage: ChatMessage = {
+                                role: 'tool',
+                                content: '[Tool response missing: the tool call was recorded but no result was produced.]',
+                                tool_call_id: toolId,
+                            };
+                            normalizedMessages.push(missingToolMessage);
+                            pendingAppends.push(missingToolMessage);
+                        }
+                    }
+                }
+            }
+            currentMessages.splice(0, currentMessages.length, ...normalizedMessages);
+
             // ── Eagerly create the session so it appears in the sidebar immediately ──
             // If the client already has a session ID (resuming), use it as-is.
             // Otherwise create a placeholder session now and rename it once we have
@@ -882,30 +920,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                         assistantMessage.tool_calls = toolCalls;
                     }
 
-                    currentMessages.push(assistantMessage);
-                    pendingAppends.push(assistantMessage);
-
-                    if ((!toolCalls || toolCalls.length === 0) && !hasMeaningfulAssistantContent(assistantMessage)) {
-                        if (emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
-                            emptyResponseRecoveryAttempts += 1;
-                            currentMessages.push({
-                                role: 'user',
-                                content:
-                                    'Your last response was empty. Provide a direct answer now. ' +
-                                    'If commands are needed, call run_command. If commands already ran, summarize their output and errors.',
-                            });
-                            pendingAppends.push({
-                                role: 'user',
-                                content:
-                                    'Your last response was empty. Provide a direct answer now. ' +
-                                    'If commands are needed, call run_command. If commands already ran, summarize their output and errors.',
-                            });
-                            continue;
-                        }
-                    } else {
-                        emptyResponseRecoveryAttempts = 0;
-                    }
-
                     // -- Handle tool calls if present -------------------------
                     if (toolCalls && toolCalls.length > 0) {
                         sendEvent('status', {
@@ -915,6 +929,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         });
 
                         const tokensUsedSoFar = promptEvalCount + evalCount;
+                        const toolResults: ChatMessage[] = [];
 
                         for (const tc of toolCalls) {
                             const toolName = tc.function.name;
@@ -934,8 +949,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     result: errorMsg,
                                     duration: 0,
                                 });
-                                currentMessages.push({ role: 'tool', content: errorMsg, tool_call_id: tc.id });
-                                pendingAppends.push({ role: 'tool', content: errorMsg, tool_call_id: tc.id });
+                                toolResults.push({ role: 'tool', content: errorMsg, tool_call_id: tc.id });
                                 continue;
                             }
 
@@ -979,8 +993,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         result: rejectedResult,
                                         duration: 0,
                                     });
-                                    currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
-                                    pendingAppends.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                    toolResults.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
                                     continue;
                                 }
                             }
@@ -1057,8 +1070,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                             result: rejectedResult,
                                             duration: 0,
                                         });
-                                        currentMessages.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
-                                        pendingAppends.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                        toolResults.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
                                         continue;
                                     }
 
@@ -1181,9 +1193,29 @@ export async function POST(req: NextRequest): Promise<Response> {
                             if (result.images && result.images.length > 0) {
                                 toolMessage.images = result.images;
                             }
-                            currentMessages.push(toolMessage);
-                            pendingAppends.push(toolMessage);
+                            toolResults.push(toolMessage);
                         }
+
+                        // The assistant message with tool_calls and every tool response
+                        // are pushed together as an atomic block. No user message can be
+                        // inserted between them, satisfying the OpenAI message-ordering
+                        // contract.
+                        // If any path failed to collect a result, synthesize an error
+                        // response for the missing tool_call_id.
+                        const respondedToolIds = new Set(toolResults.map((m) => m.tool_call_id));
+                        for (const tc of toolCalls) {
+                            if (!respondedToolIds.has(tc.id)) {
+                                toolResults.push({
+                                    role: 'tool',
+                                    content: '[Tool response missing: the tool call did not produce a result.]',
+                                    tool_call_id: tc.id,
+                                });
+                            }
+                        }
+
+                        currentMessages.push(assistantMessage, ...toolResults);
+                        pendingAppends.push(assistantMessage, ...toolResults);
+                        emptyResponseRecoveryAttempts = 0;
 
                         // Signal we are switching back to the LLM with tool results.
                         sendEvent('status', {
@@ -1197,6 +1229,27 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                         // Continue the loop so the LLM can process the tool results.
                         continue outer;
+                    }
+
+                    // -- No tool calls – this is a plain assistant message ----
+                    currentMessages.push(assistantMessage);
+                    pendingAppends.push(assistantMessage);
+
+                    if (!hasMeaningfulAssistantContent(assistantMessage)) {
+                        if (emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
+                            emptyResponseRecoveryAttempts += 1;
+                            const recoveryMessage: ChatMessage = {
+                                role: 'user',
+                                content:
+                                    'Your last response was empty. Provide a direct answer now. ' +
+                                    'If commands are needed, call run_command. If commands already ran, summarize their output and errors.',
+                            };
+                            currentMessages.push(recoveryMessage);
+                            pendingAppends.push(recoveryMessage);
+                            continue;
+                        }
+                    } else {
+                        emptyResponseRecoveryAttempts = 0;
                     }
 
                     // -- No tool calls – this is the final response -----------

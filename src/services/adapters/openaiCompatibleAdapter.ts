@@ -686,6 +686,20 @@ async function* sendOpenAICompatibleChatStream(
     { id?: string; name?: string; arguments: string }
   >();
 
+  // OpenAI sends usage data on a trailing chunk with empty choices.
+  // We skip yielding that chunk, but we stash its usage so the final
+  // content chunk can carry the real token counts.
+  let pendingUsage: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  } | undefined;
+
+  // The done chunk is yielded only after we have processed any trailing
+  // usage-only chunk, so the consumer sees authoritative token counts on
+  // the same chunk that signals completion.
+  let bufferedDoneChunk: ChatApiResponse | undefined;
+
   let buffered = '';
   for await (const rawChunk of response.data) {
     buffered += rawChunk.toString('utf8');
@@ -720,9 +734,17 @@ async function* sendOpenAICompatibleChatStream(
         // Handle usage-only chunks (stream_options.include_usage sends
         // a final chunk with empty choices and a usage field).
         if (!parsed.choices || parsed.choices.length === 0) {
-          // This is the usage-only chunk; we don't yield it as a separate
-          // ChatApiResponse since the final content chunk already carried
-          // the done signal. The usage data will be on the last yielded chunk.
+          // Apply the usage to the buffered done chunk if we are holding one.
+          if (parsed.usage && bufferedDoneChunk) {
+            if (parsed.usage.prompt_tokens !== undefined) {
+              bufferedDoneChunk.prompt_eval_count = parsed.usage.prompt_tokens;
+            }
+            if (parsed.usage.completion_tokens !== undefined) {
+              bufferedDoneChunk.eval_count = parsed.usage.completion_tokens;
+            }
+          } else if (parsed.usage) {
+            pendingUsage = parsed.usage;
+          }
           continue;
         }
 
@@ -756,6 +778,14 @@ async function* sendOpenAICompatibleChatStream(
           toolCalls = finalizeToolCalls(toolCallAccumulator);
         }
 
+        // OpenAI sends usage data on a trailing empty-choices chunk. We
+        // stashed it in `pendingUsage`; now prefer it, then fall back to
+        // usage directly present on this chunk.
+        const usage = pendingUsage ?? parsed.usage;
+        if (isDone) {
+          pendingUsage = undefined;
+        }
+
         const chunk: ChatApiResponse = {
           model: parsed.model,
           created_at: new Date(
@@ -772,18 +802,35 @@ async function* sendOpenAICompatibleChatStream(
               : {}),
           },
           // Attach token counts on the final chunk if available.
-          // Only include when usage is non-null and the value is defined.
-          ...(isDone && parsed.usage?.prompt_tokens !== undefined
-            ? { prompt_eval_count: parsed.usage.prompt_tokens }
+          ...(isDone && usage?.prompt_tokens !== undefined
+            ? { prompt_eval_count: usage.prompt_tokens }
             : {}),
-          ...(isDone && parsed.usage?.completion_tokens !== undefined
-            ? { eval_count: parsed.usage.completion_tokens }
+          ...(isDone && usage?.completion_tokens !== undefined
+            ? { eval_count: usage.completion_tokens }
             : {}),
         };
 
+        // Defer yielding the done chunk until the trailing usage-only chunk
+        // has been processed (or the stream ends). This ensures the chunk
+        // the consumer receives as "done" carries authoritative token counts.
+        if (isDone) {
+          bufferedDoneChunk = chunk;
+          continue;
+        }
+
+        if (bufferedDoneChunk) {
+          yield bufferedDoneChunk;
+          bufferedDoneChunk = undefined;
+        }
         yield chunk;
       }
     }
+  }
+
+  // Flush any deferred done chunk when the stream ends. This handles
+  // providers that do not send a trailing usage-only chunk.
+  if (bufferedDoneChunk) {
+    yield bufferedDoneChunk;
   }
 }
 
