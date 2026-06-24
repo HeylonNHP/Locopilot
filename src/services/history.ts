@@ -341,7 +341,10 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     if (images && images.length > 0) {
       msg.images = images;
     }
-    if (row.tool_call_id) {
+    if (msg.role === 'tool') {
+      // role: 'tool' requires tool_call_id, even when it is an empty string
+      msg.tool_call_id = row.tool_call_id;
+    } else if (row.tool_call_id) {
       msg.tool_call_id = row.tool_call_id;
     }
     return sanitizeChatMessage(msg);

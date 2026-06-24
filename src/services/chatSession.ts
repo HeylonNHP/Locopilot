@@ -506,16 +506,19 @@ export async function processAITurn(
   finalStats: SessionTokenStats | null;
 }> {
   const sanitizedAssistantMessage = sanitizeChatMessage(assistantMessage);
-  state.messages.push(sanitizedAssistantMessage);
 
   if (sessionTokenStats) {
     state.lastAuthoritativeTokens = sessionTokenStats.promptEvalCount + sessionTokenStats.evalCount;
-    state.estimatedTokensAtAuthoritative = countMessagesTokens(state.messages, state.currentModel);
+    state.estimatedTokensAtAuthoritative = countMessagesTokens(
+      [...state.messages, sanitizedAssistantMessage],
+      state.currentModel
+    );
   }
 
-  state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
-
   if (sanitizedAssistantMessage.tool_calls && sanitizedAssistantMessage.tool_calls.length > 0) {
+    const pendingToolMessages: ChatMessage[] = [];
+    const commandFailureSummaries: string[] = [];
+
     for (const tc of sanitizedAssistantMessage.tool_calls) {
       clearLiveStatus();
       refreshTokenStatus(state, `Tool call: ${tc.function.name}`);
@@ -527,7 +530,9 @@ export async function processAITurn(
       );
 
       clearLiveStatus();
-      state.messages.push(
+      refreshTokenStatus(state, `Token result: ${tc.function.name}`);
+
+      pendingToolMessages.push(
         sanitizeChatMessage({
           role: 'tool',
           content: tokenResult.content,
@@ -535,13 +540,8 @@ export async function processAITurn(
           ...(tokenResult.images ? { images: tokenResult.images } : {}),
         })
       );
-      refreshTokenStatus(state, `Token result: ${tc.function.name}`);
-      state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
 
-      if (
-        tc.function.name === 'run_command' &&
-        tokenResult.content.includes('(COMMAND FAILED')
-      ) {
+      if (tc.function.name === 'run_command' && tokenResult.content.includes('(COMMAND FAILED')) {
         refreshTokenStatus(state, 'Summarizing command error...');
         const errorSummary = await summarizeCommandError(
           config.baseUrl,
@@ -552,20 +552,34 @@ export async function processAITurn(
         clearLiveStatus();
         logger.info('chat-session', `AI Error Summary: ${errorSummary}`);
 
-        state.messages.push(
-          sanitizeChatMessage({
-            role: 'user',
-            content: `Command failed. AI Error Analysis: ${errorSummary}\nPlease analyze the failure and propose a correction.`,
-          })
-        );
-        refreshTokenStatus(state, 'Retry requested after command failure.');
-        state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
+        commandFailureSummaries.push(errorSummary);
       }
 
       // Interrupt check removed — the web UI uses AbortSignal instead.
     }
+
+    // Push the assistant message and all tool results as one contiguous block.
+    state.messages.push(sanitizedAssistantMessage, ...pendingToolMessages);
+    state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
+
+    // Only after the complete tool block, push user nudges for any failures.
+    for (const errorSummary of commandFailureSummaries) {
+      state.messages.push(
+        sanitizeChatMessage({
+          role: 'user',
+          content: `Command failed. AI Error Analysis: ${errorSummary}\nPlease analyze the failure and propose a correction.`,
+        })
+      );
+      refreshTokenStatus(state, 'Retry requested after command failure.');
+      state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
+    }
+
     return { shouldContinue: true, wasInterrupted: false, finalStats: sessionTokenStats };
   }
+
+  // No tool calls: just push the assistant response.
+  state.messages.push(sanitizedAssistantMessage);
+  state.onSessionUpdate?.(state.currentSessionId, state.messages, state.sessionNamed);
 
   return { shouldContinue: false, wasInterrupted: false, finalStats: sessionTokenStats };
 }

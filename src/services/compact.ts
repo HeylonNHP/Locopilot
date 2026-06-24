@@ -159,6 +159,87 @@ function findLatestUserMessageIndex(messages: ChatMessage[]): number {
   return -1;
 }
 
+/**
+ * If the proposed split index would bisect an assistant message and its
+ * immediate tool responses, return the index of the assistant so that the
+ * entire assistant+tools block stays on the same side of the split.
+ */
+function adjustSplitForToolBlockIntegrity(
+  historyMessages: ChatMessage[],
+  splitIndex: number
+): number {
+  if (splitIndex <= 0 || splitIndex >= historyMessages.length) {
+    return splitIndex;
+  }
+
+  let assistantIndex = -1;
+
+  // Case 1: splitIndex points at a tool message. Walk back through consecutive
+  // tool messages to find the assistant that owns this tool_call_id.
+  const splitToolCallId = historyMessages[splitIndex]?.tool_call_id;
+  if (splitToolCallId && historyMessages[splitIndex]?.role === 'tool') {
+    for (let i = splitIndex - 1; i >= 0; i -= 1) {
+      const candidate = historyMessages[i];
+      if (
+        candidate?.role === 'assistant' &&
+        candidate?.tool_calls?.some((tc) => tc.id === splitToolCallId)
+      ) {
+        assistantIndex = i;
+        break;
+      }
+      if (candidate?.role !== 'tool') {
+        break;
+      }
+    }
+  }
+
+  // Case 2: splitIndex sits immediately after an assistant with tool_calls.
+  if (
+    assistantIndex < 0 &&
+    historyMessages[splitIndex - 1]?.role === 'assistant'
+  ) {
+    const assistant = historyMessages[splitIndex - 1];
+    if (assistant?.tool_calls && assistant.tool_calls.length > 0) {
+      assistantIndex = splitIndex - 1;
+    }
+  }
+
+  if (assistantIndex < 0) {
+    return splitIndex;
+  }
+
+  // Determine how far the assistant's tool responses extend.
+  const assistant = historyMessages[assistantIndex];
+  if (!assistant) {
+    return splitIndex;
+  }
+  const toolCallIds = new Set(
+    assistant.tool_calls
+      ?.map((tc) => tc.id)
+      .filter((id): id is string => typeof id === 'string')
+  );
+  if (toolCallIds.size === 0) {
+    return splitIndex;
+  }
+
+  let blockEnd = assistantIndex + 1;
+  while (
+    blockEnd < historyMessages.length &&
+    historyMessages[blockEnd]?.role === 'tool' &&
+    toolCallIds.has(historyMessages[blockEnd]?.tool_call_id ?? '')
+  ) {
+    blockEnd += 1;
+  }
+
+  // If the block actually crosses the split, move the split to the assistant
+  // so the whole block is preserved together.
+  if (assistantIndex < splitIndex && blockEnd > splitIndex) {
+    return assistantIndex;
+  }
+
+  return splitIndex;
+}
+
 function splitHistoryForCompaction(
   historyMessages: ChatMessage[],
   model: string,
@@ -217,8 +298,11 @@ function splitHistoryForCompaction(
     preservedRecentTokens += estimatedMessageTokens;
   }
 
-  const windowSplitIndex = historyMessages.length - preservedFromEnd.length;
-  const windowPreservedMessages = preservedFromEnd.reverse();
+  const windowSplitIndex = adjustSplitForToolBlockIntegrity(
+    historyMessages,
+    historyMessages.length - preservedFromEnd.length
+  );
+  const windowPreservedMessages = historyMessages.slice(windowSplitIndex);
 
   // ── Latest-user-message anchor ────────────────────────────────────────
   // The most recent user message is a hard anchor: it must always appear in
@@ -280,6 +364,33 @@ function getToolMessageName(message: ChatMessage): string {
   return typeof name === 'string' && name.trim().length > 0 ? name.trim() : 'unknown_tool';
 }
 
+/**
+ * Returns the index of the assistant message that owns the tool message at
+ * `toolIndex`, or -1 if no matching assistant is found in the same contiguous
+ * tool block.
+ */
+function findMatchingAssistantIndex(
+  messages: ChatMessage[],
+  toolIndex: number
+): number {
+  if (toolIndex <= 0) return -1;
+  const toolCallId = messages[toolIndex]?.tool_call_id;
+  if (!toolCallId) return -1;
+  for (let i = toolIndex - 1; i >= 0; i -= 1) {
+    const candidate = messages[i];
+    if (
+      candidate?.role === 'assistant' &&
+      candidate?.tool_calls?.some((tc) => tc.id === toolCallId)
+    ) {
+      return i;
+    }
+    if (candidate?.role !== 'tool') {
+      break;
+    }
+  }
+  return -1;
+}
+
 async function distillToolMessages(
   baseUrl: string,
   model: string,
@@ -304,7 +415,16 @@ async function distillToolMessages(
       continue;
     }
 
-    const previous = historyMessages[index - 1];
+    const matchingAssistantIndex = findMatchingAssistantIndex(historyMessages, index);
+    if (matchingAssistantIndex < 0) {
+      // The matching assistant is not in this message slice (possible if the
+      // history was split across an assistant/tool block). Preserve the tool
+      // result verbatim to avoid orphan-conversion issues.
+      distilledMessages.push(message);
+      continue;
+    }
+
+    const previous = historyMessages[matchingAssistantIndex];
     const toolName = previous ? getToolMessageName(previous) : 'unknown_tool';
 
     // Guard against sending massive tool outputs to the distillation LLM.

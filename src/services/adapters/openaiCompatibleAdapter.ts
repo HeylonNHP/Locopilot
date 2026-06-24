@@ -224,6 +224,18 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
         });
         continue;
       }
+      // When the preceding assistant issued multiple tool_calls and this
+      // tool message is missing tool_call_id, we cannot safely guess which
+      // tool_call it responds to. Falling back to the first id would assign
+      // every orphaned response to that id, leaving the other tool_calls
+      // without responses and causing OpenAI 400 errors. Treat it as an orphan.
+      if (!message.tool_call_id && prev.tool_calls!.length > 1) {
+        result.push({
+          role: 'user',
+          content: message.content || '',
+        });
+        continue;
+      }
     }
 
     // OpenAI requires content: null for assistant messages that only have tool_calls.
@@ -242,6 +254,9 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
       // tool_call_id is not persisted in the session database, so it may
       // be missing when loading history. Use the id from the preceding
       // assistant message's tool_calls as a fallback.
+      // Multi-tool assistant turns are handled above: when there is more
+      // than one tool_call, guessing the first id is unsafe, so the message
+      // is converted to a user message instead of reaching this branch.
       const prev = i > 0 ? messages[i - 1] : undefined;
       const prevToolCalls = prev?.role === 'assistant' ? prev.tool_calls : undefined;
       const fallbackId = prevToolCalls?.[0]?.id || 'call_fallback_0';

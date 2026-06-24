@@ -92,6 +92,15 @@ function messagesEqual(a: PersistedChatMessage, b: PersistedChatMessage): boolea
         return (a as { role: 'subagent_log'; subagentId?: string }).subagentId ===
             (b as { role: 'subagent_log'; subagentId?: string }).subagentId;
     }
+    if (a.role === 'tool' || b.role === 'tool') {
+        return (a as { role: 'tool'; tool_call_id?: string }).tool_call_id ===
+            (b as { role: 'tool'; tool_call_id?: string }).tool_call_id;
+    }
+    const aMsg = a as ChatMessage;
+    const bMsg = b as ChatMessage;
+    if (aMsg.tool_calls || bMsg.tool_calls) {
+        return JSON.stringify(aMsg.tool_calls) === JSON.stringify(bMsg.tool_calls);
+    }
     return true;
 }
 
@@ -1235,21 +1244,19 @@ export async function POST(req: NextRequest): Promise<Response> {
                     currentMessages.push(assistantMessage);
                     pendingAppends.push(assistantMessage);
 
-                    if (!hasMeaningfulAssistantContent(assistantMessage)) {
-                        if (emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
-                            emptyResponseRecoveryAttempts += 1;
-                            const recoveryMessage: ChatMessage = {
-                                role: 'user',
-                                content:
-                                    'Your last response was empty. Provide a direct answer now. ' +
-                                    'If commands are needed, call run_command. If commands already ran, summarize their output and errors.',
-                            };
-                            currentMessages.push(recoveryMessage);
-                            pendingAppends.push(recoveryMessage);
-                            continue;
-                        }
-                    } else {
+                    if (hasMeaningfulAssistantContent(assistantMessage)) {
                         emptyResponseRecoveryAttempts = 0;
+                    } else if (emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
+                        emptyResponseRecoveryAttempts += 1;
+                        const recoveryMessage: ChatMessage = {
+                            role: 'user',
+                            content:
+                                'Your last response was empty. Provide a direct answer now. ' +
+                                'If commands are needed, call run_command. If commands already ran, summarize their output and errors.',
+                        };
+                        currentMessages.push(recoveryMessage);
+                        pendingAppends.push(recoveryMessage);
+                        continue;
                     }
 
                     // -- No tool calls – this is the final response -----------
