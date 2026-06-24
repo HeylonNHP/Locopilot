@@ -24,7 +24,8 @@ import { type WebExtractionSettings } from '../web/htmlExtractor';
 const COMPACTION_PROMPT_TEMPLATE = `
 You are a content compaction assistant. Your task is to intelligently summarize
 or compact the provided web page content while preserving its essential information
-and value. The compacted version must not exceed {charLimit} characters.
+and value. The compacted version MUST be between {minCharLimit} and {charLimit}
+characters long. Aim for approximately {charLimit} characters.
 
 Guidelines:
 1. Preserve verbatim (do not summarize or modify):
@@ -44,9 +45,10 @@ Guidelines:
    - Maintain the original meaning and key facts
    - Keep the tone and style consistent
    - Ensure the compacted content is coherent and readable
+   - Fill most of the allowed length; do not return a tiny summary unless the source is already short
 
 Original content length: {originalLength} characters
-Target maximum length: {charLimit} characters
+Target length: approximately {charLimit} characters (minimum {minCharLimit} characters)
 {retryNote}
 
 Content to compact:
@@ -85,7 +87,17 @@ function buildCompactionPrompt(content: string, charLimit: number, attempt: numb
       ? `Retry guidance: this is pass ${attempt} of ${MAX_COMPACTION_ATTEMPTS}. Be more aggressive about removing boilerplate, repetition, and non-essential exposition while preserving facts, URLs, code, tables, and direct quotes.`
       : '';
 
-  return COMPACTION_PROMPT_TEMPLATE.replace('{charLimit}', String(charLimit))
+  // On retries, ask for a tighter upper bound so the model is forced to
+  // shrink the output instead of expanding back toward the original limit.
+  const retryCharLimit = Math.max(
+    Math.floor(charLimit * Math.max(MIN_RETRY_OUTPUT_SCALE, 1 - (attempt - 1) * RETRY_OUTPUT_SCALE_STEP)),
+    Math.floor(charLimit * 0.5)
+  );
+  const effectiveCharLimit = attempt === 1 ? charLimit : retryCharLimit;
+  const minCharLimit = Math.max(1, Math.floor(effectiveCharLimit * 0.85));
+
+  return COMPACTION_PROMPT_TEMPLATE.replace('{charLimit}', String(effectiveCharLimit))
+    .replace('{minCharLimit}', String(minCharLimit))
     .replace('{originalLength}', String(content.length))
     .replace('{retryNote}', retryNote)
     .replace('{content}', content);
@@ -109,16 +121,19 @@ function estimateCompactionContext(
 ): { numCtx: number; numPredict: number } {
   const promptTokens = countMessagesTokens(messages, model);
   const charsPerToken = estimateCharsPerToken(content, model);
-  const roughOutputTokens = Math.max(1, Math.ceil(charLimit / charsPerToken));
-  const attemptScale = Math.max(
+
+  // The character limit shrinks on each retry so the model is forced to
+  // produce progressively shorter output. The token budget follows it down.
+  const retryScale = Math.max(
     MIN_RETRY_OUTPUT_SCALE,
-    INITIAL_OUTPUT_SCALE - (attempt - 1) * RETRY_OUTPUT_SCALE_STEP
+    1 - (attempt - 1) * RETRY_OUTPUT_SCALE_STEP
   );
-  const overflowScale =
-    content.length > charLimit ? Math.max(MIN_RETRY_OUTPUT_SCALE, charLimit / content.length) : 1;
+  const effectiveCharLimit = Math.max(1, Math.floor(charLimit * retryScale));
+
+  const roughOutputTokens = Math.max(1, Math.ceil(effectiveCharLimit / charsPerToken));
   const numPredict = Math.max(
     1,
-    Math.floor(roughOutputTokens * OUTPUT_TOKEN_BUFFER_RATIO * attemptScale * overflowScale)
+    Math.floor(roughOutputTokens * OUTPUT_TOKEN_BUFFER_RATIO)
   );
 
   return {
