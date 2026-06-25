@@ -176,6 +176,7 @@ interface OpenAIListModelsResponse {
     object: 'model';
     created: number;
     owned_by: string;
+    [key: string]: unknown;
   }>;
 }
 
@@ -556,13 +557,17 @@ async function fetchOpenAICompatibleModels(baseUrl: string): Promise<LlmModel[]>
   const response = await client.get<OpenAIListModelsResponse>(
     `${baseUrl.replace(/\/+$/, '')}/v1/models`,
   );
-  return (response.data.data ?? []).map((model) => ({
-    name: model.id,
-    model: model.id,
-    details: {
-      ...(model.owned_by ? { parent_model: model.owned_by } : {}),
-    },
-  }));
+  return (response.data.data ?? []).map((model) => {
+    const { id, object: _object, created: _created, owned_by, ...extra } = model;
+    return {
+      name: id,
+      model: id,
+      details: {
+        ...(owned_by ? { parent_model: owned_by } : {}),
+      },
+      ...extra, // pass through non-standard fields (e.g. max_context_length)
+    };
+  });
 }
 
 async function fetchOpenAICompatibleModelInfo(
@@ -574,6 +579,11 @@ async function fetchOpenAICompatibleModelInfo(
   return {
     model_info: {
       model: modelName,
+      ...(foundModel
+        ? Object.fromEntries(
+            Object.entries(foundModel).filter(([k]) => k !== 'name' && k !== 'model'),
+          )
+        : {}),
     },
     details: {
       ...(foundModel?.details?.parent_model
@@ -583,8 +593,47 @@ async function fetchOpenAICompatibleModelInfo(
   };
 }
 
-function getOpenAICompatibleModelContextLimit(_modelInfo: LlmModelInfo): number | null {
+// ── Context limit discovery ───────────────────────────────────────────────────
+// OpenAI's /v1/models endpoint does not return context window size, but some
+// OpenAI-compatible providers (LM Studio, vLLM, etc.) include non-standard
+// fields like max_context_length, context_length, context_window, etc.
+// We search for these keys recursively, mirroring the Ollama adapter's approach.
+
+const CONTEXT_LIMIT_KEY_PATTERN =
+  /(?:^|[._])(?:context_length|num_ctx|context_window|max_position_embeddings|max_sequence_length|max_context_length)$/i;
+
+function parsePositiveInteger(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }
   return null;
+}
+
+function findContextLimitInObject(value: unknown): number | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+    if (CONTEXT_LIMIT_KEY_PATTERN.test(key)) {
+      const parsed = parsePositiveInteger(nestedValue);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    const nestedLimit = findContextLimitInObject(nestedValue);
+    if (nestedLimit !== null) {
+      return nestedLimit;
+    }
+  }
+  return null;
+}
+
+function getOpenAICompatibleModelContextLimit(modelInfo: LlmModelInfo): number | null {
+  return findContextLimitInObject(modelInfo.model_info);
 }
 
 async function sendOpenAICompatibleChat(

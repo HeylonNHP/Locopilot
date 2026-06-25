@@ -36,6 +36,7 @@ export interface Session {
   last_prompt_eval_count: number | null;
   last_eval_count: number | null;
   last_total_tokens: number | null;
+  num_ctx: number | null;
 }
 
 export interface SessionTokenStats {
@@ -87,6 +88,7 @@ function addColumnIfMissing(sql: string): void {
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_prompt_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_total_tokens INTEGER');
+addColumnIfMissing('ALTER TABLE sessions ADD COLUMN num_ctx INTEGER');
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT ''");
@@ -115,6 +117,10 @@ const stmtUpdateSessionModel = db.prepare<[string, number]>(
 
 const stmtUpdateSessionTokenStats = db.prepare<[number, number, number, number]>(
   "UPDATE sessions SET last_prompt_eval_count = ?, last_eval_count = ?, last_total_tokens = ?, updated_at = datetime('now') WHERE id = ?"
+);
+
+const stmtUpdateSessionNumCtx = db.prepare<[number, number]>(
+  "UPDATE sessions SET num_ctx = ?, updated_at = datetime('now') WHERE id = ?"
 );
 
 const stmtListSessions = db.prepare<[]>('SELECT * FROM sessions ORDER BY updated_at DESC');
@@ -319,6 +325,15 @@ export function updateSessionMessages(
  */
 export function updateSessionModel(sessionId: number, model: string): void {
   stmtUpdateSessionModel.run(model, sessionId);
+}
+
+/**
+ * Updates the persisted num_ctx (context window size) for an existing session.
+ * Used to store the model's actual context limit when discovered from a
+ * 400 error response, so future requests use the correct value for compaction.
+ */
+export function updateSessionNumCtx(sessionId: number, numCtx: number): void {
+  stmtUpdateSessionNumCtx.run(numCtx, sessionId);
 }
 
 /**

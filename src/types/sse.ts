@@ -58,6 +58,7 @@ export interface SseEventPayloadMap {
   };
   error: { message: string };
   clear_assistant: object;
+  model_context_limit: { limit: number };
 }
 
 export type SseEventName = keyof SseEventPayloadMap;

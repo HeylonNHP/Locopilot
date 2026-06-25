@@ -317,11 +317,17 @@ export function useChatStream(
               content: `⚡ Conversation auto-compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`,
             },
           });
+           break;
+        }
+
+        case 'model_context_limit': {
+          if (typeof data.limit === 'number' && Number.isFinite(data.limit) && data.limit > 0) {
+            dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.limit });
+          }
           break;
         }
 
-        case 'done': {
-          // Do NOT call SET_CURRENT_SESSION here. If the user switched sessions
+        case 'done': {          // Do NOT call SET_CURRENT_SESSION here. If the user switched sessions
           // while a stream was running, dispatching SET_CURRENT_SESSION(A) would
           // forcibly snap the UI back to session A against the user's will.
           // session_created already handles new-session ID assignment; for
