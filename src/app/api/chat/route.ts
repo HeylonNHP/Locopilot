@@ -63,6 +63,7 @@ import {
   type StreamChatParams,
 } from '../../../services/llm';
 import { type ApprovalDecision, resolveApproval, waitForApproval } from '../../lib/approvalRegistry';
+import { debugLog } from '../../lib/debugLogger';
 import { logger } from '../../lib/logger';
 import { enqueueSessionRename, enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 
@@ -136,6 +137,12 @@ function hasMeaningfulAssistantContent(message: ChatMessage): boolean {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
+    // Per-request correlation ID for debug tracing.
+    const requestId = randomUUID();
+    // Build a context object for debugLog that only includes sessionId when defined
+    // (required because exactOptionalPropertyTypes forbids explicit undefined).
+    const logCtx = (sid: number | undefined): { requestId: string; sessionId?: number } =>
+        ({ requestId, ...(sid === undefined ? {} : { sessionId: sid }) });
     // ── Parse & validate the request body ──────────────────────────────
     let body: Record<string, unknown>;
     try {
@@ -380,6 +387,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             // orphaned tool responses in the same block, and insert synthesized
             // error responses for any ids that are still missing.
             const normalizedMessages: ChatMessage[] = [];
+            debugLog.messageArraySummary('normalize: input', currentMessages, logCtx(parsedSessionId));
             for (let i = 0; i < currentMessages.length; i += 1) {
                 const msg = currentMessages[i]!;
                 normalizedMessages.push(msg);
@@ -395,6 +403,18 @@ export async function POST(req: NextRequest): Promise<Response> {
                             respondedIds.add(toolMsg.tool_call_id);
                         } else {
                             orphanToolMessages.push(toolMsg);
+                            debugLog.toolMessage({
+                                layer: 'route',
+                                action: 'normalize',
+                                messageIndex: j,
+                                role: 'tool',
+                                hasToolCallId: false,
+                                tool_call_id: null,
+                                precedingAssistantToolCalls: msg.tool_calls.length,
+                                contentPreview: typeof toolMsg.content === 'string' ? toolMsg.content : '',
+                                note: 'orphan tool message (no tool_call_id) found in multi-tool block',
+                                ...logCtx(parsedSessionId),
+                            });
                         }
                         j += 1;
                     }
@@ -406,6 +426,17 @@ export async function POST(req: NextRequest): Promise<Response> {
                         const missingId = missingIds.shift();
                         if (!missingId) break;
                         orphan.tool_call_id = missingId;
+                        debugLog.toolMessage({
+                            layer: 'route',
+                            action: 'normalize',
+                            role: 'tool',
+                            hasToolCallId: true,
+                            tool_call_id: missingId,
+                            precedingAssistantToolCalls: msg.tool_calls.length,
+                            contentPreview: typeof orphan.content === 'string' ? orphan.content : '',
+                            note: 'assigned missing tool_call_id to orphan tool message',
+                            ...logCtx(parsedSessionId),
+                        });
                     }
 
                     for (const toolId of missingIds) {
@@ -416,10 +447,23 @@ export async function POST(req: NextRequest): Promise<Response> {
                         };
                         normalizedMessages.push(missingToolMessage);
                         pendingAppends.push(missingToolMessage);
+                        debugLog.toolMessage({
+                            layer: 'route',
+                            action: 'synthesize',
+                            messageIndex: normalizedMessages.length - 1,
+                            role: 'tool',
+                            hasToolCallId: true,
+                            tool_call_id: toolId,
+                            precedingAssistantToolCalls: msg.tool_calls.length,
+                            contentPreview: missingToolMessage.content,
+                            note: 'synthetic tool message inserted for missing tool_call_id',
+                            ...logCtx(parsedSessionId),
+                        });
                     }
                 }
             }
             currentMessages.splice(0, currentMessages.length, ...normalizedMessages);
+            debugLog.messageArraySummary('normalize: output', currentMessages, logCtx(parsedSessionId));
 
             // ── Eagerly create the session so it appears in the sidebar immediately ──
             // If the client already has a session ID (resuming), use it as-is.
@@ -449,7 +493,29 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // messages written concurrently from another tab.
                 await enqueueSessionWrite(
                     activeSessionId,
-                    (fresh) => mergeClientMessages(fresh, originalClientMessages as PersistedChatMessage[]),
+                    (fresh) => {
+                        debugLog.messageArraySummary('merge: fresh (DB)', fresh, logCtx(activeSessionId));
+                        debugLog.messageArraySummary('merge: client', originalClientMessages as PersistedChatMessage[], logCtx(activeSessionId));
+                        (originalClientMessages as PersistedChatMessage[]).forEach((m, idx) => {
+                            if (m.role === 'tool' && !(m as { tool_call_id?: string }).tool_call_id) {
+                                debugLog.toolMessage({
+                                    layer: 'route',
+                                    action: 'merge',
+                                    messageIndex: idx,
+                                    role: m.role,
+                                    hasToolCallId: false,
+                                    tool_call_id: null,
+                                    precedingAssistantToolCalls: 0,
+                                    contentPreview: typeof m.content === 'string' ? m.content : '',
+                                    note: 'client tool message has no tool_call_id',
+                                    ...logCtx(activeSessionId),
+                                });
+                            }
+                        });
+                        const merged = mergeClientMessages(fresh, originalClientMessages as PersistedChatMessage[]);
+                        debugLog.messageArraySummary('merge: result', merged, logCtx(activeSessionId));
+                        return merged;
+                    },
                 );
                 // Per-request MCP approval set. Mutated in place when the user
                 // resolves an approval_request event for a specific mcp_call.
@@ -798,6 +864,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                     let firstContent = '';
                     let firstThinking = '';
 
+                    debugLog.messageArraySummary('pre-LLM: currentMessages', currentMessages, logCtx(activeSessionId));
+
                     while (true) {
                         try {
                             streamStartMs = Date.now();
@@ -953,6 +1021,17 @@ export async function POST(req: NextRequest): Promise<Response> {
                         for (const tc of toolCalls) {
                             const toolName = tc.function.name;
                             let toolArgs = tc.function.arguments;
+                            debugLog.toolMessage({
+                                layer: 'route',
+                                action: 'push',
+                                role: 'assistant',
+                                hasToolCallId: !!tc.id,
+                                tool_call_id: tc.id,
+                                precedingAssistantToolCalls: toolCalls.length,
+                                contentPreview: toolName,
+                                note: `executing tool "${toolName}" with tc.id=${tc.id}`,
+                                ...logCtx(activeSessionId),
+                            });
                             if (typeof toolArgs === 'string') {
                                 try { toolArgs = JSON.parse(toolArgs); } catch { /* keep string as-is on parse failure */ }
                             }
@@ -1213,6 +1292,17 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 toolMessage.images = result.images;
                             }
                             toolResults.push(toolMessage);
+                            debugLog.toolMessage({
+                                layer: 'route',
+                                action: 'push',
+                                role: 'tool',
+                                hasToolCallId: !!toolMessage.tool_call_id,
+                                tool_call_id: toolMessage.tool_call_id ?? null,
+                                contentPreview: toolMessage.content,
+                                contentLength: toolMessage.content.length,
+                                note: `tool result for "${toolName}" (tc.id=${tc.id})`,
+                                ...logCtx(activeSessionId),
+                            });
                         }
 
                         // The assistant message with tool_calls and every tool response
@@ -1229,12 +1319,23 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     content: '[Tool response missing: the tool call did not produce a result.]',
                                     tool_call_id: tc.id,
                                 });
+                                debugLog.toolMessage({
+                                    layer: 'route',
+                                    action: 'synthesize',
+                                    role: 'tool',
+                                    hasToolCallId: true,
+                                    tool_call_id: tc.id,
+                                    contentPreview: '[Tool response missing: the tool call did not produce a result.]',
+                                    note: 'synthetic missing response created in tool execution loop',
+                                    ...logCtx(activeSessionId),
+                                });
                             }
                         }
 
                         currentMessages.push(assistantMessage, ...toolResults);
                         pendingAppends.push(assistantMessage, ...toolResults);
                         emptyResponseRecoveryAttempts = 0;
+                        debugLog.messageArraySummary('tool-loop: after push', currentMessages, logCtx(activeSessionId));
 
                         // Signal we are switching back to the LLM with tool results.
                         sendEvent('status', {

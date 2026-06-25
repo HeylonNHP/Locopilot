@@ -11,6 +11,12 @@ import { DEFAULT_NUM_CTX, DEFAULT_SESSION_NAME } from '@/constants';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
+const trace = (label: string, data?: Record<string, unknown>) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.debug(`[trace] ${label}`, data ?? {});
+  }
+};
+
 const DONE_REASONS = ['stop', 'length', 'load', 'unload', 'unknown'] as const;
 function isDoneReason(s: string): s is DoneReason {
   return (DONE_REASONS as readonly string[]).includes(s);
@@ -163,14 +169,14 @@ export function useChatStream(
             message: {
               role: 'tool',
               content: `🔧 **${data.name ?? ''}**\n\`\`\`json\n${JSON.stringify(data.arguments, null, 2)}\n\`\`\``,
-              ...(data.name === undefined ? {} : { name: data.name }),
+               ...(data.name === undefined ? {} : { name: data.name }),
             },
           });
+          trace('tool_call event', { name: data.name, hasToolCallId: false });
           break;
         }
 
-        case 'approval_request': {
-          dispatch({
+        case 'approval_request': {          dispatch({
             type: 'SHOW_APPROVAL',
             command: {
               name: data.toolName ?? data.name ?? '',
@@ -189,8 +195,13 @@ export function useChatStream(
               role: 'tool',
               content: `✅ **${data.name ?? ''}** (${data.duration ?? 0}ms)\n\n\`\`\`\n${data.result ?? ''}\n\`\`\``,
               ...(data.name === undefined ? {} : { name: data.name }),
-              ...(data.toolCallId === undefined ? {} : { tool_call_id: data.toolCallId }),
+               ...(data.toolCallId === undefined ? {} : { tool_call_id: data.toolCallId }),
             },
+          });
+          trace('tool_result event', {
+            name: data.name,
+            toolCallId: data.toolCallId,
+            contentLength: (data.result ?? '').length,
           });
           break;
         }
@@ -201,9 +212,9 @@ export function useChatStream(
             ...(data.name === undefined ? {} : { name: data.name }),
             content: data.message ?? data.content ?? String(data),
           });
+          trace('tool_progress event', { name: data.name, contentPreview: (data.message ?? '').slice(0, 80) });
           break;
         }
-
         case 'subagent_output': {
           dispatch({
             type: 'SUBAGENT_OUTPUT',
@@ -317,9 +328,14 @@ export function useChatStream(
           // existing sessions this dispatch was always a redundant no-op at best.
           // This event is in DELTA_EVENTS so it is buffered when the user is away
           // and replayed (applying the final tokenStats) when they return.
-          if (data.tokenStats) dispatch({ type: 'SET_TOKEN_STATS', stats: data.tokenStats });
-          if (typeof data.doneReason === 'string') {
-            // Normalize the server-side value to our DoneReason union. The server
+           if (data.tokenStats) dispatch({ type: 'SET_TOKEN_STATS', stats: data.tokenStats });
+          const doneToolCalls = (data as { tool_calls?: Array<{ id?: string }> }).tool_calls;
+          trace('done event', {
+            hasToolCalls: !!(doneToolCalls?.length),
+            toolCallCount: doneToolCalls?.length ?? 0,
+            toolCallIds: doneToolCalls?.map((tc) => tc.id),
+          });
+          if (typeof data.doneReason === 'string') {            // Normalize the server-side value to our DoneReason union. The server
             // coerces missing values to 'stop' and is the source of truth for
             // valid values; this is purely defensive.
             const reason: DoneReason = isDoneReason(data.doneReason) ? data.doneReason : 'unknown';
@@ -682,19 +698,30 @@ export function useChatStream(
       bufferOwnerMapRef.current.set(requestId, sessionId);
       bufferedEventsRef.current.delete(sessionId);
 
+       const allMessages = [...currentMessages, userMessage];
+      const filteredMessages = allMessages.filter((m) => {
+        if (m.role === 'system') return false;
+        // Drop display-only tool messages created by the 'tool_call' and
+        // 'tool_progress' SSE handlers. Those messages have no tool_call_id
+        // and are not part of the LLM protocol. Keep real tool results, even
+        // legacy rows whose tool_call_id is an empty string (the backend
+        // normalization pass will assign them a missing id if needed).
+        if (m.role === 'tool' && (m.tool_call_id === null || m.tool_call_id === undefined)) return false;
+        return true;
+      });
+      const toolMessages = filteredMessages.filter((m) => m.role === 'tool');
+      const toolMessagesWithId = toolMessages.filter(
+        (m) => m.tool_call_id !== null && m.tool_call_id !== undefined
+      ).length;
+      trace('sendChatMessage: body', {
+        messageCount: filteredMessages.length,
+        toolMessageCount: toolMessages.length,
+        toolMessagesWithId,
+        filteredOut: allMessages.length - filteredMessages.length,
+      });
       const bodyObj = {
-        messages: [...currentMessages, userMessage].filter((m) => {
-          if (m.role === 'system') return false;
-          // Drop display-only tool messages created by the 'tool_call' and
-          // 'tool_progress' SSE handlers. Those messages have no tool_call_id
-          // and are not part of the LLM protocol. Keep real tool results, even
-          // legacy rows whose tool_call_id is an empty string (the backend
-          // normalization pass will assign them a missing id if needed).
-          if (m.role === 'tool' && (m.tool_call_id === null || m.tool_call_id === undefined)) return false;
-          return true;
-        }),
-        model: refs.modelRef.current,
-        numCtx: refs.numCtxRef.current,
+        messages: filteredMessages,
+        model: refs.modelRef.current,        numCtx: refs.numCtxRef.current,
         baseUrl: refs.baseUrlRef.current,
         sessionId: refs.sessionIdRef.current,
         yolo: refs.yoloRef.current,

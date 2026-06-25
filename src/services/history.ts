@@ -15,6 +15,7 @@
 import Database from 'better-sqlite3';
 import path from 'node:path';
 
+import { debugLog } from '../app/lib/debugLogger';
 import {
   type ChatMessage,
   type PersistedChatMessage,
@@ -123,7 +124,7 @@ const stmtDeleteSession = db.prepare<[number]>('DELETE FROM sessions WHERE id = 
 const stmtDeleteMessages = db.prepare<[number]>('DELETE FROM messages WHERE session_id = ?');
 
 const stmtLoadMessages = db.prepare<[number]>(
-  'SELECT role, content, thinking, tool_calls, images, subagent_id, tool_call_id FROM messages WHERE session_id = ? ORDER BY id ASC'
+  'SELECT id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id FROM messages WHERE session_id = ? ORDER BY id ASC'
 );
 
 const stmtSearchSessions = db.prepare<[string, string]>(
@@ -227,6 +228,9 @@ export function updateSessionMessages(
     const stmtInsertStaging = db.prepare<[number, string, string, string, string, string, string, string]>(
       'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     );
+    let persistIndex = 0;
+    let persistToolCount = 0;
+    let persistToolWithCallIdCount = 0;
     for (const msg of persistableMessages) {
       const sanitizedMessage = sanitizeChatMessage(msg);
       const subagentId =
@@ -251,8 +255,38 @@ export function updateSessionMessages(
         sanitizedMessage.role === 'tool'
           ? (sanitizedMessage as ChatMessage).tool_call_id ?? ''
           : '';
+
+      const hasToolCallId = sanitizedMessage.role === 'tool' && toolCallId !== '';
+      debugLog.toolMessage({
+        layer: 'history',
+        action: 'persist',
+        messageIndex: persistIndex,
+        role,
+        hasToolCallId,
+        tool_call_id: toolCallId || null,
+        contentPreview: content,
+        sessionId,
+        isToolMessage: role === 'tool',
+        ...(role === 'tool'
+          ? { toolCallIdWritten: toolCallId !== '', note: toolCallId === '' ? 'EMPTY tool_call_id being written for tool message' : 'tool_call_id present' }
+          : {}),
+      });
+      if (role === 'tool') {
+        persistToolCount++;
+        if (toolCallId !== '') persistToolWithCallIdCount++;
+      }
+
       stmtInsertStaging.run(sessionId, role, content, thinking, toolCalls, images, subagentId, toolCallId);
+      persistIndex++;
     }
+
+    debugLog.debug('persist-summary', {
+      sessionId,
+      totalPersisted: persistableMessages.length,
+      toolMessageCount: persistToolCount,
+      toolMessagesWithToolCallId: persistToolWithCallIdCount,
+      toolMessagesWithEmptyToolCallId: persistToolCount - persistToolWithCallIdCount,
+    });
 
     // Atomic swap: delete originals only after staging is complete,
     // then move staged rows into the real table.
@@ -292,6 +326,7 @@ export function updateSessionModel(sessionId: number, model: string): void {
  */
 export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
   const rows = stmtLoadMessages.all(sessionId) as {
+    id: number;
     role: string;
     content: string;
     thinking: string;
@@ -301,7 +336,42 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     tool_call_id: string;
   }[];
 
-  return rows.map((row) => {
+  let loadToolCount = 0;
+  let loadToolEmptyCallIdCount = 0;
+
+  const loaded = rows.map((row, index) => {
+    const rowId = row.id;
+    const role = row.role;
+    const dbToolCallId = row.tool_call_id;
+    const isToolMessage = role === 'tool';
+    const hasToolCallId = isToolMessage && dbToolCallId !== '';
+
+    debugLog.toolMessage({
+      layer: 'history',
+      action: 'load',
+      messageIndex: index,
+      rowId,
+      role,
+      hasToolCallId,
+      tool_call_id: dbToolCallId || null,
+      contentPreview: row.content,
+      sessionId,
+      isToolMessage,
+      ...(isToolMessage
+        ? {
+            dbToolCallIdValue: dbToolCallId,
+            note:
+              dbToolCallId === ''
+                ? 'tool message loaded with EMPTY/missing tool_call_id'
+                : 'tool message loaded with tool_call_id present',
+          }
+        : {}),
+    });
+    if (isToolMessage) {
+      loadToolCount++;
+      if (dbToolCallId === '') loadToolEmptyCallIdCount++;
+    }
+
     if (row.role === 'subagent_log') {
       const msg: SubagentLogMessage = {
         role: 'subagent_log',
@@ -349,4 +419,14 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     }
     return sanitizeChatMessage(msg);
   });
+
+  debugLog.debug('load-summary', {
+    sessionId,
+    totalLoaded: loaded.length,
+    toolMessageCount: loadToolCount,
+    toolMessagesWithEmptyToolCallId: loadToolEmptyCallIdCount,
+    toolMessagesWithToolCallId: loadToolCount - loadToolEmptyCallIdCount,
+  });
+
+  return loaded;
 }

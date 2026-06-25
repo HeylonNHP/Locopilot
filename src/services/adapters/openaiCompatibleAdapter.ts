@@ -12,6 +12,8 @@ import type {
   ToolCall,
 } from './llmAdapter';
 
+import { debugLog } from '../../app/lib/debugLogger';
+
 // ── Auth support ──────────────────────────────────────────────────────────────
 // The adapter interface doesn't pass an apiKey parameter, so we use a
 // module-level axios instance that the caller can configure via setApiKey().
@@ -202,6 +204,8 @@ function stripImagesFromMessages(messages: ChatMessage[]): ChatMessage[] {
 function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
   const result: OpenAIMessage[] = [];
 
+  debugLog.messageArraySummary('toOpenAIMessages: input', messages);
+
   for (let i = 0; i < messages.length; i += 1) {
     const message = messages[i]!;
 
@@ -216,8 +220,29 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
         prev?.role === 'assistant' &&
         !!prev.tool_calls &&
         prev.tool_calls.length > 0;
+      debugLog.toolMessage({
+        layer: 'adapter',
+        action: 'receive',
+        messageIndex: i,
+        role: message.role,
+        hasToolCallId: !!message.tool_call_id,
+        tool_call_id: message.tool_call_id ?? null,
+        precedingAssistantToolCalls: prev?.role === 'assistant' ? (prev.tool_calls?.length ?? 0) : 0,
+        contentPreview: message.content || '',
+      });
       if (!prevHasToolCalls) {
         // Orphaned tool message — convert to user so it's still sent as context.
+        debugLog.toolMessage({
+          layer: 'adapter',
+          action: 'convert',
+          messageIndex: i,
+          role: 'tool',
+          hasToolCallId: !!message.tool_call_id,
+          tool_call_id: message.tool_call_id ?? null,
+          precedingAssistantToolCalls: prev?.role === 'assistant' ? (prev.tool_calls?.length ?? 0) : 0,
+          contentPreview: message.content || '',
+          reason: 'orphan',
+        });
         result.push({
           role: 'user',
           content: message.content || '',
@@ -230,6 +255,17 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
       // every orphaned response to that id, leaving the other tool_calls
       // without responses and causing OpenAI 400 errors. Treat it as an orphan.
       if (!message.tool_call_id && prev.tool_calls!.length > 1) {
+        debugLog.toolMessage({
+          layer: 'adapter',
+          action: 'convert',
+          messageIndex: i,
+          role: 'tool',
+          hasToolCallId: false,
+          tool_call_id: null,
+          precedingAssistantToolCalls: prev.tool_calls!.length,
+          contentPreview: message.content || '',
+          reason: 'multi-tool-missing-id',
+        });
         result.push({
           role: 'user',
           content: message.content || '',
@@ -261,6 +297,18 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
       const prevToolCalls = prev?.role === 'assistant' ? prev.tool_calls : undefined;
       const fallbackId = prevToolCalls?.[0]?.id || 'call_fallback_0';
       (base as { tool_call_id: string }).tool_call_id = fallbackId;
+      debugLog.toolMessage({
+        layer: 'adapter',
+        action: 'convert',
+        messageIndex: i,
+        role: 'tool',
+        hasToolCallId: false,
+        tool_call_id: null,
+        precedingAssistantToolCalls: prevToolCalls?.length ?? 0,
+        contentPreview: message.content || '',
+        reason: 'fallback-tool-call-id',
+        fallbackId,
+      });
     }
     if (message.tool_calls) {
       (base as { tool_calls: OpenAIToolCall[] }).tool_calls = message.tool_calls.map(
@@ -280,11 +328,12 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
     result.push(base);
   }
 
+  debugLog.messageArraySummary('toOpenAIMessages: output', result);
   return result;
 }
 
 /**
- * Recursively strip `description` fields from a tool parameter schema object.
+ * Recursively strip `description` fieldss from a tool parameter schema object.
  * Some providers (e.g. Airia) reject description fields inside nested
  * items.properties, even though they are valid JSON Schema.
  */
