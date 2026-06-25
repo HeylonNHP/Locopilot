@@ -60,7 +60,18 @@ Provide only the compacted content, without any additional commentary or markup.
 const MAX_COMPACTION_ATTEMPTS = 3;
 const MIN_COMPACTION_NUM_CTX = 4096;
 const COMPACTION_CONTEXT_BUFFER_TOKENS = 256;
-const OUTPUT_TOKEN_BUFFER_RATIO = 1.2;
+// Tightened from 1.2 → 1.05: the buffer used to give the model room for
+// ~20% more output than the prompted target, which caused the first
+// attempt to routinely overshoot the configured char limit and trigger
+// a retry. Matching the buffer to the target lets a "good" summary
+// land under the limit on the first pass.
+const OUTPUT_TOKEN_BUFFER_RATIO = 1.05;
+// On attempt 1 we ask the model for a target that's slightly below
+// charLimit, so a summary aiming at the upper bound still lands under
+// the hard check (`compactedContent.length <= limit`). Without this
+// headroom, the prompt's "approximately charLimit" + a 20% buffer
+// routinely produced >charLimit on the first pass.
+const FIRST_ATTEMPT_TARGET_HEADROOM_RATIO = 0.05;
 const RETRY_OUTPUT_SCALE_STEP = 0.1;
 const MIN_RETRY_OUTPUT_SCALE = 0.8;
 const MIN_CHARS_PER_TOKEN = 2;
@@ -80,19 +91,36 @@ export function getLastWebCompactionDebug(): string[] {
   return compactionDebugStore.getStore() ?? [];
 }
 
+/**
+ * Computes the prompted upper bound (in chars) for the current compaction
+ * attempt. This is the value the LLM is asked to "aim for" in the prompt,
+ * and is also the basis for sizing `numPredict`. Sharing it between the
+ * prompt and the budget keeps them consistent.
+ *
+ * - Attempt 1: charLimit minus a small headroom so a summary aiming at
+ *   the upper bound of the prompted band still lands under the hard
+ *   check (`compactedContent.length <= charLimit`).
+ * - Retries: scale charLimit down by RETRY_OUTPUT_SCALE_STEP per attempt
+ *   so the model is forced to produce progressively shorter output.
+ */
+function computeEffectiveCharLimit(charLimit: number, attempt: number): number {
+  if (attempt === 1) {
+    const headroom = Math.max(1, Math.ceil(charLimit * FIRST_ATTEMPT_TARGET_HEADROOM_RATIO));
+    return Math.max(1, charLimit - headroom);
+  }
+  return Math.max(
+    Math.floor(charLimit * Math.max(MIN_RETRY_OUTPUT_SCALE, 1 - (attempt - 1) * RETRY_OUTPUT_SCALE_STEP)),
+    Math.floor(charLimit * 0.5)
+  );
+}
+
 function buildCompactionPrompt(content: string, charLimit: number, attempt: number): string {
   const retryNote =
     attempt > 1
       ? `Retry guidance: this is pass ${attempt} of ${MAX_COMPACTION_ATTEMPTS}. Be more aggressive about removing boilerplate, repetition, and non-essential exposition while preserving facts, URLs, code, tables, and direct quotes.`
       : '';
 
-  // On retries, ask for a tighter upper bound so the model is forced to
-  // shrink the output instead of expanding back toward the original limit.
-  const retryCharLimit = Math.max(
-    Math.floor(charLimit * Math.max(MIN_RETRY_OUTPUT_SCALE, 1 - (attempt - 1) * RETRY_OUTPUT_SCALE_STEP)),
-    Math.floor(charLimit * 0.5)
-  );
-  const effectiveCharLimit = attempt === 1 ? charLimit : retryCharLimit;
+  const effectiveCharLimit = computeEffectiveCharLimit(charLimit, attempt);
   const minCharLimit = Math.max(1, Math.floor(effectiveCharLimit * 0.85));
 
   return COMPACTION_PROMPT_TEMPLATE.replace('{charLimit}', String(effectiveCharLimit))
@@ -121,13 +149,11 @@ function estimateCompactionContext(
   const promptTokens = countMessagesTokens(messages, model);
   const charsPerToken = estimateCharsPerToken(content, model);
 
-  // The character limit shrinks on each retry so the model is forced to
-  // produce progressively shorter output. The token budget follows it down.
-  const retryScale = Math.max(
-    MIN_RETRY_OUTPUT_SCALE,
-    1 - (attempt - 1) * RETRY_OUTPUT_SCALE_STEP
-  );
-  const effectiveCharLimit = Math.max(1, Math.floor(charLimit * retryScale));
+  // Size numPredict against the SAME prompted upper bound the model sees
+  // in the compaction prompt, so the model's output capacity tracks the
+  // target band instead of exceeding it. This is what lets a "good"
+  // summary land under the hard limit on the first attempt.
+  const effectiveCharLimit = computeEffectiveCharLimit(charLimit, attempt);
 
   const roughOutputTokens = Math.max(1, Math.ceil(effectiveCharLimit / charsPerToken));
   const numPredict = Math.max(
@@ -254,8 +280,12 @@ export class ContentCompactor {
       maxOutputTokens: numPredict,
     };
 
+    const charLimit = this.settings.perPageCharLimit;
+    const effectiveCharLimit = computeEffectiveCharLimit(charLimit, attempt);
+    const minCharLimit = Math.max(1, Math.floor(effectiveCharLimit * 0.85));
+
     this.output.writeLine(
-      `Web content compaction prompt: model=${model} numCtx=${numCtx} maxOutputTokens=${numPredict} (~${numPredict * 4} chars) promptTokens=${countMessagesTokens(messages, model)}`
+      `Web content compaction prompt: model=${model} numCtx=${numCtx} maxOutputTokens=${numPredict} (~${numPredict * 4} chars) promptTokens=${countMessagesTokens(messages, model)} targetBand=${minCharLimit}..${effectiveCharLimit} chars (hardLimit=${charLimit})`
     );
 
     return await this.streamCompactionResponse(params);
