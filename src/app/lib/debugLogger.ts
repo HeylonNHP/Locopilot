@@ -13,10 +13,14 @@
  */
 
 import path from 'node:path';
+import fs from 'node:fs';
 import pino from 'pino';
 
 // Ensure logs directory exists (server-side only)
 const logDir = path.join(process.cwd(), 'logs');
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
 
 const pinoLogger = pino(
   {
