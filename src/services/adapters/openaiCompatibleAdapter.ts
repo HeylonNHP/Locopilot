@@ -207,20 +207,52 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
 
   debugLog.messageArraySummary('toOpenAIMessages: input', messages);
 
-  for (let i = 0; i < messages.length; i += 1) {
-    const message = messages[i]!;
+  // Walks back over consecutive 'tool' messages to find the assistant that
+  // originated the current tool block. Returns the assistant's `tool_calls`
+  // array, or `undefined` if no such assistant exists in the run (truly
+  // orphaned tool message).
+  //
+  // OpenAI requires every assistant tool_call to be immediately followed
+  // by a tool message responding to it. When the assistant issues multiple
+  // parallel tool_calls (e.g. two `web_search` calls in one turn), the
+  // resulting tool messages are placed back-to-back. The SECOND tool
+  // message in that run has another tool message as its immediate
+  // predecessor — not the assistant — so a naive `messages[i-1]` lookup
+  // incorrectly flags it as orphan, rewrites it as a user message, and
+  // causes OpenAI to reject the request with a 400 ("tool_call_id did
+  // not have response messages"). Walking back over the consecutive tool
+  // messages finds the originating assistant regardless of where in the
+  // run this message sits.
+  const findOriginatingAssistantToolCalls = (
+    idx: number
+  ): ChatMessage['tool_calls'] | undefined => {
+    let j = idx - 1;
+    while (j >= 0) {
+      const candidate = messages[j];
+      if (!candidate) return undefined;
+      if (candidate.role === 'assistant') {
+        return candidate.tool_calls && candidate.tool_calls.length > 0
+          ? candidate.tool_calls
+          : undefined;
+      }
+      if (candidate.role !== 'tool') return undefined;
+      j -= 1;
+    }
+    return undefined;
+  };
+
+  for (const [i, message_] of messages.entries()) {
+    const message = message_!;
 
     // OpenAI requires that a 'tool' message follows an assistant message
-    // that has tool_calls. If the preceding message is not such an assistant
-    // (e.g. the assistant's tool-call message was lost from history),
-    // convert the orphaned tool message to a 'user' message so the API
-    // doesn't reject the request with a 400.
+    // that has tool_calls. If no such assistant exists in the contiguous
+    // tool run (e.g. the assistant's tool-call message was lost from
+    // history), convert the orphaned tool message to a 'user' message so
+    // the API doesn't reject the request with a 400.
     if (message.role === 'tool') {
-      const prev = i > 0 ? messages[i - 1] : undefined;
-      const prevHasToolCalls =
-        prev?.role === 'assistant' &&
-        !!prev.tool_calls &&
-        prev.tool_calls.length > 0;
+      const originatingToolCalls = findOriginatingAssistantToolCalls(i);
+      const hasOriginatingAssistant = !!originatingToolCalls;
+      const originatingToolCallCount = originatingToolCalls?.length ?? 0;
       debugLog.toolMessage({
         layer: 'adapter',
         action: 'receive',
@@ -228,10 +260,10 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
         role: message.role,
         hasToolCallId: !!message.tool_call_id,
         tool_call_id: message.tool_call_id ?? null,
-        precedingAssistantToolCalls: prev?.role === 'assistant' ? (prev.tool_calls?.length ?? 0) : 0,
+        precedingAssistantToolCalls: originatingToolCallCount,
         contentPreview: message.content || '',
       });
-      if (!prevHasToolCalls) {
+      if (!hasOriginatingAssistant) {
         // Orphaned tool message — convert to user so it's still sent as context.
         debugLog.toolMessage({
           layer: 'adapter',
@@ -240,7 +272,7 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
           role: 'tool',
           hasToolCallId: !!message.tool_call_id,
           tool_call_id: message.tool_call_id ?? null,
-          precedingAssistantToolCalls: prev?.role === 'assistant' ? (prev.tool_calls?.length ?? 0) : 0,
+          precedingAssistantToolCalls: 0,
           contentPreview: message.content || '',
           reason: 'orphan',
         });
@@ -250,12 +282,12 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
         });
         continue;
       }
-      // When the preceding assistant issued multiple tool_calls and this
+      // When the originating assistant issued multiple tool_calls and this
       // tool message is missing tool_call_id, we cannot safely guess which
       // tool_call it responds to. Falling back to the first id would assign
       // every orphaned response to that id, leaving the other tool_calls
       // without responses and causing OpenAI 400 errors. Treat it as an orphan.
-      if (!message.tool_call_id && prev.tool_calls!.length > 1) {
+      if (!message.tool_call_id && originatingToolCalls!.length > 1) {
         debugLog.toolMessage({
           layer: 'adapter',
           action: 'convert',
@@ -263,7 +295,7 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
           role: 'tool',
           hasToolCallId: false,
           tool_call_id: null,
-          precedingAssistantToolCalls: prev.tool_calls!.length,
+          precedingAssistantToolCalls: originatingToolCallCount,
           contentPreview: message.content || '',
           reason: 'multi-tool-missing-id',
         });
@@ -289,14 +321,13 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
       (base as { tool_call_id: string }).tool_call_id = message.tool_call_id;
     } else if (message.role === 'tool') {
       // tool_call_id is not persisted in the session database, so it may
-      // be missing when loading history. Use the id from the preceding
+      // be missing when loading history. Use the id from the originating
       // assistant message's tool_calls as a fallback.
       // Multi-tool assistant turns are handled above: when there is more
       // than one tool_call, guessing the first id is unsafe, so the message
       // is converted to a user message instead of reaching this branch.
-      const prev = i > 0 ? messages[i - 1] : undefined;
-      const prevToolCalls = prev?.role === 'assistant' ? prev.tool_calls : undefined;
-      const fallbackId = prevToolCalls?.[0]?.id || 'call_fallback_0';
+      const originatingToolCalls = findOriginatingAssistantToolCalls(i);
+      const fallbackId = originatingToolCalls?.[0]?.id || 'call_fallback_0';
       (base as { tool_call_id: string }).tool_call_id = fallbackId;
       debugLog.toolMessage({
         layer: 'adapter',
@@ -305,7 +336,7 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
         role: 'tool',
         hasToolCallId: false,
         tool_call_id: null,
-        precedingAssistantToolCalls: prevToolCalls?.length ?? 0,
+        precedingAssistantToolCalls: originatingToolCalls?.length ?? 0,
         contentPreview: message.content || '',
         reason: 'fallback-tool-call-id',
         fallbackId,
