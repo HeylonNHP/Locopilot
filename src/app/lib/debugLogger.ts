@@ -12,8 +12,8 @@
  *   jq 'select(.hasToolCallId == false and .role == "tool")' logs/locopilot-debug.log
  */
 
-import path from 'node:path';
 import fs from 'node:fs';
+import path from 'node:path';
 import pino from 'pino';
 
 // Ensure logs directory exists (server-side only)
