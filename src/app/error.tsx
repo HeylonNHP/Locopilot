@@ -2,6 +2,8 @@
 
 import { useEffect } from 'react';
 
+export const dynamic = 'force-dynamic';
+
 interface ErrorBoundaryProps {
   error: Error & { digest?: string };
   reset: () => void;
