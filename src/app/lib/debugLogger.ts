@@ -16,19 +16,33 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
 
-// Ensure logs directory exists (server-side only)
+// Ensure logs directory exists (server-side only).
+// If the directory cannot be created, fall back to a silent logger
+// so the server does not crash on startup.
 const logDir = path.join(process.cwd(), 'logs');
-if (!fs.existsSync(logDir)) {
-  fs.mkdirSync(logDir, { recursive: true });
+try {
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+} catch (err) {
+  console.error(`[debugLogger] Warning: could not create logs directory at ${logDir}:`, err instanceof Error ? err.message : String(err));
+  console.error('[debugLogger] Debug logging will be disabled for this session.');
 }
 
-const pinoLogger = pino(
-  {
-    level: 'debug',
-    timestamp: pino.stdTimeFunctions.isoTime,
-  },
-  pino.destination(path.join(logDir, 'locopilot-debug.log')),
-);
+let pinoLogger: pino.Logger;
+try {
+  pinoLogger = pino(
+    {
+      level: 'debug',
+      timestamp: pino.stdTimeFunctions.isoTime,
+    },
+    pino.destination(path.join(logDir, 'locopilot-debug.log')),
+  );
+} catch (err) {
+  console.error('[debugLogger] Warning: could not initialise pino logger:', err instanceof Error ? err.message : String(err));
+  console.error('[debugLogger] Debug logging will be disabled for this session.');
+  pinoLogger = pino({ level: 'silent' });
+}
 
 export interface ToolTraceEntry {
   /** Which layer produced this log entry */
