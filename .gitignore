@@ -70,3 +70,4 @@ next-env.d.ts
 
 # Per-project skill enable/disable state (user preference)
 .locopilot/skills.json
+/debug_400_payload.json
