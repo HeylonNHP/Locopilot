@@ -1,15 +1,11 @@
-import { createRequire } from 'node:module';
+import { encoding_for_model, get_encoding, init } from '@dqbd/tiktoken/init';
 
 import { APPROX_CHARS_PER_TOKEN, IMAGE_TOKEN_ESTIMATE } from '../constants';
 import { type ChatMessage } from './llm';
 import { stripSpecialTokens } from './textUtils';
 
-let encoder: TiktokenLike | null = null;
-let currentEncoderModel: string | null = null;
-const require = createRequire(import.meta.url);
-
 interface TiktokenLike {
-  encode(text: string): number[];
+  encode(text: string): Uint32Array | number[];
   estimateTokens?: (text: string) => number;
 }
 
@@ -34,31 +30,55 @@ const fallbackEncoder: TiktokenLike = {
   },
 };
 
-type TiktokenModule = {
-  encoding_for_model: (model: string) => TiktokenLike;
-  get_encoding: (encoding: string) => TiktokenLike;
-};
+let wasmReady = false;
 
-function loadTiktoken(): TiktokenModule | null {
-  try {
-    return require('@dqbd/tiktoken') as TiktokenModule;
-  } catch {
-    return null;
-  }
+async function initializeWasm(): Promise<void> {
+  if (wasmReady) return;
+
+  await init(async (imports) => {
+    if (typeof globalThis.window === 'undefined') {
+      // Server: load WASM directly from node_modules. We use dynamic imports so
+      // this code path does not pull Node.js built-ins into any client bundle.
+      const { readFileSync } = await import('node:fs');
+      const { fileURLToPath } = await import('node:url');
+      // Resolve relative to this module so the path is statically scoped to
+      // node_modules and Turbopack's NFT trace does not mark the whole project.
+      const wasmUrl = new URL('../../node_modules/@dqbd/tiktoken/tiktoken_bg.wasm', import.meta.url);
+      const wasmPath = fileURLToPath(wasmUrl);
+      const bytes = readFileSync(wasmPath);
+      return WebAssembly.instantiate(bytes, imports);
+    }
+
+    // Client: fetch the WASM file copied to the public directory by the
+    // postinstall/prebuild script (scripts/copy-wasm.mjs).
+    const response = await fetch('/wasm/tiktoken_bg.wasm');
+    const bytes = await response.arrayBuffer();
+    return WebAssembly.instantiate(bytes, imports);
+  });
+
+  wasmReady = true;
 }
+
+// Initialize at module load. Any import of this module will await this before
+// the exported functions can be called, so the public API stays synchronous.
+await initializeWasm().catch((err) => {
+  console.error('Failed to initialize tiktoken WASM; using heuristic fallback:', err);
+});
+
+let encoder: TiktokenLike | null = null;
+let currentEncoderModel: string | null = null;
 
 function getEncoder(model: string): TiktokenLike {
   if (encoder && currentEncoderModel === model) return encoder;
 
-  const tiktoken = loadTiktoken();
-  if (!tiktoken) {
+  if (!wasmReady) {
     encoder = fallbackEncoder;
     currentEncoderModel = model;
     return encoder;
   }
 
   try {
-    encoder = tiktoken.encoding_for_model(model);
+    encoder = encoding_for_model(model as never);
     currentEncoderModel = model;
   } catch {
     // Model doesn't have a known encoding — keep whatever encoder we already
@@ -68,7 +88,7 @@ function getEncoder(model: string): TiktokenLike {
       currentEncoderModel = model;
     } else {
       try {
-        encoder = tiktoken.get_encoding('cl100k_base');
+        encoder = get_encoding('cl100k_base');
         currentEncoderModel = 'cl100k_base';
       } catch {
         encoder = fallbackEncoder;
@@ -77,7 +97,7 @@ function getEncoder(model: string): TiktokenLike {
     }
   }
 
-  return encoder;
+  return encoder ?? fallbackEncoder;
 }
 
 function countTextTokensWithEncoder(text: string, activeEncoder: TiktokenLike): number {
@@ -100,7 +120,7 @@ function countMessageTokensWithEncoder(message: ChatMessage, activeEncoder: Tikt
       total += countTextTokensWithEncoder(toolCall.function?.name ?? '', activeEncoder);
       total += countTextTokensWithEncoder(
         JSON.stringify(toolCall.function?.arguments ?? {}),
-        activeEncoder
+        activeEncoder,
       );
     }
   }
