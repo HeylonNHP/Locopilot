@@ -80,7 +80,11 @@ export default function StatusBar() {
   const handleThemeToggle = useCallback(() => {
     const next = isDark ? 'frutiger-aero' : 'dark';
     document.documentElement.dataset.theme = next;
+    // Persist via cookie so the server-rendered <html data-theme=...> matches
+    // on the next navigation. localStorage is also kept as a fallback for any
+    // client-only reads (none today, but harmless).
     try {
+      document.cookie = `locopilot-theme=${next}; path=/; max-age=31536000; SameSite=Lax`;
       localStorage.setItem('locopilot-theme', next);
     } catch { /* ignore */ }
     setIsDark(!isDark);
