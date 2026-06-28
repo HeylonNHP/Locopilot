@@ -145,6 +145,10 @@ interface ChatState {
   sessionStates: Map<number, SessionState>;
   newSessionState: SessionState;
   streamingSessions: Set<number>;
+  /** Unsent text the user had typed before starting history navigation. */
+  inputDraft: string;
+  /** Index into user message history when browsing; null means not browsing. */
+  historyIndex: number | null;
 }
 
 export type ChatAction =
@@ -181,7 +185,10 @@ export type ChatAction =
   | { type: 'DISCARD_SESSION'; sessionId: number }
   | { type: 'CLEAR_COMPACT_PROGRESS' }
   | { type: 'START_STREAMING'; sessionId: number }
-  | { type: 'STOP_STREAMING'; sessionId: number };
+  | { type: 'STOP_STREAMING'; sessionId: number }
+  | { type: 'SAVE_INPUT_DRAFT'; draft: string }
+  | { type: 'SET_HISTORY_INDEX'; index: number | null }
+  | { type: 'CLEAR_HISTORY_NAVIGATION' };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -207,7 +214,24 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         messages: action.messages.filter((m: ChatMessage) => m.role !== 'system').map(withId),
       };
     }
+    case 'SAVE_INPUT_DRAFT': {
+      return { ...state, inputDraft: action.draft };
+    }
+    case 'SET_HISTORY_INDEX': {
+      return { ...state, historyIndex: action.index };
+    }
+    case 'CLEAR_HISTORY_NAVIGATION': {
+      return { ...state, inputDraft: '', historyIndex: null };
+    }
     case 'ADD_MESSAGE': {
+      if (action.message.role === 'user') {
+        return {
+          ...state,
+          messages: [...state.messages, withId(action.message)],
+          inputDraft: '',
+          historyIndex: null,
+        };
+      }
       return { ...state, messages: [...state.messages, withId(action.message)] };
     }
     case 'UPDATE_LAST_MESSAGE': {
@@ -442,7 +466,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
           pendingApprovalId: null,
         };
 
-      return nextState;
+      return { ...nextState, inputDraft: '', historyIndex: null };
     }
     case 'SET_MODELS': {
       return { ...state, models: action.models };
@@ -752,7 +776,13 @@ const initialState: ChatState = {
     lastDoneReason: undefined,
   },
   streamingSessions: new Set<number>(),
+  inputDraft: '',
+  historyIndex: null,
 };
+
+export function selectUserMessages(state: ChatState): ChatMessage[] {
+  return state.messages.filter((m) => m.role === 'user');
+}
 
 const ChatContext = createContext<{
   state: ChatState;

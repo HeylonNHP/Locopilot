@@ -2,6 +2,8 @@
 import Image from 'next/image';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { useInputHistory } from '@/app/hooks/useInputHistory';
+
 import './ChatInput.scss';
 
 const SIZE_WARNING_BYTES = 25 * 1024 * 1024; // 25 MB — show warning badge above this
@@ -220,6 +222,8 @@ export default function ChatInput({ onSend, disabled }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const inputHistory = useInputHistory();
+
   const addAttachments = useCallback(async (files: File[]) => {
     const accepted = files.filter(isAccepted);
     if (accepted.length === 0) return;
@@ -399,6 +403,25 @@ export default function ChatInput({ onSend, disabled }: Props) {
     textareaRef.current?.focus();
   };
 
+  const moveCursorToEnd = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    });
+  }, []);
+
+  const getCaretLine = useCallback((): number => {
+    const textarea = textareaRef.current;
+    if (!textarea) return 0;
+    const value = textarea.value;
+    const position = textarea.selectionStart ?? 0;
+    const before = value.slice(0, position);
+    return before.split('\n').length - 1;
+  }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showSuggestions && filtered.length > 0) {
       if (e.key === 'Tab' || e.key === 'Enter') {
@@ -423,6 +446,53 @@ export default function ChatInput({ onSend, disabled }: Props) {
         setShowSuggestions(false);
         return;
       }
+    }
+
+    // Up/Down arrow history navigation: recall previous user prompts like a
+    // terminal. Only activate when the cursor is on the top/bottom line so
+    // normal multi-line cursor movement still works.
+    if (e.key === 'ArrowUp' && !inputHistory.isBrowsingHistory && getCaretLine() === 0) {
+      const recalled = inputHistory.goBack(input);
+      if (recalled !== null) {
+        e.preventDefault();
+        setInput(recalled);
+        setAttachments([]);
+        moveCursorToEnd();
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowUp' && inputHistory.isBrowsingHistory) {
+      const recalled = inputHistory.goBack(input);
+      if (recalled !== null) {
+        e.preventDefault();
+        setInput(recalled);
+        setAttachments([]);
+        moveCursorToEnd();
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown' && inputHistory.isBrowsingHistory) {
+      const recalled = inputHistory.goForward(input);
+      if (recalled !== null) {
+        e.preventDefault();
+        setInput(recalled);
+        setAttachments([]);
+        moveCursorToEnd();
+      }
+      return;
+    }
+
+    if (e.key === 'Escape' && inputHistory.isBrowsingHistory) {
+      e.preventDefault();
+      const draft = inputHistory.goForward(input);
+      if (draft !== null) {
+        setInput(draft);
+        setAttachments([]);
+        moveCursorToEnd();
+      }
+      return;
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
