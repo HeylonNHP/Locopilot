@@ -1,4 +1,5 @@
 import { buildWebRequestHeaders } from './webRequestHeaders';
+import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
 
 export const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
 const BROWSER_RENDER_TIMEOUT_MS = 15_000;
@@ -90,7 +91,7 @@ export async function renderWithPlaywright(
 
       try {
         const page = await context.newPage();
-        const timeoutMs = Math.min(settings.requestTimeoutMs, BROWSER_RENDER_TIMEOUT_MS);
+        const timeoutMs = Math.min(DEFAULT_WEB_REQUEST_TIMEOUT_MS, BROWSER_RENDER_TIMEOUT_MS);
 
         try {
           await page.goto(url, {

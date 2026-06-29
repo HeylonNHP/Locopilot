@@ -26,6 +26,7 @@ import {
   shouldTryBrowserFallback,
 } from './playwrightRenderer';
 import { buildWebRequestHeaders } from './webRequestHeaders';
+import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
 
 export interface WebExtractionSettings {
   requestTimeoutMs: number;
@@ -159,6 +160,7 @@ export interface FetchAndExtractOptions {
    */
   fullContent?: boolean;
   signal?: AbortSignal;
+  allowAutoPlaywrightFallback?: boolean;
 }
 
 /**
@@ -177,9 +179,10 @@ export async function fetchAndExtract(
   options: FetchAndExtractOptions = {},
   signal?: AbortSignal
 ): Promise<{ title: string; text: string; finalUrl: string; links: ExtractedLink[] }> {
+  const effectiveSignal = signal ?? options.signal;
   const response = await axios.get<string>(url, {
-    timeout: settings.requestTimeoutMs,
-    ...(signal ? { signal } : {}),
+    timeout: DEFAULT_WEB_REQUEST_TIMEOUT_MS,
+    ...(effectiveSignal ? { signal: effectiveSignal } : {}),
     headers: buildWebRequestHeaders(
       url,
       settings.cookieHeader ? { cookieHeader: settings.cookieHeader } : undefined
@@ -204,10 +207,12 @@ export async function fetchAndExtract(
   let text = staticText;
 
   // Use Playwright if explicitly requested OR if automatic fallback detection suggests it
-  const shouldTryPlaywright = options.usePlaywright || shouldTryBrowserFallback(html, staticText);
+  const shouldTryPlaywright =
+    options.usePlaywright ||
+    (options.allowAutoPlaywrightFallback !== false && shouldTryBrowserFallback(html, staticText));
 
   if (shouldTryPlaywright) {
-    const renderedPage = await renderWithPlaywright(url, settings, signal);
+    const renderedPage = await renderWithPlaywright(url, settings, effectiveSignal);
     if (renderedPage) {
       const renderedText = extractMainText(renderedPage.html, renderedPage.finalUrl);
 

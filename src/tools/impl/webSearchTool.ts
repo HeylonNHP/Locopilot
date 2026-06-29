@@ -11,6 +11,7 @@ import {
   fetchAndExtract,
 } from '../web/htmlExtractor';
 import { DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
+import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
 
 export const webSearchToolSchema: ToolSchema = {
   name: 'web_search',
@@ -349,7 +350,7 @@ export class WebSearchTool {
     }).toString();
 
     const firstResponse = await axios.post<string>(DUCKDUCKGO_HTML_SEARCH_URL, firstPageData, {
-      timeout: this.settings.requestTimeoutMs,
+      timeout: DEFAULT_WEB_REQUEST_TIMEOUT_MS,
       headers: commonHeaders,
       responseType: 'text',
       ...(signal ? { signal } : {}),
@@ -408,7 +409,7 @@ export class WebSearchTool {
       let pageResponse;
       try {
         pageResponse = await axios.post<string>(DUCKDUCKGO_HTML_SEARCH_URL, pageData, {
-          timeout: this.settings.requestTimeoutMs,
+          timeout: DEFAULT_WEB_REQUEST_TIMEOUT_MS,
           headers: commonHeaders,
           responseType: 'text',
           ...(signal ? { signal } : {}),
