@@ -11,7 +11,7 @@ import {
   fetchAndExtract,
 } from '../web/htmlExtractor';
 import { DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
-import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
+import { DEFAULT_WEB_REQUEST_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES } from '@/constants';
 
 export const webSearchToolSchema: ToolSchema = {
   name: 'web_search',
@@ -197,17 +197,15 @@ export class WebSearchTool {
         continue;
       }
 
-      const pages: ExtractedPage[] = [];
-      for (const [resultIndex, result] of searchResults.entries()) {
-        this.progress(
-          `Web search: loading page ${resultIndex + 1}/${searchResults.length} for query ${queryIndex + 1}/${queries.length}...`
-        );
-
-        const extracted = await this.fetchAndExtractText(result, args.use_playwright, signal);
-        if (extracted) {
-          pages.push(extracted);
-        }
-      }
+      const pages = (
+        await this.fetchPagesWithConcurrency(
+          searchResults,
+          queryIndex,
+          queries.length,
+          args.use_playwright,
+          signal
+        )
+      ).filter((p): p is ExtractedPage => p !== null);
 
       const resultLines: string[] = [`query: ${query}`, `results: ${pages.length}`];
 
@@ -443,6 +441,51 @@ export class WebSearchTool {
     }
 
     return results;
+  }
+
+  /**
+   * Fetch and extract text for every result, with at most
+   * DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES in flight at once. Returns
+   * results in the same order as `results`; failed fetches are returned as
+   * null so callers can drop them.
+   */
+  private async fetchPagesWithConcurrency(
+    results: DuckDuckGoResult[],
+    queryIndex: number,
+    totalQueries: number,
+    usePlaywright: boolean | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<(ExtractedPage | null)[]> {
+    if (results.length === 0) return [];
+
+    // Start every fetch eagerly so the workers below can fan out across the
+    // pool without serializing on the first await. Each task already swallows
+    // its own errors and resolves with either an ExtractedPage or null.
+    const tasks = results.map((result) =>
+      this.fetchAndExtractText(result, usePlaywright, signal)
+    );
+
+    const settled: (ExtractedPage | null | undefined)[] = new Array(tasks.length);
+    const limit = Math.max(1, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES);
+
+    // Shared cursor — each worker pulls the next index until exhausted.
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const i = cursor++;
+        if (i >= tasks.length) return;
+        this.progress(
+          `Web search: loading page ${i + 1}/${results.length} for query ${queryIndex + 1}/${totalQueries}...`
+        );
+        settled[i] = await tasks[i];
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(limit, tasks.length) }, () => worker())
+    );
+
+    return settled as (ExtractedPage | null)[];
   }
 
   private async fetchAndExtractText(

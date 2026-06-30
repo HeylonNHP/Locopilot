@@ -3,6 +3,12 @@ export const DEFAULT_OLLAMA_CHAT_TIMEOUT_MS = 720_000; // 12 minutes// connectio
 export const DEFAULT_NUM_CTX = 131072;
 export const DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT = 5000;
 export const DEFAULT_WEB_REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * Maximum number of result pages to fetch in parallel for a single
+ * `web_search` query. Higher values reduce wall-clock time but risk
+ * rate-limiting by target sites.
+ */
+export const DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES = 5;
 export const IMAGE_TOKEN_ESTIMATE = 1024;
 export const APPROX_CHARS_PER_TOKEN = 4;
 export const AUTO_COMPACT_THRESHOLD_PCT = 92;
