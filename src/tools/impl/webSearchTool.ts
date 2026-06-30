@@ -10,7 +10,7 @@ import {
   cleanText,
   fetchAndExtract,
 } from '../web/htmlExtractor';
-import { DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
+import { BrowserPool, DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
 import { DEFAULT_WEB_REQUEST_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES } from '@/constants';
 
 export const webSearchToolSchema: ToolSchema = {
@@ -163,6 +163,12 @@ function isDdgCaptcha($: ReturnType<typeof cheerio.load>): boolean {
 export class WebSearchTool {
   private readonly settings: WebSearchSettings;
   private readonly onProgress: ((message: string) => void) | undefined;
+  /**
+   * Shared Chromium browser for the lifetime of one `run()` call. Set in
+   * `run()`, cleared in `finally`. Optional — when undefined, page
+   * extraction falls back to per-call Playwright launches.
+   */
+  private browserPool: BrowserPool | undefined;
 
   constructor(options: WebSearchOptions) {
     this.settings = options.settings;
@@ -170,83 +176,94 @@ export class WebSearchTool {
   }
 
   async run(args: WebSearchToolArgs, signal?: AbortSignal): Promise<string> {
-    const effectiveMaxQueries = clampToPositiveInt(
-      args.max_queries ?? this.settings.maxQueries,
-      this.settings.maxQueries
-    );
-    const effectiveResultsPerQuery = this.settings.resultsPerQuery;
+    // Always spin up a pool. It's cheap when unused (a single object
+    // allocation; Chromium itself launches lazily on first use). This
+    // way, both `use_playwright: true` and the auto-fallback heuristic
+    // get the shared-browser speed-up without extra branching here.
+    this.browserPool = new BrowserPool();
+    try {
+      const effectiveMaxQueries = clampToPositiveInt(
+        args.max_queries ?? this.settings.maxQueries,
+        this.settings.maxQueries
+      );
+      const effectiveResultsPerQuery = this.settings.resultsPerQuery;
 
-    const queries = this.generateQueries(args, effectiveMaxQueries);
-    if (queries.length === 0) {
-      return '[Web search error: no prompt/queries were provided.]';
-    }
+      const queries = this.generateQueries(args, effectiveMaxQueries);
+      if (queries.length === 0) {
+        return '[Web search error: no prompt/queries were provided.]';
+      }
 
-    this.progress(
-      `Web search: ${queries.length} quer${queries.length === 1 ? 'y' : 'ies'} selected.`
-    );
-
-    const querySections: string[] = [];
-    for (const [queryIndex, query] of queries.entries()) {
       this.progress(
-        `Web search: fetching DuckDuckGo results (${queryIndex + 1}/${queries.length}) for "${query}"...`
+        `Web search: ${queries.length} quer${queries.length === 1 ? 'y' : 'ies'} selected.`
       );
 
-      const searchResults = await this.fetchSearchResults(query, effectiveResultsPerQuery, signal);
-      if (searchResults.length === 0) {
-        querySections.push([`query: ${query}`, 'results: 0'].join('\n'));
-        continue;
-      }
+      const querySections: string[] = [];
+      for (const [queryIndex, query] of queries.entries()) {
+        this.progress(
+          `Web search: fetching DuckDuckGo results (${queryIndex + 1}/${queries.length}) for "${query}"...`
+        );
 
-      const pages = (
-        await this.fetchPagesWithConcurrency(
-          searchResults,
-          queryIndex,
-          queries.length,
-          args.use_playwright,
-          signal
-        )
-      ).filter((p): p is ExtractedPage => p !== null);
-
-      const resultLines: string[] = [`query: ${query}`, `results: ${pages.length}`];
-
-      for (const [index, page] of pages.entries()) {
-        const urlLines = [`result_${index + 1}_source_url: ${page.url}`];
-        if (page.finalUrl !== page.url) {
-          urlLines.push(`result_${index + 1}_final_url: ${page.finalUrl}`);
+        const searchResults = await this.fetchSearchResults(query, effectiveResultsPerQuery, signal);
+        if (searchResults.length === 0) {
+          querySections.push([`query: ${query}`, 'results: 0'].join('\n'));
+          continue;
         }
 
-        const linksStr =
-          page.links.length > 0
-            ? page.links.map((l) => `- [${l.text}](${l.url})`).join('\n')
-            : '(none)';
+        const pages = (
+          await this.fetchPagesWithConcurrency(
+            searchResults,
+            queryIndex,
+            queries.length,
+            args.use_playwright,
+            signal
+          )
+        ).filter((p): p is ExtractedPage => p !== null);
 
-        const methodNote = page.usedPlaywright
-          ? '\n[Note: This page was rendered using Playwright (browser) because use_playwright was requested.]'
-          : '';
+        const resultLines: string[] = [`query: ${query}`, `results: ${pages.length}`];
 
-        resultLines.push(
-          [
-            `result_${index + 1}_title: ${page.title || '(untitled)'}`,
-            ...urlLines,
-            `result_${index + 1}_snippet: ${page.snippet || '(none)'}`,
-            `result_${index + 1}_text:\n${page.text || '(no extractable text)'}${methodNote}`,
-            `result_${index + 1}_links:\n${linksStr}`,
-          ].join('\n')
-        );
+        for (const [index, page] of pages.entries()) {
+          const urlLines = [`result_${index + 1}_source_url: ${page.url}`];
+          if (page.finalUrl !== page.url) {
+            urlLines.push(`result_${index + 1}_final_url: ${page.finalUrl}`);
+          }
+
+          const linksStr =
+            page.links.length > 0
+              ? page.links.map((l) => `- [${l.text}](${l.url})`).join('\n')
+              : '(none)';
+
+          const methodNote = page.usedPlaywright
+            ? '\n[Note: This page was rendered using Playwright (browser) because use_playwright was requested.]'
+            : '';
+
+          resultLines.push(
+            [
+              `result_${index + 1}_title: ${page.title || '(untitled)'}`,
+              ...urlLines,
+              `result_${index + 1}_snippet: ${page.snippet || '(none)'}`,
+              `result_${index + 1}_text:\n${page.text || '(no extractable text)'}${methodNote}`,
+              `result_${index + 1}_links:\n${linksStr}`,
+            ].join('\n')
+          );
+        }
+
+        querySections.push(resultLines.join('\n\n'));
       }
 
-      querySections.push(resultLines.join('\n\n'));
+      this.progress('Web search: completed.');
+      return [
+        'web_search_results:',
+        'REMINDER: When citing these results, use the REAL URLs (e.g. https://example.com) immediately after the relevant text. Do NOT use result_N placeholders or special tags.',
+        `queries_used: ${queries.length}`,
+        `results_per_query: ${effectiveResultsPerQuery}`,
+        '',
+        querySections.join('\n\n---\n\n'),
+      ].join('\n');
+    } finally {
+      // Idempotent — Chromium may never have launched (no pages needed it).
+      await this.browserPool?.close();
+      this.browserPool = undefined;
     }
-
-    this.progress('Web search: completed.');
-    return [
-      'web_search_results:',
-      'REMINDER: When citing these results, use the REAL URLs (e.g. https://example.com) immediately after the relevant text. Do NOT use result_N placeholders or special tags.',
-      `queries_used: ${queries.length}`,
-      `results_per_query: ${effectiveResultsPerQuery}`,
-      '',
-      querySections.join('\n\n---\n\n'),
-    ].join('\n');
   }
 
   private progress(message: string): void {
@@ -496,6 +513,7 @@ export class WebSearchTool {
     try {
       const extracted = await fetchAndExtract(result.url, this.settings, {
         usePlaywright: usePlaywright === true,
+        ...(this.browserPool ? { browserPool: this.browserPool } : {}),
         ...(signal ? { signal } : {}),
       });
 

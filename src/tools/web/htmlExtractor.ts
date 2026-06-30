@@ -21,6 +21,7 @@ import type { ToolOutputSink } from '../toolOutput';
 import { ContentCompactor } from '../impl/contentCompactor';
 import { type ExtractedLink, extractLinks } from './linkExtractor';
 import {
+  type BrowserPool,
   renderWithPlaywright,
   shouldPreferRenderedText,
   shouldTryBrowserFallback,
@@ -161,6 +162,12 @@ export interface FetchAndExtractOptions {
   fullContent?: boolean;
   signal?: AbortSignal;
   allowAutoPlaywrightFallback?: boolean;
+  /**
+   * Optional shared browser pool. When provided, Playwright renders for
+   * this page reuse the shared Chromium; when omitted, Playwright is
+   * launched in a self-contained per-call launch (the legacy path).
+   */
+  browserPool?: BrowserPool;
 }
 
 /**
@@ -212,7 +219,12 @@ export async function fetchAndExtract(
     (options.allowAutoPlaywrightFallback !== false && shouldTryBrowserFallback(html, staticText));
 
   if (shouldTryPlaywright) {
-    const renderedPage = await renderWithPlaywright(url, settings, effectiveSignal);
+    const renderedPage = await renderWithPlaywright(
+      url,
+      settings,
+      effectiveSignal,
+      options.browserPool
+    );
     if (renderedPage) {
       const renderedText = extractMainText(renderedPage.html, renderedPage.finalUrl);
 
