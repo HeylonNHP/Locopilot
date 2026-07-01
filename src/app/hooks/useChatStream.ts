@@ -8,6 +8,7 @@ import type { SseEventPayloadMap } from '@/types/sse';
 import { type ChatMessage, type DoneReason, useChat } from '@/app/lib/chatStore';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
 import { DEFAULT_NUM_CTX, DEFAULT_SESSION_NAME } from '@/constants';
+import { stampUserContent } from '@/services/userMessageStamp';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
@@ -683,9 +684,13 @@ export function useChatStream(
 
       // Process attachments into message content + images
       const { content, images } = await resolveAttachments(message, attachments ?? []);
+      // Stamp the local "sent at" time onto the user message before it enters
+      // local state, the POST body, and the persisted history. Sub-agent
+      // prompts and prompt-loop nudges are constructed elsewhere and never
+      // cross this path, so they remain unstamped.
       const userMessage: ChatMessage = {
         role: 'user',
-        content,
+        content: stampUserContent(content),
         ...(images.length > 0 ? { images } : {}),
       };
 
