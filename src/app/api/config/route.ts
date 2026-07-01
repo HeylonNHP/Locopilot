@@ -32,6 +32,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
       yolo: false,
       thinkingEnabled: true,
+      promptTimestamps: true,
       webSearch: {
         maxQueries: 3,
         resultsPerQuery: 3,

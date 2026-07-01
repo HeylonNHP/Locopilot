@@ -73,6 +73,7 @@ db.exec(`
         thinking   TEXT    NOT NULL DEFAULT '',
         tool_calls TEXT    NOT NULL DEFAULT '[]',
         images     TEXT    NOT NULL DEFAULT '[]',
+        created_at DATETIME,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
 `);
@@ -93,7 +94,9 @@ addColumnIfMissing("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAU
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("ALTER TABLE messages ADD COLUMN created_at DATETIME");
 addColumnIfMissing("ALTER TABLE messages_staging ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("ALTER TABLE messages_staging ADD COLUMN created_at DATETIME");
 
 // ---------------------------------------------------------------------------
 // Prepared statements (created once, reused on every call)
@@ -130,7 +133,7 @@ const stmtDeleteSession = db.prepare<[number]>('DELETE FROM sessions WHERE id = 
 const stmtDeleteMessages = db.prepare<[number]>('DELETE FROM messages WHERE session_id = ?');
 
 const stmtLoadMessages = db.prepare<[number]>(
-  'SELECT id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id FROM messages WHERE session_id = ? ORDER BY id ASC'
+  'SELECT id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at FROM messages WHERE session_id = ? ORDER BY id ASC'
 );
 
 const stmtSearchSessions = db.prepare<[string, string]>(
@@ -224,15 +227,15 @@ export function updateSessionMessages(
         "role TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', " +
         "thinking TEXT NOT NULL DEFAULT '', tool_calls TEXT NOT NULL DEFAULT '[]', " +
         "images TEXT NOT NULL DEFAULT '[]', subagent_id TEXT NOT NULL DEFAULT '', " +
-        "tool_call_id TEXT NOT NULL DEFAULT '')"
+        "tool_call_id TEXT NOT NULL DEFAULT '', created_at DATETIME)"
     );
     const stmtDeleteStaging = db.prepare<[number]>(
       'DELETE FROM messages_staging WHERE session_id = ?'
     );
     stmtDeleteStaging.run(sessionId);
 
-    const stmtInsertStaging = db.prepare<[number, string, string, string, string, string, string, string]>(
-      'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    const stmtInsertStaging = db.prepare<[number, string, string, string, string, string, string, string, string | null]>(
+      'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     let persistIndex = 0;
     let persistToolCount = 0;
@@ -261,6 +264,12 @@ export function updateSessionMessages(
         sanitizedMessage.role === 'tool'
           ? (sanitizedMessage as ChatMessage).tool_call_id ?? ''
           : '';
+      // Only user-role messages carry a createdAt; assistant/tool/system/subagent_log
+      // rows store NULL so they don't display a misleading timestamp in the UI.
+      const createdAt =
+        sanitizedMessage.role === 'user' && typeof sanitizedMessage.createdAt === 'string'
+          ? sanitizedMessage.createdAt
+          : null;
 
       const hasToolCallId = sanitizedMessage.role === 'tool' && toolCallId !== '';
       debugLog.toolMessage({
@@ -282,7 +291,7 @@ export function updateSessionMessages(
         if (toolCallId !== '') persistToolWithCallIdCount++;
       }
 
-      stmtInsertStaging.run(sessionId, role, content, thinking, toolCalls, images, subagentId, toolCallId);
+      stmtInsertStaging.run(sessionId, role, content, thinking, toolCalls, images, subagentId, toolCallId, createdAt);
       persistIndex++;
     }
 
@@ -298,8 +307,8 @@ export function updateSessionMessages(
     // then move staged rows into the real table.
     stmtDeleteMessages.run(sessionId);
     const stmtCopyStaging = db.prepare<[number]>(
-      'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id) ' +
-        'SELECT session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id ' +
+      'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at) ' +
+        'SELECT session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at ' +
         'FROM messages_staging WHERE session_id = ?'
     );
     stmtCopyStaging.run(sessionId);
@@ -349,6 +358,7 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     images: string;
     subagent_id: string;
     tool_call_id: string;
+    created_at: string | null;
   }[];
 
   let loadToolCount = 0;
@@ -425,6 +435,9 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     }
     if (images && images.length > 0) {
       msg.images = images;
+    }
+    if (row.created_at && row.role === 'user') {
+      msg.createdAt = row.created_at;
     }
     if (msg.role === 'tool') {
       // role: 'tool' requires tool_call_id, even when it is an empty string

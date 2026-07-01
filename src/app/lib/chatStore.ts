@@ -22,6 +22,13 @@ export interface ChatMessage {
   images?: string[];
   /** OpenAI-compatible: identifies which tool call this result answers. */
   tool_call_id?: string;
+  /**
+   * ISO-8601 wall-clock time captured at the moment the user pressed Enter.
+   * Set on every user-role message; persisted to the messages.created_at
+   * column. Always shown in the user bubble (independent of the
+   * promptTimestamps toggle); the toggle controls LLM visibility only.
+   */
+  createdAt?: string;
 }
 
 /**
@@ -118,6 +125,13 @@ interface ChatState {
   // Additional persisted config fields
   yolo: boolean;
   thinkingEnabled: boolean;
+  /**
+   * When true, the server-side chat route prepends a `[Sent …]` header to
+   * each user-role message before sending it to the LLM. The
+   * messages.created_at column is always populated regardless of this flag.
+   * Defaults to true.
+   */
+  promptTimestamps: boolean;
   compactionModel: string;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
@@ -753,6 +767,7 @@ const initialState: ChatState = {
   pendingApprovalId: null,
   yolo: false,
   thinkingEnabled: true,
+  promptTimestamps: true,
   compactionModel: '',
   chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   webSearch: {

@@ -29,6 +29,14 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.4);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
 
+  &-timestamp {
+    font-size: 11px;
+    line-height: 1.2;
+    opacity: 0.75;
+    margin-bottom: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
   &::before {
     content: '';
     position: absolute;

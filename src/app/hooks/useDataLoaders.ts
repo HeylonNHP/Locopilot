@@ -163,6 +163,7 @@ export function useDataLoaders(refs: StableRefs) {
             model: config.model || config.lastModel || refs.modelRef.current,
             yolo: config.yolo ?? state.yolo,
             thinkingEnabled: config.thinkingEnabled ?? state.thinkingEnabled,
+            promptTimestamps: config.promptTimestamps ?? state.promptTimestamps,
             compactionModel: config.compactionModel ?? state.compactionModel,
             chatTimeoutMs: config.chatTimeoutMs ?? state.chatTimeoutMs,
             webSearch: config.webSearch ?? state.webSearch,

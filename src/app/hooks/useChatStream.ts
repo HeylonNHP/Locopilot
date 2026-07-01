@@ -8,7 +8,6 @@ import type { SseEventPayloadMap } from '@/types/sse';
 import { type ChatMessage, type DoneReason, useChat } from '@/app/lib/chatStore';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
 import { DEFAULT_NUM_CTX, DEFAULT_SESSION_NAME } from '@/constants';
-import { stampUserContent } from '@/services/userMessageStamp';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
@@ -684,14 +683,16 @@ export function useChatStream(
 
       // Process attachments into message content + images
       const { content, images } = await resolveAttachments(message, attachments ?? []);
-      // Stamp the local "sent at" time onto the user message before it enters
-      // local state, the POST body, and the persisted history. Sub-agent
-      // prompts and prompt-loop nudges are constructed elsewhere and never
-      // cross this path, so they remain unstamped.
+      // Capture the wall-clock send time on the user message. The LLM-bound
+      // copy of this content is stamped server-side based on the
+      // promptTimestamps toggle; the DB row stores the verbatim content
+      // plus this timestamp in messages.created_at, so flipping the toggle
+      // back on later retroactively exposes the date to the LLM.
       const userMessage: ChatMessage = {
         role: 'user',
-        content: stampUserContent(content),
+        content,
         ...(images.length > 0 ? { images } : {}),
+        createdAt: new Date().toISOString(),
       };
 
       dispatch({ type: 'ADD_MESSAGE', message: userMessage });

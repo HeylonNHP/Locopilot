@@ -97,5 +97,9 @@ export function sanitizeChatMessage(message: PersistedChatMessage): PersistedCha
     })) as [ToolCall, ...ToolCall[]];
   }
 
+  if (typeof message.createdAt === 'string') {
+    sanitizedMessage.createdAt = message.createdAt;
+  }
+
   return sanitizedMessage;
 }

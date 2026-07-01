@@ -30,6 +30,13 @@ export interface ChatMessage {
   tool_call_id?: string;
   /** Base64-encoded images for multimodal/vision models. */
   images?: string[];
+  /**
+   * ISO-8601 timestamp captured at the moment the user pressed Enter.
+   * Persisted in the messages table for every user-role row. Used by the
+   * chat route to optionally inject a `[Sent …]` header into the LLM-bound
+   * copy of the message; the field itself is stripped before the LLM call.
+   */
+  createdAt?: string;
 }
 
 export interface ChatApiResponse {

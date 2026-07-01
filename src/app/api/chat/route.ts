@@ -48,6 +48,7 @@ import { sanitizeChatMessage, stripSpecialTokens } from '@/services/textUtils';
 import { generateSessionTitle, sanitizeContentForTitle } from '@/services/titleGeneration';
 import { generateFallbackTitle } from '@/services/titleUtils';
 import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
+import { buildUserMessageStamp } from '@/services/userMessageStamp';
 import { enterRequestScope } from '@/tools/impl/runCommandTool';
 import { handleToolCall, type RequestContext, sanitize, type ToolOutputSink, TOOLS } from '@/tools/tools';
 import { WorkingDirectoryScope } from '@/tools/workingDirectory';
@@ -125,6 +126,31 @@ function mergeClientMessages(
 function sanitizeAssistantTextFragment(text: string): string {
     const cleaned = stripSpecialTokens(text ?? '');
     return CHANNEL_LABEL_ONLY_PATTERN.test(cleaned.trim()) ? '' : cleaned;
+}
+
+/**
+ * Build the LLM-bound copy of a user message. When the promptTimestamps
+ * toggle is on and the message carries a createdAt, prepend a
+ * `[Sent YYYY-MM-DD HH:MM]` header so the LLM can reason about elapsed
+ * time. The `createdAt` field itself is stripped from the result so it
+ * does not leak into the LLM payload as an unknown JSON key. Returns the
+ * message unchanged when the toggle is off, the role is not user, or no
+ * createdAt is available.
+ */
+function maybeInjectPromptTimestamp(
+    message: ChatMessage,
+    promptTimestampsEnabled: boolean
+): ChatMessage {
+    if (!promptTimestampsEnabled) return message;
+    if (message.role !== 'user') return message;
+    if (typeof message.createdAt !== 'string') return message;
+
+    const stamp = buildUserMessageStamp(new Date(message.createdAt));
+    if (message.content.startsWith(stamp)) return message;
+
+    const { createdAt: _createdAt, ...rest } = message;
+    void _createdAt;
+    return { ...rest, content: `${stamp}\n${message.content}` };
 }
 
 function hasMeaningfulAssistantContent(message: ChatMessage): boolean {
@@ -344,6 +370,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Whether YOLO mode is active (set from config below). When true,
             // run_command skips the approval gate and executes unconditionally.
             let effectiveYolo = false;
+            // Whether the user wants the LLM to see a `[Sent …]` header on
+            // each user-role message. Read from config below (default true).
+            // The created_at column is always populated regardless of this
+            // flag, so toggling it later retroactively changes LLM visibility
+            // for every persisted message.
+            let effectivePromptTimestamps = true;
             let emptyResponseRecoveryAttempts = 0;
             // Server-generated messages that have not yet been persisted.
             // flushSessionState appends these to the fresh DB message list.
@@ -591,6 +623,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                         if (typeof config.yolo === 'boolean') {
                             effectiveYolo = config.yolo;
                         }
+                        if (typeof config.promptTimestamps === 'boolean') {
+                            effectivePromptTimestamps = config.promptTimestamps;
+                        }
 
                         effectiveCompactionModel = resolveCompactionModel(config.compactionModel, model as string);
                     }
@@ -832,8 +867,20 @@ export async function POST(req: NextRequest): Promise<Response> {
                         }
                     }
 
+                    // Derive the LLM-bound copy of the conversation. The user-typed
+                    // content stays in `currentMessages` (which is what we persist
+                    // and what we re-merge on retry); `llmMessages` is a fresh
+                    // derivative that optionally prepends a `[Sent …]` header on
+                    // each user-role message when the promptTimestamps toggle is
+                    // on. The toggle is checked here (not at send-time) so it
+                    // retroactively affects past messages whose created_at column
+                    // is already populated.
+                    const llmMessages: ChatMessage[] = currentMessages.map((message) =>
+                        maybeInjectPromptTimestamp(message, effectivePromptTimestamps)
+                    );
+
                     // Signal that we are about to start an LLM call.
-                    const promptEstimate = countMessagesTokens(currentMessages, model as string);
+                    const promptEstimate = countMessagesTokens(llmMessages, model as string);
                     sendEvent('status', {
                         phase: 'thinking',
                         tokensUsed: promptEstimate,
@@ -844,7 +891,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // -- Call the LLM via the active adapter ------------------
                     const params: StreamChatParams = {
                         model: model as string,
-                        messages: currentMessages,
+                        messages: llmMessages,
                         tools: requestContext.disabledMainTools?.length
                             ? mergedTools.filter((t) => !requestContext.disabledMainTools!.includes(t.function.name))
                             : mergedTools,

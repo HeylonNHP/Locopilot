@@ -160,6 +160,11 @@ export default function ChatMessageBubble({ message }: Props) {
     return (
       <div className="bubble-user-wrap">
         <div className="bubble-user">
+          {message.createdAt && (
+            <div className="bubble-user-timestamp">
+              {new Date(message.createdAt).toLocaleString()}
+            </div>
+          )}
           {message.images && message.images.length > 0 && (
             <AttachmentImages images={message.images} />
           )}

@@ -16,6 +16,14 @@ export interface Config {
   chatTimeoutMs?: number;
   yolo?: boolean;
   thinkingEnabled?: boolean;
+  /**
+   * When true, the chat route prepends a `[Sent YYYY-MM-DD HH:MM]` header
+   * to each user-role message in the LLM-bound conversation. The
+   * messages.created_at column is always populated regardless of this flag,
+   * so toggling it later retroactively changes LLM visibility for every
+   * persisted message. Defaults to true.
+   */
+  promptTimestamps?: boolean;
   webSearch?: {
     maxQueries: number;
     resultsPerQuery: number;

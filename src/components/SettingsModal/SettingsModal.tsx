@@ -17,6 +17,7 @@ export default function SettingsModal({ onClose }: Props) {
   const [numCtx, setNumCtx] = useState(String(state.requestedNumCtx));
   const [yolo, setYolo] = useState(state.yolo);
   const [thinkingEnabled, setThinkingEnabled] = useState(state.thinkingEnabled);
+  const [promptTimestamps, setPromptTimestamps] = useState(state.promptTimestamps ?? true);
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
   const totalSeconds = Math.floor((state.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000);
   const [chatTimeoutHours, setChatTimeoutHours] = useState(String(Math.floor(totalSeconds / 3600)));
@@ -54,6 +55,7 @@ export default function SettingsModal({ onClose }: Props) {
       model,
       yolo,
       thinkingEnabled,
+      promptTimestamps,
       compactionModel,
       chatTimeoutMs: parsedChatTimeoutMs,
       webSearch: {
@@ -235,6 +237,28 @@ export default function SettingsModal({ onClose }: Props) {
                   {thinkingEnabled ? 'Enabled' : 'Disabled'}
                 </label>
               </div>
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <label className="settings-label">Prompt Timestamps</label>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-12">
+                <input
+                  id="prompt-timestamps-toggle"
+                  type="checkbox"
+                  checked={promptTimestamps}
+                  onChange={(e) => setPromptTimestamps(e.target.checked)}
+                />
+                <label htmlFor="prompt-timestamps-toggle" className="font-14 text-primary">
+                  {promptTimestamps ? 'Sent to the model' : 'Hidden from the model'}
+                </label>
+              </div>
+              <span className="font-12 text-secondary">
+                Adds a [Sent YYYY-MM-DD HH:MM] header to each prompt the LLM sees. The
+                wall-clock time of every message is always recorded, so toggling this
+                back on later reveals the date for past messages.
+              </span>
             </div>
           </div>
 
