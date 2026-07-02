@@ -51,38 +51,55 @@ export function useDataLoaders(refs: StableRefs) {
     }
   };
 
-  // Optimistic selection: mark the session immediately and discard stale responses.
+  // Session selection is committed AFTER the fetch resolves so a 404 from a
+  // previously-selected session can't wipe a more recently-loaded session's
+  // messages (the user rapidly clicked A then B; if A returns 404 after B
+  // succeeds, the old code would dispatch SET_CURRENT_SESSION(null) +
+  // CLEAR_MESSAGES and clobber B's state). The caller (useSessionActions /
+  // useSessionUrlParam) is expected to have already optimistically updated
+  // refs.sessionIdRef.current to sessionId so guard checks see the right
+  // value during the in-flight request.
   const loadSessionMessages = useCallback(
     async (sessionId: number) => {
       const requestId = sessionLoadRequestIdRef.current + 1;
       sessionLoadRequestIdRef.current = requestId;
-      dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
 
       try {
         const res = await fetch(`/api/sessions/${sessionId}`);
+        // Stale check: another load has been requested since this one started.
+        if (sessionLoadRequestIdRef.current !== requestId) return;
+
         if (!res.ok) {
-          if (res.status === 404 && sessionLoadRequestIdRef.current === requestId) {
-            // Session was deleted (e.g. in another tab). Clear state immediately
-            // so the UI doesn't stay stuck on a ghost session, and so subsequent
-            // chat sends won't reuse the stale session ID.
+          // Session was deleted (e.g. in another tab). Only clear if the
+          // user hasn't already moved on to a different session — the
+          // caller's earlier click on session B will have updated
+          // refs.sessionIdRef.current, so this guard prevents the A 404
+          // from clobbering B's state.
+          if (res.status === 404 && refs.sessionIdRef.current === sessionId) {
             refs.sessionIdRef.current = null;
             dispatch({ type: 'SET_CURRENT_SESSION', id: null });
             dispatch({ type: 'CLEAR_MESSAGES' });
           }
           return;
         }
-        if (sessionLoadRequestIdRef.current !== requestId) return;
         const data = await res.json();
         if (sessionLoadRequestIdRef.current !== requestId) return;
+
+        // Commit the session change now that we have data. The caller
+        // typically already dispatched SET_CURRENT_SESSION optimistically,
+        // so this is usually a no-op; the guard avoids a redundant dispatch.
+        if (refs.sessionIdRef.current !== sessionId) {
+          refs.sessionIdRef.current = sessionId;
+          dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
+        }
+
         if (data.messages?.length > 0) {
           dispatch({ type: 'SET_MESSAGES', messages: data.messages, targetSessionId: sessionId });
         }
         if (data.session?.model) {
           await loadModelContextLimit(data.session.model);
-          // Re-check after the await — the user may have switched sessions
-          // while the model info fetch was in flight. If so, bail out so we
-          // don't dispatch token stats for a now-stale session.
-          if (sessionLoadRequestIdRef.current !== requestId) return;
+          // The outer requestId check above already gated entry to this
+          // branch, so a second re-check after the await is unnecessary.
         }
         if (data.estimatedTokens !== null && data.estimatedTokens !== undefined) {
           dispatch({

@@ -57,6 +57,7 @@ export interface SseEventPayloadMap {
     doneReason: 'stop' | 'length' | 'load' | 'unload';
   };
   error: { message: string };
+  write_error: { message: string };
   clear_assistant: object;
   model_context_limit: { limit: number };
 }

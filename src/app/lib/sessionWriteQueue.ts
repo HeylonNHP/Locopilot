@@ -39,8 +39,7 @@ export async function enqueueSessionWrite(
   // let the caller produce the new list, and persist it.
   const work = prev.then(async () => {
     if (!sessionExists(sessionId)) {
-      console.warn(`[sessionWriteQueue] Skipping write for deleted session ${sessionId}`);
-      return;
+      throw new Error(`Session ${sessionId} no longer exists; skipping write.`);
     }
     const currentMessages = loadSessionMessages(sessionId);
     const newMessages = await buildMessages(currentMessages);

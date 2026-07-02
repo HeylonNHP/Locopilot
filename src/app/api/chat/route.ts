@@ -383,29 +383,55 @@ export async function POST(req: NextRequest): Promise<Response> {
             const pendingAppends: PersistedChatMessage[] = [];
             let pendingReplace: PersistedChatMessage[] | null = null;
 
-            async function flushSessionState(): Promise<void> {
-                if (activeSessionId === undefined) return;
+            async function flushSessionState(): Promise<{ ok: true } | { ok: false; error: string }> {
+                if (activeSessionId === undefined) return { ok: true };
                 const sessionId = activeSessionId;
                 // Race: session may have been deleted mid-stream by another tab.
-                if (!sessionExists(sessionId)) return;
+                if (!sessionExists(sessionId)) return { ok: true };
 
                 if (pendingReplace) {
                     const replacement = pendingReplace;
+                    try {
+                        await enqueueSessionWrite(
+                            sessionId,
+                            () => replacement,
+                            { promptEvalCount, evalCount },
+                        );
+                    } catch (err) {
+                        // Keep `pendingReplace` so a later attempt can retry.
+                        // Note: `currentMessages` is not rolled back because the
+                        // replacement is already a complete, LLM-observed state
+                        // (e.g. after compaction) — removing it would break the
+                        // LLM stream mid-loop. The DB will diverge; surface the
+                        // error so the user can decide whether to retry.
+                        const message = err instanceof Error ? err.message : 'Unknown write error';
+                        sendEvent('write_error', { message });
+                        return { ok: false, error: message };
+                    }
                     pendingReplace = null;
-                    await enqueueSessionWrite(
-                        sessionId,
-                        () => replacement,
-                        { promptEvalCount, evalCount },
-                    );
                 } else if (pendingAppends.length > 0) {
                     const appends = [...pendingAppends];
-                    await enqueueSessionWrite(
-                        sessionId,
-                        (fresh) => [...fresh, ...appends],
-                        { promptEvalCount, evalCount },
-                    );
+                    try {
+                        await enqueueSessionWrite(
+                            sessionId,
+                            (fresh) => [...fresh, ...appends],
+                            { promptEvalCount, evalCount },
+                        );
+                    } catch (err) {
+                        // Keep `pendingAppends` so a later attempt can retry.
+                        // Note: `currentMessages` is not rolled back because the
+                        // newly-appended messages are the LLM's own assistant
+                        // turn and the tool results it must observe on the next
+                        // iteration. Removing them would break the LLM stream.
+                        // The DB will diverge; surface the error so the user
+                        // can decide whether to retry.
+                        const message = err instanceof Error ? err.message : 'Unknown write error';
+                        sendEvent('write_error', { message });
+                        return { ok: false, error: message };
+                    }
                     pendingAppends.length = 0;
                 }
+                return { ok: true };
             }
 
             const systemMessage: ChatMessage = {
@@ -811,6 +837,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 tokensUsed,
                                 tokenLimit: effectiveNumCtx,
                             });
+                            let compactFailed = false;
+                            let persistedOk = true;
+                            let writeError: string | null = null;
                             try {
                                 const compactResult = await compactHistory(
                                     effectiveBaseUrl,
@@ -840,7 +869,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 });
                                 // Persist compacted history so the frontend sees the reduced state.
                                 pendingReplace = [...currentMessages];
-                                await flushSessionState();
+                                const flushResult = await flushSessionState();
+                                if (!flushResult.ok) {
+                                    persistedOk = false;
+                                    writeError = flushResult.error;
+                                }
                                 // Send the compacted message list to the client AFTER
                                 // persisting so the client doesn't see a state that
                                 // might fail to persist.
@@ -858,11 +891,22 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 }
                             } catch {
                                 // Non-fatal — log and continue with existing messages.
+                                compactFailed = true;
+                            }
+                            if (compactFailed) {
                                 sendEvent('status', {
                                     phase: 'compact_failed',
                                     tokensUsed,
                                     tokenLimit: effectiveNumCtx,
                                 });
+                            }
+                            if (!persistedOk) {
+                                // Persisting the compacted history failed. The DB
+                                // is now out of sync with `currentMessages`; bail
+                                // out of the entire tool loop so the user can
+                                // decide whether to retry. The `write_error`
+                                // event was already emitted by flushSessionState.
+                                throw new Error(`Write failed: ${writeError ?? 'unknown'}`);
                             }
                         }
                     }
@@ -1185,77 +1229,73 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         } catch {
                                             // Best-effort: fall through to the prompt.
                                         }
+                                    }
 
-                                        if (autoApproved) {
+                                    if (autoApproved) {
+                                        // A5: server-config autoApprove — silently allow, no UI gate.
+                                        if (namespacedTarget) {
                                             mcpApprovalsSet.add(namespacedTarget);
                                             requestContext.mcpApprovals = [...mcpApprovalsSet];
                                         }
-                                    }
+                                    } else {
+                                        // Full approval gate: emit approval_request, wait, race against abort.
+                                        const requestId = randomUUID();
 
-                                    // Always show the approval UI (prompt or
-                                    // autoApproved).  This is the critical fix:
-                                    // the previous outer `if (namespacedTarget)`
-                                    // silently bypassed the gate when the LLM
-                                    // sent `mcp_call` with no/malformed args.
-                                    // Now every `mcp_call` hits the gate, and
-                                    // the UI surfaces validation errors to the
-                                    // LLM when `namespacedTarget` is null.
-                                    const requestId = randomUUID();
-
-                                    const abortPromise = new Promise<ApprovalDecision>((resolve) => {
-                                        if (req.signal.aborted) { resolve({ approved: false }); return; }
-                                        req.signal.addEventListener('abort', () => resolve({ approved: false }), { once: true });
-                                    });
-
-                                    sendEvent('approval_request', {
-                                        requestId,
-                                        toolName,
-                                        toolCallName: namespacedTarget ?? 'mcp__unknown__unknown',
-                                        args: toolArgs ?? {},
-                                    });
-
-                                    const decision = await Promise.race([
-                                        waitForApproval(requestId, {
-                                            toolName,
-                                            risk: 'mcp',
-                                            args: { server: requestedServer, tool: requestedTool, toolArgs },
-                                        }),
-                                        abortPromise,
-                                    ]);
-
-                                    resolveApproval(requestId, { approved: false });
-
-                                    if (!decision.approved) {
-                                        const rejectedResult = '[MCP call rejected by user]';
-                                        sendEvent('tool_result', {
-                                            name: toolName,
-                                            result: rejectedResult,
-                                            duration: 0,
+                                        const abortPromise = new Promise<ApprovalDecision>((resolve) => {
+                                            if (req.signal.aborted) { resolve({ approved: false }); return; }
+                                            req.signal.addEventListener('abort', () => resolve({ approved: false }), { once: true });
                                         });
-                                        toolResults.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
-                                        continue;
-                                    }
 
-                                    // When the user approves, record the call and
-                                    // any granted pre-authorisations.
-                                    if (namespacedTarget) {
-                                        const granted = decision.grantedTools ?? [];
-                                        for (const grantedName of granted) {
-                                            const grantedServer = grantedName.slice(
-                                                'mcp__'.length,
-                                                grantedName.lastIndexOf('__'),
-                                            );
-                                            try {
-                                                const grantedCfg = await getMCPServerConfig(grantedServer);
-                                                if (grantedCfg) {
-                                                    mcpApprovalsSet.add(grantedName);
-                                                }
-                                            } catch {
-                                                // Best-effort: skip unverifiable targets.
-                                            }
+                                        sendEvent('approval_request', {
+                                            requestId,
+                                            toolName,
+                                            toolCallName: namespacedTarget ?? 'mcp__unknown__unknown',
+                                            args: toolArgs ?? {},
+                                        });
+
+                                        const decision = await Promise.race([
+                                            waitForApproval(requestId, {
+                                                toolName,
+                                                risk: 'mcp',
+                                                args: { server: requestedServer, tool: requestedTool, toolArgs },
+                                            }),
+                                            abortPromise,
+                                        ]);
+
+                                        resolveApproval(requestId, { approved: false });
+
+                                        if (!decision.approved) {
+                                            const rejectedResult = '[MCP call rejected by user]';
+                                            sendEvent('tool_result', {
+                                                name: toolName,
+                                                result: rejectedResult,
+                                                duration: 0,
+                                            });
+                                            toolResults.push({ role: 'tool', content: rejectedResult, tool_call_id: tc.id });
+                                            continue;
                                         }
-                                        mcpApprovalsSet.add(namespacedTarget);
-                                        requestContext.mcpApprovals = [...mcpApprovalsSet];
+
+                                        // When the user approves, record the call and
+                                        // any granted pre-authorisations.
+                                        if (namespacedTarget) {
+                                            const granted = decision.grantedTools ?? [];
+                                            for (const grantedName of granted) {
+                                                const grantedServer = grantedName.slice(
+                                                    'mcp__'.length,
+                                                    grantedName.lastIndexOf('__'),
+                                                );
+                                                try {
+                                                    const grantedCfg = await getMCPServerConfig(grantedServer);
+                                                    if (grantedCfg) {
+                                                        mcpApprovalsSet.add(grantedName);
+                                                    }
+                                                } catch {
+                                                    // Best-effort: skip unverifiable targets.
+                                                }
+                                            }
+                                            mcpApprovalsSet.add(namespacedTarget);
+                                            requestContext.mcpApprovals = [...mcpApprovalsSet];
+                                        }
                                     }
                                 }
                             }
@@ -1409,7 +1449,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                         });
 
                         // Persist tool results so the frontend can load them if user switches away.
-                        await flushSessionState();
+                        const flushResult = await flushSessionState();
+                        if (!flushResult.ok) {
+                            // Bail out of the outer tool loop; the catch handler
+                            // at the bottom of this block will emit an `error`
+                            // event and close the stream.
+                            throw new Error(`Write failed: ${flushResult.error}`);
+                        }
 
                         // Continue the loop so the LLM can process the tool results.
                         continue outer;
@@ -1585,7 +1631,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                             // authoritative token anchor so the next iteration
                             // uses the fallback estimator for auto-compaction.
                             lastAuthoritativeTokens = 0;
-                            await flushSessionState();
+                            const flushResult = await flushSessionState();
+                            if (!flushResult.ok) {
+                                // Bail out of the outer tool loop; the catch
+                                // handler at the bottom of this block will
+                                // emit an `error` event and close the stream.
+                                throw new Error(`Write failed: ${flushResult.error}`);
+                            }
                             continue outer;
                         }
                     }
@@ -1622,7 +1674,15 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                     // Persist final state (append any remaining server-generated
                     // messages to the latest DB state).
-                    await flushSessionState();
+                    const flushResult = await flushSessionState();
+                    if (!flushResult.ok) {
+                        // Bail out of the outer tool loop; the catch handler
+                        // at the bottom of this block will emit an `error`
+                        // event and close the stream. Do NOT send `done` —
+                        // the client must see the failure so it does not
+                        // treat this turn as a successful final response.
+                        throw new Error(`Write failed: ${flushResult.error}`);
+                    }
 
                     const totalTokens = promptEvalCount + evalCount;
 

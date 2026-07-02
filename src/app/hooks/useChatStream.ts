@@ -364,6 +364,20 @@ export function useChatStream(
           break;
         }
 
+        case 'write_error': {
+          // Persistence failure for a session-messages write. Surface the
+          // message to the user; the DB and the LLM-observed in-memory
+          // state have diverged. Marking the request as failed prevents
+          // `retryPayloadRef` from being cleared so the user can retry.
+          if (requestId !== undefined) requestFailedMapRef.current.set(requestId, true);
+          dispatch({
+            type: 'SET_ERROR',
+            error: `Failed to save message to database: ${data.message ?? 'Unknown error'}`,
+          });
+          dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+          break;
+        }
+
         case 'clear_assistant': {
           dispatch({ type: 'REMOVE_LAST_ASSISTANT' });
           break;

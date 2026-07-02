@@ -1,6 +1,6 @@
 'use client';
 
-import { EventSourceParserStream } from 'eventsource-parser/stream';
+import { type EventSourceMessage, EventSourceParserStream } from 'eventsource-parser/stream';
 import { type Dispatch, type SetStateAction, useCallback } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
@@ -9,11 +9,26 @@ import { buildToolUseNudge } from '@/services/toolUseNudge';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
+/**
+ * Sentinel key under which the in-flight /compact, /title, and /dump
+ * AbortControllers are registered in `abortControllersRef`. Real session
+ * IDs are positive integers (the DB primary key), so a negative sentinel
+ * cannot collide. The Stop button iterates every value in the map, so
+ * registering here means the user can cancel these long-running commands
+ * with the same button that aborts a chat stream.
+ */
+export const COMPACTION_ABORT_KEY = Number.MIN_SAFE_INTEGER;
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'AbortError';
+}
+
 interface SlashCommandDeps {
   refs: StableRefs;
   isCurrentSessionStreaming: boolean;
   isCompactingRef: WritableRef<boolean>;
   isGeneratingTitleRef: WritableRef<boolean>;
+  abortControllersRef: WritableRef<Map<number, AbortController>>;
   setIsCompacting: Dispatch<SetStateAction<boolean>>;
   setIsGeneratingTitle: Dispatch<SetStateAction<boolean>>;
   onOpenSettings: () => void;
@@ -29,6 +44,7 @@ export function useSlashCommands({
   isCurrentSessionStreaming,
   isCompactingRef,
   isGeneratingTitleRef,
+  abortControllersRef,
   setIsCompacting,
   setIsGeneratingTitle,
   onOpenSettings,
@@ -333,6 +349,14 @@ export function useSlashCommands({
           // Clear any stale phases from previous compactions so the indicator
           // starts fresh.
           dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
+
+          // Register an AbortController under a sentinel key so the Stop
+          // button (which iterates every value in the map) can also cancel
+          // this long-running SSE stream. Real session IDs are positive
+          // integers, so a negative sentinel cannot collide.
+          const abortController = new AbortController();
+          abortControllersRef.current.set(COMPACTION_ABORT_KEY, abortController);
+          let reader: ReadableStreamDefaultReader<EventSourceMessage> | null = null;
           try {
             const response = await fetch('/api/compact', {
               method: 'POST',
@@ -345,6 +369,7 @@ export function useSlashCommands({
                 compactionModel: refs.compactionModelRef.current,
                 sessionId: compactSessionId,
               }),
+              signal: abortController.signal,
             });
 
             if (!response.ok) {
@@ -358,7 +383,7 @@ export function useSlashCommands({
               .pipeThrough(new TextDecoderStream())
               .pipeThrough(new EventSourceParserStream());
 
-            const reader = eventStream.getReader();
+            reader = eventStream.getReader();
             let compactData: {
               messages: ChatMessage[];
               stats: { oldTokenCount?: number; newTokenCount?: number };
@@ -423,10 +448,26 @@ export function useSlashCommands({
             }
             await loadSessions();
           } catch (err) {
-            addSystem(
-              `Compaction failed: ${err instanceof Error ? err.message : 'Unknown error'}`
-            );
+            if (isAbortError(err)) {
+              addSystem('Compaction cancelled.');
+            } else {
+              addSystem(
+                `Compaction failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+              );
+            }
           } finally {
+            // Cancel the reader so an in-flight read() unblocks if the
+            // controller was aborted, then unregister.
+            if (reader) {
+              try {
+                await reader.cancel();
+              } catch {
+                // Ignore — the stream may already be closed.
+              }
+            }
+            if (abortControllersRef.current.get(COMPACTION_ABORT_KEY) === abortController) {
+              abortControllersRef.current.delete(COMPACTION_ABORT_KEY);
+            }
             isCompactingRef.current = false;
             setIsCompacting(false);
           }
@@ -465,6 +506,11 @@ export function useSlashCommands({
 
           isGeneratingTitleRef.current = true;
           setIsGeneratingTitle(true);
+
+          // Register an AbortController under a sentinel key so the Stop
+          // button can cancel title generation alongside chat streams.
+          const abortController = new AbortController();
+          abortControllersRef.current.set(COMPACTION_ABORT_KEY, abortController);
           try {
             const response = await fetch('/api/title', {
               method: 'POST',
@@ -477,6 +523,7 @@ export function useSlashCommands({
                 sessionId: refs.sessionIdRef.current,
                 think: refs.thinkingEnabledRef.current,
               }),
+              signal: abortController.signal,
             });
 
             const data = await response.json().catch(() => null);
@@ -487,11 +534,16 @@ export function useSlashCommands({
 
             await loadSessions();
           } catch (err) {
-            dispatch({
-              type: 'SET_ERROR',
-              error: `Title generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
-            });
+            if (!isAbortError(err)) {
+              dispatch({
+                type: 'SET_ERROR',
+                error: `Title generation failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+              });
+            }
           } finally {
+            if (abortControllersRef.current.get(COMPACTION_ABORT_KEY) === abortController) {
+              abortControllersRef.current.delete(COMPACTION_ABORT_KEY);
+            }
             isGeneratingTitleRef.current = false;
             setIsGeneratingTitle(false);
           }
@@ -517,6 +569,10 @@ export function useSlashCommands({
             return;
           }
 
+          // Register an AbortController under a sentinel key so the Stop
+          // button can cancel /dump alongside chat streams.
+          const abortController = new AbortController();
+          abortControllersRef.current.set(COMPACTION_ABORT_KEY, abortController);
           try {
             const response = await fetch('/api/dump', {
               method: 'POST',
@@ -528,19 +584,29 @@ export function useSlashCommands({
                 baseUrl: refs.baseUrlRef.current,
                 sessionId: refs.sessionIdRef.current,
               }),
+              signal: abortController.signal,
             });
 
             if (!response.ok) {
               throw new Error(await readErrorMessage(response));
+            }
+            if (abortController.signal.aborted) {
+              return;
             }
 
             const markdown = await response.text();
             const fileName = parseDownloadFileName(response.headers.get('content-disposition'));
             triggerDownload(markdown, fileName);
           } catch (err) {
-            addSystem(
-              `Conversation dump failed: ${err instanceof Error ? err.message : 'Unknown error'}`
-            );
+            if (!isAbortError(err)) {
+              addSystem(
+                `Conversation dump failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+              );
+            }
+          } finally {
+            if (abortControllersRef.current.get(COMPACTION_ABORT_KEY) === abortController) {
+              abortControllersRef.current.delete(COMPACTION_ABORT_KEY);
+            }
           }
           return;
         }
@@ -720,6 +786,7 @@ export function useSlashCommands({
       isCurrentSessionStreaming,
       isCompactingRef,
       isGeneratingTitleRef,
+      abortControllersRef,
       setIsCompacting,
       setIsGeneratingTitle,
       onOpenSettings,

@@ -88,6 +88,7 @@ function HomeInner() {
     isCurrentSessionStreaming,
     isCompactingRef,
     isGeneratingTitleRef,
+    abortControllersRef,
     setIsCompacting,
     setIsGeneratingTitle,
     onOpenSettings: handleOpenSettings,
@@ -99,7 +100,6 @@ function HomeInner() {
 
   const { handleStop, handleSkillPrompt } = useActionHandlers(
     abortControllersRef,
-    state.currentSessionId,
     isCurrentSessionStreaming,
     handleSend,
     dispatch

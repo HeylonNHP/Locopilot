@@ -14,15 +14,18 @@ import type { WritableRef } from './useStableRefs';
  */
 export function useActionHandlers(
   abortControllersRef: WritableRef<Map<number, AbortController>>,
-  currentSessionId: number | null,
   isCurrentSessionStreaming: boolean,
   handleSend: (message: string, attachments: Attachment[]) => Promise<void>,
   dispatch: Dispatch<ChatAction>
 ) {
   const handleStop = useCallback(() => {
-    const controller = abortControllersRef.current.get(currentSessionId ?? -1);
-    controller?.abort();
-  }, [abortControllersRef, currentSessionId]);
+    for (const controller of abortControllersRef.current.values()) {
+      controller.abort();
+    }
+    // Note: do NOT delete entries here — the `finally` block in useChatStream's
+    // retry / sendChatMessage deletes them on its own. Deleting here would race
+    // with that cleanup and break the bookkeeping.
+  }, [abortControllersRef]);
 
   const handleSkillPrompt = useCallback(
     (message: string) => {
