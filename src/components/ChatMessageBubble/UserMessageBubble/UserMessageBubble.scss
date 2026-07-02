@@ -1,0 +1,52 @@
+// ================================================================
+//  Component: UserMessageBubble
+// ================================================================
+
+.bubble-user {
+  &-wrap {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
+  }
+
+  max-width: 70%;
+  padding: 10px 16px;
+  border-radius: 20px 20px 4px 20px;
+  background: linear-gradient(
+    180deg,
+    var(--gradient-primary-0) 0%,
+    var(--gradient-primary-1) 60%,
+    var(--gradient-primary-2) 100%
+  );
+  color: white;
+  font-size: 14px;
+  line-height: 1.5;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    0 4px 12px rgba(var(--rgb-shadow-blue), 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+
+  &-timestamp {
+    font-size: 11px;
+    line-height: 1.2;
+    opacity: 0.75;
+    margin-bottom: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.45) 0%,
+      rgba(255, 255, 255, 0.15) 40%,
+      transparent 40%
+    );
+    pointer-events: none;
+  }
+}

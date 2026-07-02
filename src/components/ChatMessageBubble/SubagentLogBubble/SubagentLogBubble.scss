@@ -1,0 +1,54 @@
+// ================================================================
+//  Component: SubagentLogBubble
+// ================================================================
+
+.bubble-subagent {
+  &-wrap {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 4px;
+  }
+
+  max-width: 90%;
+  border-radius: 12px;
+  background: var(--bg-subagent-bubble);
+  border: 1px solid var(--border-subagent);
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(var(--rgb-success), 0.05);
+
+  &-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-align: left;
+    transition: color 0.2s ease;
+
+    &:hover {
+      color: var(--text-primary);
+    }
+
+    &-open {
+      border-bottom: 1px solid var(--border-subagent-toggle);
+    }
+  }
+
+  &-log {
+    margin: 0;
+    padding: 8px 12px;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    overflow-y: auto;
+    max-height: 300px;
+  }
+}
