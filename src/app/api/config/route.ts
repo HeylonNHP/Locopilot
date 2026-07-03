@@ -11,6 +11,10 @@ const KNOWN_TOP_KEYS: Set<string> = new Set([
   'provider',
   'apiKey',
   'baseUrl',
+  'model',
+  // Legacy alias accepted for backward compatibility with older
+  // `config.json` files written before the `lastModel` → `model` rename.
+  // New writes go out as `model`; `lastModel` is still accepted on input.
   'lastModel',
   'compactionModel',
   'numCtx',
@@ -97,11 +101,15 @@ function validateConfig(
     out.baseUrl = input.baseUrl;
   }
 
-  if ('lastModel' in input) {
-    if (typeof input.lastModel !== 'string') {
-      return { ok: false, error: "Invalid config: 'lastModel' must be a string" };
+  if ('model' in input || 'lastModel' in input) {
+    // `model` is the canonical key; `lastModel` is a legacy alias kept for
+    // backward compatibility with older `config.json` files. If both are
+    // present, `model` wins.
+    const v = input.model ?? input.lastModel;
+    if (typeof v !== 'string') {
+      return { ok: false, error: "Invalid config: 'model' must be a string" };
     }
-    out.lastModel = input.lastModel;
+    out.model = v;
   }
 
   if ('compactionModel' in input) {
@@ -344,7 +352,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     const currentConfig = await loadConfig();
     const base: Config = {
       baseUrl: '',
-      lastModel: '',
+      model: '',
       compactionModel: '',
       numCtx: 131072,
       chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
@@ -379,6 +387,14 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     // Scrub empty API-key strings so they don't get persisted.
     if (updatedConfig.apiKey !== undefined && updatedConfig.apiKey.trim() === '') {
       delete updatedConfig.apiKey;
+    }
+
+    // `lastModel` is a legacy alias kept only for backward-compatible reads
+    // of older `config.json` files. If we have a `model` (the canonical key),
+    // drop the legacy duplicate from the persisted output so the file
+    // migrates cleanly to the new key on the next save.
+    if (updatedConfig.model !== undefined) {
+      delete updatedConfig.lastModel;
     }
 
     await saveConfig(updatedConfig);

@@ -10,6 +10,14 @@ export interface Config {
   /** API key for OpenAI-compatible providers. Ignored by Ollama. */
   apiKey?: string;
   baseUrl: string;
+  /**
+   * Persisted model selection. Renamed from `lastModel` to match the
+   * in-memory store key (`state.model`) and the UI label ("Model").
+   * `lastModel` is still read on load for backward compatibility with
+   * older `config.json` files but is no longer written.
+   */
+  model?: string;
+  /** @deprecated Use `model` instead. Read-only for backward compat. */
   lastModel?: string;
   compactionModel?: string;
   numCtx?: number;
