@@ -349,6 +349,35 @@ The `config.json` format (auto-generated):
 }
 ```
 
+### numCtx preservation across model changes
+
+`numCtx` is a per-user setting, not a per-model setting. When the user
+picks a new model in the ModelSelector, the resulting `PUT /api/config`
+call deliberately does **not** include `numCtx` in its body (see
+`src/components/ModelSelector/ModelSelector.tsx:201-219`). The
+`Config.model` field is updated and `numCtx` is left untouched in
+`config.json`.
+
+The effective value sent to `/api/chat` is then re-derived in-memory by
+`SET_MODEL_CONTEXT_LIMIT` against the new model's advertised cap:
+
+```
+state.numCtx = Math.min(state.requestedNumCtx, state.modelContextLimit)
+```
+
+If the new model has a larger window than `requestedNumCtx`, no clamp
+occurs and the user keeps the smaller value they asked for. If the new
+model has a smaller window, the clamp is applied silently and the
+Settings modal surfaces it as "capped by model limit" next to the
+requested value. The persisted `numCtx` is never reduced by a model
+change, so switching back to a model with a larger window restores the
+original request.
+
+Do not "fix" the ModelSelector by adding `numCtx` to the PUT body — that
+would force the old value back into the server config, breaking the
+preserve-on-change invariant. The Settings modal is the only surface
+that writes `numCtx` to disk.
+
 ---
 
 ## Last Updated

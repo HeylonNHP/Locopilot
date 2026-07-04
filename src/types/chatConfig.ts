@@ -15,6 +15,16 @@ export interface Config {
    * in-memory store key (`state.model`) and the UI label ("Model").
    * `lastModel` is still read on load for backward compatibility with
    * older `config.json` files but is no longer written.
+   *
+   * IMPORTANT: changing this field does NOT change `numCtx`. When the
+   * user picks a new model in the ModelSelector, the PUT /api/config
+   * request deliberately omits `numCtx` so the user's configured
+   * maximum context size is preserved. The effective (clamped) value
+   * is applied in-memory via SET_MODEL_CONTEXT_LIMIT after fetching
+   * the model's info. Do not "fix" the ModelSelector by adding
+   * `numCtx` to the PUT body — that would silently re-apply a value
+   * the user may have set for a different model. See
+   * WEBUI_MIGRATION.md §"numCtx preservation across model changes".
    */
   model?: string;
   /** @deprecated Use `model` instead. Read-only for backward compat. */
