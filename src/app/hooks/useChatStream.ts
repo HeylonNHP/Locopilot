@@ -268,16 +268,18 @@ export function useChatStream(
           if (data.tps !== undefined) {
             dispatch({ type: 'SET_CURRENT_TPS', tps: data.tps });
           }
-          // The server surfaces a runtime-discovered model cap (smaller than
-          // what we proactively probed) on a `status` event after a 400
-          // error. Update the in-memory clamp so the next request body
-          // is built with the correct numCtx.
+          // The server reports the model's runtime cap on every `status`
+          // event so the client can render an authoritative cap without
+          // ever applying the clamp itself. The cap arrives here in
+          // `modelContextLimit` (renamed from the previous
+          // `discoveredContextLimit` when the field moved from a
+          // 400-only one-shot to a per-status authoritative value).
           if (
-            typeof data.discoveredContextLimit === 'number' &&
-            Number.isFinite(data.discoveredContextLimit) &&
-            data.discoveredContextLimit > 0
+            typeof data.modelContextLimit === 'number' &&
+            Number.isFinite(data.modelContextLimit) &&
+            data.modelContextLimit > 0
           ) {
-            dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.discoveredContextLimit });
+            dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.modelContextLimit });
           }
           break;
         }

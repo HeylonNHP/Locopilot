@@ -54,6 +54,10 @@ import { handleToolCall, type RequestContext, sanitize, type ToolOutputSink, TOO
 import { WorkingDirectoryScope } from '@/tools/workingDirectory';
 
 import {
+  recordDiscoveredCap,
+  resolveEffectiveNumCtx,
+} from '../../../services/capResolver';
+import {
   type ChatMessage,
   configureLlmAdapterAndAuth,
   fetchLlmModelInfo,
@@ -221,9 +225,19 @@ export async function POST(req: NextRequest): Promise<Response> {
         ? baseUrl.trim()
         : 'http://localhost:11434';
 
-    let effectiveNumCtx = typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
+    // The client's numCtx (from the request body) is treated as the user's
+    // *requested* value. The actual effective value sent to the model is
+    // resolved server-side by resolveEffectiveNumCtx (see below, after
+    // config is loaded) so the clamp against the model's runtime cap is
+    // never the client's responsibility. The fallback chain here mirrors
+    // the priority the resolver will see: explicit per-request value,
+    // persisted config value, then DEFAULT_NUM_CTX.
+    const requestedNumCtx = typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
         ? Math.floor(numCtx)
         : DEFAULT_NUM_CTX;
+    let effectiveNumCtx = requestedNumCtx;
+    /** The model's runtime cap as known to the resolver, or null if unknown. */
+    let modelContextLimit: number | null = null;
 
     const effectiveChatTimeoutMs = typeof chatTimeoutMs === 'number' && Number.isFinite(chatTimeoutMs) && chatTimeoutMs > 0
         ? Math.floor(chatTimeoutMs)
@@ -640,6 +654,36 @@ export async function POST(req: NextRequest): Promise<Response> {
                         effectiveCompactionModel = resolveCompactionModel(config.compactionModel, model as string);
                     }
 
+                    // Resolve the effective numCtx against the model's runtime
+                    // cap. This is the single backend source of truth for the
+                    // clamp; the client never applies it. The body numCtx
+                    // (requestedNumCtx) wins over the persisted config value
+                    // for this turn, falling back to config.numCtx when the
+                    // body omitted the field, then to DEFAULT_NUM_CTX.
+                    {
+                        const configRequested = config?.numCtx;
+                        const requested = (typeof configRequested === 'number' &&
+                            Number.isFinite(configRequested) &&
+                            configRequested > 0)
+                            ? Math.floor(configRequested)
+                            : requestedNumCtx;
+                        try {
+                            const resolved = await resolveEffectiveNumCtx(
+                                effectiveBaseUrl,
+                                model as string,
+                                requested
+                            );
+                            effectiveNumCtx = resolved.effective;
+                            modelContextLimit = resolved.modelCap;
+                        } catch {
+                            // Resolver is best-effort: if both probes fail,
+                            // fall through with the requested value. The
+                            // reactive 400 catch below will catch any
+                            // over-budget request and update the cap.
+                            effectiveNumCtx = requested;
+                        }
+                    }
+
                     // Compute allowedTools from always-apply skills (best-effort)
                     let allowedTools: string[] | undefined;
                     try {
@@ -820,6 +864,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 phase: 'compacting',
                                 tokensUsed,
                                 tokenLimit: effectiveNumCtx,
+                                modelContextLimit,
                             });
                             let compactFailed = false;
                             let persistedOk = true;
@@ -871,6 +916,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                         phase: 'compact_overflow',
                                         tokensUsed: compactResult.stats.newTokenCount,
                                         tokenLimit: effectiveNumCtx,
+                                        modelContextLimit,
                                     });
                                 }
                             } catch {
@@ -882,6 +928,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                     phase: 'compact_failed',
                                     tokensUsed,
                                     tokenLimit: effectiveNumCtx,
+                                    modelContextLimit,
                                 });
                             }
                             if (!persistedOk) {
@@ -913,6 +960,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         phase: 'thinking',
                         tokensUsed: promptEstimate,
                         tokenLimit: effectiveNumCtx,
+                        modelContextLimit,
                         isEstimated: true,
                     });
 
@@ -1105,6 +1153,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             phase: 'tools',
                             tokensUsed: promptEvalCount + evalCount,
                             tokenLimit: effectiveNumCtx,
+                            modelContextLimit,
                         });
 
                         const tokensUsedSoFar = promptEvalCount + evalCount;
@@ -1430,6 +1479,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             phase: 'responding',
                             tokensUsed: tokensUsedSoFar,
                             tokenLimit: effectiveNumCtx,
+                            modelContextLimit,
                         });
 
                         // Persist tool results so the frontend can load them if user switches away.
@@ -1491,6 +1541,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             phase: 'truncated',
                             tokensUsed: promptEvalCount + evalCount,
                             tokenLimit: effectiveNumCtx,
+                            modelContextLimit,
                         });
                     }
 
@@ -1527,6 +1578,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                                 maxIterations: effectiveMaxPromptLoopIterations,
                                 tokensUsed: promptEvalCount + evalCount,
                                 tokenLimit: effectiveNumCtx,
+                                modelContextLimit,
                             });
 
                             // Build trace: all messages between the original user request
@@ -1689,6 +1741,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             evalCount,
                             totalTokens,
                             tokenLimit: effectiveNumCtx,
+                            modelContextLimit,
                             ...(typeof promptTps === 'number' ? { promptTps } : {}),
                             ...(typeof effectiveEvalTps === 'number'
                                 ? { evalTps: effectiveEvalTps }
@@ -1719,15 +1772,22 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                 // Parse the model's actual context limit from 400 error responses.
                 // OpenAI-compatible providers don't expose context window via
-                // /v1/models, but the 400 error message contains it. Extract it,
-                // update effectiveNumCtx, notify the frontend via the existing
-                // `status` channel, and persist it so future requests use the
-                // correct value for compaction.
+                // /v1/models, but the 400 error message contains it. The cap
+                // is folded back into the resolver's cache so the next turn
+                // uses the correct value without another 400; the SSE stream
+                // is notified via the existing `status` channel so the client
+                // can update its in-memory display.
                 const discoveredLimit = parseContextLimitFromError(message);
                 if (discoveredLimit !== null && discoveredLimit !== effectiveNumCtx) {
                     effectiveNumCtx = discoveredLimit;
+                    modelContextLimit = discoveredLimit;
+                    recordDiscoveredCap(effectiveBaseUrl, model as string, discoveredLimit);
                     try {
-                        sendEvent('status', { phase: 'context_limit_adjusted', tokenLimit: discoveredLimit, discoveredContextLimit: discoveredLimit });
+                        sendEvent('status', {
+                            phase: 'context_limit_adjusted',
+                            tokenLimit: discoveredLimit,
+                            modelContextLimit: discoveredLimit,
+                        });
                     } catch {
                         // Controller may already be closed – ignore.
                     }

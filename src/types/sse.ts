@@ -13,6 +13,14 @@ export interface SseTokenStats {
   promptTps?: number;
   evalTps?: number;
   isEstimated?: boolean;
+  /**
+   * The model's runtime cap as known to the server at the end of the
+   * turn. Mirrors the `status.modelContextLimit` field so the client
+   * can rely on the `done` event alone to learn the cap on a turn
+   * that emitted no informative `status` events (e.g. an instant
+   * stop with no tool calls).
+   */
+  modelContextLimit?: number | null;
 }
 
 /**
@@ -47,13 +55,13 @@ export interface SseEventPayloadMap {
     attempt?: number;
     maxRetries?: number;
     /**
-     * Set by the server when an OpenAI-compatible 400 error response
-     * surfaces a smaller context-window size than the one we
-     * proactively probed. The client should use this to update its
-     * in-memory `modelContextLimit` clamp so the next request uses the
-     * correct value without a round-trip failure.
+     * The model's runtime cap as known to the server. Set on every
+     * `status` event so the client can render an authoritative cap
+     * (e.g. "capped by model limit" in SettingsModal) without ever
+     * computing the clamp itself. Null when the server has no
+     * resolved cap (probes failed and no 400 has been observed).
      */
-    discoveredContextLimit?: number;
+    modelContextLimit?: number | null;
   };
   compact_progress: { message: string };
   compact: { messages: ChatMessage[]; stats: CompactStats };
