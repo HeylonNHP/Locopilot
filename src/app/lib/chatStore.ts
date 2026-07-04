@@ -204,6 +204,25 @@ export type ChatAction =
   | { type: 'SET_HISTORY_INDEX'; index: number | null }
   | { type: 'CLEAR_HISTORY_NAVIGATION' };
 
+/**
+ * Compute the in-memory `numCtx` from the user's requested value and the
+ * known model cap. If no model cap is known, the requested value is used
+ * as-is; otherwise we clamp down to the smaller of the two.
+ *
+ * Kept as a module-level pure function so the SET_CONFIG and
+ * SET_MODEL_CONTEXT_LIMIT reducer cases can share a single source of
+ * truth for the clamp rule. The two cases differ only in where the
+ * inputs come from (a config action vs. a limit action); the rule that
+ * turns (requestedNumCtx, modelContextLimit) into an effective numCtx is
+ * the same.
+ */
+function computeEffectiveNumCtx(requestedNumCtx: number, modelContextLimit: number | null): number {
+  if (modelContextLimit && modelContextLimit > 0) {
+    return Math.min(requestedNumCtx, modelContextLimit);
+  }
+  return requestedNumCtx;
+}
+
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SET_MESSAGES': {
@@ -493,11 +512,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
     case 'SET_CONFIG': {
       const requestedNumCtx = action.config.numCtx ?? state.requestedNumCtx;
-      const modelContextLimit = state.modelContextLimit;
-      const effectiveNumCtx =
-        modelContextLimit && modelContextLimit > 0
-          ? Math.min(requestedNumCtx, modelContextLimit)
-          : requestedNumCtx;
+      const effectiveNumCtx = computeEffectiveNumCtx(requestedNumCtx, state.modelContextLimit);
       const { numCtx: _, ...restConfig } = action.config;
       return { ...state, requestedNumCtx, numCtx: effectiveNumCtx, ...restConfig };
     }
@@ -573,10 +588,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return nextState;
     }
     case 'SET_MODEL_CONTEXT_LIMIT': {
-      const effectiveNumCtx =
-        action.limit && action.limit > 0
-          ? Math.min(state.requestedNumCtx, action.limit)
-          : state.requestedNumCtx;
+      const effectiveNumCtx = computeEffectiveNumCtx(state.requestedNumCtx, action.limit);
       return { ...state, modelContextLimit: action.limit, numCtx: effectiveNumCtx };
     }
     case 'CLEAR_MESSAGES': {
