@@ -4,7 +4,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 import type { CompletionMode, Config, LlmProvider } from '../../../types/chatConfig';
 
-import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
+import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
 import { loadConfig, saveConfig } from '../../../services/configManager';
 
 const KNOWN_TOP_KEYS: Set<string> = new Set([
@@ -360,7 +360,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       baseUrl: '',
       model: '',
       compactionModel: '',
-      numCtx: 131072,
+      numCtx: DEFAULT_NUM_CTX,
       chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
       yolo: false,
       thinkingEnabled: true,

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
-import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
 import './SettingsModal.scss';
 
@@ -39,7 +39,7 @@ export default function SettingsModal({ onClose }: Props) {
   const handleSave = async () => {
     setSaveError(null);
 
-    const parsedNumCtx = Number.parseInt(numCtx) || 131072;
+    const parsedNumCtx = Number.parseInt(numCtx) || DEFAULT_NUM_CTX;
     const parsedHours = Number.parseInt(chatTimeoutHours) || 0;
     const parsedMinutes = Number.parseInt(chatTimeoutMinutes) || 0;
     const parsedSeconds = Number.parseInt(chatTimeoutSeconds) || 0;

@@ -6,7 +6,7 @@ import type { ToolCall } from '@/services/llm';
 import type { ToolCallArguments } from '@/tools/tools';
 import type { CompletionMode } from '@/types/chatConfig';
 
-import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
 export interface ChatMessage {
   /** Stable client-only identity used as React list key. Never sent to the server. */
@@ -758,8 +758,8 @@ const initialState: ChatState = {
   model: '',
   models: [],
   baseUrl: 'http://localhost:11434',
-  numCtx: 131072,
-  requestedNumCtx: 131072,
+  numCtx: DEFAULT_NUM_CTX,
+  requestedNumCtx: DEFAULT_NUM_CTX,
   modelContextLimit: null,
   error: null,
   pendingCommand: null,
