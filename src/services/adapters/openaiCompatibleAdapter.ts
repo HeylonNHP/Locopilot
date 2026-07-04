@@ -13,6 +13,7 @@ import type {
 } from './llmAdapter';
 
 import { debugLog } from '../../app/lib/debugLogger';
+import { getModelContextLimitFromInfo } from '../llmContextLimit';
 
 // ── Auth support ──────────────────────────────────────────────────────────────
 // The adapter interface doesn't pass an apiKey parameter, so we use a
@@ -627,45 +628,10 @@ async function fetchOpenAICompatibleModelInfo(
 // ── Context limit discovery ───────────────────────────────────────────────────
 // OpenAI's /v1/models endpoint does not return context window size, but some
 // OpenAI-compatible providers (LM Studio, vLLM, etc.) include non-standard
-// fields like max_context_length, context_length, context_window, etc.
-// We search for these keys recursively, mirroring the Ollama adapter's approach.
-
-const CONTEXT_LIMIT_KEY_PATTERN =
-  /(?:^|[._])(?:context_length|num_ctx|context_window|max_position_embeddings|max_sequence_length|max_context_length)$/i;
-
-function parsePositiveInteger(value: unknown): number | null {
-  if (typeof value === 'number') {
-    return Number.isInteger(value) && value > 0 ? value : null;
-  }
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-  }
-  return null;
-}
-
-function findContextLimitInObject(value: unknown): number | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
-    if (CONTEXT_LIMIT_KEY_PATTERN.test(key)) {
-      const parsed = parsePositiveInteger(nestedValue);
-      if (parsed !== null) {
-        return parsed;
-      }
-    }
-    const nestedLimit = findContextLimitInObject(nestedValue);
-    if (nestedLimit !== null) {
-      return nestedLimit;
-    }
-  }
-  return null;
-}
-
-function getOpenAICompatibleModelContextLimit(modelInfo: LlmModelInfo): number | null {
-  return findContextLimitInObject(modelInfo.model_info);
-}
+// fields like max_context_length, context_length, context_window, etc. The
+// shared llmContextLimit util recursively walks the model-info payload for
+// these keys and falls back to scanning free-form `parameters` / `modelfile`
+// text for `num_ctx N` declarations.
 
 async function sendOpenAICompatibleChat(
   baseUrl: string,
@@ -1044,7 +1010,7 @@ export const openaiCompatibleAdapter: LlmAdapter = {
   validateConnection: validateOpenAICompatibleConnection,
   fetchModels: fetchOpenAICompatibleModels,
   fetchModelInfo: fetchOpenAICompatibleModelInfo,
-  getModelContextLimit: getOpenAICompatibleModelContextLimit,
+  getModelContextLimit: getModelContextLimitFromInfo,
   sendChat: sendOpenAICompatibleChat,
   sendChatStream: sendOpenAICompatibleChatStream,
   getApiErrorMessage: getOpenAICompatibleApiErrorMessage,

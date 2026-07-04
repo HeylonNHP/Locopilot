@@ -114,6 +114,16 @@ export function fetchLlmRunningModelVram(baseUrl: string, modelName: string): Pr
   return activeAdapter.fetchRunningModelVram(baseUrl, modelName);
 }
 
+export function fetchLlmRunningModelContextLength(
+  baseUrl: string,
+  modelName: string
+): Promise<number | null> {
+  if (!activeAdapter.fetchRunningModelContextLength) {
+    return Promise.resolve(null);
+  }
+  return activeAdapter.fetchRunningModelContextLength(baseUrl, modelName);
+}
+
 export type { LlmTurnStats, StreamChatParams } from './adapters/llmAdapter';
 export {
   type ChatApiResponse,

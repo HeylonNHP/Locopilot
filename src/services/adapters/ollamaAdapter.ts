@@ -13,91 +13,25 @@ import type {
   StreamChatParams,
 } from './llmAdapter';
 
+import { getModelContextLimitFromInfo } from '../llmContextLimit';
+
 interface TagsResponse {
   models: LlmModel[];
 }
 
+/**
+ * Ollama's `/api/ps` response. Each loaded model reports both the VRAM
+ * footprint and the runtime context length that Ollama has actually
+ * allocated to the runner. The latter may differ from the modelfile's
+ * declared `num_ctx` if the user started the runner with a custom value
+ * (e.g. `ollama run --num-ctx 8192 llama3`).
+ */
 interface PsResponse {
   models: Array<{
     name: string;
     size_vram?: number;
+    context_length?: number;
   }>;
-}
-
-const CONTEXT_LIMIT_KEY_PATTERN =
-  /(?:^|[._])(?:context_length|num_ctx|context_window|max_position_embeddings|max_sequence_length)$/i;
-
-function parsePositiveInteger(value: unknown): number | null {
-  if (typeof value === 'number') {
-    return Number.isInteger(value) && value > 0 ? value : null;
-  }
-
-  if (typeof value === 'string') {
-    const parsed = Number.parseInt(value, 10);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-  }
-
-  return null;
-}
-
-function findContextLimitInObject(value: unknown): number | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-
-  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
-    if (CONTEXT_LIMIT_KEY_PATTERN.test(key)) {
-      const parsed = parsePositiveInteger(nestedValue);
-      if (parsed !== null) {
-        return parsed;
-      }
-    }
-
-    const nestedLimit = findContextLimitInObject(nestedValue);
-    if (nestedLimit !== null) {
-      return nestedLimit;
-    }
-  }
-
-  return null;
-}
-
-function parseContextLimitFromText(value: unknown): number | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  const patterns = [/\bnum_ctx\s+(\d+)\b/i, /\bcontext_length\s+(\d+)\b/i];
-
-  for (const pattern of patterns) {
-    const match = value.match(pattern);
-    if (!match?.[1]) {
-      continue;
-    }
-
-    const parsed = Number.parseInt(match[1], 10);
-    if (Number.isInteger(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-function getOllamaModelContextLimit(info: LlmModelInfo): number | null {
-  const structuredLimit = findContextLimitInObject(info);
-  if (structuredLimit !== null) {
-    return structuredLimit;
-  }
-
-  for (const text of [info.parameters, info.modelfile]) {
-    const parsed = parseContextLimitFromText(text);
-    if (parsed !== null) {
-      return parsed;
-    }
-  }
-
-  return null;
 }
 
 function stripImagesFromMessages(messages: ChatMessage[]): ChatMessage[] {
@@ -181,6 +115,35 @@ async function fetchOllamaRunningModelVram(
     const model = models.find((m) => m.name === modelName || m.name.startsWith(`${modelName  }:`));
     if (model && typeof model.size_vram === 'number' && model.size_vram > 0) {
       return model.size_vram;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the runtime context length for a model that is currently loaded
+ * in the Ollama runner. Returns null if the model is not loaded, the
+ * endpoint is unreachable, or the response is missing the field.
+ *
+ * This value is authoritative when the model is loaded: it reflects what
+ * Ollama will actually enforce on the next request, not what the
+ * modelfile claims. The model-info path (`/api/show`) returns the
+ * modelfile's declared `num_ctx`, which can be overridden at runner
+ * start; this function returns the *effective* value.
+ */
+async function fetchOllamaRunningModelContextLength(
+  baseUrl: string,
+  modelName: string
+): Promise<number | null> {
+  try {
+    const response = await axios.get<PsResponse>(`${baseUrl}/api/ps`);
+    const models = response.data.models || [];
+    const model = models.find((m) => m.name === modelName || m.name.startsWith(`${modelName  }:`));
+    const contextLength = model?.context_length;
+    if (typeof contextLength === 'number' && Number.isInteger(contextLength) && contextLength > 0) {
+      return contextLength;
     }
     return null;
   } catch {
@@ -332,10 +295,11 @@ export const ollamaAdapter: LlmAdapter = {
   validateConnection: validateOllamaConnection,
   fetchModels: fetchOllamaModels,
   fetchModelInfo: fetchOllamaModelInfo,
-  getModelContextLimit: getOllamaModelContextLimit,
+  getModelContextLimit: getModelContextLimitFromInfo,
   sendChat: sendOllamaChat,
   sendChatStream: sendOllamaChatStream,
   getApiErrorMessage: getOllamaApiErrorMessage,
   getTurnStats: getOllamaTurnStats,
   fetchRunningModelVram: fetchOllamaRunningModelVram,
+  fetchRunningModelContextLength: fetchOllamaRunningModelContextLength,
 };

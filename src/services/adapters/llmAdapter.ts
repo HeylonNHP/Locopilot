@@ -150,4 +150,12 @@ export interface LlmAdapter {
   getApiErrorMessage(error: unknown): Promise<string>;
   getTurnStats(response: ChatApiResponse): LlmTurnStats | null;
   fetchRunningModelVram?(baseUrl: string, modelName: string): Promise<number | null>;
+  /**
+   * If implemented, returns the runtime context length that the provider
+   * has actually allocated to a currently-loaded runner, or null if the
+   * model is not loaded or the value is unavailable. Used to prefer the
+   * effective cap over the modelfile's declared value when reconciling
+   * the model context limit.
+   */
+  fetchRunningModelContextLength?(baseUrl: string, modelName: string): Promise<number | null>;
 }
