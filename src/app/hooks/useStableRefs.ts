@@ -15,7 +15,20 @@ export type WritableRef<T> = { current: T };
 export interface StableRefs {
   messagesRef: WritableRef<ChatMessage[]>;
   modelRef: WritableRef<string>;
-  numCtxRef: WritableRef<number>;
+  /**
+   * Effective context-window size — the value the server actually sent
+   * to the LLM. Kept for client-side display only; never used to
+   * build request bodies. The clamp itself is the server's
+   * responsibility.
+   */
+  effectiveNumCtxRef: WritableRef<number>;
+  /**
+   * User's requested context-window size — sent in the request body so
+   * the server can resolve it against the model's runtime cap. The
+   * server's clamp result lands back in `effectiveNumCtxRef` via the
+   * `status` SSE event.
+   */
+  requestedNumCtxRef: WritableRef<number>;
   baseUrlRef: WritableRef<string>;
   sessionIdRef: WritableRef<number | null>;
   sessionsRef: WritableRef<Session[]>;
@@ -32,7 +45,8 @@ export interface StableRefs {
 interface StableRefsInput {
   messages: ChatMessage[];
   model: string;
-  numCtx: number;
+  effectiveNumCtx: number;
+  requestedNumCtx: number;
   baseUrl: string;
   currentSessionId: number | null;
   sessions: Session[];
@@ -54,7 +68,8 @@ interface StableRefsInput {
 export function useStableRefs(state: StableRefsInput): StableRefs {
   const messagesRef = useRef(state.messages);
   const modelRef = useRef(state.model);
-  const numCtxRef = useRef(state.numCtx);
+  const effectiveNumCtxRef = useRef(state.effectiveNumCtx);
+  const requestedNumCtxRef = useRef(state.requestedNumCtx);
   const baseUrlRef = useRef(state.baseUrl);
   const sessionIdRef = useRef(state.currentSessionId);
   const sessionsRef = useRef(state.sessions);
@@ -81,8 +96,11 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
     modelRef.current = state.model;
   }, [state.model]);
   useEffect(() => {
-    numCtxRef.current = state.numCtx;
-  }, [state.numCtx]);
+    effectiveNumCtxRef.current = state.effectiveNumCtx;
+  }, [state.effectiveNumCtx]);
+  useEffect(() => {
+    requestedNumCtxRef.current = state.requestedNumCtx;
+  }, [state.requestedNumCtx]);
   useEffect(() => {
     baseUrlRef.current = state.baseUrl;
   }, [state.baseUrl]);
@@ -122,7 +140,8 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
     containerRef.current = {
       messagesRef,
       modelRef,
-      numCtxRef,
+      effectiveNumCtxRef,
+      requestedNumCtxRef,
       baseUrlRef,
       sessionIdRef,
       sessionsRef,

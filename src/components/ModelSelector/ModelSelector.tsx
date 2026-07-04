@@ -201,8 +201,10 @@ export default function ModelSelector({
       try {
         // Only persist the model change; do NOT send numCtx so the user's
         // configured maximum context size is preserved in config.json.
-        // The effective (clamped) limit is applied in-memory via
-        // SET_MODEL_CONTEXT_LIMIT after fetching the model's info.
+        // The effective (clamped) limit is now applied by the server
+        // via the cap resolver and reported back on the next chat
+        // turn's `status` event. The client no longer pre-fetches the
+        // cap; the server is authoritative.
         const config = {
           baseUrl,
           model: modelName,
@@ -217,12 +219,6 @@ export default function ModelSelector({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(config),
         });
-
-        const res = await fetch(`/api/models/${encodeURIComponent(modelName)}/info`);
-        if (res.ok) {
-          const data = await res.json();
-          dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.contextLimit ?? null });
-        }
       } catch {
         // Silently ignore
       }

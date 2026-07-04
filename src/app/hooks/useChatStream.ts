@@ -268,19 +268,13 @@ export function useChatStream(
           if (data.tps !== undefined) {
             dispatch({ type: 'SET_CURRENT_TPS', tps: data.tps });
           }
-          // The server reports the model's runtime cap on every `status`
-          // event so the client can render an authoritative cap without
-          // ever applying the clamp itself. The cap arrives here in
-          // `modelContextLimit` (renamed from the previous
-          // `discoveredContextLimit` when the field moved from a
-          // 400-only one-shot to a per-status authoritative value).
-          if (
-            typeof data.modelContextLimit === 'number' &&
-            Number.isFinite(data.modelContextLimit) &&
-            data.modelContextLimit > 0
-          ) {
-            dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.modelContextLimit });
-          }
+          // The server reports the model's runtime cap on every
+          // `status` event so the client can render an authoritative
+          // cap without ever applying the clamp itself. The effective
+          // numCtx (in `tokenLimit`) and the cap (in
+          // `modelContextLimit`) both flow through SET_TOKEN_STATS,
+          // which keeps state.tokenStats and state.effectiveNumCtx
+          // in sync. No separate dispatch is needed here.
           break;
         }
 
@@ -316,7 +310,7 @@ export function useChatStream(
                 promptEvalCount: data.stats.newTokenCount,
                 evalCount: 0,
                 totalTokens: data.stats.newTokenCount,
-                tokenLimit: data.tokenLimit ?? refs.numCtxRef.current ?? DEFAULT_NUM_CTX,
+                tokenLimit: data.tokenLimit ?? refs.requestedNumCtxRef.current ?? DEFAULT_NUM_CTX,
               },
               ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
             });
@@ -753,7 +747,7 @@ export function useChatStream(
       });
       const bodyObj = {
         messages: filteredMessages,
-        model: refs.modelRef.current,        numCtx: refs.numCtxRef.current,
+        model: refs.modelRef.current,        numCtx: refs.requestedNumCtxRef.current,
         baseUrl: refs.baseUrlRef.current,
         sessionId: refs.sessionIdRef.current,
         yolo: refs.yoloRef.current,

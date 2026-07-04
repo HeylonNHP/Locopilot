@@ -114,9 +114,23 @@ interface ChatState {
   model: string;
   models: LLmModel[];
   baseUrl: string;
-  numCtx: number;
+  /**
+   * The user's requested context-window size, persisted to config.json.
+   * This is what the user typed in Settings; it is *not* the value
+   * sent to the LLM. The server clamps it against the model's runtime
+   * cap and reports the effective value back via the `status` SSE
+   * event's `tokenLimit` field; that value populates
+   * {@link effectiveNumCtx} below.
+   */
   requestedNumCtx: number;
-  modelContextLimit: number | null;
+  /**
+   * The effective context-window size — the value the server actually
+   * sent to the LLM. Defaults to {@link requestedNumCtx} until the
+   * first `status` or `done` event arrives; thereafter it tracks the
+   * server's most recent reported value. The clamp itself is never
+   * applied on the client.
+   */
+  effectiveNumCtx: number;
   error: string | null;
   // Approval dialog
   pendingCommand: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
@@ -180,7 +194,13 @@ export type ChatAction =
   | { type: 'SET_MODEL'; model: string }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
-  | { type: 'SET_MODEL_CONTEXT_LIMIT'; limit: number | null }
+  | {
+      type: 'SET_EFFECTIVE_NUM_CTX';
+      /** The effective numCtx reported by the server, or null to keep the previous value. */
+      effective: number | null;
+      /** The model's runtime cap, or null when the server has not resolved one. */
+      cap: number | null;
+    }
   | {
       type: 'SHOW_APPROVAL';
       command: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
@@ -203,25 +223,6 @@ export type ChatAction =
   | { type: 'SAVE_INPUT_DRAFT'; draft: string }
   | { type: 'SET_HISTORY_INDEX'; index: number | null }
   | { type: 'CLEAR_HISTORY_NAVIGATION' };
-
-/**
- * Compute the in-memory `numCtx` from the user's requested value and the
- * known model cap. If no model cap is known, the requested value is used
- * as-is; otherwise we clamp down to the smaller of the two.
- *
- * Kept as a module-level pure function so the SET_CONFIG and
- * SET_MODEL_CONTEXT_LIMIT reducer cases can share a single source of
- * truth for the clamp rule. The two cases differ only in where the
- * inputs come from (a config action vs. a limit action); the rule that
- * turns (requestedNumCtx, modelContextLimit) into an effective numCtx is
- * the same.
- */
-function computeEffectiveNumCtx(requestedNumCtx: number, modelContextLimit: number | null): number {
-  if (modelContextLimit && modelContextLimit > 0) {
-    return Math.min(requestedNumCtx, modelContextLimit);
-  }
-  return requestedNumCtx;
-}
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -511,10 +512,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, error: action.error };
     }
     case 'SET_CONFIG': {
-      const requestedNumCtx = action.config.numCtx ?? state.requestedNumCtx;
-      const effectiveNumCtx = computeEffectiveNumCtx(requestedNumCtx, state.modelContextLimit);
-      const { numCtx: _, ...restConfig } = action.config;
-      return { ...state, requestedNumCtx, numCtx: effectiveNumCtx, ...restConfig };
+      // The clamp is the server's responsibility. SET_CONFIG only
+      // stores the user's requested value; the effective value is
+      // updated by SET_TOKEN_STATS and SET_EFFECTIVE_NUM_CTX when
+      // the server reports back.
+      return { ...state, ...action.config };
     }
     case 'SHOW_APPROVAL': {
       let nextState: ChatState = {
@@ -587,9 +589,17 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
       return nextState;
     }
-    case 'SET_MODEL_CONTEXT_LIMIT': {
-      const effectiveNumCtx = computeEffectiveNumCtx(state.requestedNumCtx, action.limit);
-      return { ...state, modelContextLimit: action.limit, numCtx: effectiveNumCtx };
+    case 'SET_EFFECTIVE_NUM_CTX': {
+      // The server reports the effective numCtx and the model cap
+      // together. The cap flows through SET_TOKEN_STATS (which the
+      // client reads for the Settings display) so we only update it
+      // here when the server explicitly sends it; the effective
+      // value is always replaced when present.
+      const next: ChatState = { ...state };
+      if (action.effective !== null && Number.isFinite(action.effective) && action.effective > 0) {
+        next.effectiveNumCtx = action.effective;
+      }
+      return next;
     }
     case 'CLEAR_MESSAGES': {
       return { ...state, messages: [] };
@@ -620,7 +630,22 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         totalTokens: 0,
         tokenLimit: 0,
       };
-      return { ...state, tokenStats: { ...base, ...action.stats } };
+      const merged = { ...base, ...action.stats };
+      // The server's per-turn tokenLimit is the authoritative effective
+      // numCtx. Sync state.effectiveNumCtx from it whenever a positive
+      // value arrives; ignore 0 (used as a clear-sentinel elsewhere
+      // and would clobber a real cap with the fallback default).
+      const effectiveFromStats =
+        typeof merged.tokenLimit === 'number' &&
+        Number.isFinite(merged.tokenLimit) &&
+        merged.tokenLimit > 0
+          ? merged.tokenLimit
+          : null;
+      return {
+        ...state,
+        tokenStats: merged,
+        ...(effectiveFromStats === null ? {} : { effectiveNumCtx: effectiveFromStats }),
+      };
     }
     case 'SET_DONE_REASON': {
       if (
@@ -770,9 +795,8 @@ const initialState: ChatState = {
   model: '',
   models: [],
   baseUrl: 'http://localhost:11434',
-  numCtx: DEFAULT_NUM_CTX,
   requestedNumCtx: DEFAULT_NUM_CTX,
-  modelContextLimit: null,
+  effectiveNumCtx: DEFAULT_NUM_CTX,
   error: null,
   pendingCommand: null,
   showApproval: false,

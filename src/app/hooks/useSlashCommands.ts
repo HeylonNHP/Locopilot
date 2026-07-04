@@ -364,7 +364,7 @@ export function useSlashCommands({
               body: JSON.stringify({
                 messages: currentMessages,
                 model: refs.modelRef.current,
-                numCtx: refs.numCtxRef.current,
+                numCtx: refs.requestedNumCtxRef.current,
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
                 sessionId: compactSessionId,
@@ -423,7 +423,7 @@ export function useSlashCommands({
                   promptEvalCount: compactData.stats.newTokenCount,
                   evalCount: 0,
                   totalTokens: compactData.stats.newTokenCount,
-                  tokenLimit: refs.numCtxRef.current,
+                  tokenLimit: refs.requestedNumCtxRef.current,
                 },
                 ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
               });
@@ -436,9 +436,19 @@ export function useSlashCommands({
               addSystem(
                 `⚡ **Conversation compacted:** ${oldTokens.toLocaleString()} → ${newTokens.toLocaleString()} tokens (−${saved.toLocaleString()}, ${pct}% reduction)`
               );
-              if (newTokens > refs.numCtxRef.current) {
+              // Compare against the server's effective cap (the
+              // value the next turn will actually use), not the
+              // user's raw requested value. If the server has not
+              // yet reported a cap, fall back to the requested
+              // value; this is a display-only check, so the worst
+              // case is a slightly conservative warning.
+              const capForWarning = Math.min(
+                refs.requestedNumCtxRef.current,
+                refs.effectiveNumCtxRef.current
+              );
+              if (newTokens > capForWarning) {
                 addSystem(
-                  `⚠️ Compaction reduced the history but it is still over the current context limit (${newTokens.toLocaleString()}/${refs.numCtxRef.current.toLocaleString()} tokens). The next turn may fail.`
+                  `⚠️ Compaction reduced the history but it is still over the current context limit (${newTokens.toLocaleString()}/${capForWarning.toLocaleString()} tokens). The next turn may fail.`
                 );
               }
             } else {
@@ -517,7 +527,7 @@ export function useSlashCommands({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 model: refs.modelRef.current,
-                numCtx: refs.numCtxRef.current,
+                numCtx: refs.requestedNumCtxRef.current,
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
                 sessionId: refs.sessionIdRef.current,
@@ -580,7 +590,7 @@ export function useSlashCommands({
               body: JSON.stringify({
                 messages: currentMessages,
                 model: refs.modelRef.current,
-                numCtx: refs.numCtxRef.current,
+                numCtx: refs.requestedNumCtxRef.current,
                 baseUrl: refs.baseUrlRef.current,
                 sessionId: refs.sessionIdRef.current,
               }),
@@ -759,7 +769,7 @@ export function useSlashCommands({
           if (!args || Number.isNaN(size) || size <= 0) {
             addSystem('Usage: /ctx <size> (e.g., /ctx 8192)');
           } else {
-            dispatch({ type: 'SET_CONFIG', config: { numCtx: size } });
+            dispatch({ type: 'SET_CONFIG', config: { requestedNumCtx: size } });
             try {
               await fetch('/api/config', {
                 method: 'PUT',

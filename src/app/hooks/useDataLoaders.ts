@@ -36,21 +36,6 @@ export function useDataLoaders(refs: StableRefs) {
     [dispatch]
   );
 
-  /**
-   * Fetches the model's actual context limit from Ollama and applies the clamp.
-   */
-  const loadModelContextLimit = async (modelName: string) => {
-    try {
-      const res = await fetch(`/api/models/${encodeURIComponent(modelName)}/info`);
-      if (res.ok) {
-        const data = await res.json();
-        dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.contextLimit ?? null });
-      }
-    } catch {
-      // Silently ignore – model context limit will remain null
-    }
-  };
-
   // Session selection is committed AFTER the fetch resolves so a 404 from a
   // previously-selected session can't wipe a more recently-loaded session's
   // messages (the user rapidly clicked A then B; if A returns 404 after B
@@ -96,11 +81,12 @@ export function useDataLoaders(refs: StableRefs) {
         if (data.messages?.length > 0) {
           dispatch({ type: 'SET_MESSAGES', messages: data.messages, targetSessionId: sessionId });
         }
-        if (data.session?.model) {
-          await loadModelContextLimit(data.session.model);
-          // The outer requestId check above already gated entry to this
-          // branch, so a second re-check after the await is unnecessary.
-        }
+        // Cap discovery is server-driven; the chat route's first
+        // status event on the next turn will populate
+        // state.effectiveNumCtx via SET_TOKEN_STATS. The session row
+        // already carries the previous effective value in
+        // data.session.num_ctx, which the SET_TOKEN_STATS dispatch
+        // below consumes as tokenLimit.
         if (data.estimatedTokens !== null && data.estimatedTokens !== undefined) {
           dispatch({
             type: 'SET_TOKEN_STATS',
@@ -108,7 +94,7 @@ export function useDataLoaders(refs: StableRefs) {
               promptEvalCount: 0,
               evalCount: data.estimatedTokens,
               totalTokens: data.estimatedTokens,
-              tokenLimit: refs.numCtxRef.current,
+              tokenLimit: refs.requestedNumCtxRef.current,
               isEstimated: true,
             },
             targetSessionId: sessionId,
@@ -118,10 +104,13 @@ export function useDataLoaders(refs: StableRefs) {
           data.session?.last_prompt_eval_count !== undefined &&
           data.session?.last_eval_count !== undefined
         ) {
-          // Use the session's own persisted context limit if available, otherwise
-          // fall back to the currently-displayed one. This prevents restored
-          // sessions from showing wrong percentages after model/context switches.
-          const tokenLimit = data.session.num_ctx ?? refs.numCtxRef.current;
+          // Use the session's own persisted effective numCtx if
+          // available, otherwise fall back to the user's requested
+          // value. The persisted column currently holds the
+          // runtime-discovered cap written by the chat route's 400
+          // catch and the resolver's cache; we use it as the
+          // per-session effective value.
+          const tokenLimit = data.session.num_ctx ?? refs.requestedNumCtxRef.current;
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
@@ -156,7 +145,8 @@ export function useDataLoaders(refs: StableRefs) {
             typeof modelList[0] === 'string' ? modelList[0] : (modelList[0].name ?? '');
           if (firstModel) {
             dispatch({ type: 'SET_MODEL', model: firstModel });
-            await loadModelContextLimit(firstModel);
+            // Cap discovery is server-driven; the chat route will
+            // populate effectiveNumCtx on the next turn's status event.
           }
         }
       }
@@ -176,7 +166,7 @@ export function useDataLoaders(refs: StableRefs) {
           type: 'SET_CONFIG',
           config: {
             baseUrl: config.baseUrl ?? state.baseUrl,
-            numCtx: config.numCtx ?? state.numCtx,
+            requestedNumCtx: config.numCtx ?? state.requestedNumCtx,
             model: config.model || config.lastModel || refs.modelRef.current,
             yolo: config.yolo ?? state.yolo,
             thinkingEnabled: config.thinkingEnabled ?? state.thinkingEnabled,
@@ -189,11 +179,9 @@ export function useDataLoaders(refs: StableRefs) {
               config.maxPromptLoopIterations ?? state.maxPromptLoopIterations,
           },
         });
-        // Fetch and apply model context limit after config is loaded
-        const modelName = config.model || config.lastModel || refs.modelRef.current;
-        if (modelName) {
-          await loadModelContextLimit(modelName);
-        }
+        // Cap discovery is no longer client-driven. The server's
+        // first `status` event on the next chat turn will populate
+        // state.effectiveNumCtx via SET_TOKEN_STATS.
       }
     } catch {
       // Silently ignore

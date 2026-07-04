@@ -32,7 +32,6 @@ export default function SettingsModal({ onClose }: Props) {
   const [webPerPageCharLimit, setWebPerPageCharLimit] = useState(
     String(state.webSearch?.perPageCharLimit ?? 5000)
   );
-  const [modelContextLimit, setModelContextLimit] = useState(state.modelContextLimit);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -49,9 +48,16 @@ export default function SettingsModal({ onClose }: Props) {
     const parsedWebResultsPerQuery = Number.parseInt(webResultsPerQuery) || 3;
     const parsedWebPerPageCharLimit = Number.parseInt(webPerPageCharLimit) || 5000;
 
-    const config = {
+    // The cap is now the server's responsibility. We only include
+    // numCtx in the PUT body when the user actually changed it in
+    // this modal session; otherwise we omit it so two tabs racing on
+    // save don't clobber each other's setting. (If the user just
+    // edited, say, the chat timeout, sending the unchanged numCtx
+    // back would be a no-op write that could still overwrite a value
+    // another tab had just persisted.)
+    const numCtxChanged = parsedNumCtx !== state.requestedNumCtx;
+    const clientConfig: Record<string, unknown> = {
       baseUrl,
-      numCtx: parsedNumCtx,
       model,
       yolo,
       thinkingEnabled,
@@ -64,15 +70,20 @@ export default function SettingsModal({ onClose }: Props) {
         perPageCharLimit: parsedWebPerPageCharLimit,
       },
     };
+    if (numCtxChanged) {
+      clientConfig.numCtx = parsedNumCtx;
+    }
 
-    dispatch({ type: 'SET_CONFIG', config });
+    // Update the in-memory requested value optimistically so the
+    // StatusBar reflects the new setting before the next chat turn.
+    dispatch({ type: 'SET_CONFIG', config: { requestedNumCtx: parsedNumCtx } });
     setIsSaving(true);
 
     try {
       const response = await fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify(clientConfig),
       });
 
       if (!response.ok) {
@@ -97,8 +108,6 @@ export default function SettingsModal({ onClose }: Props) {
         throw new Error(message);
       }
 
-      dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: modelContextLimit });
-      dispatch({ type: 'SET_CONFIG', config });
       onClose();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save config.';
@@ -130,20 +139,7 @@ export default function SettingsModal({ onClose }: Props) {
               <label className="settings-label">Model</label>
               <select
                 value={model}
-                onChange={async (e) => {
-                  const newModel = e.target.value;
-                  setModel(newModel);
-                  // Fetch the model's actual context limit from Ollama
-                  try {
-                    const res = await fetch(`/api/models/${encodeURIComponent(newModel)}/info`);
-                    if (res.ok) {
-                      const data = await res.json();
-                      setModelContextLimit(data.contextLimit ?? null);
-                    }
-                  } catch {
-                    // Silently ignore
-                  }
-                }}
+                onChange={(e) => setModel(e.target.value)}
                 className="settings-input"
               >
                 <option value="">Select a model...</option>
@@ -193,7 +189,7 @@ export default function SettingsModal({ onClose }: Props) {
               />
             </div>
 
-            {state.numCtx === state.requestedNumCtx ? (
+            {state.effectiveNumCtx === state.requestedNumCtx ? (
               <div />
             ) : (
               <div className="settings-row">
@@ -202,7 +198,7 @@ export default function SettingsModal({ onClose }: Props) {
                   className="settings-input text-secondary"
                   style={{ display: 'inline-flex', alignItems: 'center' }}
                 >
-                  {state.numCtx.toLocaleString()} (capped by model limit)
+                  {state.effectiveNumCtx.toLocaleString()} (capped by model limit)
                 </span>
               </div>
             )}

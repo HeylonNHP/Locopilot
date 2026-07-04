@@ -15,7 +15,7 @@ export default function StatusBar() {
     model,
     compactionModel,
     messages,
-    numCtx,
+    effectiveNumCtx,
     currentTps,
     completionMode,
     maxPromptLoopIterations,
@@ -93,7 +93,10 @@ export default function StatusBar() {
   // Use the backend-provided token count. If we haven't received one yet
   // (briefly before the first SSE event) show 0 instead of a local guess.
   const totalTokens = tokenStats?.totalTokens ?? 0;
-  const tokenLimit = numCtx;
+  // Prefer the per-turn tokenLimit reported by the server (already
+  // clamped to the model's cap). Fall back to state.effectiveNumCtx
+  // for the brief window before the first SSE event arrives.
+  const tokenLimit = tokenStats?.tokenLimit ?? effectiveNumCtx;
 
   const pct = tokenLimit > 0 ? Math.round((totalTokens / tokenLimit) * 100) : 0;
 
