@@ -189,19 +189,37 @@ export default function SettingsModal({ onClose }: Props) {
               />
             </div>
 
-            {state.effectiveNumCtx === state.requestedNumCtx ? (
-              <div />
-            ) : (
-              <div className="settings-row">
-                <label className="settings-label">Effective Context Size</label>
-                <span
-                  className="settings-input text-secondary"
-                  style={{ display: 'inline-flex', alignItems: 'center' }}
-                >
-                  {state.effectiveNumCtx.toLocaleString()} (capped by model limit)
-                </span>
-              </div>
-            )}
+            {(() => {
+              // Show the "Effective Context Size" row only when the
+              // server has reported a real cap that is smaller than
+              // the user's requested value. Before the first chat
+              // turn (or if the server could not resolve a cap),
+              // `tokenStats.modelContextLimit` is null and we hide
+              // the row entirely — the user only sees their
+              // requested value. Comparing
+              // state.effectiveNumCtx to state.requestedNumCtx
+              // would conflate the pre-response default with a
+              // genuine cap, which is the bug this row guards
+              // against.
+              const reportedCap = state.tokenStats?.modelContextLimit;
+              const isCapped =
+                typeof reportedCap === 'number' &&
+                Number.isFinite(reportedCap) &&
+                reportedCap > 0 &&
+                reportedCap < state.requestedNumCtx;
+              if (!isCapped) return <div />;
+              return (
+                <div className="settings-row">
+                  <label className="settings-label">Effective Context Size</label>
+                  <span
+                    className="settings-input text-secondary"
+                    style={{ display: 'inline-flex', alignItems: 'center' }}
+                  >
+                    {reportedCap.toLocaleString()} (capped by model limit)
+                  </span>
+                </div>
+              );
+            })()}
           </div>
 
           <div className="settings-grid">

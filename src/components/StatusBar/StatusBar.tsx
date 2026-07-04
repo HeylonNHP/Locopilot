@@ -16,6 +16,7 @@ export default function StatusBar() {
     compactionModel,
     messages,
     effectiveNumCtx,
+    requestedNumCtx,
     currentTps,
     completionMode,
     maxPromptLoopIterations,
@@ -95,8 +96,13 @@ export default function StatusBar() {
   const totalTokens = tokenStats?.totalTokens ?? 0;
   // Prefer the per-turn tokenLimit reported by the server (already
   // clamped to the model's cap). Fall back to state.effectiveNumCtx
-  // for the brief window before the first SSE event arrives.
-  const tokenLimit = tokenStats?.tokenLimit ?? effectiveNumCtx;
+  // for the brief window before the first SSE event arrives; if
+  // that is also null (no server response yet), fall back to the
+  // user's requested value as a last resort. We never invent a
+  // default like DEFAULT_NUM_CTX here — using the requested value
+  // means the percentage is at most 100% even before the server
+  // speaks, which is the right display behaviour.
+  const tokenLimit = tokenStats?.tokenLimit ?? effectiveNumCtx ?? requestedNumCtx;
 
   const pct = tokenLimit > 0 ? Math.round((totalTokens / tokenLimit) * 100) : 0;
 

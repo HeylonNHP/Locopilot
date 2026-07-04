@@ -262,19 +262,19 @@ export function useChatStream(
                 promptEvalCount: 0,
                 evalCount: data.tokensUsed,
                 isEstimated: data.isEstimated ?? false,
+                // The server reports the model's runtime cap on every
+                // status event. Thread it through so the Settings
+                // modal can decide whether to show the "capped by
+                // model limit" row without conflating it with the
+                // client's default-effective value before any server
+                // response has arrived.
+                modelContextLimit: data.modelContextLimit ?? null,
               },
             });
           }
           if (data.tps !== undefined) {
             dispatch({ type: 'SET_CURRENT_TPS', tps: data.tps });
           }
-          // The server reports the model's runtime cap on every
-          // `status` event so the client can render an authoritative
-          // cap without ever applying the clamp itself. The effective
-          // numCtx (in `tokenLimit`) and the cap (in
-          // `modelContextLimit`) both flow through SET_TOKEN_STATS,
-          // which keeps state.tokenStats and state.effectiveNumCtx
-          // in sync. No separate dispatch is needed here.
           break;
         }
 

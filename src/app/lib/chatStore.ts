@@ -88,6 +88,7 @@ export interface SessionState {
     promptTps?: number;
     evalTps?: number;
     isEstimated?: boolean;
+    modelContextLimit?: number | null;
   } | null;
   currentTps: number | null;
   compactingPhases: string[];
@@ -125,12 +126,20 @@ interface ChatState {
   requestedNumCtx: number;
   /**
    * The effective context-window size — the value the server actually
-   * sent to the LLM. Defaults to {@link requestedNumCtx} until the
-   * first `status` or `done` event arrives; thereafter it tracks the
-   * server's most recent reported value. The clamp itself is never
-   * applied on the client.
+   * sent to the LLM. `null` until the first `status` or `done` event
+   * arrives; thereafter it tracks the server's most recent reported
+   * value. The clamp itself is never applied on the client.
+   *
+   * The `null` initial state is important: a non-null default (e.g.
+   * `DEFAULT_NUM_CTX`) would be displayed in the Settings modal as
+   * "capped by model limit" the moment the user opens the modal,
+   * which would be a lie — the server has not yet reported a cap.
+   * Components that consume this field should treat `null` as
+   * "server has not yet responded" and either show nothing, show a
+   * muted placeholder, or fall back to `requestedNumCtx` (the
+   * user's own setting) for display purposes.
    */
-  effectiveNumCtx: number;
+  effectiveNumCtx: number | null;
   error: string | null;
   // Approval dialog
   pendingCommand: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
@@ -167,6 +176,15 @@ interface ChatState {
     promptTps?: number;
     evalTps?: number;
     isEstimated?: boolean;
+    /**
+     * The model's runtime cap as reported by the server. `null`
+     * until the server has responded at least once. Components
+     * that decide whether to display the "capped by model limit"
+     * hint should read this field directly rather than
+     * comparing {@link effectiveNumCtx} to
+     * {@link requestedNumCtx}.
+     */
+    modelContextLimit?: number | null;
   } | null;
   currentTps: number | null;
   compactingPhases: string[];
@@ -796,7 +814,7 @@ const initialState: ChatState = {
   models: [],
   baseUrl: 'http://localhost:11434',
   requestedNumCtx: DEFAULT_NUM_CTX,
-  effectiveNumCtx: DEFAULT_NUM_CTX,
+  effectiveNumCtx: null,
   error: null,
   pendingCommand: null,
   showApproval: false,

@@ -442,10 +442,11 @@ export function useSlashCommands({
               // yet reported a cap, fall back to the requested
               // value; this is a display-only check, so the worst
               // case is a slightly conservative warning.
-              const capForWarning = Math.min(
-                refs.requestedNumCtxRef.current,
-                refs.effectiveNumCtxRef.current
-              );
+              const effective = refs.effectiveNumCtxRef.current;
+              const capForWarning =
+                typeof effective === 'number' && effective > 0
+                  ? Math.min(refs.requestedNumCtxRef.current, effective)
+                  : refs.requestedNumCtxRef.current;
               if (newTokens > capForWarning) {
                 addSystem(
                   `⚠️ Compaction reduced the history but it is still over the current context limit (${newTokens.toLocaleString()}/${capForWarning.toLocaleString()} tokens). The next turn may fail.`

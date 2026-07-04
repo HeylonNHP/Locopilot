@@ -19,9 +19,10 @@ export interface StableRefs {
    * Effective context-window size — the value the server actually sent
    * to the LLM. Kept for client-side display only; never used to
    * build request bodies. The clamp itself is the server's
-   * responsibility.
+   * responsibility. `null` until the server has reported a value
+   * for the active model.
    */
-  effectiveNumCtxRef: WritableRef<number>;
+  effectiveNumCtxRef: WritableRef<number | null>;
   /**
    * User's requested context-window size — sent in the request body so
    * the server can resolve it against the model's runtime cap. The
@@ -45,7 +46,7 @@ export interface StableRefs {
 interface StableRefsInput {
   messages: ChatMessage[];
   model: string;
-  effectiveNumCtx: number;
+  effectiveNumCtx: number | null;
   requestedNumCtx: number;
   baseUrl: string;
   currentSessionId: number | null;

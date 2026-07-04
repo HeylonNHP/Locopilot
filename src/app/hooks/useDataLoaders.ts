@@ -179,9 +179,25 @@ export function useDataLoaders(refs: StableRefs) {
               config.maxPromptLoopIterations ?? state.maxPromptLoopIterations,
           },
         });
-        // Cap discovery is no longer client-driven. The server's
-        // first `status` event on the next chat turn will populate
-        // state.effectiveNumCtx via SET_TOKEN_STATS.
+        // The server also returns the cap for the persisted default
+        // model (best-effort; null when unresolved). Seed
+        // tokenStats with it so the Settings modal can show
+        // "capped by model limit" before the first chat turn. We
+        // only seed when we have a real cap; if the server
+        // reports null, leave tokenStats alone.
+        const reportedCap = data.modelContextLimit;
+        if (typeof reportedCap === 'number' && Number.isFinite(reportedCap) && reportedCap > 0) {
+          dispatch({
+            type: 'SET_TOKEN_STATS',
+            stats: {
+              promptEvalCount: 0,
+              evalCount: 0,
+              totalTokens: 0,
+              tokenLimit: Math.min(config.numCtx ?? state.requestedNumCtx, reportedCap),
+              modelContextLimit: reportedCap,
+            },
+          });
+        }
       }
     } catch {
       // Silently ignore
