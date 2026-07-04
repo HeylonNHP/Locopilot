@@ -120,10 +120,14 @@ function validateConfig(
   }
 
   if ('numCtx' in input) {
-    if (!isFiniteInteger(input.numCtx) || input.numCtx <= 0 || input.numCtx > 1_000_000) {
+    // No upper bound enforced server-side: Ollama caps the effective context
+    // to the active model's `num_ctx` at runtime, and the UI surfaces that
+    // as "capped by model limit". Arbitrary ceilings here only block valid
+    // configurations for models with large context windows.
+    if (!isFiniteInteger(input.numCtx) || input.numCtx <= 0) {
       return {
         ok: false,
-        error: "Invalid config: 'numCtx' must be a positive integer up to 1000000",
+        error: "Invalid config: 'numCtx' must be a positive integer",
       };
     }
     out.numCtx = input.numCtx;
@@ -238,11 +242,13 @@ function validateConfig(
     }
     if ('perPageCharLimit' in input.webSearch) {
       const v = input.webSearch.perPageCharLimit;
-      if (!isFiniteInteger(v) || v < 0 || v > 1_000_000) {
+      // No upper bound enforced server-side: downstream consumers (web fetch
+      // + the chat model) will truncate at their own natural limits, and the
+      // auto-compactor already manages the resulting token load.
+      if (!isFiniteInteger(v) || v < 0) {
         return {
           ok: false,
-          error:
-            "Invalid config: 'webSearch.perPageCharLimit' must be a non-negative integer up to 1000000",
+          error: "Invalid config: 'webSearch.perPageCharLimit' must be a non-negative integer",
         };
       }
       webSearch.perPageCharLimit = v;
