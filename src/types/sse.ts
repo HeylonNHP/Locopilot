@@ -46,6 +46,14 @@ export interface SseEventPayloadMap {
     maxIterations?: number;
     attempt?: number;
     maxRetries?: number;
+    /**
+     * Set by the server when an OpenAI-compatible 400 error response
+     * surfaces a smaller context-window size than the one we
+     * proactively probed. The client should use this to update its
+     * in-memory `modelContextLimit` clamp so the next request uses the
+     * correct value without a round-trip failure.
+     */
+    discoveredContextLimit?: number;
   };
   compact_progress: { message: string };
   compact: { messages: ChatMessage[]; stats: CompactStats };
@@ -59,7 +67,6 @@ export interface SseEventPayloadMap {
   error: { message: string };
   write_error: { message: string };
   clear_assistant: object;
-  model_context_limit: { limit: number };
 }
 
 export type SseEventName = keyof SseEventPayloadMap;

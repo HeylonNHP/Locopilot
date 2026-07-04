@@ -63,6 +63,7 @@ import {
   sendLlmChatStream,
   type StreamChatParams,
 } from '../../../services/llm';
+import { parseContextLimitFromError } from '../../../services/llmContextLimit';
 import { type ApprovalDecision, resolveApproval, waitForApproval } from '../../lib/approvalRegistry';
 import { debugLog } from '../../lib/debugLogger';
 import { logger } from '../../lib/logger';
@@ -317,23 +318,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                 }
 
                 return false;
-            }
-
-            /**
-             * Parse the model's actual context limit from a 400 error message.
-             * OpenAI-compatible providers don't expose context window via
-             * /v1/models, but the 400 error message contains it:
-             * "This model's maximum context length is 16385 tokens."
-             */
-            function parseContextLimitFromError(message: string): number | null {
-                const match = message.match(/maximum context length is (\d+) tokens/i);
-                if (match?.[1]) {
-                    const parsed = Number.parseInt(match[1]!, 10);
-                    if (Number.isInteger(parsed) && parsed > 0) {
-                        return parsed;
-                    }
-                }
-                return null;
             }
 
             function startKeepalive(): void {
@@ -1736,12 +1720,17 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // Parse the model's actual context limit from 400 error responses.
                 // OpenAI-compatible providers don't expose context window via
                 // /v1/models, but the 400 error message contains it. Extract it,
-                // update effectiveNumCtx, notify the frontend, and persist it so
-                // future requests use the correct value for compaction.
+                // update effectiveNumCtx, notify the frontend via the existing
+                // `status` channel, and persist it so future requests use the
+                // correct value for compaction.
                 const discoveredLimit = parseContextLimitFromError(message);
                 if (discoveredLimit !== null && discoveredLimit !== effectiveNumCtx) {
                     effectiveNumCtx = discoveredLimit;
-                    sendEvent('model_context_limit', { limit: discoveredLimit });
+                    try {
+                        sendEvent('status', { phase: 'context_limit_adjusted', tokenLimit: discoveredLimit, discoveredContextLimit: discoveredLimit });
+                    } catch {
+                        // Controller may already be closed – ignore.
+                    }
                     if (activeSessionId !== undefined) {
                         try { updateSessionNumCtx(activeSessionId, discoveredLimit); } catch { /* best-effort */ }
                     }

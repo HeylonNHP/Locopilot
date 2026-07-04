@@ -268,6 +268,17 @@ export function useChatStream(
           if (data.tps !== undefined) {
             dispatch({ type: 'SET_CURRENT_TPS', tps: data.tps });
           }
+          // The server surfaces a runtime-discovered model cap (smaller than
+          // what we proactively probed) on a `status` event after a 400
+          // error. Update the in-memory clamp so the next request body
+          // is built with the correct numCtx.
+          if (
+            typeof data.discoveredContextLimit === 'number' &&
+            Number.isFinite(data.discoveredContextLimit) &&
+            data.discoveredContextLimit > 0
+          ) {
+            dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.discoveredContextLimit });
+          }
           break;
         }
 
@@ -318,13 +329,6 @@ export function useChatStream(
             },
           });
            break;
-        }
-
-        case 'model_context_limit': {
-          if (typeof data.limit === 'number' && Number.isFinite(data.limit) && data.limit > 0) {
-            dispatch({ type: 'SET_MODEL_CONTEXT_LIMIT', limit: data.limit });
-          }
-          break;
         }
 
         case 'done': {          // Do NOT call SET_CURRENT_SESSION here. If the user switched sessions
