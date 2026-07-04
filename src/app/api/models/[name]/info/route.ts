@@ -9,6 +9,7 @@ import type { Config } from '../../../../../types/chatConfig';
 import {
   configureLlmAdapterAndAuth,
   fetchLlmModelInfo,
+  fetchLlmRunningModelContextLength,
   getLlmModelContextLimit,
   type LlmModelInfo,
 } from '../../../../../services/llm';
@@ -43,7 +44,16 @@ export async function GET(
     configureLlmAdapterAndAuth(config.provider, config.apiKey);
 
     const modelInfo: LlmModelInfo = await fetchLlmModelInfo(config.baseUrl, name);
-    const contextLimit = getLlmModelContextLimit(modelInfo);
+    const staticLimit = getLlmModelContextLimit(modelInfo);
+
+    // Reconcile the proactive (modelfile-declared) cap with the
+    // authoritative runtime cap reported by a currently-loaded runner.
+    // The runtime value is preferred because it reflects what Ollama
+    // will actually enforce — the user may have started the runner
+    // with `--num-ctx N` or set a different default in the Ollama
+    // server config, and the modelfile value will then be wrong.
+    const runtimeLimit = await fetchLlmRunningModelContextLength(config.baseUrl, name);
+    const contextLimit = runtimeLimit ?? staticLimit;
 
     return NextResponse.json({ contextLimit, modelInfo });
   } catch (err) {
