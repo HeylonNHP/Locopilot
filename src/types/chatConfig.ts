@@ -20,11 +20,12 @@ export interface Config {
    * user picks a new model in the ModelSelector, the PUT /api/config
    * request deliberately omits `numCtx` so the user's configured
    * maximum context size is preserved. The effective (clamped) value
-   * is applied in-memory via SET_MODEL_CONTEXT_LIMIT after fetching
-   * the model's info. Do not "fix" the ModelSelector by adding
-   * `numCtx` to the PUT body — that would silently re-apply a value
-   * the user may have set for a different model. See
-   * WEBUI_MIGRATION.md §"numCtx preservation across model changes".
+   * is now applied by the server via capResolver and reported back on
+   * every chat turn's `status` SSE event. Do not "fix" the
+   * ModelSelector by adding `numCtx` to the PUT body — that would
+   * silently re-apply a value the user may have set for a different
+   * model. See WEBUI_MIGRATION.md §"numCtx preservation across model
+   * changes" and §"backend-side numCtx enforcement".
    */
   model?: string;
   /** @deprecated Use `model` instead. Read-only for backward compat. */

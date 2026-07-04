@@ -5,6 +5,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import type { CompletionMode, Config, LlmProvider } from '../../../types/chatConfig';
 
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
+import { resolveEffectiveNumCtx } from '../../../services/capResolver';
 import { loadConfig, saveConfig } from '../../../services/configManager';
 
 const KNOWN_TOP_KEYS: Set<string> = new Set([
@@ -340,7 +341,27 @@ export async function GET(): Promise<NextResponse> {
     if (!config) {
       return NextResponse.json({ config: {} });
     }
-    return NextResponse.json({ config });
+    // Resolve the model cap for the persisted default model so a
+    // freshly-mounted tab can display the "capped by model limit"
+    // hint without waiting for the first chat turn. The cap is
+    // informational; the authoritative value comes back on every
+    // chat turn's `status` event. If resolution fails (Ollama
+    // unreachable, model not loaded, etc.) we silently omit the
+    // field rather than 500ing the config read.
+    let modelContextLimit: number | null = null;
+    if (config.baseUrl && config.model) {
+      try {
+        const resolved = await resolveEffectiveNumCtx(
+          config.baseUrl,
+          config.model,
+          config.numCtx ?? DEFAULT_NUM_CTX
+        );
+        modelContextLimit = resolved.modelCap;
+      } catch {
+        // Resolver is best-effort on this read path.
+      }
+    }
+    return NextResponse.json({ config, modelContextLimit });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: `Failed to load config: ${message}` }, { status: 500 });

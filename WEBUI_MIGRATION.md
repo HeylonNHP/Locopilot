@@ -378,6 +378,84 @@ would force the old value back into the server config, breaking the
 preserve-on-change invariant. The Settings modal is the only surface
 that writes `numCtx` to disk.
 
+### Backend-side numCtx enforcement
+
+`numCtx` enforcement (the clamp against the model's runtime context-window
+size) is the server's responsibility. The client ships the user's raw
+*requested* value in the request body; the server resolves the cap and
+applies the clamp before sending the request to the LLM. The client
+never applies the clamp itself.
+
+The server-side resolver lives in `src/services/capResolver.ts`. For a
+given `(baseUrl, modelName)` pair and a requested value, it returns
+`{ effective, requested, modelCap, source }` where `effective` is what
+the LLM actually receives. The resolution order is:
+
+  1. Cache hit (TTL 5 minutes, keyed on the full `(baseUrl, modelName)`
+     pair).
+  2. Runtime probe — Ollama `/api/ps` `context_length` for currently
+     loaded runners. Authoritative when the model is loaded.
+  3. Static probe — per-adapter `getModelContextLimit` (typically
+     `/api/show`).
+  4. `null` cap — the effective value is then the requested value.
+
+The cap is reported back to the client on every chat turn's `status`
+SSE event (`status.modelContextLimit`) and on the `done` event
+(`tokenStats.modelContextLimit`). The client stores these in
+`state.effectiveNumCtx` (via `SET_TOKEN_STATS`) and `state.tokenStats.
+modelContextLimit` for display only; it never uses them to clamp a
+future request.
+
+The cap resolver is also wired into `/api/compact`, `/api/title`, and
+`/api/dump` so the effective numCtx shown in compaction runs, generated
+session titles, and conversation dumps all reflect the same server-
+resolved cap. `GET /api/config` also returns a `modelContextLimit`
+field (best-effort) for the persisted default model so a freshly-
+mounted tab can display the "capped by model limit" hint without
+waiting for the first chat turn.
+
+The /api/models/[name]/info endpoint remains available but is no
+longer called by the client. The chat route and the config GET route
+call it indirectly via the resolver.
+
+#### Multi-tab contract
+
+The cap cache is process-wide (intentional: cap discovery is amortised
+across tabs), keyed on `(baseUrl, modelName)` with NUL separator. The
+key discipline prevents one tab's model from leaking into another
+tab's cap:
+
+  - `baseUrl` is part of the key because two Ollama instances on
+    different URLs can host the same model name with different caps.
+  - The model name is the exact string supplied — no normalisation,
+    no case folding, no tag stripping. `qwen3:6.35b` and
+    `qwen3:6.35b-instruct` are two distinct cache entries.
+
+Two tabs using two different models therefore see two different caps
+on their respective chat responses, and neither tab's in-flight turn
+is influenced by the other tab's choice. A `clearCapCache` test
+helper is exported for the smoke-test harness
+(`scripts/verify-numctx.mjs`).
+
+The Settings modal's PUT /api/config body omits `numCtx` when the
+user didn't change it in this modal session. Two tabs racing on save
+(one editing `numCtx`, one editing `chatTimeout`) no longer clobber
+each other's requested-numCtx setting on the disk-persisted
+`config.json`.
+
+#### Known deferred concerns
+
+  - **Two tabs in the same session row.** `sessions.id` is a single
+    primary key; two tabs both working on session 5 share the row's
+    `effective_num_ctx`. Per-tab `sessionId` allocation is a separate
+    refactor.
+  - **Cross-process `config.json` racing.** Two Next.js instances
+    pointed at the same disk would race on `saveConfig`. File
+    locking is out of scope.
+  - **Cross-tab UI sync.** A model change in tab A is not pushed to
+    tab B. The second tab only learns on its own next chat turn or
+    its own `loadConfig` call.
+
 ---
 
 ## Last Updated

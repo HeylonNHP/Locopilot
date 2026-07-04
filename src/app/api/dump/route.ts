@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { DEFAULT_NUM_CTX } from '../../../constants';
+import { resolveEffectiveNumCtx } from '../../../services/capResolver';
 import { loadConfig } from '../../../services/configManager';
 import { listSessions } from '../../../services/history';
 import {
@@ -54,15 +54,31 @@ export async function POST(request: NextRequest): Promise<Response> {
       typeof body.baseUrl === 'string' && body.baseUrl.trim().length > 0
         ? body.baseUrl.trim()
         : config?.baseUrl?.trim() || 'http://localhost:11434';
-    const effectiveNumCtx =
-      parsePositiveInteger(body.numCtx) ??
-      (config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
-        ? Math.trunc(config.numCtx)
-        : DEFAULT_NUM_CTX);
-    const savedNumCtx =
+    // Resolve the effective numCtx against the model's runtime
+    // cap for the dump's runtimeNumCtx field. The dump is
+    // informational (no LLM call) so the cap is just a
+    // best-effort label. The savedNumCtx field is the user's
+    // persisted requested value.
+    const bodyRequested = parsePositiveInteger(body.numCtx);
+    const configRequested =
       config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
         ? Math.trunc(config.numCtx)
         : undefined;
+    const requested = bodyRequested ?? configRequested ?? 0;
+    let effectiveNumCtx = requested;
+    if (requested > 0) {
+      try {
+        const resolved = await resolveEffectiveNumCtx(
+          effectiveBaseUrl,
+          model,
+          requested
+        );
+        effectiveNumCtx = resolved.effective;
+      } catch {
+        // Resolver is best-effort.
+      }
+    }
+    const savedNumCtx = configRequested;
     const parsedSessionId = parsePositiveInteger(body.sessionId);
     const sessionName = parsedSessionId
       ? listSessions().find((session) => session.id === parsedSessionId)?.name

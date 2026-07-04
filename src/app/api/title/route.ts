@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { enqueueSessionRename } from '@/app/lib/sessionWriteQueue';
-import { DEFAULT_NUM_CTX } from '@/constants';
+import { resolveEffectiveNumCtx } from '@/services/capResolver';
 import { loadConfig } from '@/services/configManager';
 import { listSessions, loadSessionMessages } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
@@ -66,12 +66,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       typeof baseUrl === 'string' && baseUrl.trim().length > 0
         ? baseUrl.trim()
         : config?.baseUrl?.trim() || 'http://localhost:11434';
-    const effectiveNumCtx =
-      typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-        ? Math.floor(numCtx)
-        : config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
-          ? Math.floor(config.numCtx)
-          : DEFAULT_NUM_CTX;
+    // Resolve the effective numCtx against the model's runtime
+    // cap. The body numCtx is informational; the resolver prefers
+    // the persisted config value (the user's authoritative
+    // requested cap) and falls back to the body value if config
+    // is missing. The clamp is the server's responsibility.
+    const bodyRequested = typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
+      ? Math.floor(numCtx)
+      : null;
+    const configRequested =
+      config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
+        ? Math.floor(config.numCtx)
+        : null;
+    const requested = bodyRequested ?? configRequested ?? 0;
+    let effectiveNumCtx = requested;
+    if (requested > 0) {
+      try {
+        const resolved = await resolveEffectiveNumCtx(
+          effectiveBaseUrl,
+          model as string,
+          requested
+        );
+        effectiveNumCtx = resolved.effective;
+      } catch {
+        // Resolver is best-effort; fall through with the requested
+        // value.
+      }
+    }
     const effectiveCompactionModel = resolveCompactionModel(
       typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
       model.trim()
