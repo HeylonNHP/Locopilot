@@ -34,7 +34,6 @@ import {
 const NAMESPACE_REGEX = /^mcp__[\d_a-z-]+__[\w.-]+$/;
 const SERVER_NAME_REGEX = /^[\w-]+$/i;
 const TOOL_NAME_REGEX = /^[\w.-]+$/;
-const MAX_DESCRIPTION_CHARS = 100;
 
 function isPlainString(value: unknown): value is string {
   return typeof value === 'string';
@@ -303,11 +302,3 @@ export async function runSearchMCPTools(
       blocks.join('\n---\n')}`,
   };
 }
-
-// Surface a couple of values for tests / introspection.
-export const __INTERNAL__ = {
-  MAX_DESCRIPTION_CHARS,
-  NAMESPACE_REGEX,
-  SERVER_NAME_REGEX,
-  TOOL_NAME_REGEX,
-} as const;

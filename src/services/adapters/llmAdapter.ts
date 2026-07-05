@@ -135,7 +135,6 @@ export interface LlmTurnStats {
 
 export interface LlmAdapter {
   readonly id: string;
-  validateConnection(baseUrl: string, timeoutMs?: number): Promise<void>;
   fetchModels(baseUrl: string): Promise<LlmModel[]>;
   fetchModelInfo(baseUrl: string, modelName: string): Promise<LlmModelInfo>;
   getModelContextLimit(modelInfo: LlmModelInfo): number | null;
@@ -149,7 +148,6 @@ export interface LlmAdapter {
   sendChatStream(baseUrl: string, params: StreamChatParams): AsyncGenerator<ChatApiResponse>;
   getApiErrorMessage(error: unknown): Promise<string>;
   getTurnStats(response: ChatApiResponse): LlmTurnStats | null;
-  fetchRunningModelVram?(baseUrl: string, modelName: string): Promise<number | null>;
   /**
    * If implemented, returns the runtime context length that the provider
    * has actually allocated to a currently-loaded runner, or null if the

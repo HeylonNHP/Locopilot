@@ -58,10 +58,6 @@ export function configureLlmAdapterAndAuth(provider?: LlmProvider, apiKey?: stri
   return adapter;
 }
 
-export function validateLlmConnection(baseUrl: string, timeoutMs?: number): Promise<void> {
-  return activeAdapter.validateConnection(baseUrl, timeoutMs);
-}
-
 export function fetchLlmModels(baseUrl: string): Promise<LlmModel[]> {
   return activeAdapter.fetchModels(baseUrl);
 }
@@ -105,13 +101,6 @@ export function getLlmApiErrorMessage(error: unknown): Promise<string> {
 
 export function getLlmTurnStats(response: ChatApiResponse): LlmTurnStats | null {
   return activeAdapter.getTurnStats(response);
-}
-
-export function fetchLlmRunningModelVram(baseUrl: string, modelName: string): Promise<number | null> {
-  if (!activeAdapter.fetchRunningModelVram) {
-    return Promise.resolve(null);
-  }
-  return activeAdapter.fetchRunningModelVram(baseUrl, modelName);
 }
 
 export function fetchLlmRunningModelContextLength(

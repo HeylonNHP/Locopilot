@@ -19,13 +19,6 @@ export function parsePositiveInteger(
   return floored;
 }
 
-export function parseNonNegativeInteger(
-  value: unknown,
-  max = Number.MAX_SAFE_INTEGER
-): number | null {
-  return parsePositiveInteger(value, 0, max);
-}
-
 export function parsePositiveTimeoutMs(seconds: unknown): number | null {
   const parsedSeconds = parseFiniteNumber(seconds);
   if (parsedSeconds === null || parsedSeconds <= 0) return null;

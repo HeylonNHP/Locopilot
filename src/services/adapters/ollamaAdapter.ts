@@ -20,16 +20,15 @@ interface TagsResponse {
 }
 
 /**
- * Ollama's `/api/ps` response. Each loaded model reports both the VRAM
- * footprint and the runtime context length that Ollama has actually
- * allocated to the runner. The latter may differ from the modelfile's
- * declared `num_ctx` if the user started the runner with a custom value
- * (e.g. `ollama run --num-ctx 8192 llama3`).
+ * Ollama's `/api/ps` response. Each loaded model reports the runtime
+ * context length that Ollama has actually allocated to the runner.
+ * The latter may differ from the modelfile's declared `num_ctx` if
+ * the user started the runner with a custom value (e.g.
+ * `ollama run --num-ctx 8192 llama3`).
  */
 interface PsResponse {
   models: Array<{
     name: string;
-    size_vram?: number;
     context_length?: number;
   }>;
 }
@@ -105,23 +104,6 @@ function getOllamaTurnStats(response: ChatApiResponse): LlmTurnStats | null {
   return stats;
 }
 
-async function fetchOllamaRunningModelVram(
-  baseUrl: string,
-  modelName: string
-): Promise<number | null> {
-  try {
-    const response = await axios.get<PsResponse>(`${baseUrl}/api/ps`);
-    const models = response.data.models || [];
-    const model = models.find((m) => m.name === modelName || m.name.startsWith(`${modelName  }:`));
-    if (model && typeof model.size_vram === 'number' && model.size_vram > 0) {
-      return model.size_vram;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Fetch the runtime context length for a model that is currently loaded
  * in the Ollama runner. Returns null if the model is not loaded, the
@@ -140,7 +122,7 @@ async function fetchOllamaRunningModelContextLength(
   try {
     const response = await axios.get<PsResponse>(`${baseUrl}/api/ps`);
     const models = response.data.models || [];
-    const model = models.find((m) => m.name === modelName || m.name.startsWith(`${modelName  }:`));
+    const model = models.find((m) => m.name === modelName || m.name.startsWith(`${modelName}:`));
     const contextLength = model?.context_length;
     if (typeof contextLength === 'number' && Number.isInteger(contextLength) && contextLength > 0) {
       return contextLength;
@@ -149,10 +131,6 @@ async function fetchOllamaRunningModelContextLength(
   } catch {
     return null;
   }
-}
-
-async function validateOllamaConnection(baseUrl: string, timeoutMs: number = 2000): Promise<void> {
-  await axios.get<TagsResponse>(`${baseUrl}/api/tags`, { timeout: timeoutMs });
 }
 
 async function fetchOllamaModels(baseUrl: string): Promise<LlmModel[]> {
@@ -292,7 +270,6 @@ async function getOllamaApiErrorMessage(error: unknown): Promise<string> {
 
 export const ollamaAdapter: LlmAdapter = {
   id: 'ollama',
-  validateConnection: validateOllamaConnection,
   fetchModels: fetchOllamaModels,
   fetchModelInfo: fetchOllamaModelInfo,
   getModelContextLimit: getModelContextLimitFromInfo,
@@ -300,6 +277,5 @@ export const ollamaAdapter: LlmAdapter = {
   sendChatStream: sendOllamaChatStream,
   getApiErrorMessage: getOllamaApiErrorMessage,
   getTurnStats: getOllamaTurnStats,
-  fetchRunningModelVram: fetchOllamaRunningModelVram,
   fetchRunningModelContextLength: fetchOllamaRunningModelContextLength,
 };

@@ -123,14 +123,3 @@ export function resolveApproval(
   pending.resolve(final);
   return true;
 }
-
-/**
- * Read-only accessor for the registered request metadata. Used by
- * `/api/approve` to surface the request's `toolName` / `args` back
- * to the client (e.g. for telemetry or richer modal rendering).
- * Returns `null` if the requestId is unknown.
- */
-export function getApprovalRequest(requestId: string): ApprovalRequest | null {
-  const pending = pendingApprovals.get(requestId);
-  return pending ? pending.request : null;
-}

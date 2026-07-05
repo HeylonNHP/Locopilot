@@ -116,12 +116,4 @@ export const debugLog = {
   debug(label: string, data?: Record<string, unknown>) {
     pinoLogger.debug(data ?? {}, `[trace] ${label}`);
   },
-
-  /** Flush the log destination (call at end of request) */
-  async flush() {
-    // pino.destination is synchronous by default, but we can flush explicitly
-    pinoLogger.flush();
-  },
 };
-
-export { truncate };

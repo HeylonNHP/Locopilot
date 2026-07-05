@@ -578,13 +578,6 @@ function toChatApiResponse(response: OpenAIChatCompletionResponse): ChatApiRespo
 
 // ── API methods ──────────────────────────────────────────────────────────────
 
-async function validateOpenAICompatibleConnection(
-  baseUrl: string,
-  timeoutMs: number = 2000,
-): Promise<void> {
-  await client.get(`${baseUrl.replace(/\/+$/, '')}/v1/models`, { timeout: timeoutMs });
-}
-
 async function fetchOpenAICompatibleModels(baseUrl: string): Promise<LlmModel[]> {
   const response = await client.get<OpenAIListModelsResponse>(
     `${baseUrl.replace(/\/+$/, '')}/v1/models`,
@@ -1007,7 +1000,6 @@ async function getOpenAICompatibleApiErrorMessage(error: unknown): Promise<strin
 
 export const openaiCompatibleAdapter: LlmAdapter = {
   id: 'openai-compatible',
-  validateConnection: validateOpenAICompatibleConnection,
   fetchModels: fetchOpenAICompatibleModels,
   fetchModelInfo: fetchOpenAICompatibleModelInfo,
   getModelContextLimit: getModelContextLimitFromInfo,
