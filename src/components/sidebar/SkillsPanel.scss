@@ -1,0 +1,784 @@
+@use '../../app/styles/mixins' as *;
+
+// ================================================================
+//  Component: SkillsPanel
+// ================================================================
+
+.skills-panel {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--glass-panel);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border-left: 1px solid var(--glass-border);
+  box-shadow: -4px 0 24px rgba(var(--rgb-shadow-navy), 0.08);
+  transition: width 0.25s ease;
+  width: 36px;
+
+  &--expanded {
+    width: 260px;
+  }
+
+  // ── Collapsed state: two stacked tab buttons ────────────────
+  &-collapsed {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+
+    &-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      width: 100%;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition:
+        color 0.2s ease,
+        background 0.2s ease;
+
+      &:hover {
+        color: var(--text-primary);
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      &-icon {
+        font-size: 15px;
+        line-height: 1;
+      }
+
+      &-label {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+        white-space: nowrap;
+      }
+    }
+
+    &-divider {
+      width: 20px;
+      height: 1px;
+      background: var(--glass-border-soft);
+      flex-shrink: 0;
+    }
+  }
+
+  // ── Tab bar ──────────────────────────────────────────────────
+  &-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 8px 0;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--glass-border-soft);
+  }
+
+  &-tab {
+    padding: 5px 10px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease;
+    white-space: nowrap;
+
+    &--active {
+      background: rgba(255, 255, 255, 0.12);
+      color: var(--text-primary);
+      border-color: var(--glass-border-soft);
+    }
+
+    &:hover:not(#{&}--active) {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-primary);
+    }
+  }
+
+  &-tabs-spacer {
+    flex: 1;
+  }
+
+  // ── Tool section (Tools tab) ─────────────────────────────────
+  &-tool-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 12px;
+
+    &-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      padding: 4px 2px 6px;
+      border-bottom: 1px solid var(--glass-border-soft);
+      margin-bottom: 4px;
+    }
+  }
+
+  &-tool-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 4px;
+    border-radius: 8px;
+    transition: background 0.15s ease;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.07);
+    }
+
+    &-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+  }
+
+  // ── Expanded inner container ─────────────────────────────────
+  &-inner {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  // ── Header ───────────────────────────────────────────────────
+  &-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--glass-border-soft);
+    flex-shrink: 0;
+
+    &-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+    }
+
+    &-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    &-btn {
+      @include icon-circle-btn(28px);
+    }
+  }
+
+  // ── Body scroll area ─────────────────────────────────────────
+  &-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  // ── Skill card ───────────────────────────────────────────────
+  &-skill {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--glass-border-soft);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition:
+      background 0.2s ease,
+      box-shadow 0.2s ease,
+      transform 0.15s ease;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.15);
+      box-shadow: 0 2px 8px rgba(var(--rgb-shadow-deep), 0.08);
+      transform: translateX(-2px);
+    }
+
+    &-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    &-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    &-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    &-desc {
+      margin-top: 6px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+
+    &-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 6px;
+    }
+
+    &-edit-btn {
+      @include icon-circle-btn(24px);
+      font-size: 12px;
+    }
+  }
+
+  // ── Badges ───────────────────────────────────────────────────
+  &-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1.2;
+    text-transform: uppercase;
+
+    &--always {
+      border: 1px solid rgba(0, 168, 232, 0.18);
+      background: rgba(0, 168, 232, 0.12);
+      color: var(--accent);
+    }
+
+    &--auto {
+      border: 1px solid rgba(113, 171, 35, 0.18);
+      background: rgba(113, 171, 35, 0.12);
+      color: var(--accent-green);
+    }
+  }
+
+  // ── Toggle switch ────────────────────────────────────────────
+  &-toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+    cursor: pointer;
+
+    input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+
+      &:checked + .skills-panel-toggle-switch-slider {
+        background: linear-gradient(180deg, #33d1ff 0%, #00a8e8 60%, #0077b6 100%);
+        border-color: rgba(0, 168, 232, 0.4);
+        box-shadow:
+          0 2px 6px rgba(0, 120, 180, 0.25),
+          inset 0 1px 0 rgba(255, 255, 255, 0.4);
+
+        &::before {
+          transform: translateX(16px);
+        }
+      }
+
+      &:focus-visible + .skills-panel-toggle-switch-slider {
+        box-shadow: 0 0 0 3px rgba(0, 168, 232, 0.2);
+      }
+    }
+
+    &-slider {
+      position: absolute;
+      inset: 0;
+      border-radius: 50px;
+      background: rgba(200, 210, 220, 0.5);
+      border: 1px solid var(--glass-border-soft);
+      transition:
+        background 0.2s ease,
+        box-shadow 0.2s ease;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+
+      &::before {
+        content: '';
+        position: absolute;
+        left: 2px;
+        top: 2px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: white;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        transition: transform 0.2s ease;
+      }
+    }
+  }
+
+  // ── Empty / error / footer ───────────────────────────────────
+  &-empty {
+    padding: 16px 8px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+
+    &-title {
+      margin: 0 0 8px 0;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    &-hint {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    &-code {
+      font-family: monospace;
+      font-size: 11px;
+      background: rgba(255, 255, 255, 0.25);
+      padding: 1px 4px;
+      border-radius: 4px;
+      color: var(--text-primary);
+    }
+  }
+
+  &-error {
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(220, 80, 80, 0.35);
+    background: rgba(255, 200, 200, 0.3);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    &-text {
+      font-size: 12px;
+      color: #a03030;
+      line-height: 1.5;
+    }
+
+    &-retry {
+      align-self: flex-end;
+      padding: 4px 12px;
+      border-radius: 50px;
+      border: 1px solid rgba(220, 80, 80, 0.4);
+      background: rgba(255, 255, 255, 0.3);
+      color: #a03030;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.5);
+        box-shadow: 0 2px 8px rgba(220, 60, 60, 0.15);
+      }
+    }
+  }
+
+  &-footer {
+    padding: 10px 12px;
+    border-top: 1px solid var(--glass-border-soft);
+    flex-shrink: 0;
+
+    &-hint {
+      margin: 0;
+      font-size: 11px;
+      color: var(--text-secondary);
+      text-align: center;
+      line-height: 1.4;
+
+      code {
+        font-family: monospace;
+        font-size: 10px;
+        background: rgba(255, 255, 255, 0.25);
+        padding: 1px 3px;
+        border-radius: 4px;
+        color: var(--text-primary);
+      }
+    }
+  }
+
+  // ── Creating indicator ──────────────────────────────────────
+  &-creating {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--glass-border-soft);
+
+    &-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: aero-pulse 1.5s infinite ease-in-out;
+    }
+
+    &-text {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+  }
+
+  // ── Inline create form ──────────────────────────────────────
+  &-form {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-bottom: 1px solid var(--glass-border-soft);
+    background: rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+
+    &-input {
+      @include glass-input;
+    }
+
+    &-textarea {
+      @include glass-input;
+      resize: vertical;
+    }
+
+    &-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    &-radio-group {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    &-radio-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    &-check {
+      cursor: pointer;
+
+      input {
+        cursor: pointer;
+      }
+    }
+
+    &-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    &-btn-cancel {
+      padding: 6px 14px;
+      border-radius: 50px;
+      border: 1px solid var(--glass-border);
+      background: rgba(255, 255, 255, 0.15);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s ease;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      font-family: inherit;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.3);
+        box-shadow: 0 2px 8px rgba(0, 80, 120, 0.1);
+      }
+    }
+
+    &-btn-create {
+      @include gel-button;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-family: inherit;
+
+      &:disabled {
+        @include gel-button-disabled;
+      }
+    }
+
+    &-error {
+      color: #c41e3a;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+  }
+
+  // ── Edit form on skill card ─────────────────────────────────
+  &-edit-form {
+    margin-top: 8px;
+    padding: 10px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--glass-border-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+
+  // ── MCP server card (MCP tab) ───────────────────────────────
+  &-mcp-item {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--glass-border-soft);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition:
+      background 0.2s ease,
+      box-shadow 0.2s ease;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.15);
+      box-shadow: 0 2px 8px rgba(var(--rgb-shadow-deep), 0.08);
+    }
+
+    &-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    &-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    &-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+    }
+
+    &-desc {
+      margin-top: 6px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+
+    &-error {
+      margin-top: 6px;
+      font-size: 11px;
+      line-height: 1.4;
+      color: var(--color-text-error);
+      font-family: monospace;
+      background: rgba(255, 200, 200, 0.3);
+      border: 1px solid rgba(220, 80, 80, 0.25);
+      border-radius: 6px;
+      padding: 4px 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+  }
+
+  // ── Transport pill (stdio / http / sse) ─────────────────────
+  &-mcp-transport {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    border: 1px solid var(--glass-border-soft);
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text-secondary);
+
+    &--stdio {
+      border-color: rgba(0, 168, 232, 0.18);
+      background: rgba(0, 168, 232, 0.1);
+      color: var(--accent);
+    }
+    &--http {
+      border-color: rgba(113, 171, 35, 0.18);
+      background: rgba(113, 171, 35, 0.1);
+      color: var(--accent-green);
+    }
+    &--sse {
+      border-color: rgba(0, 196, 199, 0.22);
+      background: rgba(0, 196, 199, 0.1);
+      color: var(--color-aqua);
+    }
+  }
+
+  // ── Status pill (connected / connecting / disconnected / error / not_loaded) ──
+  &-mcp-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    border: 1px solid var(--glass-border-soft);
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text-secondary);
+
+    &::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+
+    &--connected {
+      border-color: rgba(34, 197, 94, 0.3);
+      background: rgba(34, 197, 94, 0.12);
+      color: var(--status-success);
+    }
+    &--connecting {
+      border-color: rgba(0, 168, 232, 0.3);
+      background: rgba(0, 168, 232, 0.12);
+      color: var(--accent);
+
+      @media (prefers-reduced-motion: no-preference) {
+        &::before {
+          animation: aero-pulse 1.5s infinite ease-in-out;
+        }
+      }
+    }
+    &--disconnected {
+      border-color: rgba(120, 130, 145, 0.3);
+      background: rgba(120, 130, 145, 0.12);
+      color: var(--text-secondary);
+    }
+    &--error {
+      border-color: rgba(220, 80, 80, 0.35);
+      background: rgba(255, 200, 200, 0.3);
+      color: var(--color-text-error);
+    }
+    &--not_loaded {
+      border-color: rgba(234, 179, 8, 0.3);
+      background: rgba(234, 179, 8, 0.12);
+      color: var(--status-warning);
+    }
+    &--auth_required {
+      border-color: rgba(168, 85, 247, 0.35);
+      background: rgba(168, 85, 247, 0.12);
+      color: rgb(168, 85, 247);
+    }
+  }
+
+  // ── Authenticate button (Phase 3.5) ───────────────────
+  &-mcp-auth-btn {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+    background: rgba(168, 85, 247, 0.18);
+    color: rgb(168, 85, 247);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: background 0.15s ease;
+
+    &:hover {
+      background: rgba(168, 85, 247, 0.28);
+    }
+    &:active {
+      background: rgba(168, 85, 247, 0.4);
+    }
+    &:focus-visible {
+      outline: 2px solid rgba(168, 85, 247, 0.6);
+      outline-offset: 2px;
+    }
+  }
+
+  // ── Tool count label (MCP) ─────────────────────────────────
+  &-mcp-toolcount {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--glass-border-soft);
+  }
+}

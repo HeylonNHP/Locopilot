@@ -21,28 +21,28 @@ Adding MCP (Model Context Protocol) server support to Locopilot is a **medium-si
 
 ### Effort estimate
 
-| Phase | Scope | Effort |
-|---|---|---|
-| **Phase 1 (MVP)** | stdio transport, config file, settings UI, basic tool registration, no hot-reload, no approval gate | 3–5 days |
-| **Phase 2 (Standard)** | Streamable HTTP transport, tool namespacing, env var expansion, per-tool approval gate, `notifications/tools/list_changed` hot-reload, MCP slash command, error reporting | 4–6 days |
+| Phase                  | Scope                                                                                                                                                                            | Effort   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| **Phase 1 (MVP)**      | stdio transport, config file, settings UI, basic tool registration, no hot-reload, no approval gate                                                                              | 3–5 days |
+| **Phase 2 (Standard)** | Streamable HTTP transport, tool namespacing, env var expansion, per-tool approval gate, `notifications/tools/list_changed` hot-reload, MCP slash command, error reporting        | 4–6 days |
 | **Phase 3 (Advanced)** | MCP Tool Search (lazy loading), OAuth flow for remote servers, per-server timeouts and lifecycle management UI, image content routing, `--additional-mcp-config` CLI flag parity | 5–8 days |
 
 **Total: ~2–3 weeks for a thorough implementation that matches industry leaders.**
 
 ### Key design decisions (with rationale)
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Namespacing scheme | `mcp__<server>__<tool>` | Matches Claude Code, Continue, Codex — the most common pattern. Survives server renames; enables wildcard approvals. |
-| Config file format | `mcpServers` root key, identical to Claude/Cursor/Cline/Windsurf shape | Maximum portability; users can share configs across tools. Auto-translate `servers` → `mcpServers` for VS Code compat. |
-| Connection lifecycle | Lazy (connect on first tool call, cache thereafter) + manual reload slash command | Avoids 30–50% context-window bloat from unused servers; matches the Python SDK example and Claude Code's `Tool Search` pattern. |
-| Tool schema | Reuse existing `OllamaTool` interface directly; MCP's `inputSchema` is JSON Schema, 1:1 mappable to `parameters` | Zero schema-translation code needed. |
-| Approval model | Default-prompt per tool call, with `autoApprove: string[]` per-server escape hatch | Matches the industry "safe by default" baseline (Claude, Cline, Roo). The existing `approvalRegistry` plumbing supports this. |
-| Hot-reload | Watch `config.mcpServers` via `chokidar`-style file watcher; `list_changed` notifications for in-process tool updates | Matches Cline/Roo behaviour; user expectation. |
-| Reconnection | Exponential backoff with jitter for HTTP/SSE; process respawn (max 3 in 5 min) for stdio | Industry consensus from Claude Code, DeployStack, mcp-cli. |
-| OAuth | Defer to Phase 3 — out of scope for MVP | OAuth flow is non-trivial; no remote server use case yet. |
-| Sandbox | Defer — Locopilot is a local terminal app; users already have OS-level control | Sandboxing is an opt-in concern (VS Code only supports it on macOS/Linux anyway). |
-| Tool Search (lazy schemas) | Implement in Phase 3 when total tool count makes context bloat measurable | Phase 1+2 will surface the actual token cost. |
+| Decision                   | Choice                                                                                                                | Rationale                                                                                                                       |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Namespacing scheme         | `mcp__<server>__<tool>`                                                                                               | Matches Claude Code, Continue, Codex — the most common pattern. Survives server renames; enables wildcard approvals.            |
+| Config file format         | `mcpServers` root key, identical to Claude/Cursor/Cline/Windsurf shape                                                | Maximum portability; users can share configs across tools. Auto-translate `servers` → `mcpServers` for VS Code compat.          |
+| Connection lifecycle       | Lazy (connect on first tool call, cache thereafter) + manual reload slash command                                     | Avoids 30–50% context-window bloat from unused servers; matches the Python SDK example and Claude Code's `Tool Search` pattern. |
+| Tool schema                | Reuse existing `OllamaTool` interface directly; MCP's `inputSchema` is JSON Schema, 1:1 mappable to `parameters`      | Zero schema-translation code needed.                                                                                            |
+| Approval model             | Default-prompt per tool call, with `autoApprove: string[]` per-server escape hatch                                    | Matches the industry "safe by default" baseline (Claude, Cline, Roo). The existing `approvalRegistry` plumbing supports this.   |
+| Hot-reload                 | Watch `config.mcpServers` via `chokidar`-style file watcher; `list_changed` notifications for in-process tool updates | Matches Cline/Roo behaviour; user expectation.                                                                                  |
+| Reconnection               | Exponential backoff with jitter for HTTP/SSE; process respawn (max 3 in 5 min) for stdio                              | Industry consensus from Claude Code, DeployStack, mcp-cli.                                                                      |
+| OAuth                      | Defer to Phase 3 — out of scope for MVP                                                                               | OAuth flow is non-trivial; no remote server use case yet.                                                                       |
+| Sandbox                    | Defer — Locopilot is a local terminal app; users already have OS-level control                                        | Sandboxing is an opt-in concern (VS Code only supports it on macOS/Linux anyway).                                               |
+| Tool Search (lazy schemas) | Implement in Phase 3 when total tool count makes context bloat measurable                                             | Phase 1+2 will surface the actual token cost.                                                                                   |
 
 ---
 
@@ -208,7 +208,9 @@ export function expandEnvVars(value: string): string {
 }
 
 // Recursively expand in any object/array structure
-export function expandConfigEnv<T>(value: T): T { /* ... */ }
+export function expandConfigEnv<T>(value: T): T {
+  /* ... */
+}
 ```
 
 ### 3.4 Validation
@@ -239,8 +241,8 @@ interface McpServerState {
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
   lastError?: string;
   lastConnectedAt?: number;
-  tools: McpTool[];            // populated by listTools()
-  restartAttempts: number;      // for stdio crash recovery
+  tools: McpTool[]; // populated by listTools()
+  restartAttempts: number; // for stdio crash recovery
   abortController?: AbortController;
 }
 
@@ -289,6 +291,7 @@ async function scheduleReconnect(name: string) {
 ### 4.4 Hot-reload behaviour
 
 On `PUT /api/config` with new `mcpServers`:
+
 1. Compute diff (added / removed / modified / transport-changed)
 2. For removed: disconnect + delete from registry
 3. For transport-changed (e.g. command changed): disconnect old, connect new
@@ -333,16 +336,21 @@ Currently `TOOLS` is a hard-coded `const` array. Convert to a derived list:
 
 ```typescript
 // Before:
-export const TOOLS: OllamaTool[] = [ /* 12 hardcoded entries */ ];
+export const TOOLS: OllamaTool[] = [
+  /* 12 hardcoded entries */
+];
 
 // After:
-export const NATIVE_TOOLS: OllamaTool[] = [ /* 12 hardcoded entries */ ];
+export const NATIVE_TOOLS: OllamaTool[] = [
+  /* 12 hardcoded entries */
+];
 export function getAllTools(): OllamaTool[] {
   return [...NATIVE_TOOLS, ...mcpRegistry.getAllTools()];
 }
 ```
 
 All call sites that currently use `TOOLS` need updating:
+
 - `app/api/chat/route.ts:435` — `getAllTools().filter(...)`
 - `app/api/chat/route.ts:293` (sub-agent) — same
 - The system prompt generator — keep the numbered list using `NATIVE_TOOLS` (MCP tool descriptions appear in the JSON schema list sent to the LLM, not in the human-readable system prompt)
@@ -377,23 +385,25 @@ export class McpToolCommand implements IToolCommand {
 
     // 2. Per-server disabled-tool check
     if (this.serverConfig.disabledTools?.includes(this.toolName)) {
-      return { content: `[Error: tool "${this.toolName}" is disabled on server "${this.serverName}"]` };
+      return {
+        content: `[Error: tool "${this.toolName}" is disabled on server "${this.serverName}"]`,
+      };
     }
 
     // 3. Status check
     const status = mcpRegistry.getStatus(this.serverName);
     if (status !== 'connected') {
-      return { content: `[Error: MCP server "${this.serverName}" is not connected (status: ${status})]` };
+      return {
+        content: `[Error: MCP server "${this.serverName}" is not connected (status: ${status})]`,
+      };
     }
 
     // 4. Call MCP
     try {
-      const result = await mcpRegistry.callTool(
-        this.serverName,
-        this.toolName,
-        args,
-        { signal, timeoutMs: (this.serverConfig.timeoutSeconds ?? 60) * 1000 }
-      );
+      const result = await mcpRegistry.callTool(this.serverName, this.toolName, args, {
+        signal,
+        timeoutMs: (this.serverConfig.timeoutSeconds ?? 60) * 1000,
+      });
       return formatMcpToolResult(result);
     } catch (err) {
       return { content: `[Error: MCP call failed: ${(err as Error).message}]` };
@@ -416,7 +426,9 @@ export function formatMcpToolResult(result: CallToolResult): ToolCallResult {
         break;
       case 'image':
         images.push(block.data); // base64 → routed to ChatMessage.images
-        textBlocks.push(`[image: ${block.mimeType}, ${Math.round(block.data.length * 0.75)} bytes]`);
+        textBlocks.push(
+          `[image: ${block.mimeType}, ${Math.round(block.data.length * 0.75)} bytes]`
+        );
         break;
       case 'audio':
         // Drop audio in MVP (no audio support in ChatMessage). Log warning.
@@ -450,14 +462,14 @@ export function formatMcpToolResult(result: CallToolResult): ToolCallResult {
 export async function GET() {
   const servers = mcpRegistry.listServers();
   return NextResponse.json({
-    servers: servers.map(s => ({
+    servers: servers.map((s) => ({
       name: s.config.name,
       description: s.config.description,
       transport: s.config.transport.type,
       status: s.status,
       lastError: s.lastError,
       toolCount: s.tools.length,
-      tools: s.tools.map(t => ({
+      tools: s.tools.map((t) => ({
         name: t.name,
         fullName: `mcp__${s.config.name}__${t.name}`,
         description: t.description,
@@ -488,11 +500,13 @@ A new collapsible section in the existing SettingsModal:
 ### 6.3 Slash command
 
 Add `/mcp` to:
+
 - `components/ChatInput/ChatInput.tsx` `COMMANDS` array
 - `app/hooks/useSlashCommands.ts` `handleSlashCommand` switch
 - New `app/api/mcp/route.ts` GET already exists, so the command can `fetch('/api/mcp')` and render the result inline
 
 Behaviours:
+
 - `/mcp` — list servers + status
 - `/mcp reload` — force reconnect all servers
 - `/mcp test <name>` — test a single server
@@ -512,8 +526,8 @@ Behaviours:
 export interface ApprovalRequest {
   requestId: string;
   toolName: string;
-  args: unknown;          // displayed in the approval dialog
-  serverName?: string;    // for MCP: which server
+  args: unknown; // displayed in the approval dialog
+  serverName?: string; // for MCP: which server
   description?: string;
 }
 ```
@@ -534,13 +548,13 @@ A `disabled: true` flag in `McpServerConfig` causes the server to be skipped dur
 
 The codebase already has precedent for both patterns. Decide per concern:
 
-| Concern | Scope | Rationale |
-|---|---|---|
-| **Server connections** | Module-level singleton (`mcpRegistry`) | MCP servers are long-lived processes/SSE streams; per-request spawn would be catastrophic for performance and reliability. |
-| **Tool list** | Module-level (rebuilt on registry changes) | Same reasoning; rebuilt on config change notifications. |
-| **Tool call dispatch** | Module-level client, per-request `AbortSignal` | The MCP client call accepts `signal`; abort propagates through the SDK. |
-| **Error reporting back to user** | Per-request through `RequestContext.output` | Reuse existing pattern from `runCommandTool`. |
-| **Approval gate** | Per-request (already a Map keyed by `requestId`) | Existing `approvalRegistry` already per-request. |
+| Concern                          | Scope                                            | Rationale                                                                                                                  |
+| -------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| **Server connections**           | Module-level singleton (`mcpRegistry`)           | MCP servers are long-lived processes/SSE streams; per-request spawn would be catastrophic for performance and reliability. |
+| **Tool list**                    | Module-level (rebuilt on registry changes)       | Same reasoning; rebuilt on config change notifications.                                                                    |
+| **Tool call dispatch**           | Module-level client, per-request `AbortSignal`   | The MCP client call accepts `signal`; abort propagates through the SDK.                                                    |
+| **Error reporting back to user** | Per-request through `RequestContext.output`      | Reuse existing pattern from `runCommandTool`.                                                                              |
+| **Approval gate**                | Per-request (already a Map keyed by `requestId`) | Existing `approvalRegistry` already per-request.                                                                           |
 
 The `enterRequestScope()` AsyncLocalStorage pattern (used for the command process registry) is **not** needed for MCP — the SDK clients themselves are async and stateless across requests (you just pass different signals). Reserve AsyncLocalStorage for genuinely per-request state.
 
@@ -728,14 +742,14 @@ Add to `package.json`:
 
 ### Risks
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| MCP server crashes mid-conversation | High | Medium | Reconnection with backoff; surface error to LLM as tool result; show red badge in settings |
-| Context window overflow from many tools | High | High | Phase 3 Tool Search implementation; consider raising the system prompt's tool list to mention "use sparingly" |
-| Tool name collision between servers and native | Low | High | Namespacing (`mcp__*__*` prefix) + audit before launch |
-| User adds malicious MCP server (stdio = arbitrary code execution) | Medium | High | Document security model prominently; default-approval; future sandbox work |
-| Long-running tool calls blocking the chat | Medium | Medium | Per-server `timeoutSeconds`; `AbortSignal` propagation |
-| `Ollama` model returns malformed tool_call with non-existent MCP tool | Low | Low | `toolRegistry.get()` already returns `[Unknown tool: ...]` for missing tools |
+| Risk                                                                  | Likelihood | Impact | Mitigation                                                                                                    |
+| --------------------------------------------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------- |
+| MCP server crashes mid-conversation                                   | High       | Medium | Reconnection with backoff; surface error to LLM as tool result; show red badge in settings                    |
+| Context window overflow from many tools                               | High       | High   | Phase 3 Tool Search implementation; consider raising the system prompt's tool list to mention "use sparingly" |
+| Tool name collision between servers and native                        | Low        | High   | Namespacing (`mcp__*__*` prefix) + audit before launch                                                        |
+| User adds malicious MCP server (stdio = arbitrary code execution)     | Medium     | High   | Document security model prominently; default-approval; future sandbox work                                    |
+| Long-running tool calls blocking the chat                             | Medium     | Medium | Per-server `timeoutSeconds`; `AbortSignal` propagation                                                        |
+| `Ollama` model returns malformed tool_call with non-existent MCP tool | Low        | Low    | `toolRegistry.get()` already returns `[Unknown tool: ...]` for missing tools                                  |
 
 ### Open questions for the user
 
@@ -751,6 +765,7 @@ Add to `package.json`:
 ## 14. Summary of File Changes
 
 ### New files
+
 - `services/mcp/index.ts`
 - `services/mcp/client.ts`
 - `services/mcp/registry.ts`
@@ -769,6 +784,7 @@ Add to `package.json`:
 - `tests/integration/mcp/*.test.ts` (multiple)
 
 ### Modified files
+
 - `types/chatConfig.ts` — add `McpServerConfig`, `McpTransport*` types
 - `constants.ts` — add MCP defaults
 - `tools/tools.ts` — `TOOLS` → `NATIVE_TOOLS` + `getAllTools()`; update system prompt generator
@@ -783,6 +799,7 @@ Add to `package.json`:
 - `.github/copilot-instructions.md` — feature entry + maintenance note
 
 ### Estimated LOC
+
 - New: ~1,200 lines
 - Modified: ~200 lines
 - Tests: ~600 lines

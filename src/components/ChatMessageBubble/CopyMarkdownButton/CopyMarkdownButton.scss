@@ -1,0 +1,57 @@
+// ================================================================
+//  Component: CopyMarkdownButton (assistant bubble action)
+// ================================================================
+
+// NOTE: The hover-reveal rule that pairs this button with the AI bubble
+// wrap lives in ChatMessageBubble.scss because the trigger state lives
+// on the wrap (.bubble-ai-wrap:hover / :focus-within), not on the button.
+
+.bubble-copy-md {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border-soft);
+  background: var(--code-copy-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    background 0.2s ease,
+    color 0.2s ease;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 5;
+
+  &:hover {
+    background: var(--code-copy-hover-bg);
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: none;
+    opacity: 1;
+    background: var(--code-copy-hover-bg);
+    color: var(--text-primary);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0;
+  }
+
+  &--copied {
+    opacity: 1;
+    background: var(--code-copy-active-bg);
+    color: var(--accent);
+  }
+}

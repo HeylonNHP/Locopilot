@@ -1,0 +1,37 @@
+// ================================================================
+//  Locopilot Design Tokens — semantic aliases over theme colours
+//  Raw colour values live in _theme-colors.scss.
+//  These tokens form the stable contract consumed by mixins and
+//  component styles; only this file should be referenced by them.
+// ================================================================
+
+:root {
+  // ── Nature palette (semantic aliases) ──────────────────────
+  --sky-deep: var(--color-sky-alt);
+  --sky-bright: var(--color-sky-core);
+  --sky-light: var(--color-sky-soft);
+  --aqua: var(--color-aqua);
+  --grass: var(--color-grass);
+  --sun: var(--color-sun);
+  --cloud: var(--color-cloud);
+
+  // ── Functional tokens ───────────────────────────────────────
+  --bg-primary: transparent;
+  --bg-secondary: var(--glass-white);
+  --bg-tertiary: var(--glass-light);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-white: var(--color-text-white);
+  --accent: var(--color-sky-core);
+  --accent-hover: var(--color-sky-bright);
+  --accent-green: var(--color-grass);
+  --shadow-soft: 0 8px 32px rgba(var(--rgb-shadow-deep), 0.12);
+  --shadow-lift: 0 12px 40px rgba(var(--rgb-shadow-navy), 0.18);
+
+  // ── Status tokens ────────────────────────────────────────────
+  --status-success: var(--color-success);
+  --status-warning: var(--color-warning);
+  --status-danger: var(--color-danger);
+  --status-error: var(--color-error);
+  --status-error-light: var(--color-error-light);
+}

@@ -5,43 +5,70 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next build && next start",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node scripts/copy-wasm.mjs && next dev",
+    "build": "NODE_ENV=production next build",
+    "start": "NODE_ENV=production next build && NODE_ENV=production next start",
+    "postinstall": "node scripts/copy-wasm.mjs",
+    "prebuild": "node scripts/copy-wasm.mjs",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "type-check": "tsc --noEmit"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,css,scss,md,html,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@dqbd/tiktoken": "^1.0.22",
-    "@inquirer/prompts": "^8.2.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
     "axios": "^1.16.0",
     "better-sqlite3": "^12.6.2",
     "chalk": "^5.6.2",
     "cheerio": "^1.2.0",
+    "dompurify": "^3.4.11",
     "eventsource-parser": "^3.0.8",
     "image-type": "^4.1.0",
     "isomorphic-dompurify": "^3.13.0",
     "jsdom": "^28.1.0",
     "marked": "^15.0.12",
-    "next": "^15.5.18",
+    "next": "^16.2.9",
     "pdf-parse": "^2.4.5",
+    "pino": "^10.3.1",
     "playwright": "^1.59.1",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "undici": "^7.28.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@next/eslint-plugin-next": "^16.2.9",
     "@types/better-sqlite3": "^7.6.13",
     "@types/jsdom": "^27.0.0",
     "@types/node": "^25.5.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "copy-webpack-plugin": "^14.0.0",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-perfectionist": "^4.15.1",
+    "eslint-plugin-unicorn": "^57.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
+    "prettier": "^3.8.4",
     "sass": "^1.99.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.61.0"
   },
   "overrides": {
     "postcss": "8.5.10",

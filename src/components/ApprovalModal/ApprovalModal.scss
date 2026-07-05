@@ -1,0 +1,115 @@
+@use '../../app/styles/mixins' as *;
+
+// ================================================================
+//  Component: ApprovalModal
+// ================================================================
+
+.modal {
+  &-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--overlay-modal);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  &-content {
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 24px;
+    padding: 24px;
+    max-width: 500px;
+    width: 90%;
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    box-shadow:
+      var(--shadow-lift),
+      inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+
+  &-title {
+    margin: 0 0 16px 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  &-command-box {
+    @include glass-bubble-box(rgba(255, 255, 255, 0.25));
+    margin-bottom: 16px;
+  }
+
+  &-command-text {
+    padding: 12px;
+    font-family: monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow: auto;
+    color: var(--text-primary);
+  }
+
+  &-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+
+  &-btn-reject {
+    padding: 8px 20px;
+    border-radius: 50px;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.3);
+      box-shadow: 0 2px 8px rgba(0, 80, 120, 0.1);
+    }
+  }
+
+  &-btn-approve {
+    @include gel-button;
+    padding: 8px 20px;
+    font-size: 14px;
+  }
+
+  &-mcp-tool-name {
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  &-args-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: var(--font-mono, monospace);
+    font-size: 13px;
+  }
+
+  &-args-row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+
+  &-args-key {
+    color: var(--text-muted, #888);
+    flex-shrink: 0;
+  }
+
+  &-args-value {
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+}

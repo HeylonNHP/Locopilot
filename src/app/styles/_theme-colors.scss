@@ -1,0 +1,272 @@
+// ================================================================
+//  Locopilot Theme Colours — Frutiger Aero
+//
+//  Single source of truth for all colour values.
+//  Raw hex, rgba, gradient stops, and shadow tints live here.
+//
+//  To create a new theme, add an override block:
+//    html[data-theme='dark'] { --color-sky-core: …; … }
+//  Only properties that differ need to be re-declared.
+// ================================================================
+
+:root,
+html[data-theme='frutiger-aero'] {
+  // ── Base palette ───────────────────────────────────────────
+  --color-sky-bright: #33d1ff; // hover accent / gradient-primary start
+  --color-sky-core: #00a8e8; // primary accent
+  --color-sky-deep: #0077b6; // gradient-primary end / dark accent
+  --color-sky-alt: #0689e4; // legacy --sky-deep alias
+  --color-sky-soft: #87ceeb; // legacy --sky-light alias
+  --color-aqua: #00c4c7;
+  --color-grass: #71ab23;
+  --color-sun: #fbb905;
+  --color-cloud: #f0f8ff;
+
+  // ── Text colours ───────────────────────────────────────────
+  --color-text-primary: #1a3a5c;
+  --color-text-secondary: #5a7a9a;
+  --color-text-white: #ffffff;
+  --color-text-system: #8a7a4a; // system message bubble
+  --color-text-error: #a03030; // settings / inline error text
+
+  // ── Glass surface layers ────────────────────────────────────
+  // White-overlay tints; override all in dark themes.
+  --glass-white: rgba(255, 255, 255, 0.15);
+  --glass-heavy: rgba(255, 255, 255, 0.28);
+  --glass-light: rgba(255, 255, 255, 0.08);
+  --glass-panel: rgba(255, 255, 255, 0.12); // sidebar / input-area / status-bar panels
+  --glass-border: rgba(255, 255, 255, 0.45);
+  --glass-border-soft: rgba(255, 255, 255, 0.25);
+
+  // ── RGB channel triplets for rgba() compositing ─────────────
+  // Usage: rgba(var(--rgb-accent), 0.15)
+  --rgb-accent: 0, 168, 232; // sky-core
+  --rgb-shadow-navy: 0, 60, 100; // deep page / popover shadows
+  --rgb-shadow-blue: 0, 120, 180; // button-level shadows
+  --rgb-shadow-deep: 0, 80, 120; // mid-depth panel shadows
+  --rgb-shadow-mid: 0, 100, 160; // softer hover shadows
+  --rgb-danger: 220, 60, 60; // danger button hover shadow
+  --rgb-success: 60, 160, 60; // success button hover shadow
+
+  // ── Status colours ──────────────────────────────────────────
+  --color-success: #22c55e;
+  --color-warning: #eab308;
+  --color-danger: #ef4444;
+  --color-error: #c41e3a;
+  --color-error-light: #e84a6a;
+  --color-green-bright: #4ade80; // utility .text-green
+  --color-yellow-bright: #facc15; // utility .text-yellow
+
+  // ── Error surface tints ─────────────────────────────────────
+  --bg-error-soft: rgba(255, 200, 200, 0.35);
+  --border-error-soft: rgba(220, 80, 80, 0.4);
+
+  // ── Gel gradient stops — primary (sky / user bubble / default button) ──
+  --gradient-primary-0: #33d1ff;
+  --gradient-primary-1: #00a8e8;
+  --gradient-primary-2: #0077b6;
+
+  // ── Gel gradient stops — disabled ──────────────────────────
+  --gradient-disabled-0: #b0c4de;
+  --gradient-disabled-1: #90a4be;
+
+  // ── Gel gradient stops — danger (stop button) ───────────────
+  --gradient-danger-0: #ff8a8a;
+  --gradient-danger-1: #ff5252;
+  --gradient-danger-2: #e53935;
+
+  // ── Gel gradient stops — success (retry button) ─────────────
+  --gradient-success-0: #81c784;
+  --gradient-success-1: #4caf50;
+  --gradient-success-2: #388e3c;
+
+  // ── Page background gradient stops ──────────────────────────
+  --bg-gradient-0: #4fc3f7; // sky top
+  --bg-gradient-1: #81d4fa;
+  --bg-gradient-2: #b3e5fc;
+  --bg-gradient-3: #e1f5fe;
+  --bg-gradient-4: #f1f8e9; // grass start
+  --bg-gradient-5: #dcedc8;
+  --bg-gradient-6: #c5e1a5;
+  --bg-gradient-7: #aed581; // grass bottom
+
+  // ── Scrollbar gradient states ───────────────────────────────
+  --scrollbar-thumb-0: rgba(0, 200, 255, 0.35);
+  --scrollbar-thumb-1: rgba(0, 168, 232, 0.4);
+  --scrollbar-thumb-2: rgba(0, 130, 200, 0.35);
+  --scrollbar-hover-0: rgba(0, 220, 255, 0.5);
+  --scrollbar-hover-1: rgba(0, 190, 255, 0.55);
+  --scrollbar-hover-2: rgba(0, 150, 220, 0.5);
+  --scrollbar-active-0: rgba(0, 240, 255, 0.6);
+  --scrollbar-active-1: rgba(0, 210, 255, 0.65);
+  --scrollbar-active-2: rgba(0, 170, 240, 0.6);
+  --scrollbar-firefox: rgba(0, 168, 232, 0.4);
+
+  // ── Bubble surface tints ────────────────────────────────────
+  --bg-tool-bubble: rgba(200, 245, 255, 0.25); // tool result
+  --bg-system-bubble: rgba(255, 245, 200, 0.3); // system message
+  --border-system-bubble: rgba(255, 220, 100, 0.3);
+  --bg-subagent-bubble: rgba(220, 255, 220, 0.25); // sub-agent log
+  --border-subagent: rgba(113, 171, 35, 0.2);
+  --border-subagent-toggle: rgba(113, 171, 35, 0.15);
+
+  // ── Overlay / popover surfaces ──────────────────────────────
+  --overlay-modal: rgba(100, 180, 255, 0.25); // modal backdrop tint
+  --bg-suggestions: rgba(248, 252, 255, 0.78); // autocomplete dropdown
+  --bg-popover: rgba(240, 250, 255, 0.82); // model selector popover
+
+  // ── Glass surface highlights (panel top-edge rim + gel button gloss) ─────
+  --glass-inset-highlight: rgba(255, 255, 255, 0.35);
+  --glass-gloss-top: rgba(255, 255, 255, 0.5);
+  --glass-gloss-mid: rgba(255, 255, 255, 0.2);
+  --glass-input-bg: rgba(255, 255, 255, 0.35);
+  --glass-input-focus: rgba(255, 255, 255, 0.5);
+
+  // ── Response surfaces ─────────────────────────────────────
+  --bubble-ai-bg: rgba(255, 255, 255, 0.22);
+  --markdown-table-border: rgba(0, 80, 140, 0.12);
+  --markdown-table-head-bg: rgba(0, 160, 230, 0.08);
+  --markdown-hr: rgba(0, 80, 140, 0.15);
+  --latest-button-bg: rgba(248, 252, 255, 0.88);
+  --latest-button-hover-bg: rgba(255, 255, 255, 0.95);
+  --latest-button-border: rgba(255, 255, 255, 0.45);
+  --latest-button-shadow: 0 10px 24px rgba(var(--rgb-shadow-navy), 0.16);
+  --latest-button-text: var(--text-primary);
+
+  // ── Code surfaces ─────────────────────────────────────────
+  --code-inline-bg: rgba(0, 100, 180, 0.08);
+  --code-inline-text: #005577;
+  --code-block-bg: rgba(255, 255, 255, 0.55);
+  --code-block-text: #1a3a5c;
+  --code-copy-bg: rgba(255, 255, 255, 0.8);
+  --code-copy-hover-bg: rgba(255, 255, 255, 0.95);
+  --code-copy-active-bg: rgba(0, 168, 232, 0.15);
+
+  // ── Background atmosphere bubbles ─────────────────────────
+  --bg-bubble-1: rgba(255, 255, 255, 0.35);
+  --bg-bubble-2: rgba(255, 255, 255, 0.25);
+  --bg-bubble-3: rgba(255, 255, 255, 0.2);
+  --bg-bubble-4: rgba(255, 255, 255, 0.3);
+  --bg-bubble-5: rgba(255, 255, 255, 0.15);
+}
+
+// ── Dark professional theme ───────────────────────────────────
+html[data-theme='dark'] {
+  // Base palette
+  --color-sky-bright: #7dd3fc;
+  --color-sky-core: #38bdf8;
+  --color-sky-deep: #0369a1;
+  --color-sky-alt: #0ea5e9;
+  --color-sky-soft: #bae6fd;
+  --color-aqua: #2dd4bf;
+  --color-grass: #34d399;
+  --color-sun: #fbbf24;
+  --color-cloud: #1e293b;
+  // Text
+  --color-text-primary: #e6edf6;
+  --color-text-secondary: #9fb0c6;
+  --color-text-white: #ffffff;
+  --color-text-system: #c4ae6e;
+  --color-text-error: #f87171;
+  // Glass surfaces
+  --glass-white: rgba(255, 255, 255, 0.07);
+  --glass-heavy: rgba(255, 255, 255, 0.12);
+  --glass-light: rgba(255, 255, 255, 0.04);
+  --glass-panel: rgba(12, 20, 34, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-border-soft: rgba(255, 255, 255, 0.06);
+  // Glass surface highlights
+  --glass-inset-highlight: rgba(255, 255, 255, 0.07);
+  --glass-gloss-top: rgba(255, 255, 255, 0.12);
+  --glass-gloss-mid: rgba(255, 255, 255, 0.05);
+  --glass-input-bg: rgba(255, 255, 255, 0.08);
+  --glass-input-focus: rgba(255, 255, 255, 0.12);
+
+  // ── Response surfaces ─────────────────────────────────────
+  --bubble-ai-bg: rgba(255, 255, 255, 0.08);
+  --markdown-table-border: rgba(255, 255, 255, 0.16);
+  --markdown-table-head-bg: rgba(56, 189, 248, 0.1);
+  --markdown-hr: rgba(255, 255, 255, 0.12);
+  --latest-button-bg: rgba(12, 20, 34, 0.92);
+  --latest-button-hover-bg: rgba(18, 28, 46, 0.98);
+  --latest-button-border: rgba(255, 255, 255, 0.1);
+  --latest-button-shadow: 0 12px 26px rgba(0, 0, 0, 0.32);
+  --latest-button-text: var(--text-primary);
+
+  // Code surfaces
+  --code-inline-bg: rgba(56, 189, 248, 0.12);
+  --code-inline-text: #bfeaff;
+  --code-block-bg: rgba(7, 16, 30, 0.94);
+  --code-block-text: #d9e8f7;
+  --code-copy-bg: rgba(255, 255, 255, 0.08);
+  --code-copy-hover-bg: rgba(56, 189, 248, 0.14);
+  --code-copy-active-bg: rgba(56, 189, 248, 0.2);
+  // RGB triplets
+  --rgb-accent: 56, 189, 248;
+  --rgb-shadow-navy: 0, 5, 20;
+  --rgb-shadow-blue: 0, 20, 60;
+  --rgb-shadow-deep: 0, 10, 30;
+  --rgb-shadow-mid: 0, 15, 45;
+  --rgb-danger: 248, 113, 113;
+  --rgb-success: 52, 211, 153;
+  // Status
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-error: #f87171;
+  --color-error-light: #fca5a5;
+  --color-green-bright: #34d399;
+  --color-yellow-bright: #fbbf24;
+  // Error surfaces
+  --bg-error-soft: rgba(248, 113, 113, 0.12);
+  --border-error-soft: rgba(248, 113, 113, 0.28);
+  // Gel gradient stops
+  --gradient-primary-0: #7dd3fc;
+  --gradient-primary-1: #38bdf8;
+  --gradient-primary-2: #0369a1;
+  --gradient-disabled-0: #2d3b52;
+  --gradient-disabled-1: #1a2a3e;
+  --gradient-danger-0: #fca5a5;
+  --gradient-danger-1: #f87171;
+  --gradient-danger-2: #dc2626;
+  --gradient-success-0: #6ee7b7;
+  --gradient-success-1: #34d399;
+  --gradient-success-2: #059669;
+  // Page background gradient stops (deep midnight navy)
+  --bg-gradient-0: #060d18;
+  --bg-gradient-1: #080f1c;
+  --bg-gradient-2: #0a1220;
+  --bg-gradient-3: #0b1522;
+  --bg-gradient-4: #0a1520;
+  --bg-gradient-5: #091419;
+  --bg-gradient-6: #081216;
+  --bg-gradient-7: #071014;
+  // Background atmosphere bubbles (subtle cyan glows on dark)
+  --bg-bubble-1: rgba(56, 189, 248, 0.04);
+  --bg-bubble-2: rgba(45, 212, 191, 0.03);
+  --bg-bubble-3: rgba(56, 189, 248, 0.02);
+  --bg-bubble-4: rgba(52, 211, 153, 0.03);
+  --bg-bubble-5: rgba(56, 189, 248, 0.02);
+  // Scrollbar gradient states
+  --scrollbar-thumb-0: rgba(56, 189, 248, 0.22);
+  --scrollbar-thumb-1: rgba(56, 189, 248, 0.28);
+  --scrollbar-thumb-2: rgba(14, 165, 233, 0.22);
+  --scrollbar-hover-0: rgba(56, 189, 248, 0.4);
+  --scrollbar-hover-1: rgba(56, 189, 248, 0.46);
+  --scrollbar-hover-2: rgba(14, 165, 233, 0.4);
+  --scrollbar-active-0: rgba(56, 189, 248, 0.55);
+  --scrollbar-active-1: rgba(56, 189, 248, 0.6);
+  --scrollbar-active-2: rgba(14, 165, 233, 0.55);
+  --scrollbar-firefox: rgba(56, 189, 248, 0.3);
+  // Bubble surface tints
+  --bg-tool-bubble: rgba(56, 189, 248, 0.07);
+  --bg-system-bubble: rgba(251, 191, 36, 0.07);
+  --border-system-bubble: rgba(251, 191, 36, 0.18);
+  --bg-subagent-bubble: rgba(52, 211, 153, 0.07);
+  --border-subagent: rgba(52, 211, 153, 0.17);
+  --border-subagent-toggle: rgba(52, 211, 153, 0.1);
+  // Overlays
+  --overlay-modal: rgba(0, 8, 24, 0.72);
+  --bg-suggestions: rgba(12, 20, 34, 0.96);
+  --bg-popover: rgba(18, 28, 46, 0.96);
+}

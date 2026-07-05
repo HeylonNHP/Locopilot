@@ -1,0 +1,401 @@
+// ================================================================
+//  Atomic utility classes — layout, spacing, typography, etc.
+// ================================================================
+
+// ── Layout ───────────────────────────────────────────────────
+.flex {
+  display: flex;
+}
+.flex-col {
+  flex-direction: column;
+}
+.flex-1 {
+  flex: 1;
+}
+.flex-shrink-0 {
+  flex-shrink: 0;
+}
+
+.items-center {
+  align-items: center;
+}
+.items-start {
+  align-items: flex-start;
+}
+.justify-center {
+  justify-content: center;
+}
+.justify-end {
+  justify-content: flex-end;
+}
+.justify-between {
+  justify-content: space-between;
+}
+
+.gap-4 {
+  gap: 4px;
+}
+.gap-6 {
+  gap: 6px;
+}
+.gap-8 {
+  gap: 8px;
+}
+.gap-12 {
+  gap: 12px;
+}
+.gap-16 {
+  gap: 16px;
+}
+
+.w-full {
+  width: 100%;
+}
+.w-260 {
+  width: 260px;
+}
+.h-screen {
+  height: 100vh;
+}
+.min-w-0 {
+  min-width: 0;
+}
+
+.max-w-70 {
+  max-width: 70%;
+}
+.max-w-80 {
+  max-width: 80%;
+}
+.max-w-90 {
+  max-width: 90%;
+}
+.max-w-500 {
+  max-width: 500px;
+}
+
+.max-h-200 {
+  max-height: 200px;
+}
+.max-h-300 {
+  max-height: 300px;
+}
+.max-h-screen-90 {
+  max-height: 90vh;
+}
+
+.overflow-hidden {
+  overflow: hidden;
+}
+.overflow-auto {
+  overflow: auto;
+}
+.overflow-y-auto {
+  overflow-y: auto;
+}
+.overflow-x-auto {
+  overflow-x: auto;
+}
+
+.relative {
+  position: relative;
+}
+.absolute {
+  position: absolute;
+}
+.fixed {
+  position: fixed;
+}
+.inset-0 {
+  inset: 0;
+}
+.z-10 {
+  z-index: 10;
+}
+.z-1000 {
+  z-index: 1000;
+}
+
+.box-border {
+  box-sizing: border-box;
+}
+.outline-none {
+  outline: none;
+}
+
+// ── Spacing ──────────────────────────────────────────────────
+.p-0 {
+  padding: 0;
+}
+.p-4 {
+  padding: 4px;
+}
+.p-6 {
+  padding: 6px;
+}
+.p-8 {
+  padding: 8px;
+}
+.p-10 {
+  padding: 10px;
+}
+.p-12 {
+  padding: 12px;
+}
+.p-16 {
+  padding: 16px;
+}
+.p-24 {
+  padding: 24px;
+}
+
+.px-8 {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.px-10 {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.px-12 {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.px-16 {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.px-20 {
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+.py-6 {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.py-8 {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.py-10 {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.py-12 {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.m-0 {
+  margin: 0;
+}
+.mb-4 {
+  margin-bottom: 4px;
+}
+.mb-8 {
+  margin-bottom: 8px;
+}
+.mb-12 {
+  margin-bottom: 12px;
+}
+.mb-16 {
+  margin-bottom: 16px;
+}
+.mt-4 {
+  margin-top: 4px;
+}
+.mt-8 {
+  margin-top: 8px;
+}
+.ml-12 {
+  margin-left: 12px;
+}
+
+// ── Typography ───────────────────────────────────────────────
+.text-primary {
+  color: var(--text-primary);
+}
+.text-secondary {
+  color: var(--text-secondary);
+}
+.text-white {
+  color: var(--text-white);
+}
+.text-accent {
+  color: var(--accent);
+}
+.text-error {
+  color: var(--status-error);
+}
+.text-error-light {
+  color: var(--status-error-light);
+}
+.text-green {
+  color: var(--color-green-bright);
+}
+.text-yellow {
+  color: var(--color-yellow-bright);
+}
+.text-red {
+  color: var(--status-danger);
+}
+
+.text-center {
+  text-align: center;
+}
+.text-left {
+  text-align: left;
+}
+
+.font-mono {
+  font-family: monospace;
+}
+.font-inherit {
+  font-family: inherit;
+}
+.font-bold {
+  font-weight: bold;
+}
+.font-normal {
+  font-weight: normal;
+}
+
+.font-12 {
+  font-size: 12px;
+}
+.font-13 {
+  font-size: 13px;
+}
+.font-14 {
+  font-size: 14px;
+}
+.font-16 {
+  font-size: 16px;
+}
+.font-18 {
+  font-size: 18px;
+}
+.font-24 {
+  font-size: 24px;
+}
+
+.line-125 {
+  line-height: 1.25;
+}
+.line-15 {
+  line-height: 1.5;
+}
+.line-16 {
+  line-height: 1.6;
+}
+.line-165 {
+  line-height: 1.65;
+}
+
+.no-wrap {
+  white-space: nowrap;
+}
+.pre-wrap {
+  white-space: pre-wrap;
+}
+.whitespace-pre-wrap {
+  white-space: pre-wrap;
+}
+.word-break-anywhere {
+  overflow-wrap: anywhere;
+}
+
+.text-overflow-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// ── Borders ──────────────────────────────────────────────────
+.radius-4 {
+  border-radius: 4px;
+}
+.radius-6 {
+  border-radius: 6px;
+}
+.radius-8 {
+  border-radius: 8px;
+}
+.radius-12 {
+  border-radius: 12px;
+}
+.radius-16 {
+  border-radius: 16px;
+}
+.radius-24 {
+  border-radius: 24px;
+}
+.radius-pill {
+  border-radius: 50px;
+}
+
+.border-none {
+  border: none;
+}
+.border-glass {
+  border: 1px solid var(--glass-border);
+}
+.border-glass-soft {
+  border: 1px solid var(--glass-border-soft);
+}
+.border-dashed-glass {
+  border: 1px dashed var(--glass-border-soft);
+}
+.border-bottom-glass {
+  border-bottom: 1px solid var(--glass-border-soft);
+}
+.border-top-glass {
+  border-top: 1px solid var(--glass-border-soft);
+}
+.border-left-accent {
+  border-left: 3px solid var(--accent);
+}
+
+// ── Backgrounds ──────────────────────────────────────────────
+.bg-primary {
+  background: var(--bg-primary);
+}
+.bg-secondary {
+  background: var(--bg-secondary);
+}
+.bg-tertiary {
+  background: var(--bg-tertiary);
+}
+.bg-accent {
+  background: var(--accent);
+}
+.bg-transparent {
+  background: transparent;
+}
+.bg-overlay {
+  background: var(--overlay-modal);
+}
+.bg-light-error {
+  background: var(--bg-error-soft);
+}
+
+// ── Cursors & display ───────────────────────────────────────
+.cursor-pointer {
+  cursor: pointer;
+}
+.cursor-default {
+  cursor: default;
+}
+.cursor-not-allowed {
+  cursor: not-allowed;
+}
+.cursor-progress {
+  cursor: progress;
+}
+.block {
+  display: block;
+}
+.opacity-50 {
+  opacity: 0.5;
+}

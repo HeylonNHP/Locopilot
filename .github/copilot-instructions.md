@@ -1,4 +1,5 @@
 <!-- Use this file to provide workspace-specific custom instructions to Copilot. For more details, visit https://code.visualstudio.com/docs/copilot/copilot-customization#_use-a-githubcopilotinstructionsmd-file -->
+
 - [x] Verify that the copilot-instructions.md file in the .github directory is created.
 - [x] Clarify Project Requirements
 - [x] Scaffold the Project
@@ -10,9 +11,11 @@
 - [x] Ensure Documentation is Complete
 
 ## Project Summary
+
 A CLI tool for chatting with Ollama. It handles configuration for host/port, model selection, and basic chat loops.
 
 ## Technical Stack
+
 - Node.js (ESM)
 - Inquirer for CLI interactions
 - Axios for Ollama API communication
@@ -23,6 +26,7 @@ A CLI tool for chatting with Ollama. It handles configuration for host/port, mod
 Apply appropriate design patterns and good programming practices to all code changes:
 
 ### Design Patterns
+
 - **Prefer composition over inheritance** — use composition, delegation, and dependency injection to build flexible, testable components.
 - **Apply SOLID principles** — single responsibility, open/closed, Liskov substitution, interface segregation, and dependency inversion.
 - **Use established patterns where fit**:
@@ -34,6 +38,7 @@ Apply appropriate design patterns and good programming practices to all code cha
 - **Avoid over-engineering** — use patterns when they genuinely simplify complexity, not to add abstraction layers for their own sake.
 
 ### Good Practices
+
 - **Single Responsibility** — each function/module should do one thing well; keep functions small and focused.
 - **DRY (Don't Repeat Yourself)** — extract shared logic into reusable helpers; avoid copy-paste code.
 - **Explicit over implicit** — prefer clear, descriptive naming and explicit flows over clever shortcuts.
@@ -44,15 +49,14 @@ Apply appropriate design patterns and good programming practices to all code cha
 - **Testability** — structure code so dependencies can be injected or mocked for testing.
 
 ### Refactoring Guidelines
+
 - When modifying existing code, look for opportunities to improve structure.
 - Extract new helpers into dedicated modules (e.g., `services/`, `tools/`) rather than bloating `index.ts`.
 - Update this file when patterns or key architectural decisions change.
 
-
 - Work through each checklist item systematically.
 - Keep communication concise and focused.
 - Follow development best practices.
-
 
 <!-- Feature documentation — keep this section up to date as the application evolves -->
 
@@ -66,9 +70,9 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
 - **YOLO Mode**: A high-trust mode that skips command confirmation for automated workflows, enabled via startup prompt, `--yolo`/`-y` flag, or `YOLO=true` environment variable.
 - **Session Management**: Resume recent chats, switch between multiple active sessions (`/sessions`), or delete old ones (`/delete`).
 - **Slash Commands**: Specialized commands for utility tasks:
-    - `/model`: Refresh and switch LLM models mid-conversation.
-    - `/settings`: Change App and Session settings (replaces initial startup prompts).
-    - `/compact`: Force conversation summarization to recover context.
+  - `/model`: Refresh and switch LLM models mid-conversation.
+  - `/settings`: Change App and Session settings (replaces initial startup prompts).
+  - `/compact`: Force conversation summarization to recover context.
   - `/dump`: Export the current conversation history, including the system prompt and tool call/tool result details, to a markdown debug file.
     - `/clear-images`: Remove all image attachments from the active conversation, both in client state and persisted SQLite, to free vision context and recover from 400 errors.
     - `/sessions`: Switch between multiple persistent chat histories.
@@ -79,6 +83,7 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
 ## Tool-calling / Command-execution
 
 Feature summary:
+
 - **`run_command`**: Request shell commands. Uses a process registry for tracking and `Ctrl+X` for interruption.
 - **`run_subagents`**: Run one or more isolated sub-agents sequentially. Each sub-agent gets a fresh ephemeral history, the normal tool set except `run_subagents` itself, and returns only its final answer back to the parent agent.
 - **Process Registry**: Long-running commands are tracked by ID, allowing the AI to poll for output using a `check_process_output` tool if a command exceeds the initial 30s timeout.
@@ -90,6 +95,7 @@ Feature summary:
 ## Markdown rendering
 
 Feature summary:
+
 - **`streamAIResponse`**: Provides real-time "typing" effect chunk-by-chunk. Intentionally skips markdown formatting during streaming for performance and accuracy.
 - **`printAIResponse`**: Renders full markdown (tables, code blocks, formatting) using `marked` and `marked-terminal` once the stream is complete or for static messages.
 - **Viewport Recovery**: Uses a viewport-aware strategy to replace raw streamed text with formatted markdown if the response fits on screen; otherwise, appends the formatted version after a separator.
@@ -98,7 +104,8 @@ Feature summary:
 ## Session & Token Management
 
 Feature summary:
-- **SQLite Storage**: Uses `better-sqlite3` in WAL mode for reliable, concurrent message persistence. 
+
+- **SQLite Storage**: Uses `better-sqlite3` in WAL mode for reliable, concurrent message persistence.
 - **Live Token Meter**: Displays a real-time status line ([statusLine.ts](statusLine.ts)) with a 10-frame spinner (`⠋⠙⠹...`), current phase, model, context usage (`used / limit`), and source tag (`estimated` vs `ollama`).
 - **Authoritative Stats**: Reconciles estimated local token counts (`tiktoken`) with authoritative metrics from Ollama (`prompt_eval_count`, `eval_count`) at the end of each turn.
 - **Token Calculation**: Estimated counts [tokenizer.ts](tokenizer.ts) add 4 tokens per message plus role, content, and tool call overhead to match OpenAI-style counting as a robust local approximation.
@@ -108,6 +115,7 @@ Feature summary:
 ## Web search & Fetch tools
 
 Feature summary:
+
 - **`web_search`**: Multi-query DuckDuckGo search with automatic derivation of search intent and pagination support.
 - **`fetch_url`**: Direct page retrieval for following links or deep-diving into specific documentation.
 - **`fetch_image`**: Fetches an image from a URL or local file path and attaches it as base64 to the conversation message. Vision-only; only useful with models that have image understanding (e.g. llava, llama3.2-vision). Supports JPEG, PNG, GIF, WebP, and BMP up to 10 MB. The base64 is stored in the `images` field of the tool result message and is persisted to SQLite alongside other message fields.
@@ -124,25 +132,82 @@ Feature summary:
   - When adding tools, document their security profile and confirmation UX.
   - Ensure all new features align with the "Local, Private, Safe" philosophy.
 
+- **Adapter mapping convention**:
+  - Canonical request concepts belong on `ChatParams` / `StreamChatParams` as typed fields (e.g. `maxOutputTokens`), not buried inside `options`.
+  - Each adapter is responsible for translating canonical fields into provider-native request fields:
+    - Ollama: `maxOutputTokens` → `options.num_predict`
+    - OpenAI-compatible: `maxOutputTokens` → `max_completion_tokens`
+  - Keep provider-specific parameter names out of callers. Legacy `options.*` passthrough may remain as a fallback, but new code should prefer the canonical field.
+  - Document the mapping in both JSDoc on `ChatParams` and in `OPENAI_COMPATIBILITY_MIGRATION.md`.
+  - When adding a new provider, implement the same canonical fields so callers stay provider-agnostic.
+
 - **Web search tool** (`web_search`):
-    - Changed `queries` parameter from `string` to `array` in the tool schema to encourage LLMs to provide multiple explicit queries properly.
-    - Updated `parseQueriesInput` in `tools.ts` to handle actual arrays, JSON-encoded arrays, and strings separated by newlines, commas, or semicolons.
-    - Updated tool description and system prompt to explicitly encourage using 2-3 queries for complex tasks.
-    - Improved automated query derivation in `webSearchTool.ts` to split prompts on "and", "or", commas, and semicolons.
-    - This ensures more effective search coverage even with "lazy" model inputs.- [x] **Alternate interrupt key** (default: `Ctrl+X`):
-    - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
-    - Summary: Added a `keypress` listener (defaulting to `Ctrl+X`) that interrupts the AI tool-call loop without exiting the application. `Ctrl+C` retains its normal behavior (exits Locopilot) at all times.
-    - Intent: Prevent accidental closures of Locopilot when the user only wants to stop a looping or long-running AI task. Because `setRawMode(true)` suppresses the OS SIGINT signal for Ctrl+C, the keypress listener re-raises SIGINT via `process.kill(process.pid, 'SIGINT')` so the top-level exit handler fires normally.
+
+- **App Router 404 / `_document` build error** (known Next.js 15.5 upstream bug — see vercel/next.js#90349):
+  - Next.js 15.5 always generates an internal Pages Router `_error`/`_document` fallback for `/404` and `/500`, even in pure App Router projects with no `pages/` directory. During static generation this throws `<Html> should not be imported outside of pages/_document`.
+  - Correct App Router conventions that should still be followed: include `src/app/not-found.tsx`; `src/app/error.tsx` must not render `<html>` or `<body>` (only `layout.tsx` and `global-error.tsx` may own those tags).
+  - Workarounds that do NOT work cleanly: adding a `pages/` directory triggers a separate Next.js 15.5 validator bug (`.next/types/validator.ts` hardcodes wrong `.js` paths when `src/` is used). Setting `typedRoutes: false` does not disable the validator.
+  - **Current status**: `npm run build` still fails at the static-page-generation step with this error. `tsc --noEmit` and `npm run dev` are unaffected. This is tracked as a pre-existing upstream bug.
+  - Changed `queries` parameter from `string` to `array` in the tool schema to encourage LLMs to provide multiple explicit queries properly.
+  - Updated `parseQueriesInput` in `tools.ts` to handle actual arrays, JSON-encoded arrays, and strings separated by newlines, commas, or semicolons.
+  - Updated tool description and system prompt to explicitly encourage using 2-3 queries for complex tasks.
+  - Improved automated query derivation in `webSearchTool.ts` to split prompts on "and", "or", commas, and semicolons.
+  - This ensures more effective search coverage even with "lazy" model inputs.- [x] **Alternate interrupt key** (default: `Ctrl+X`):
+  - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
+  - Summary: Added a `keypress` listener (defaulting to `Ctrl+X`) that interrupts the AI tool-call loop without exiting the application. `Ctrl+C` retains its normal behavior (exits Locopilot) at all times.
+  - Intent: Prevent accidental closures of Locopilot when the user only wants to stop a looping or long-running AI task. Because `setRawMode(true)` suppresses the OS SIGINT signal for Ctrl+C, the keypress listener re-raises SIGINT via `process.kill(process.pid, 'SIGINT')` so the top-level exit handler fires normally.
 - [x] **Refactored run_command tool** (`runCommandTool.ts`):
-    - Files: `runCommandTool.ts` (new), `tools.ts`
-    - Summary: Extracted command execution logic, process registry, and shell resolution into `runCommandTool.ts`.
-    - Intent: Keep `tools.ts` focused on common tool-calling orchestration and schemas while isolating concrete tool implementations.
+  - Files: `runCommandTool.ts` (new), `tools.ts`
+  - Summary: Extracted command execution logic, process registry, and shell resolution into `runCommandTool.ts`.
+  - Intent: Keep `tools.ts` focused on common tool-calling orchestration and schemas while isolating concrete tool implementations.
 - [x] **Preserve message history on error/interrupt**:
-    - Files: `index.ts`
-    - Summary: Removed the code that rolled back `messages.length` to `historyLengthBeforeTurn` when an AI turn was interrupted or failed due to an Ollama API error.
-    - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
+  - Files: `index.ts`
+  - Summary: Removed the code that rolled back `messages.length` to `historyLengthBeforeTurn` when an AI turn was interrupted or failed due to an Ollama API error.
+  - Intent: Ensure that when an error occurs mid-turn (e.g. after several successful tool calls), the previous context and already-executed tool output remain in the history. This allows the user to "try again" with the model seeing exactly where it left off, rather than losing the entire turn's progress.
 
 ## Change History
+
+- 2026-06-24: Corrected App Router error-handling conventions (pre-existing Next.js 15.5 build bug remains)
+  - Files: `src/app/not-found.tsx` (new), `src/app/error.tsx`, `.github/copilot-instructions.md`
+  - Summary: Added `src/app/not-found.tsx` and removed `<html>`/`<body>` from `src/app/error.tsx` to follow correct App Router conventions. However, the underlying `npm run build` failure (`<Html> should not be imported outside of pages/_document` during prerendering of `/404` and `/500`) is a known Next.js 15.5 upstream bug (vercel/next.js#90349) that cannot be cleanly worked around without triggering a separate validator bug. `tsc --noEmit` and `npm run dev` are unaffected.
+  - Intent: Follow correct App Router conventions while documenting the upstream bug so it is not re-investigated.
+
+- 2026-06-24: Canonical `maxOutputTokens` output-token cap across adapters
+  - Files: `services/adapters/llmAdapter.ts`, `services/adapters/ollamaAdapter.ts`, `services/adapters/openaiCompatibleAdapter.ts`, `services/compact.ts`, `tools/impl/contentCompactor.ts`, `OPENAI_COMPATIBILITY_MIGRATION.md`, `.github/copilot-instructions.md`
+  - Summary: Added a provider-agnostic `maxOutputTokens` field to `ChatParams` / `StreamChatParams`. The Ollama adapter maps it to `options.num_predict`; the OpenAI-compatible adapter maps it to `max_completion_tokens`. Migrated all internal callers that were capping output tokens (`measureConversationTokens`, tool distillation, conversation summary streaming, web content compaction) from `options.num_predict` to the canonical field. Legacy `options.num_predict` / `options.max_tokens` / `options.max_completion_tokens` remain as fallback-only passthroughs. The web content compactor still hard-truncates its final result to the configured per-page character limit as a safety net.
+  - Intent: Fix the bug where OpenAI-compatible endpoints ignored the requested output-token cap during compaction/summarization because `num_predict` is an Ollama-specific option. By centralizing the translation inside the adapters, callers stay provider-agnostic and future adapters only need to implement the mapping once.
+
+- 2026-06-20: Decoupled working-directory tracking from ToolOutputSink
+  - Files: `tools/workingDirectory.ts`, `tools/toolRegistry.ts`, `tools/impl/writeFileTool.ts`, `tools/impl/readFileTool.ts`, `tools/impl/patchFileTool.ts`, `tools/impl/readPdfTool.ts`, `tools/impl/runCommandTool.ts`, `tools/impl/subAgentTool.ts`, `app/api/chat/route.ts`, `.github/copilot-instructions.md`
+  - Summary: Created a dedicated `WorkingDirectoryScope` class as a lightweight identity token for the `WeakMap<WorkingDirectoryScope, string>` in `workingDirectory.ts`, replacing the previous pattern of using `ToolOutputSink` objects as map keys. Added `workingDirectoryScope?: WorkingDirectoryScope` to `RequestContext`. The web chat route now creates one `WorkingDirectoryScope` per HTTP request and threads it through `RequestContext`, so `run_command`'s `cd` tracking persists across all tool calls within a request (previously broken because fresh `ToolOutputSink` objects were created per tool call, making WeakMap entries ephemeral). Sub-agents create their own `WorkingDirectoryScope` in `runSingleAgent` for isolation. Tool classes updated: `WriteFileTool` no longer accepts `output` (it never wrote to it); `ReadFileTool`, `PatchFileTool`, `ReadPdfTool` now accept both `output` (for logging) and `scope` (for path resolution); `runCommand` accepts `scope` as a new parameter for working-directory operations while keeping `output` for UI messages. Removed the dead `SET_STREAMING` action and orphaned `isStreaming` field cleanup was done in the previous commit.
+  - Intent: Separate the output-channel concern from the working-directory-identity concern, fix the broken per-request working-directory tracking in the web route, and make tool constructor dependencies honest.
+
+- 2026-06-18: Fixed three compaction status-update bugs
+  - Files: `app/api/compact/route.ts`, `app/hooks/useSlashCommands.ts`, `app/hooks/useChatStream.ts`, `app/lib/chatStore.ts`, `.github/copilot-instructions.md`
+  - Bug 1 (manual /compact progress thrown away): Converted `/api/compact` from a plain JSON response to an SSE stream. The server now emits `compact_progress` events live via the `onProgress` callback, followed by a `compact` event with the result. Updated `useSlashCommands.ts` to parse the SSE stream with `EventSourceParserStream` and dispatch `COMPACT_PROGRESS` events as they arrive, so the `InputArea` streaming indicator shows live progress during manual `/compact`.
+  - Bug 2 (auto-compact label gets stuck): Added `dispatch({ type: 'CLEAR_COMPACT_PROGRESS' })` at the top of the `compact` event handler in `useChatStream.ts`, so the streaming indicator switches back to "Streaming..." as soon as compaction finishes and the model resumes generating.
+  - Bug 3 (compaction phases leak across streams/sessions): Updated the `STOP_STREAMING` reducer case in `chatStore.ts` to clear `compactingPhases` when the visible session's stream ends. Guarded with `isVisibleSession` check to avoid clearing phases during the `session_created` placeholder migration (-1 → realId) or when a non-current background session stops. Removed the dead `SET_STREAMING` action type, reducer case, and the orphaned `isStreaming` field from `ChatState` / initial state — these were never dispatched and were leftover from the CLI-to-web-UI migration.
+  - Intent: Ensure compaction progress updates reliably reach the UI for both manual and auto-compaction, and that stale progress text doesn't linger after a stream ends.
+
+- 2026-06-18: Added compaction model selector to the status bar
+  - Files: `components/StatusBar/StatusBar.tsx`, `components/StatusBar/StatusBar.scss`, `components/ModelSelector/ModelSelector.tsx`, `.github/copilot-instructions.md`
+  - Summary: Extended `ModelSelector` with an optional `mode` prop (`'model'` | `'compaction'`). In compaction mode it dispatches `SET_CONFIG { compactionModel: modelName }`, persists via `PUT /api/config`, skips the model-info / context-limit fetch, and shows a "Same as main model" option at the top of the list. Added a second clickable label to `StatusBar` displaying `Compaction: {compactionModel || 'Same as main'}`, plus the corresponding open/close state, ref, keyboard activation, and hover styling. The main model selector continues to behave exactly as before.
+  - Intent: Let users quickly view and swap the compaction model from the status bar without opening the full Settings modal, matching the convenience of the main model selector.
+
+- 2026-06-18: Removed dead interrupt-manager code and orphaned aiResponseRenderer
+  - Files: `src/tools/interruptManager.ts` (deleted), `src/aiResponseRenderer.ts` (deleted), `src/tools/tools.ts`, `src/tools/impl/runCommandTool.ts`, `src/tools/impl/subAgentTool.ts`, `src/services/chatSession.ts`, `.github/copilot-instructions.md`
+  - Summary: Removed the `interruptManager.ts` module entirely — `requestInterrupt()` and `clearInterrupt()` had zero callers, and the handler registry (`registerInterruptHandler`/`unregisterInterruptHandler`/`isInterruptRequested`) was dormant because nothing ever set the interrupt flag. The web UI's actual interrupt path is the HTTP `AbortSignal` (`req.signal`), which is already threaded through `handleToolCall` and `spawn()` separately. Removed the orphaned `aiResponseRenderer.ts` (nothing imported it). Updated `runCommandTool.ts` (removed dead interrupt-handler registration), `subAgentTool.ts` (simplified `isInterruptOrAbort` to only check the signal), `chatSession.ts` (removed dead `isInterruptRequested` checks in the CLI-only `processAITurn`), and `tools.ts` (removed the 5 re-exports from the deleted module).
+  - Intent: Clean up dead code left behind by the CLI-to-web-UI migration. The interrupt manager's trigger side was replaced by the HTTP AbortSignal, but the old module and its dormant callers were never removed.
+
+- 2026-06-18: Fixed web UI auto-scroll behavior during fast LLM streaming
+  - Files: `app/hooks/useScrollManager.ts`, `app/page.tsx`, `.github/copilot-instructions.md`
+  - Summary: Replaced the `IntersectionObserver`-based bottom detection in `useScrollManager` with a synchronous scroll listener throttled by `requestAnimationFrame`. The "at bottom" threshold is now computed from the container's actual bottom `padding-bottom` (which expands to `96px` when the floating "Latest" button is visible) plus a `32px` buffer, instead of a hard-coded `32px`. This fixes the bug where the button's own padding pushed the sentinel outside the observer margin, preventing auto-scroll from re-engaging once the user scrolled back to the bottom. The hook also now accepts an `isStreaming` flag from `page.tsx`; while streaming, it scrolls with `behavior: 'auto'` so rapid chunks don't queue up conflicting smooth animations, and falls back to `behavior: 'smooth'` when not streaming. Manual scroll-up still pauses auto-follow, and scrolling back to the bottom resumes it.
+  - Intent: Keep the latest LLM output in view during fast streaming while preserving the user's ability to scroll up and read past content, and ensure the scroll-to-latest button reliably re-anchors the view.
+
+- 2026-06-06: Prompt loop completion mode
+  - Files: `services/promptLoop.ts` (new), `components/CompletionModeSelector/` (new — `index.ts`, `CompletionModeSelector.tsx`, `CompletionModeSelector.scss`), `types/chatConfig.ts`, `app/lib/chatStore.ts`, `app/hooks/useStableRefs.ts`, `app/hooks/useDataLoaders.ts`, `app/hooks/useChatStream.ts`, `app/api/config/route.ts`, `app/api/chat/route.ts`, `components/StatusBar/StatusBar.tsx`, `components/StatusBar/StatusBar.scss`, `.github/copilot-instructions.md`
+  - Summary: Added a "Completion mode" dropdown to the status bar (next to the Model selector) with two options: **Normal** (default, existing behavior) and **Prompt loop** (auto-continue until the task is done). When Prompt loop is active, after the LLM produces a non-tool-call final response, a lightweight judge call asks the same model "is the user's request fully satisfied?" If no, a continuation nudge ("Continue working on my original request. It is not yet complete.") is injected into the conversation history and the outer LLM loop is re-entered. The loop is capped by a user-configurable `maxPromptLoopIterations` setting (0 = unlimited, default 4), exposed as a number input inside the CompletionModeSelector dropdown when "Prompt loop" is selected. The judge helper (`services/promptLoop.ts`) is modeled on `errorSummary.ts` — short behavior-only system prompt, non-streaming `sendLlmChat` call, fail-open on parse errors (defaults to satisfied), and uses the spread pattern `...(signal ? { signal } : {})` to satisfy `exactOptionalPropertyTypes: true`. The outer `while (true)` tool-calling loop in `chat/route.ts` is now labeled `outer:` so the prompt-loop continuation can `continue outer;` from within the nested judge loop. A new SSE `status` event with `phase: 'completeness-check'` carries the current iteration and max so the client can show progress. The two new config fields (`completionMode`, `maxPromptLoopIterations`) are persisted to `config.json` via the existing `PUT /api/config` endpoint and threaded through the full state pipeline: `ChatState` → `useStableRefs` → `useChatStream` request body → `chat/route.ts` parsing. The CompletionModeSelector component mirrors the ModelSelector pattern (controlled popup, anchorRef positioning, outside-click/Escape close, identical SCSS tokens).
+  - Intent: Solve the "small model stops before finishing" problem (e.g. qwen3.6 35B) without requiring the user to manually type "continue". The previous done-reason work was a prerequisite; this is the feature itself.
 
 - 2026-06-06: Done-reason aware finality detection
   - Files: `app/api/chat/route.ts`, `app/lib/chatStore.ts`, `app/hooks/useChatStream.ts`, `.github/copilot-instructions.md`
@@ -442,6 +507,7 @@ Feature summary:
   - Intent: Give the model and user clearer runtime context when polling long-running commands or diagnosing slow executions.
 
 (End of maintenance instructions)
+
 - 2026-02-24: Added alternate `Ctrl+X` interrupt key
   - Files: `tools.ts`, `index.ts`, `.github/copilot-instructions.md`
   - Summary: Added `installKeyInterruptListener` / `removeKeyInterruptListener` in `tools.ts`. `Ctrl+X` interrupts the AI loop; `Ctrl+C` exits the app as normal at all times. Because `setRawMode(true)` suppresses OS SIGINT, the keypress listener re-raises it via `process.kill(process.pid, 'SIGINT')` when Ctrl+C is pressed.

@@ -1,0 +1,20 @@
+@use 'mixins' as *;
+
+// ================================================================
+//  Shared abstractions — glass-panel, gel-button
+//  (these are used across multiple components, kept in globals.scss scope)
+// ================================================================
+
+// ── Glass panel base ─────────────────────────────────────────
+.glass-panel {
+  @include glass-panel;
+}
+
+.glass-panel-heavy {
+  @include glass-panel-heavy;
+}
+
+// ── Gel button base ──────────────────────────────────────────
+.gel-button {
+  @include gel-button;
+}

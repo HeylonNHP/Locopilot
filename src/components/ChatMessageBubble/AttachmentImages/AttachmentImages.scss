@@ -1,0 +1,19 @@
+// ================================================================
+//  Component: AttachmentImages (used inside ChatMessageBubble)
+// ================================================================
+
+.bubble-attachment-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.bubble-attachment-image {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 8px;
+  cursor: zoom-in;
+  object-fit: contain;
+  display: block;
+}

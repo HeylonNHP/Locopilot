@@ -1,0 +1,74 @@
+// ================================================================
+//  Component: ChatMessageBubble
+//
+//  This file owns only the classes for the AI assistant bubble (its
+//  wrap, message body, and the reasoning toggle) plus the cross-cutting
+//  hover/focus rule that reveals CopyMarkdownButton. The other role
+//  bubbles and CopyMarkdownButton each own their own SCSS file.
+// ================================================================
+
+// ── AI / assistant bubble ────────────────────────────────────
+.bubble-ai {
+  &-wrap {
+    position: relative;
+    margin-bottom: 12px;
+  }
+
+  &-msg {
+    max-width: 80%;
+    padding: 12px 18px;
+    border-radius: 20px 20px 20px 4px;
+    background: var(--bubble-ai-bg);
+    border: 1px solid var(--glass-border);
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: normal;
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    box-shadow:
+      0 4px 16px rgba(var(--rgb-shadow-deep), 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    color: var(--text-primary);
+  }
+}
+
+// Reveal the copy button on hover/focus of the AI bubble wrap so it
+// stays out of the way until the user reaches for it. Keyboard users
+// get the same affordance via :focus-within on the wrap.
+.bubble-ai-wrap:hover .bubble-copy-md,
+.bubble-ai-wrap:focus-within .bubble-copy-md {
+  opacity: 0.85;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+// ── Thinking toggle ──────────────────────────────────────────
+.bubble-thinking {
+  &-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 0;
+    transition: color 0.2s ease;
+
+    &:hover {
+      color: var(--accent);
+    }
+  }
+
+  &-box {
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    border-left: 3px solid var(--accent);
+    margin-top: 4px;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+}

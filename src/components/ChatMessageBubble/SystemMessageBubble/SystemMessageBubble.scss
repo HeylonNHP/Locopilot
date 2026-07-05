@@ -1,0 +1,25 @@
+// ================================================================
+//  Component: SystemMessageBubble
+// ================================================================
+
+.bubble-system {
+  &-wrap {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+
+  max-width: 80%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--bg-system-bubble);
+  border: 1px solid var(--border-system-bubble);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-system);
+  white-space: pre-wrap;
+  text-align: center;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(var(--rgb-shadow-deep), 0.05);
+}
