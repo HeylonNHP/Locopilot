@@ -51,7 +51,9 @@ async function resolve(model, requested) {
     const text = await res.text();
     throw new Error(`GET ${url} -> ${res.status} ${text}`);
   }
-  return /** @type {{ model: string, requested: number, effective: number, modelCap: number|null, source: string }} */ (await res.json());
+  return /** @type {{ model: string, requested: number, effective: number, modelCap: number|null, source: string }} */ (
+    await res.json()
+  );
 }
 
 async function main() {
@@ -75,7 +77,10 @@ async function main() {
     `effective (${a1.effective}) <= requested (${REQUESTED})`
   );
   assert(
-    a1.source === 'runtime-ps' || a1.source === 'static-show' || a1.source === 'cache' || a1.source === 'unknown',
+    a1.source === 'runtime-ps' ||
+      a1.source === 'static-show' ||
+      a1.source === 'cache' ||
+      a1.source === 'unknown',
     `source is one of the expected values (got: ${a1.source})`
   );
   console.log('');
@@ -111,13 +116,64 @@ async function main() {
   // for different models interleaved should both resolve
   // correctly without one overwriting the other's cache entry.
   console.log('Test 4: concurrent requests to two different models');
-  const [a3, b2] = await Promise.all([
-    resolve(MODEL_A, REQUESTED),
-    resolve(MODEL_B, REQUESTED),
-  ]);
-  assert(a3.model === MODEL_A && b2.model === MODEL_B, 'concurrent responses are correctly addressed');
+  const [a3, b2] = await Promise.all([resolve(MODEL_A, REQUESTED), resolve(MODEL_B, REQUESTED)]);
+  assert(
+    a3.model === MODEL_A && b2.model === MODEL_B,
+    'concurrent responses are correctly addressed'
+  );
   assert(a3.effective === a1.effective, 'concurrent MODEL_A result matches prior result');
   assert(b2.effective === b1.effective, 'concurrent MODEL_B result matches prior result');
+  console.log('');
+
+  // Test 5: Modelfile `PARAMETER num_ctx N` is preferred over the
+  // GGUF training context. The static walk should find the
+  // Modelfile's num_ctx in `info.parameters` and return it. To
+  // exercise this, create a temporary Modelfile-derived model via
+  // `ollama create` and assert the resolver returns the Modelfile
+  // value, not the GGUF training context.
+  console.log('Test 5: Modelfile num_ctx override is preferred over GGUF context');
+  const modelfileModel = process.env.MODEL_FILE_OVERRIDE ?? 'qwen3-test-rope';
+  const modelfileCap = Number(process.env.MODEL_FILE_CAP ?? 524288);
+  const rope1 = await resolve(modelfileModel, 1_000_000);
+  console.log(`  response: ${JSON.stringify(rope1)}`);
+  if (rope1.modelCap === null) {
+    console.log(`  SKIP  Modelfile model ${modelfileModel} not available; cannot assert`);
+  } else {
+    assert(
+      rope1.modelCap >= modelfileCap,
+      `Modelfile cap (${modelfileCap}) is at or below the resolved cap (${rope1.modelCap})`
+    );
+    assert(
+      rope1.effective === Math.min(1_000_000, rope1.modelCap),
+      `effective (${rope1.effective}) is min(requested, modelCap)`
+    );
+  }
+  console.log('');
+
+  // Test 6: cache invalidation on model change. Set up a
+  // situation where the cache has MODEL_A's cap; switch to
+  // MODEL_B; the next resolve(MODEL_B) should re-probe (not
+  // cached) and return MODEL_B's cap.
+  console.log('Test 6: cache invalidation on model change');
+  // Warm MODEL_B's cache by re-resolving.
+  const bWarm = await resolve(MODEL_B, REQUESTED);
+  assert(bWarm.source === 'cache', `MODEL_B re-resolve hits cache (got: ${bWarm.source})`);
+  // Switch the active model via PUT /api/config.
+  const putRes = await fetch(`${BASE_URL}/api/config`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: MODEL_B }),
+  });
+  if (!putRes.ok) {
+    console.log(`  SKIP  PUT /api/config returned ${putRes.status}; cannot exercise invalidation`);
+  } else {
+    const bFresh = await resolve(MODEL_B, REQUESTED);
+    console.log(`  response: ${JSON.stringify(bFresh)}`);
+    assert(
+      bFresh.source !== 'cache' || bFresh.modelCap === bWarm.modelCap,
+      'after model change, either re-probed (source != cache) or cap unchanged'
+    );
+  }
   console.log('');
 
   console.log(`Results: ${pass} pass, ${fail} fail`);

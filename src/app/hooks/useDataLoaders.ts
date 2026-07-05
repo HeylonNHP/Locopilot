@@ -83,10 +83,10 @@ export function useDataLoaders(refs: StableRefs) {
         }
         // Cap discovery is server-driven; the chat route's first
         // status event on the next turn will populate
-        // state.effectiveNumCtx via SET_TOKEN_STATS. The session row
-        // already carries the previous effective value in
-        // data.session.num_ctx, which the SET_TOKEN_STATS dispatch
-        // below consumes as tokenLimit.
+        // state.effectiveNumCtx via SET_TOKEN_STATS. Until then, the
+        // status bar uses the user's requested value as the
+        // tokenLimit display, with the actual cap resolution
+        // happening on the server.
         if (data.estimatedTokens !== null && data.estimatedTokens !== undefined) {
           dispatch({
             type: 'SET_TOKEN_STATS',
@@ -104,13 +104,11 @@ export function useDataLoaders(refs: StableRefs) {
           data.session?.last_prompt_eval_count !== undefined &&
           data.session?.last_eval_count !== undefined
         ) {
-          // Use the session's own persisted effective numCtx if
-          // available, otherwise fall back to the user's requested
-          // value. The persisted column currently holds the
-          // runtime-discovered cap written by the chat route's 400
-          // catch and the resolver's cache; we use it as the
-          // per-session effective value.
-          const tokenLimit = data.session.num_ctx ?? refs.requestedNumCtxRef.current;
+          // Until the next chat turn's status event arrives, display
+          // the user's requested value as the tokenLimit. The
+          // chat route's `resolveEffectiveNumCtx` will re-resolve the
+          // real cap on the next request and emit it via SSE.
+          const tokenLimit = refs.requestedNumCtxRef.current;
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {

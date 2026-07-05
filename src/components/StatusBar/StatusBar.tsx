@@ -69,10 +69,13 @@ export default function StatusBar() {
     setShowCompactionSelector(false);
   }, []);
 
-  const handleOpenModeSelector = useCallback(({ clientX, clientY }: { clientX: number; clientY: number }) => {
-    lastClickRef.current = { x: clientX, y: clientY };
-    setShowModeSelector(true);
-  }, []);
+  const handleOpenModeSelector = useCallback(
+    ({ clientX, clientY }: { clientX: number; clientY: number }) => {
+      lastClickRef.current = { x: clientX, y: clientY };
+      setShowModeSelector(true);
+    },
+    []
+  );
 
   const handleCloseModeSelector = useCallback(() => {
     setShowModeSelector(false);
@@ -87,7 +90,9 @@ export default function StatusBar() {
     try {
       document.cookie = `locopilot-theme=${next}; path=/; max-age=31536000; SameSite=Lax`;
       localStorage.setItem('locopilot-theme', next);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setIsDark(!isDark);
   }, [isDark]);
 
@@ -121,10 +126,25 @@ export default function StatusBar() {
   const tpsValue = currentTps ?? tokenStats?.evalTps ?? tokenStats?.promptTps;
   const tpsLabel = tpsValue === null || tpsValue === undefined ? null : `${tpsValue} t/s`;
 
+  // "Model max" hint. The cap is the GGUF training context for Ollama
+  // (or the provider's advertised cap for OpenAI-compatible). When the
+  // user has asked for less than the cap, the requested value is
+  // already shown in the token display. When the user has asked for
+  // more, show a small label so it's clear that the displayed
+  // tokenLimit is the model's actual ceiling, not a transient state.
+  const modelMax =
+    tokenStats?.modelContextLimit ??
+    (effectiveNumCtx !== null && effectiveNumCtx < requestedNumCtx ? effectiveNumCtx : null);
+  const modelMaxLabel =
+    modelMax !== null && modelMax > 0 && modelMax < requestedNumCtx
+      ? `(model max: ${modelMax.toLocaleString()})`
+      : null;
+
   const normalizedCompletionMode = (completionMode || 'normal') as string;
   const iterations = maxPromptLoopIterations ?? 4;
   const maxLabel = iterations === 0 ? '∞' : String(iterations);
-  const modeLabel = normalizedCompletionMode === 'prompt-loop' ? `Prompt loop (${maxLabel})` : 'Normal';
+  const modeLabel =
+    normalizedCompletionMode === 'prompt-loop' ? `Prompt loop (${maxLabel})` : 'Normal';
 
   return (
     <div className="statusbar">
@@ -133,6 +153,7 @@ export default function StatusBar() {
       )}
       <span className={tokenColorClass}>
         {totalTokens}/{tokenLimit} tokens ({pct}%) {sourceLabel}
+        {modelMaxLabel && <span className="statusbar-model-max"> {modelMaxLabel}</span>}
       </span>
       {tpsLabel && <span>{tpsLabel}</span>}
       <span>

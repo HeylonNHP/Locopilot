@@ -82,6 +82,14 @@
     }
   }
 
+  &-model-max {
+    color: var(--text-secondary);
+    font-weight: 400;
+    font-size: 11px;
+    margin-left: 4px;
+    opacity: 0.85;
+  }
+
   &-theme-toggle {
     margin-left: auto;
     background: none;

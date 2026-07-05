@@ -45,14 +45,21 @@ import {
 
 /** Result of resolving a chat request's effective numCtx. */
 export interface ResolvedNumCtx {
-  /** The user's requested value (clamped to the model's runtime cap if known). */
+  /** The user's requested value, clamped to the model's cap if known. */
   effective: number;
   /** The user's requested value, as passed in (unclamped). */
   requested: number;
-  /** The model's runtime cap, or null if unknown. */
+  /** The model's capability cap (from `/api/show` model_info). null if unknown. */
   modelCap: number | null;
+  /**
+   * The runner's current KV-cache allocation (from `/api/ps`). Informational
+   * only — does not affect `effective`. Useful for UI hints and diagnostics.
+   * Null when the model is not currently loaded or the provider has no
+   * runtime probe.
+   */
+  runtime: number | null;
   /** Where the modelCap came from, for diagnostics. */
-  source: 'runtime-ps' | 'static-show' | 'cache' | 'unknown';
+  source: 'static-show' | 'runtime-ps' | 'cache' | 'unknown';
 }
 
 interface CacheEntry {
@@ -96,24 +103,75 @@ export function clearCapCache(): void {
 }
 
 /**
+ * Invalidate cached cap entries so the next call to
+ * `resolveEffectiveNumCtx` re-probes the provider.
+ *
+ * Use this when the user changes the model or updates the config in
+ * a way that should re-trigger discovery — switching models,
+ * switching `baseUrl`, or raising `requestedNumCtx` above the
+ * cached cap. Without invalidation, the stale 5-minute cache
+ * continues to report the old cap for the next 5 minutes.
+ *
+ * - If `baseUrl` and `modelName` are both provided, only the one
+ *   matching entry is removed.
+ * - If only `baseUrl` is provided, all entries for that URL are
+ *   removed (e.g. when the user switches Ollama instances).
+ * - If neither is provided, the entire cache is cleared.
+ */
+export function invalidateCapCache(baseUrl?: string, modelName?: string): void {
+  if (baseUrl === undefined && modelName === undefined) {
+    cache.clear();
+    return;
+  }
+  if (modelName === undefined) {
+    // Invalidate every entry for this baseUrl, regardless of model.
+    for (const key of cache.keys()) {
+      if (key.startsWith(`${baseUrl}\0`)) {
+        cache.delete(key);
+      }
+    }
+    return;
+  }
+  cache.delete(cacheKey(baseUrl as string, modelName));
+}
+
+/**
  * Resolve the effective context-window size for a (baseUrl, modelName)
  * pair, given the user's requested numCtx.
+ *
+ * The cap authority is the **static probe** (per-adapter
+ * `getModelContextLimit`, typically backed by Ollama `/api/show`'s
+ * `model_info.<arch>.context_length`). This is the model's
+ * capability — the training-time max context that Ollama will not
+ * exceed when allocating a runner. The user's request is sent to
+ * Ollama as `options.num_ctx` and Ollama's scheduler reloads the
+ * runner with the new size if it differs from the current
+ * allocation.
+ *
+ * The runtime probe (`/api/ps`) is informational: it reports the
+ * runner's *current* KV-cache allocation, which is a transient
+ * state Ollama will change automatically. We still call it (so the
+ * UI can show "(runner at N)" hints) but its value never affects
+ * `effective`.
  *
  * The resolution order is:
  *
  *   1. Cache hit (TTL-bounded).
- *   2. Runtime probe (Ollama `/api/ps`) — authoritative when the
- *      model is currently loaded in a runner.
- *   3. Static probe (per-adapter `getModelContextLimit`, typically
- *      backed by `/api/show`) — falls back when the model is not
- *      loaded or no runtime probe is available.
- *   4. `null` cap (model not probed, no info available). The effective
- *      value is then equal to the requested value.
+ *   2. Static probe (per-adapter `getModelContextLimit`, typically
+ *      backed by `/api/show`) — the model's capability cap.
+ *   3. Runtime probe (Ollama `/api/ps`) — collected for telemetry
+ *      but does NOT affect the cap. Used as a last-resort fallback
+ *      only when the static probe is unavailable.
+ *   4. `null` cap (no probe succeeded). The effective value is then
+ *      equal to the requested value, and Ollama will reject the
+ *      request with 400 if it's beyond the model's real cap.
  *
- * The result is cached so subsequent requests for the same model hit
- * the cache for up to 5 minutes. This is per-(baseUrl, modelName),
- * not per-request, so two tabs sharing a model share the resolved
- * cap.
+ * The cap result is cached so subsequent requests for the same
+ * model hit the cache for up to 5 minutes. This is
+ * per-(baseUrl, modelName), not per-request, so two tabs sharing
+ * a model share the resolved cap. Use `invalidateCapCache` to
+ * force a re-probe (e.g. after the user changes the model or
+ * updates the config).
  */
 export async function resolveEffectiveNumCtx(
   baseUrl: string,
@@ -130,33 +188,42 @@ export async function resolveEffectiveNumCtx(
       effective: cached === null ? requested : Math.min(requested, cached),
       requested,
       modelCap: cached,
+      runtime: null,
       source: 'cache',
     };
   }
 
-  // 2. Runtime probe.
+  // 2. Static probe — the model's capability cap.
   let cap: number | null = null;
   let source: ResolvedNumCtx['source'] = 'unknown';
   try {
-    cap = await fetchLlmRunningModelContextLength(baseUrl, modelName);
+    const modelInfo = await fetchLlmModelInfo(baseUrl, modelName);
+    cap = getLlmModelContextLimit(modelInfo);
     if (cap !== null) {
-      source = 'runtime-ps';
+      source = 'static-show';
     }
   } catch {
-    // Runtime probe is best-effort; fall through to the static probe.
+    // Static probe is best-effort; fall through.
   }
 
-  // 3. Static probe.
-  if (cap === null) {
-    try {
-      const modelInfo = await fetchLlmModelInfo(baseUrl, modelName);
-      cap = getLlmModelContextLimit(modelInfo);
-      if (cap !== null) {
-        source = 'static-show';
-      }
-    } catch {
-      // Static probe is also best-effort; cap stays null.
-    }
+  // 3. Runtime probe — informational only. Run in parallel with the
+  //    static probe would be nicer but the per-request cost is
+  //    negligible (one extra HTTP call) and serial is simpler.
+  let runtime: number | null = null;
+  try {
+    runtime = await fetchLlmRunningModelContextLength(baseUrl, modelName);
+  } catch {
+    // Runtime probe is best-effort.
+  }
+
+  // 3a. Last-resort fallback: if the static probe returned nothing,
+  //     use the runtime probe as the cap. This keeps the legacy
+  //     "runtime as cap" behaviour for the case where /api/show
+  //     doesn't expose a `context_length` (older Ollama, some
+  //     OpenAI-compatible providers).
+  if (cap === null && runtime !== null) {
+    cap = runtime;
+    source = 'runtime-ps';
   }
 
   setCachedCap(baseUrl, modelName, cap, now);
@@ -165,6 +232,7 @@ export async function resolveEffectiveNumCtx(
     effective: cap === null ? requested : Math.min(requested, cap),
     requested,
     modelCap: cap,
+    runtime,
     source,
   };
 }

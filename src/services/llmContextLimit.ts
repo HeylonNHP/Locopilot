@@ -109,18 +109,26 @@ export function parseContextLimitFromText(value: unknown): number | null {
 
 /**
  * Adapter-facing entry point: extract the model context limit from a
- * raw `LlmModelInfo` payload. Tries the structured object walk first
- * (works for any provider that returns the value under a known key in
- * JSON), then falls back to scanning the modelfile/parameters text (an
- * Ollama-specific surface that some OpenAI-compatible providers also
- * emulate).
+ * raw `LlmModelInfo` payload.
+ *
+ * Resolution order:
+ *
+ *   1. Text scan over `info.parameters` and `info.modelfile` for an
+ *      explicit `num_ctx N` or `context_length N`. The Modelfile's
+ *      `PARAMETER num_ctx N` line is the user's intent — for
+ *      RoPE-scaled models this is the *extended* context, which is
+ *      higher than the GGUF training context reported under
+ *      `model_info.<arch>.context_length`. Preferring the text scan
+ *      captures that intent.
+ *   2. Structured object walk over `info` for the standard keys
+ *      (`<arch>.context_length`, `num_ctx`, `context_window`,
+ *      `max_position_embeddings`, `max_sequence_length`,
+ *      `max_context_length`). This is the GGUF training context for
+ *      Ollama, or whatever the provider exposes for OpenAI-compatible.
  */
 export function getModelContextLimitFromInfo(info: LlmModelInfo): number | null {
-  const structuredLimit = findContextLimitInObject(info);
-  if (structuredLimit !== null) {
-    return structuredLimit;
-  }
-
+  // 1. Modelfile / parameters text scan first — captures the user's
+  //    intent for RoPE-scaled and other Modelfile-overridden models.
   for (const text of [info.parameters, info.modelfile]) {
     const parsed = parseContextLimitFromText(text);
     if (parsed !== null) {
@@ -128,7 +136,9 @@ export function getModelContextLimitFromInfo(info: LlmModelInfo): number | null 
     }
   }
 
-  return null;
+  // 2. Structured walk — the GGUF training context or whatever the
+  //    provider advertises. Returns the first match.
+  return findContextLimitInObject(info);
 }
 
 /**

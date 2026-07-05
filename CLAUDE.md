@@ -142,6 +142,13 @@ Feature summary:
   - Document the mapping in both JSDoc on `ChatParams` and in `OPENAI_COMPATIBILITY_MIGRATION.md`.
   - When adding a new provider, implement the same canonical fields so callers stay provider-agnostic.
 
+- **numCtx cap resolution** (`src/services/capResolver.ts`, `src/services/llmContextLimit.ts`):
+  - The user's `requestedNumCtx` is the source of truth. We always send it to the model as `options.num_ctx`. For Ollama, the server's scheduler reloads the runner if the requested size differs from the runner's current KV cache, so a 4096 runner accepts a 1M request by tearing down the 4096 runner and starting a 1M one.
+  - The model cap is discovered from the **static probe** (`/api/show`'s `model_info.<arch>.context_length`, or the Modelfile's `PARAMETER num_ctx N` for RoPE-scaled models). The runtime probe (`/api/ps`) is informational only — it reports the runner's transient state, not the model's ceiling.
+  - `getModelContextLimitFromInfo` tries the Modelfile/parameters text scan FIRST, then falls back to the structured walk. This captures RoPE-scaled Modelfile overrides (e.g. `num_ctx 1048576`) that exceed the GGUF training context.
+  - The cap cache is per-`(baseUrl, modelName)` with a 5-minute TTL. Invalidate it on model change or `requestedNumCtx` change via `invalidateCapCache(baseUrl?, modelName?)`.
+  - The 400-driven discovery path in the chat route no longer writes to `sessions.num_ctx` — that column was a permanent poison pill. `updateSessionNumCtx` is deprecated; the in-memory cache and the SSE `status` event are sufficient.
+
 - **Web search tool** (`web_search`):
 
 - **App Router 404 / `_document` build error** (known Next.js 15.5 upstream bug — see vercel/next.js#90349):

@@ -16,11 +16,7 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 
 import { debugLog } from '../app/lib/debugLogger';
-import {
-  type ChatMessage,
-  type PersistedChatMessage,
-  type SubagentLogMessage,
-} from './llm';
+import { type ChatMessage, type PersistedChatMessage, type SubagentLogMessage } from './llm';
 import { sanitizeChatMessage } from './textUtils';
 
 // ---------------------------------------------------------------------------
@@ -94,9 +90,9 @@ addColumnIfMissing("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAU
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''");
-addColumnIfMissing("ALTER TABLE messages ADD COLUMN created_at DATETIME");
+addColumnIfMissing('ALTER TABLE messages ADD COLUMN created_at DATETIME');
 addColumnIfMissing("ALTER TABLE messages_staging ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''");
-addColumnIfMissing("ALTER TABLE messages_staging ADD COLUMN created_at DATETIME");
+addColumnIfMissing('ALTER TABLE messages_staging ADD COLUMN created_at DATETIME');
 
 // ---------------------------------------------------------------------------
 // Prepared statements (created once, reused on every call)
@@ -234,7 +230,9 @@ export function updateSessionMessages(
     );
     stmtDeleteStaging.run(sessionId);
 
-    const stmtInsertStaging = db.prepare<[number, string, string, string, string, string, string, string, string | null]>(
+    const stmtInsertStaging = db.prepare<
+      [number, string, string, string, string, string, string, string, string | null]
+    >(
       'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     let persistIndex = 0;
@@ -262,7 +260,7 @@ export function updateSessionMessages(
           : JSON.stringify((sanitizedMessage as ChatMessage).images ?? []);
       const toolCallId =
         sanitizedMessage.role === 'tool'
-          ? (sanitizedMessage as ChatMessage).tool_call_id ?? ''
+          ? ((sanitizedMessage as ChatMessage).tool_call_id ?? '')
           : '';
       // Only user-role messages carry a createdAt; assistant/tool/system/subagent_log
       // rows store NULL so they don't display a misleading timestamp in the UI.
@@ -283,7 +281,13 @@ export function updateSessionMessages(
         sessionId,
         isToolMessage: role === 'tool',
         ...(role === 'tool'
-          ? { toolCallIdWritten: toolCallId !== '', note: toolCallId === '' ? 'EMPTY tool_call_id being written for tool message' : 'tool_call_id present' }
+          ? {
+              toolCallIdWritten: toolCallId !== '',
+              note:
+                toolCallId === ''
+                  ? 'EMPTY tool_call_id being written for tool message'
+                  : 'tool_call_id present',
+            }
           : {}),
       });
       if (role === 'tool') {
@@ -291,7 +295,17 @@ export function updateSessionMessages(
         if (toolCallId !== '') persistToolWithCallIdCount++;
       }
 
-      stmtInsertStaging.run(sessionId, role, content, thinking, toolCalls, images, subagentId, toolCallId, createdAt);
+      stmtInsertStaging.run(
+        sessionId,
+        role,
+        content,
+        thinking,
+        toolCalls,
+        images,
+        subagentId,
+        toolCallId,
+        createdAt
+      );
       persistIndex++;
     }
 
@@ -338,8 +352,15 @@ export function updateSessionModel(sessionId: number, model: string): void {
 
 /**
  * Updates the persisted num_ctx (context window size) for an existing session.
- * Used to store the model's actual context limit when discovered from a
- * 400 error response, so future requests use the correct value for compaction.
+ *
+ * @deprecated This function used to be called from the chat route's
+ * 400 catch block to record the runtime-discovered cap, but the
+ * session column became a permanent poison pill (no path could
+ * null it out, so a stray 4096 in an error message would stick
+ * forever). The chat route no longer calls this; the resolver
+ * uses its in-memory 5-minute cache instead. The column is kept
+ * in the schema for backwards compatibility (old session rows
+ * may still have a value) but new writes should be avoided.
  */
 export function updateSessionNumCtx(sessionId: number, numCtx: number): void {
   stmtUpdateSessionNumCtx.run(numCtx, sessionId);

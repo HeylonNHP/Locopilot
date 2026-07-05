@@ -5,7 +5,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import type { CompletionMode, Config, LlmProvider } from '../../../types/chatConfig';
 
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
-import { resolveEffectiveNumCtx } from '../../../services/capResolver';
+import { invalidateCapCache, resolveEffectiveNumCtx } from '../../../services/capResolver';
 import { loadConfig, saveConfig } from '../../../services/configManager';
 
 const KNOWN_TOP_KEYS: Set<string> = new Set([
@@ -206,9 +206,7 @@ function validateConfig(
     if (!isPlainObject(input.webSearch)) {
       return { ok: false, error: "Invalid config: 'webSearch' must be an object" };
     }
-    const wsUnknown = Object.keys(input.webSearch).filter(
-      (k) => !KNOWN_WEB_SEARCH_KEYS.has(k)
-    );
+    const wsUnknown = Object.keys(input.webSearch).filter((k) => !KNOWN_WEB_SEARCH_KEYS.has(k));
     if (wsUnknown.length > 0) {
       return {
         ok: false,
@@ -261,9 +259,7 @@ function validateConfig(
     if (!isPlainObject(input.skills)) {
       return { ok: false, error: "Invalid config: 'skills' must be an object" };
     }
-    const skillsUnknown = Object.keys(input.skills).filter(
-      (k) => !KNOWN_SKILLS_KEYS.has(k)
-    );
+    const skillsUnknown = Object.keys(input.skills).filter((k) => !KNOWN_SKILLS_KEYS.has(k));
     if (skillsUnknown.length > 0) {
       return {
         ok: false,
@@ -422,6 +418,31 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     // migrates cleanly to the new key on the next save.
     if (updatedConfig.model !== undefined) {
       delete updatedConfig.lastModel;
+    }
+
+    // Invalidate the cap-resolver cache for any field that affects
+    // which model we're talking to or how big a context we're asking
+    // for. Without this, a stale entry from a previous model/runner
+    // state would persist for up to 5 minutes after the user updates
+    // the config.
+    const baseUrlChanged = body.baseUrl !== undefined && body.baseUrl !== currentConfig?.baseUrl;
+    const modelChanged = body.model !== undefined && body.model !== currentConfig?.model;
+    if (baseUrlChanged || modelChanged) {
+      // Invalidate both the old and new (baseUrl, model) pairs to
+      // be safe in case the user swapped them in either order.
+      invalidateCapCache(updatedConfig.baseUrl, updatedConfig.model);
+      if (currentConfig?.baseUrl && currentConfig?.model) {
+        invalidateCapCache(currentConfig.baseUrl, currentConfig.model);
+      }
+    } else if (
+      body.numCtx !== undefined &&
+      updatedConfig.numCtx !== currentConfig?.numCtx &&
+      updatedConfig.baseUrl &&
+      updatedConfig.model
+    ) {
+      // numCtx raised above the cached cap strongly suggests the
+      // user reconfigured the runner / Modelfile. Re-probe.
+      invalidateCapCache(updatedConfig.baseUrl, updatedConfig.model);
     }
 
     await saveConfig(updatedConfig);

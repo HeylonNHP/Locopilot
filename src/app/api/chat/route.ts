@@ -40,7 +40,7 @@ import { getMCPServerConfig, getMCPToolCount, getMergedMCPToolDefinitions, getMe
 import { createSystemPrompt } from '@/services/chatSession';
 import { compactHistory } from '@/services/compact';
 import { loadConfig } from '@/services/configManager';
-import { createSession, getSessionName, renameSession, sessionExists, updateSessionNumCtx } from '@/services/history';
+import { createSession, getSessionName, renameSession, sessionExists } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { checkCompleteness } from '@/services/promptLoop';
 import { discoverSkills, getAllowedToolsFromSkills, getEnabledSkills, loadSkillState } from '@/services/skillManager';
@@ -1790,9 +1790,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                         });
                     } catch {
                         // Controller may already be closed – ignore.
-                    }
-                    if (activeSessionId !== undefined) {
-                        try { updateSessionNumCtx(activeSessionId, discoveredLimit); } catch { /* best-effort */ }
                     }
                 }
 
