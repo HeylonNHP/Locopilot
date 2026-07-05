@@ -19,7 +19,7 @@ When adding a new entry:
 ---
 
 - 2026-07-05: Fixed model cap discovery to respect user's numCtx (Ollama auto-resize)
-  - Files: `src/services/capResolver.ts`, `src/services/llmContextLimit.ts`, `src/app/api/chat/route.ts`, `src/app/api/config/route.ts`, `src/app/hooks/useDataLoaders.ts`, `src/services/history.ts`, `src/components/StatusBar/StatusBar.tsx`, `src/components/StatusBar/StatusBar.scss`, `scripts/test-numctx.mjs` (new), `scripts/verify-numctx.mjs`, `package.json`, `CLAUDE.md`
+  - Files: `src/services/capResolver.ts`, `src/services/llmContextLimit.ts`, `src/app/api/chat/route.ts`, `src/app/api/config/route.ts`, `src/app/hooks/useDataLoaders.ts`, `src/services/history.ts`, `src/components/StatusBar/StatusBar.tsx`, `src/components/StatusBar/StatusBar.scss`, `scripts/test-numctx.mjs` (new), `scripts/verify-numctx.mjs`, `package.json`, `CLAUDE.md`, `docs/CHANGELOG.md`
   - Summary: Three changes that together fix a class of bug where the user's `requestedNumCtx` was silently clamped to a much smaller value.
     (1) **Static probe is now authoritative** for the model cap. `getModelContextLimitFromInfo` scans `info.parameters` / `info.modelfile` for `num_ctx N` FIRST (capturing RoPE-scaled Modelfile overrides), then falls back to the structured walk over `model_info.<arch>.context_length`. The runtime probe (`/api/ps`) is now telemetry-only — the runner's transient KV-cache state is no longer treated as the cap. The cap resolver runs the static probe first; the runtime probe only matters when the static probe is unavailable.
     (2) **Ollama auto-resize**: Ollama's scheduler evicts the old runner and starts a new one with the requested `num_ctx` when a chat request asks for a larger context than the runner is currently allocated. So Locopilot no longer needs to "warn the user to restart Ollama" — sending the user's `requestedNumCtx` in the request body is sufficient. The user's 1M request is honored (clamped to the model's true max, e.g. 262144 for a Qwen3 35B base GGUF) without any manual `--num-ctx` flag.
@@ -27,12 +27,6 @@ When adding a new entry:
   - Also: exposed `invalidateCapCache(baseUrl?, modelName?)` for explicit cache eviction on model change, baseUrl change, or `numCtx` change in Settings. Added a `(model max: N)` label in the status bar when the resolved cap is below the user's requested value. Added `tsx` as a devDependency to support the new `scripts/test-numctx.mjs` unit-test harness (35 tests, no network, no live server).
   - Intent: Make the user's `numCtx` setting the source of truth for the chat request. Today, the cap resolver trusts the runtime probe and clamps the user's request down to whatever `/api/ps` reports — which is Ollama's default 4096 for a default-loaded 35B model, not the model's actual capability. After this change, the cap is the GGUF training context (or the Modelfile's RoPE override), and the user's request is sent verbatim.
   - Lesson: `capResolver.ts` had the static and runtime probes in the wrong order for Ollama. The runtime probe is a useful UI hint (it tells us the runner's current state) but it's not the cap. The right model is "max of probes, where the static probe is the upper bound and the runtime probe is the lower bound."
-
-  optional `Intent:` and `Lesson:` bullets.
-
-- Don't include the diff itself — that's what `git log -p` is for.
-
----
 
 - 2026-06-24: Corrected App Router error-handling conventions (pre-existing Next.js 15.5 build bug remains)
   - Files: `src/app/not-found.tsx` (new), `src/app/error.tsx`, `.github/copilot-instructions.md`
