@@ -1,7 +1,3 @@
-import type { SessionTokenStats } from '@/services/history';
-
-import type { ChatMessage } from '../services/llm';
-
 export type CompletionMode = 'normal' | 'prompt-loop';
 export type LlmProvider = 'ollama' | 'openai-compatible';
 
@@ -70,28 +66,4 @@ export interface Config {
   completionMode?: CompletionMode;
   /** Max prompt-loop iterations before giving up; 0 = unlimited. */
   maxPromptLoopIterations?: number;
-}
-
-export interface ChatContext {
-  baseUrl: string;
-  currentModel: string;
-  numCtx: number;
-  messages: ChatMessage[];
-  currentSessionId: number;
-  config: Config;
-  systemPrompt: string;
-  thinkingSupported?: boolean;
-  saveConfig: (config: Config) => Promise<void>;
-  updateNumCtx: (numCtx: number) => void;
-  saveSession: (tokenStats?: SessionTokenStats | null) => void;
-  refreshTokenStatus: (
-    phase: string,
-    tokensUsedOverride?: number,
-    tokenSource?: 'estimated' | 'ollama',
-    modelOverride?: string
-  ) => void;
-  updateModel: (model: string) => Promise<void>;
-  updateSession: (sessionId: number, messages: ChatMessage[], sessionNamed: boolean) => void;
-  /** Optional override for message input (web API injects this) */
-  promptProvider?: (prompt: string) => Promise<string>;
 }

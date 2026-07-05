@@ -76,13 +76,3 @@ export interface SseEventPayloadMap {
   write_error: { message: string };
   clear_assistant: object;
 }
-
-export type SseEventName = keyof SseEventPayloadMap;
-
-export type SseEvent<N extends SseEventName = SseEventName> = {
-  event: N;
-  data: SseEventPayloadMap[N];
-};
-
-/** Union of all possible chat SSE frames. */
-export type AnySseEvent = SseEvent<SseEventName>;

@@ -83,14 +83,6 @@ export interface RequestContext {
   workingDirectoryScope?: WorkingDirectoryScope;
 }
 
-export interface ToolWebSearchConfig {
-  maxQueries: number;
-  resultsPerQuery: number;
-  perPageCharLimit: number;
-  baseUrl: string;
-  compactionModel: string;
-}
-
 export interface SubAgentConfig {
   baseUrl: string;
   model: string;
