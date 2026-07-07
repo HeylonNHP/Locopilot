@@ -1,6 +1,8 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { writeFile } from 'node:fs/promises';
 
+import { debugLog } from '@/app/lib/debugLogger';
+
 import type {
   ChatApiResponse,
   ChatMessage,
@@ -12,7 +14,6 @@ import type {
   ToolCall,
 } from './llmAdapter';
 
-import { debugLog } from '../../app/lib/debugLogger';
 import { getModelContextLimitFromInfo } from '../llmContextLimit';
 
 // ── Auth support ──────────────────────────────────────────────────────────────
@@ -41,9 +42,19 @@ export function clearApiKey(): void {
 
 // ── OpenAI API types (concrete, matching the official spec) ───────────────────
 
+/** Content part types for OpenAI's multi-part user messages (vision). */
+type OpenAITextContentPart = { type: 'text'; text: string };
+type OpenAIImageContentPart = {
+  type: 'image_url';
+  image_url: { url: string; detail?: 'auto' | 'low' | 'high' };
+};
+type OpenAIContentPart = OpenAITextContentPart | OpenAIImageContentPart;
+
 /** A message as sent to the OpenAI Chat Completions API. */
 type OpenAIMessage =
-  | { role: 'system' | 'user' | 'assistant'; content: string }
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string | OpenAIContentPart[] }
+  | { role: 'assistant'; content: string | null }
   | { role: 'tool'; content: string; tool_call_id: string }
   | {
       role: 'assistant';
@@ -203,6 +214,50 @@ function stripImagesFromMessages(messages: ChatMessage[]): ChatMessage[] {
   });
 }
 
+/**
+ * Detect the MIME type of a base64-encoded image from its magic bytes.
+ * Falls back to image/jpeg when the format cannot be determined.
+ */
+function detectImageMimeTypeFromBase64(base64: string): string {
+  try {
+    const buf = Buffer.from(base64.slice(0, 8), 'base64');
+    if (buf.length < 4) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
+      return 'image/png';
+    if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46)
+      return 'image/webp';
+    if (buf[0] === 0x42 && buf[1] === 0x4d) return 'image/bmp';
+  } catch {
+    return 'image/jpeg';
+  }
+  return 'image/jpeg';
+}
+
+/**
+ * Build the OpenAI content payload for a user message. Text stays as a
+ * string when there are no images; otherwise it is emitted as a multi-part
+ * array containing the text and one `image_url` part per attached image.
+ */
+function buildOpenAIUserContent(message: ChatMessage): string | OpenAIContentPart[] {
+  if (!message.images || message.images.length === 0) {
+    return message.content;
+  }
+
+  const parts: OpenAIContentPart[] = [{ type: 'text', text: message.content }];
+
+  for (const imageBase64 of message.images) {
+    const mimeType = detectImageMimeTypeFromBase64(imageBase64);
+    parts.push({
+      type: 'image_url',
+      image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+    });
+  }
+
+  return parts;
+}
+
 function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
   const result: OpenAIMessage[] = [];
 
@@ -310,8 +365,12 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
 
     // OpenAI requires content: null for assistant messages that only have tool_calls.
     const hasToolCalls = !!message.tool_calls && message.tool_calls.length > 0;
-    const content: string | null =
-      hasToolCalls && !message.content?.trim() ? null : message.content;
+    const content: string | null | OpenAIContentPart[] =
+      hasToolCalls && !message.content?.trim()
+        ? null
+        : message.role === 'user' && message.images && message.images.length > 0
+          ? buildOpenAIUserContent(message)
+          : message.content;
 
     const base: OpenAIMessage = {
       role: message.role,
@@ -354,7 +413,7 @@ function toOpenAIMessages(messages: ChatMessage[]): OpenAIMessage[] {
             name: toolCall.function.name,
             arguments: JSON.stringify(toolCall.function.arguments),
           },
-        }),
+        })
       );
     }
 
@@ -548,19 +607,15 @@ function toChatApiResponse(response: OpenAIChatCompletionResponse): ChatApiRespo
     },
   }));
 
-  const result: ChatApiResponse = {
+  return {
     model: response.model,
-    created_at: new Date(
-      (response.created ?? Math.floor(Date.now() / 1000)) * 1000,
-    ).toISOString(),
+    created_at: new Date((response.created ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
     done: true,
     ...(choice?.finish_reason ? { done_reason: choice.finish_reason } : {}),
     message: {
       role: 'assistant',
       content,
-      ...(reasoningContent
-        ? { thinking: reasoningContent }
-        : {}),
+      ...(reasoningContent ? { thinking: reasoningContent } : {}),
       ...(toolCalls && toolCalls.length > 0
         ? { tool_calls: toolCalls as unknown as [ToolCall, ...ToolCall[]] }
         : {}),
@@ -572,15 +627,13 @@ function toChatApiResponse(response: OpenAIChatCompletionResponse): ChatApiRespo
       ? {}
       : { eval_count: response.usage.completion_tokens }),
   };
-
-  return result;
 }
 
 // ── API methods ──────────────────────────────────────────────────────────────
 
 async function fetchOpenAICompatibleModels(baseUrl: string): Promise<LlmModel[]> {
   const response = await client.get<OpenAIListModelsResponse>(
-    `${baseUrl.replace(/\/+$/, '')}/v1/models`,
+    `${baseUrl.replace(/\/+$/, '')}/v1/models`
   );
   return (response.data.data ?? []).map((model) => {
     const { id, object: _object, created: _created, owned_by, ...extra } = model;
@@ -597,7 +650,7 @@ async function fetchOpenAICompatibleModels(baseUrl: string): Promise<LlmModel[]>
 
 async function fetchOpenAICompatibleModelInfo(
   baseUrl: string,
-  modelName: string,
+  modelName: string
 ): Promise<LlmModelInfo> {
   const models = await fetchOpenAICompatibleModels(baseUrl);
   const foundModel = models.find((model) => model.name === modelName);
@@ -606,7 +659,7 @@ async function fetchOpenAICompatibleModelInfo(
       model: modelName,
       ...(foundModel
         ? Object.fromEntries(
-            Object.entries(foundModel).filter(([k]) => k !== 'name' && k !== 'model'),
+            Object.entries(foundModel).filter(([k]) => k !== 'name' && k !== 'model')
           )
         : {}),
     },
@@ -631,7 +684,7 @@ async function sendOpenAICompatibleChat(
   params: ChatParams,
   onChunk?: (chunk: ChatApiResponse) => void,
   timeoutMs?: number,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<ChatApiResponse> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
 
@@ -674,7 +727,7 @@ async function sendOpenAICompatibleChat(
   const response = await client.post<OpenAIChatCompletionResponse>(
     `${normalizedBaseUrl}/v1/chat/completions`,
     buildChatPayload(params, false),
-    config,
+    config
   );
 
   return toChatApiResponse(response.data);
@@ -682,7 +735,7 @@ async function sendOpenAICompatibleChat(
 
 async function* sendOpenAICompatibleChatStream(
   baseUrl: string,
-  params: StreamChatParams,
+  params: StreamChatParams
 ): AsyncGenerator<ChatApiResponse> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
 
@@ -699,7 +752,7 @@ async function* sendOpenAICompatibleChatStream(
     response = await client.post<NodeJS.ReadableStream>(
       `${normalizedBaseUrl}/v1/chat/completions`,
       payload,
-      config,
+      config
     );
   } catch (err) {
     // On 400, try to read the error stream to surface the real API message
@@ -771,8 +824,8 @@ async function* sendOpenAICompatibleChatStream(
               response: { message: apiMessage || null },
             },
             null,
-            2,
-          ),
+            2
+          )
         );
         console.error('Debug data saved to:', 'debug_400_payload.json');
       } catch {
@@ -784,19 +837,18 @@ async function* sendOpenAICompatibleChatStream(
   }
 
   // Accumulate tool call fragments across chunks by index.
-  const toolCallAccumulator = new Map<
-    number,
-    { id?: string; name?: string; arguments: string }
-  >();
+  const toolCallAccumulator = new Map<number, { id?: string; name?: string; arguments: string }>();
 
   // OpenAI sends usage data on a trailing chunk with empty choices.
   // We skip yielding that chunk, but we stash its usage so the final
   // content chunk can carry the real token counts.
-  let pendingUsage: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  } | undefined;
+  let pendingUsage:
+    | {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      }
+    | undefined;
 
   // The done chunk is yielded only after we have processed any trailing
   // usage-only chunk, so the consumer sees authoritative token counts on
@@ -892,7 +944,7 @@ async function* sendOpenAICompatibleChatStream(
         const chunk: ChatApiResponse = {
           model: parsed.model,
           created_at: new Date(
-            (parsed.created ?? Math.floor(Date.now() / 1000)) * 1000,
+            (parsed.created ?? Math.floor(Date.now() / 1000)) * 1000
           ).toISOString(),
           done: isDone,
           ...(doneReason ? { done_reason: doneReason } : {}),
@@ -943,9 +995,7 @@ async function getOpenAICompatibleApiErrorMessage(error: unknown): Promise<strin
     const data = error.response?.data;
 
     if (typeof data === 'string' && data.trim()) {
-      return status
-        ? `OpenAI-compatible API error (${status}): ${data.trim()}`
-        : data.trim();
+      return status ? `OpenAI-compatible API error (${status}): ${data.trim()}` : data.trim();
     }
 
     // Try to parse as the standard OpenAI error response shape.
@@ -987,9 +1037,7 @@ async function getOpenAICompatibleApiErrorMessage(error: unknown): Promise<strin
       }
     }
 
-    return status
-      ? `OpenAI-compatible API error (${status}): ${error.message}`
-      : error.message;
+    return status ? `OpenAI-compatible API error (${status}): ${error.message}` : error.message;
   }
 
   if (error instanceof Error) return error.message;
@@ -1007,10 +1055,7 @@ export const openaiCompatibleAdapter: LlmAdapter = {
   sendChatStream: sendOpenAICompatibleChatStream,
   getApiErrorMessage: getOpenAICompatibleApiErrorMessage,
   getTurnStats: (response: ChatApiResponse) => {
-    if (
-      !Number.isFinite(response.prompt_eval_count) ||
-      !Number.isFinite(response.eval_count)
-    ) {
+    if (!Number.isFinite(response.prompt_eval_count) || !Number.isFinite(response.eval_count)) {
       return null;
     }
     return {
