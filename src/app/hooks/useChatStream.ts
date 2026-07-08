@@ -275,6 +275,16 @@ export function useChatStream(
           if (data.tps !== undefined) {
             dispatch({ type: 'SET_CURRENT_TPS', tps: data.tps });
           }
+          // The server emits a `vision_unsupported` status phase when
+          // a 400 indicates the active model rejected image input. The
+          // server has already folded the discovery into its
+          // per-(baseUrl, modelName) vision cache, so the client only
+          // needs to update its own display state for the warning UI.
+          // Any other phase is left alone — visionState is initialized
+          // to 'unknown' and updated only on this signal.
+          if (data.phase === 'vision_unsupported') {
+            dispatch({ type: 'SET_VISION_STATE', state: 'unsupported' });
+          }
           break;
         }
 

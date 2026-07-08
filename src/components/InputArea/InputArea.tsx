@@ -2,6 +2,8 @@
 
 import ChatInput, { type Attachment } from '@/components/ChatInput';
 
+import { useChat } from '@/app/lib/chatStore';
+
 interface InputAreaProps {
   isStreaming: boolean;
   isCompacting: boolean;
@@ -25,6 +27,15 @@ export function InputArea({
   onStop,
   onSend,
 }: InputAreaProps) {
+  // visionState is read from the chat store so the ChatInput
+  // composer can render the inline warning when the active model
+  // is known to reject image input. See
+  // `src/services/visionCache.ts` and the `vision_unsupported`
+  // SSE event for how this state transitions.
+  const { state } = useChat();
+  const visionState = state.visionState;
+  const provider = state.provider;
+
   if (isStreaming) {
     const phase =
       compactingPhases.length > 0 ? compactingPhases.at(-1) : 'Streaming...';
@@ -58,5 +69,5 @@ export function InputArea({
     );
   }
 
-  return <ChatInput onSend={onSend} disabled={false} />;
+  return <ChatInput onSend={onSend} disabled={false} visionState={visionState} provider={provider} />;
 }

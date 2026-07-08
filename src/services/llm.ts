@@ -15,6 +15,7 @@ import {
   openaiCompatibleAdapter,
   setApiKey as setOpenAIApiKey,
 } from './adapters/openaiCompatibleAdapter';
+import { resolveVisionSupport, type VisionSupportState } from './visionCache';
 
 let activeAdapter: LlmAdapter = ollamaAdapter;
 
@@ -71,11 +72,51 @@ export function getLlmModelContextLimit(modelInfo: LlmModelInfo): number | null 
 }
 
 export function getLlmModelVisionSupport(info: LlmModelInfo): boolean {
+  // Defensive: a null/undefined info payload should not throw, even
+  // though the contract says `LlmModelInfo`. The legacy sync
+  // heuristic is also called from the /api/models projection in a
+  // context where the info is best-effort.
+  if (!info || typeof info !== 'object') {
+    return false;
+  }
   if (Array.isArray(info.capabilities)) {
     const capabilities = new Set(info.capabilities.map(String));
     return capabilities.has('vision') || capabilities.has('multimodal') || capabilities.has('image');
   }
   return false;
+}
+
+/**
+ * Async, cache-aware vision-support resolution. The chat route uses
+ * this in place of the sync `getLlmModelVisionSupport(info)` so the
+ * `openai-compatible` provider — whose `/v1/models` has no standard
+ * `capabilities` field — stops silently stripping image attachments
+ * for the common vision-capable case. See `src/services/visionCache.ts`
+ * for the resolution order (cache → probe → provider default).
+ *
+ * The injected probe is a thin wrapper around the existing
+ * `info.capabilities` heuristic; for openai-compatible the probe
+ * returns `false` (no capabilities), so the resolver falls through
+ * to the optimistic default. For ollama the probe reads
+ * `info.capabilities` directly and the resolver caches its result.
+ *
+ * The `provider` argument comes from the active `Config.provider`
+ * and selects the optimistic default (`'supported'` for
+ * openai-compatible, `'unsupported'` for ollama).
+ */
+export async function getLlmModelVisionSupportAsync(
+  baseUrl: string,
+  modelName: string,
+  provider: LlmProvider,
+  info: LlmModelInfo
+): Promise<{ visionSupported: boolean; state: VisionSupportState }> {
+  const resolved = await resolveVisionSupport(baseUrl, modelName, provider, () =>
+    getLlmModelVisionSupport(info)
+  );
+  return {
+    visionSupported: resolved.state === 'supported',
+    state: resolved.state,
+  };
 }
 
 export function sendLlmChat(
@@ -126,3 +167,17 @@ export {
   type ToolCall,
   type ToolDefinition,
 } from './adapters/llmAdapter';
+// Re-export the vision-cache surface and the 400-message parser so
+// callers can import the full vision-capability stack from a single
+// entry point (mirrors the `capResolver` + `llmContextLimit` pattern
+// that the chat route uses). The actual implementations live in
+// `visionCache.ts` and `llmContextLimit.ts`.
+export {
+  clearVisionCache,
+  invalidateVisionCache,
+  recordDiscoveredNonVision,
+  resolveVisionSupport,
+  type ResolvedVisionSupport,
+  type VisionSupportState,
+} from './visionCache';
+export { parseVisionUnsupportedFromError } from './llmContextLimit';

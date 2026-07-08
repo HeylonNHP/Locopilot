@@ -3,6 +3,7 @@
 import React, { createContext, type ReactNode, useContext, useReducer } from 'react';
 
 import type { ToolCall } from '@/services/llm';
+import type { VisionSupportState } from '@/services/visionCache';
 import type { ToolCallArguments } from '@/tools/tools';
 import type { CompletionMode } from '@/types/chatConfig';
 
@@ -125,6 +126,16 @@ interface ChatState {
    */
   requestedNumCtx: number;
   /**
+   * The active LLM provider — `'ollama'` (default) or
+   * `'openai-compatible'`. Loaded from `config.json` on mount via
+   * `useDataLoaders.loadConfig`. The ChatInput uses this to decide
+   * whether to render the "vision support unconfirmed" hint for
+   * openai-compatible providers (whose `/v1/models` endpoint has
+   * no standard `capabilities` field, so the optimistic default in
+   * `visionCache.ts` carries more weight there).
+   */
+  provider: 'ollama' | 'openai-compatible';
+  /**
    * The effective context-window size — the value the server actually
    * sent to the LLM. `null` until the first `status` or `done` event
    * arrives; thereafter it tracks the server's most recent reported
@@ -168,6 +179,25 @@ interface ChatState {
    * for the full description of the value space.
    */
   lastDoneReason?: DoneReason | undefined;
+  /**
+   * The active model's vision (image-input) support, as known to the
+   * server. Mirrors the same field on the SessionState but is
+   * deliberately chat-scoped (not per-session) so the model selector
+   * can drive the warning UI regardless of which session is active.
+   *
+   * - `'unknown'` is the initial state before the first chat turn;
+   *   the ChatInput renders a softer "unconfirmed" hint for
+   *   openai-compatible providers in this state.
+   * - `'supported'` means the cache is confident images will reach
+   *   the model (openai-compatible optimistic default, ollama
+   *   `/api/show` with `capabilities: ["vision"]`, or a 400-driven
+   *   discovery that the model accepts images — though in practice
+   *   the cache only ever records `'unsupported'` from 400s).
+   * - `'unsupported'` means the model will not accept image input;
+   *   the ChatInput renders an inline warning so the user knows
+   *   their attached image will be dropped.
+   */
+  visionState: VisionSupportState;
   tokenStats: {
     promptEvalCount: number;
     evalCount: number;
@@ -240,7 +270,8 @@ export type ChatAction =
   | { type: 'STOP_STREAMING'; sessionId: number }
   | { type: 'SAVE_INPUT_DRAFT'; draft: string }
   | { type: 'SET_HISTORY_INDEX'; index: number | null }
-  | { type: 'CLEAR_HISTORY_NAVIGATION' };
+  | { type: 'CLEAR_HISTORY_NAVIGATION' }
+  | { type: 'SET_VISION_STATE'; state: VisionSupportState };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -274,6 +305,15 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
     case 'CLEAR_HISTORY_NAVIGATION': {
       return { ...state, inputDraft: '', historyIndex: null };
+    }
+    case 'SET_VISION_STATE': {
+      // The vision state is chat-scoped, not session-scoped: the
+      // active model determines whether image attachments will be
+      // stripped, and that does not change when the user switches
+      // sessions. The SSE `vision_unsupported` event (sent from the
+      // server when a 400 indicates the model rejected an image) and
+      // the optimistic default at app start both flow through here.
+      return { ...state, visionState: action.state };
     }
     case 'ADD_MESSAGE': {
       if (action.message.role === 'user') {
@@ -813,6 +853,7 @@ const initialState: ChatState = {
   model: '',
   models: [],
   baseUrl: 'http://localhost:11434',
+  provider: 'ollama',
   requestedNumCtx: DEFAULT_NUM_CTX,
   effectiveNumCtx: null,
   error: null,
@@ -847,6 +888,11 @@ const initialState: ChatState = {
   streamingSessions: new Set<number>(),
   inputDraft: '',
   historyIndex: null,
+  // Initial value is 'unknown' so the ChatInput renders the
+  // "unconfirmed" hint for openai-compatible providers before the
+  // first chat turn reports the resolved state. See the field's
+  // JSDoc above for the full state machine.
+  visionState: 'unknown',
 };
 
 export function selectUserMessages(state: ChatState): ChatMessage[] {

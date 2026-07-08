@@ -308,3 +308,29 @@
     }
   }
 }
+
+/* Vision-support inline warnings.
+   The "unsupported" warning is amber-toned; the "unknown" hint is
+   muted-neutral so it doesn't shout at the user when most cases
+   resolve to "supported" on the first try. */
+.chat-input-vision-warn {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255, 184, 0, 0.12);
+  border: 1px solid rgba(255, 184, 0, 0.35);
+  color: #b87900;
+  margin-top: 6px;
+}
+
+.chat-input-vision-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(120, 120, 120, 0.08);
+  border: 1px solid rgba(120, 120, 120, 0.2);
+  color: #666;
+  margin-top: 6px;
+}

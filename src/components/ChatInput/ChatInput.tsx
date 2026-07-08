@@ -3,6 +3,8 @@ import Image from 'next/image';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useInputHistory } from '@/app/hooks/useInputHistory';
+import type { LlmProvider } from '@/types/chatConfig';
+import type { VisionSupportState } from '@/services/visionCache';
 
 import './ChatInput.scss';
 
@@ -120,6 +122,23 @@ function readFileAsBase64(file: File): Promise<string> {
 interface Props {
   onSend: (message: string, attachments: Attachment[]) => void;
   disabled?: boolean;
+  /**
+   * The active model's vision (image-input) support, as known to
+   * the server's `visionCache`. Used to render an inline warning
+   * when the user attaches an image to a model that cannot accept
+   * one. See `src/services/visionCache.ts` for the resolution
+   * order; the `vision_unsupported` SSE event in
+   * `useChatStream.ts` updates this state on a 400.
+   */
+  visionState?: VisionSupportState;
+  /**
+   * The active provider, used to decide whether to render the
+   * "unconfirmed" hint in the `unknown` case. OpenAI-compatible
+   * gets the hint; Ollama doesn't (because Ollama's `/api/show`
+   * already reports capabilities, so `unknown` is unreachable in
+   * practice there).
+   */
+  provider?: LlmProvider;
 }
 
 const MIN_TEXTAREA_HEIGHT = 44;
@@ -213,7 +232,7 @@ function extractPaths(e: React.DragEvent): string[] {
   return paths;
 }
 
-export default function ChatInput({ onSend, disabled }: Props) {
+export default function ChatInput({ onSend, disabled, visionState, provider }: Props) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -702,6 +721,41 @@ export default function ChatInput({ onSend, disabled }: Props) {
             })}
           </div>
         )}
+
+        {/*
+          Vision-support inline warning. Rendered only when the user
+          has actually attached at least one image, so the warning
+          doesn't appear for text-only messages. Two states:
+
+          - `visionState === 'unsupported'`: hard warning. The
+            server's vision cache is confident the model will not
+            accept the image; the next chat turn will strip it.
+
+          - `visionState === 'unknown'` + `provider === 'openai-compatible'`:
+            soft hint. The optimistic default has not yet been
+            resolved for this model and the first request may fail.
+            Ollama is excluded from the soft hint because its
+            `/api/show` always reports capabilities, so an
+            `unknown` state there is unexpected.
+
+          The attach control stays enabled in both cases — the
+          warning is informational, not a block.
+        */}
+        {attachments.some((att) => att.type === 'image') &&
+          visionState === 'unsupported' && (
+            <div className="chat-input-vision-warn" role="status">
+              ⚠ This model does not support image input. The image
+              will be sent as a text description.
+            </div>
+          )}
+        {attachments.some((att) => att.type === 'image') &&
+          visionState === 'unknown' &&
+          provider === 'openai-compatible' && (
+            <div className="chat-input-vision-hint" role="status">
+              ℹ Vision support unconfirmed for this model — the first
+              request may fail.
+            </div>
+          )}
 
         <div className="chat-input-textarea-wrap">
           <textarea

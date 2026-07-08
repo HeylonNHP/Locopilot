@@ -7,6 +7,7 @@ import path from 'node:path';
 import type { Config } from '../../../types/chatConfig';
 
 import { configureLlmAdapterAndAuth, fetchLlmModelInfo, fetchLlmModels } from '../../../services/llm';
+import { resolveVisionSupport } from '../../../services/visionCache';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 
@@ -33,22 +34,54 @@ export async function GET(): Promise<NextResponse> {
     configureLlmAdapterAndAuth(config.provider, config.apiKey);
 
     const models = await fetchLlmModels(config.baseUrl);
+    const provider = config.provider ?? 'ollama';
     const modelsWithCapabilities = await Promise.all(
       models.map(async (model) => {
+        // Start with the adapter's own capabilities (Ollama's /api/show
+        // populates this; OpenAI-compatible leaves it empty).
+        const caps = new Set<string>();
         try {
           const modelInfo = await fetchLlmModelInfo(config.baseUrl, model.name);
-          return {
-            ...model,
-            capabilities: Array.isArray(modelInfo.capabilities)
-              ? modelInfo.capabilities.map(String)
-              : [],
-          };
+          if (Array.isArray(modelInfo.capabilities)) {
+            for (const cap of modelInfo.capabilities) {
+              caps.add(String(cap));
+            }
+          }
         } catch {
-          return {
-            ...model,
-            capabilities: [],
-          };
+          // probe failure — fall through to the vision cache check below
         }
+        // Merge in the vision-cache state. The vision cache is the
+        // single backend source of truth for image-input support and
+        // also folds in 400-driven discoveries, so it is authoritative
+        // over the adapter's own probe when the two disagree (e.g. an
+        // OpenAI-compatible endpoint whose provider had no
+        // `capabilities` field but was found to reject image input).
+        try {
+          const vision = await resolveVisionSupport(config.baseUrl, model.name, provider);
+          if (vision.state === 'unsupported') {
+            caps.delete('vision');
+            caps.delete('multimodal');
+            caps.delete('image');
+          } else if (
+            vision.state === 'supported' &&
+            !caps.has('vision') &&
+            !caps.has('multimodal') &&
+            !caps.has('image')
+          ) {
+            // Optimistic default for openai-compatible: surface the
+            // assumption as a Vision badge so the user sees the
+            // predicted capability in the model selector without
+            // waiting for a 400. `getCapabilityBadges` already
+            // maps `'multimodal'` → `'Vision'`.
+            caps.add('multimodal');
+          }
+        } catch {
+          // vision-cache failure is non-fatal
+        }
+        return {
+          ...model,
+          capabilities: [...caps],
+        };
       })
     );
 

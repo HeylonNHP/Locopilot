@@ -164,6 +164,7 @@ export function useDataLoaders(refs: StableRefs) {
           type: 'SET_CONFIG',
           config: {
             baseUrl: config.baseUrl ?? state.baseUrl,
+            provider: config.provider ?? state.provider,
             requestedNumCtx: config.numCtx ?? state.requestedNumCtx,
             model: config.model || config.lastModel || refs.modelRef.current,
             yolo: config.yolo ?? state.yolo,

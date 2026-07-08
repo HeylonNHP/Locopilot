@@ -62,8 +62,7 @@ export interface SseEventPayloadMap {
      * resolved cap (probes failed and no 400 has been observed).
      */
     modelContextLimit?: number | null;
-  };
-  compact_progress: { message: string };
+  };  compact_progress: { message: string };
   compact: { messages: ChatMessage[]; stats: CompactStats };
   done: {
     content: string;

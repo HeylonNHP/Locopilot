@@ -7,6 +7,7 @@ import type { CompletionMode, Config, LlmProvider } from '../../../types/chatCon
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
 import { invalidateCapCache, resolveEffectiveNumCtx } from '../../../services/capResolver';
 import { loadConfig, saveConfig } from '../../../services/configManager';
+import { invalidateVisionCache } from '../../../services/visionCache';
 
 const KNOWN_TOP_KEYS: Set<string> = new Set([
   'provider',
@@ -433,6 +434,15 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       invalidateCapCache(updatedConfig.baseUrl, updatedConfig.model);
       if (currentConfig?.baseUrl && currentConfig?.model) {
         invalidateCapCache(currentConfig.baseUrl, currentConfig.model);
+      }
+      // Mirror the same invalidation on the vision-support cache
+      // (src/services/visionCache.ts). Vision support is keyed on
+      // (baseUrl, modelName) for the same multi-tab reason as the
+      // cap cache, and a model/baseUrl change should re-resolve
+      // optimistic defaults on the next chat turn.
+      invalidateVisionCache(updatedConfig.baseUrl, updatedConfig.model);
+      if (currentConfig?.baseUrl && currentConfig?.model) {
+        invalidateVisionCache(currentConfig.baseUrl, currentConfig.model);
       }
     } else if (
       body.numCtx !== undefined &&

@@ -149,6 +149,14 @@ Feature summary:
   - The cap cache is per-`(baseUrl, modelName)` with a 5-minute TTL. Invalidate it on model change or `requestedNumCtx` change via `invalidateCapCache(baseUrl?, modelName?)`.
   - The 400-driven discovery path in the chat route no longer writes to `sessions.num_ctx` — that column was a permanent poison pill. `updateSessionNumCtx` is deprecated; the in-memory cache and the SSE `status` event are sufficient.
 
+- **Vision-capability cache** (`src/services/visionCache.ts`, `src/services/llmContextLimit.ts`):
+  - Per-`(baseUrl, modelName)` cache of vision (image-input) support, mirroring `capResolver.ts` exactly: NUL-separated key, 5-minute TTL, `Map`-backed, `invalidateVisionCache(baseUrl?, modelName?)` for model/baseUrl change.
+  - **Default behaviour**: OpenAI-compatible assumes `'supported'` (optimistic — `/v1/models` has no standard `capabilities` field and the legacy `info.capabilities` check would return `false`, which silently strips images). Ollama assumes `'unsupported'` (preserves the pre-fix behaviour — `/api/show` exposes `capabilities` for vision models, so the optimistic default is the wrong fallback when capabilities are missing).
+  - **Reactive discovery**: `parseVisionUnsupportedFromError` in `src/services/llmContextLimit.ts` matches a small set of well-known 400-message patterns ("image input is not supported", "does not support image", "image_url is not supported", etc.). When the chat route's 400 catch block matches, it calls `recordDiscoveredNonVision(baseUrl, model)` and emits an SSE `status` event with `phase: 'vision_unsupported'` so the client warning UI updates. Conservative on purpose — false positives would silently strip images from a model that actually supports them.
+  - **Surface for callers**: `resolveVisionSupport(baseUrl, model, provider, probe?)` returns `{state, source}`. The chat route's pre-flight call uses the **async** `getLlmModelVisionSupportAsync` which goes through the cache; the legacy sync `getLlmModelVisionSupport(info)` is kept for the `/api/models` projection and is defensive against `null`/`undefined` info payloads.
+  - **Client warning UI**: `ChatInput.tsx` renders an inline amber `⚠` warning when the user attaches an image to a known non-vision model, and a softer `ℹ` "unconfirmed" hint for the `unknown` + openai-compatible case (the optimistic default has not yet been resolved for that model). The attach control stays enabled — the warning is informational, not a block.
+  - **Invalidation**: `src/app/api/config/route.ts` calls `invalidateVisionCache(...)` for both the old and new `(baseUrl, model)` pair on model/baseUrl change — same conditions as `invalidateCapCache`.
+
 - **Web search tool** (`web_search`):
 
 - **App Router 404 / `_document` build error** (known Next.js 15.5 upstream bug — see vercel/next.js#90349):

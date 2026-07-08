@@ -169,3 +169,45 @@ export function parseContextLimitFromError(message: string): number | null {
   const parsed = Number.parseInt(match[1], 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
+
+/**
+ * Patterns that, when matched against a 400-style error message,
+ * indicate the model rejected the request because vision/image input
+ * is not supported. Conservative on purpose — a false positive would
+ * silently strip image attachments from a model that actually accepts
+ * them, which is the same class of bug as the OpenAI-compatible
+ * vision-strip we are trying to fix. Returning `false` is the safe
+ * default; the user sees a 400 in that case.
+ *
+ * Covers common phrasings from OpenAI, vLLM, llama.cpp-server,
+ * Ollama-as-OpenAI-compatible, and similar providers. New providers
+ * should add their pattern here in a 2-line diff.
+ */
+const VISION_UNSUPPORTED_PATTERNS: RegExp[] = [
+  /image input (?:is|are) not (?:supported|allowed)/i,
+  /does not support (?:image|vision|multimodal)/i,
+  /vision (?:input|image) not supported/i,
+  /model does not accept (?:images?|image_url)/i,
+  /unsupported (?:content type|part type|message part).*image/i,
+  /image_url is not supported/i,
+];
+
+/**
+ * Returns true when the given error message indicates the provider
+ * rejected the request because vision/image input is not supported by
+ * the active model. Used by the chat route's 400 catch block to fold
+ * a runtime-discovered "non-vision" signal into the vision cache (see
+ * `src/services/visionCache.ts`) so the next turn strips images
+ * without re-hitting the same 400.
+ */
+export function parseVisionUnsupportedFromError(message: string): boolean {
+  if (typeof message !== 'string' || message.length === 0) {
+    return false;
+  }
+  for (const pattern of VISION_UNSUPPORTED_PATTERNS) {
+    if (pattern.test(message)) {
+      return true;
+    }
+  }
+  return false;
+}

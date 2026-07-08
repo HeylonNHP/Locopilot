@@ -62,12 +62,16 @@ import {
   configureLlmAdapterAndAuth,
   fetchLlmModelInfo,
   getLlmApiErrorMessage,
-  getLlmModelVisionSupport,
+  getLlmModelVisionSupportAsync,
   type PersistedChatMessage,
   sendLlmChatStream,
   type StreamChatParams,
 } from '../../../services/llm';
-import { parseContextLimitFromError } from '../../../services/llmContextLimit';
+import {
+  parseContextLimitFromError,
+  parseVisionUnsupportedFromError,
+} from '../../../services/llmContextLimit';
+import { recordDiscoveredNonVision } from '../../../services/visionCache';
 import { type ApprovalDecision, resolveApproval, waitForApproval } from '../../lib/approvalRegistry';
 import { debugLog } from '../../lib/debugLogger';
 import { logger } from '../../lib/logger';
@@ -827,11 +831,24 @@ export async function POST(req: NextRequest): Promise<Response> {
                 }
 
                 // Determine vision support for the selected model so we can strip
-                // image attachments when the model does not support them.
+                // image attachments when the model does not support them. The
+                // async resolver consults a per-(baseUrl, modelName) cache and
+                // falls back to provider-specific optimistic defaults — see
+                // `src/services/visionCache.ts` for the full resolution order.
+                // This is what fixes the silent image-stripping bug for
+                // openai-compatible providers (`/v1/models` has no standard
+                // `capabilities` field, so the legacy sync heuristic always
+                // returned `false` and the adapter stripped the image).
                 let visionSupported: boolean | undefined = undefined;
                 try {
                     const modelInfo = await fetchLlmModelInfo(effectiveBaseUrl, model as string);
-                    visionSupported = getLlmModelVisionSupport(modelInfo);
+                    const resolved = await getLlmModelVisionSupportAsync(
+                        effectiveBaseUrl,
+                        model as string,
+                        config?.provider ?? 'ollama',
+                        modelInfo
+                    );
+                    visionSupported = resolved.visionSupported;
                 } catch {
                     // Best-effort: if model info is unavailable, preserve current
                     // behaviour (images sent, fetch_image tool included).
@@ -1788,6 +1805,23 @@ export async function POST(req: NextRequest): Promise<Response> {
                             tokenLimit: discoveredLimit,
                             modelContextLimit: discoveredLimit,
                         });
+                    } catch {
+                        // Controller may already be closed – ignore.
+                    }
+                }
+
+                // Parse the error message for a "vision not supported" signal.
+                // When matched, record the (baseUrl, model) as non-vision in
+                // the vision cache and notify the client so the ChatInput
+                // warning UI can update for future image attachments in this
+                // session. See `src/services/visionCache.ts` and
+                // `parseVisionUnsupportedFromError` in
+                // `src/services/llmContextLimit.ts` for the matcher details.
+                const visionNotSupported = parseVisionUnsupportedFromError(message);
+                if (visionNotSupported) {
+                    recordDiscoveredNonVision(effectiveBaseUrl, model as string);
+                    try {
+                        sendEvent('status', { phase: 'vision_unsupported' });
                     } catch {
                         // Controller may already be closed – ignore.
                     }
