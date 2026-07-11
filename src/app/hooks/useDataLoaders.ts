@@ -184,14 +184,22 @@ export function useDataLoaders(refs: StableRefs) {
         // "capped by model limit" before the first chat turn. We
         // only seed when we have a real cap; if the server
         // reports null, leave tokenStats alone.
+        //
+        // This dispatch seeds ONLY the cap-related fields and must
+        // not touch the count (totalTokens / promptEvalCount /
+        // evalCount): the count is owned by `loadSessionMessages`
+        // (for restored sessions) and the chat stream's SSE
+        // `status` events (for live turns). The reducer's merge
+        // ({...base, ...action.stats}) would otherwise clobber
+        // whichever count was set first when both this and
+        // `loadSessionMessages` fire concurrently on mount — making
+        // restored sessions show `0 tokens` in the status bar
+        // until the first prompt overrides the count.
         const reportedCap = data.modelContextLimit;
         if (typeof reportedCap === 'number' && Number.isFinite(reportedCap) && reportedCap > 0) {
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
-              promptEvalCount: 0,
-              evalCount: 0,
-              totalTokens: 0,
               tokenLimit: Math.min(config.numCtx ?? state.requestedNumCtx, reportedCap),
               modelContextLimit: reportedCap,
             },

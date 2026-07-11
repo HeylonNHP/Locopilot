@@ -256,7 +256,7 @@ export type ChatAction =
     }
   | { type: 'CLEAR_MESSAGES' }
   | { type: 'REMOVE_LAST_ASSISTANT' }
-  | { type: 'SET_TOKEN_STATS'; stats: ChatState['tokenStats']; targetSessionId?: number }
+  | { type: 'SET_TOKEN_STATS'; stats: Partial<NonNullable<ChatState['tokenStats']>>; targetSessionId?: number }
   | { type: 'SET_DONE_REASON'; reason: DoneReason | undefined; targetSessionId?: number }
   | { type: 'SET_CURRENT_TPS'; tps: number | null }
   | { type: 'CLEAR_TOKEN_STATS' }
