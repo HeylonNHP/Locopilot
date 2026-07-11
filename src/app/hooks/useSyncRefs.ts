@@ -9,12 +9,10 @@ import { useEffect, useRef } from 'react';
  */
 export function useSyncRefs(
   isCompacting: boolean,
-  isGeneratingTitle: boolean,
-  currentSessionId: number | null
+  isGeneratingTitle: boolean
 ) {
   const isCompactingRef = useRef(false);
   const isGeneratingTitleRef = useRef(false);
-  const currentSessionIdRef = useRef<number | null>(currentSessionId);
 
   useEffect(() => {
     isCompactingRef.current = isCompacting;
@@ -22,9 +20,6 @@ export function useSyncRefs(
   useEffect(() => {
     isGeneratingTitleRef.current = isGeneratingTitle;
   }, [isGeneratingTitle]);
-  useEffect(() => {
-    currentSessionIdRef.current = currentSessionId;
-  }, [currentSessionId]);
 
-  return { isCompactingRef, isGeneratingTitleRef, currentSessionIdRef };
+  return { isCompactingRef, isGeneratingTitleRef };
 }

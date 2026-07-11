@@ -18,8 +18,3 @@ export function buildUserMessageStamp(now: Date = new Date()): string {
   const MM = now.getMinutes().toString().padStart(2, '0');
   return `[Sent ${yyyy}-${mm}-${dd} ${HH}:${MM}]`;
 }
-
-/** Prepend the stamp to the user message body, with a single newline separator. */
-export function stampUserContent(content: string, now: Date = new Date()): string {
-  return `${buildUserMessageStamp(now)}\n${content}`;
-}

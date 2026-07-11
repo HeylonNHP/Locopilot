@@ -243,13 +243,6 @@ export type ChatAction =
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
   | {
-      type: 'SET_EFFECTIVE_NUM_CTX';
-      /** The effective numCtx reported by the server, or null to keep the previous value. */
-      effective: number | null;
-      /** The model's runtime cap, or null when the server has not resolved one. */
-      cap: number | null;
-    }
-  | {
       type: 'SHOW_APPROVAL';
       command: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
       requestId?: string;
@@ -261,9 +254,6 @@ export type ChatAction =
   | { type: 'SET_CURRENT_TPS'; tps: number | null }
   | { type: 'CLEAR_TOKEN_STATS' }
   | { type: 'COMPACT_PROGRESS'; message: string }
-  | { type: 'INIT_SESSION'; sessionId: number }
-  | { type: 'SAVE_ACTIVE_SESSION' }
-  | { type: 'RESTORE_SESSION'; sessionId: number | null }
   | { type: 'DISCARD_SESSION'; sessionId: number }
   | { type: 'CLEAR_COMPACT_PROGRESS' }
   | { type: 'START_STREAMING'; sessionId: number }
@@ -572,8 +562,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'SET_CONFIG': {
       // The clamp is the server's responsibility. SET_CONFIG only
       // stores the user's requested value; the effective value is
-      // updated by SET_TOKEN_STATS and SET_EFFECTIVE_NUM_CTX when
-      // the server reports back.
+      // updated by SET_TOKEN_STATS when the server reports back.
       return { ...state, ...action.config };
     }
     case 'SHOW_APPROVAL': {
@@ -647,18 +636,6 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
       return nextState;
     }
-    case 'SET_EFFECTIVE_NUM_CTX': {
-      // The server reports the effective numCtx and the model cap
-      // together. The cap flows through SET_TOKEN_STATS (which the
-      // client reads for the Settings display) so we only update it
-      // here when the server explicitly sends it; the effective
-      // value is always replaced when present.
-      const next: ChatState = { ...state };
-      if (action.effective !== null && Number.isFinite(action.effective) && action.effective > 0) {
-        next.effectiveNumCtx = action.effective;
-      }
-      return next;
-    }
     case 'CLEAR_MESSAGES': {
       return { ...state, messages: [] };
     }
@@ -722,88 +699,6 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     }
     case 'COMPACT_PROGRESS': {
       return { ...state, compactingPhases: [...state.compactingPhases, action.message] };
-    }
-    case 'INIT_SESSION': {
-      if (state.sessionStates.has(action.sessionId)) return state;
-      const newMap = new Map(state.sessionStates);
-      newMap.set(action.sessionId, {
-        messages: [],
-        error: null,
-        tokenStats: null,
-        currentTps: null,
-        compactingPhases: [],
-        pendingApproval: null,
-        lastDoneReason: undefined,
-      });
-      return { ...state, sessionStates: newMap };
-    }
-    case 'SAVE_ACTIVE_SESSION': {
-      const snapshot: SessionState = {
-        messages: state.messages,
-        error: state.error,
-        tokenStats: state.tokenStats,
-        currentTps: state.currentTps,
-        compactingPhases: state.compactingPhases,
-        lastDoneReason: state.lastDoneReason,
-        pendingApproval: state.pendingCommand
-          ? {
-              command: state.pendingCommand,
-              requestId: state.pendingApprovalId,
-            }
-          : null,
-      };
-      if (state.currentSessionId !== null) {
-        const newMap = new Map(state.sessionStates);
-        newMap.set(state.currentSessionId, snapshot);
-        return { ...state, sessionStates: newMap };
-      }
-      return { ...state, newSessionState: snapshot };
-    }
-    case 'RESTORE_SESSION': {
-      if (action.sessionId !== null) {
-        const session = state.sessionStates.get(action.sessionId);
-        if (session) {
-          return {
-            ...state,
-            messages: session.messages,
-            error: session.error,
-            tokenStats: session.tokenStats,
-            currentTps: session.currentTps,
-            compactingPhases: session.compactingPhases,
-            lastDoneReason: session.lastDoneReason,
-            pendingCommand: session.pendingApproval?.command ?? null,
-            showApproval: session.pendingApproval
-              ? session.pendingApproval.command !== null
-              : false,
-            pendingApprovalId: session.pendingApproval?.requestId ?? null,
-          };
-        }
-        return {
-          ...state,
-          messages: [],
-          error: null,
-          tokenStats: null,
-          currentTps: null,
-          compactingPhases: [],
-          pendingCommand: null,
-          showApproval: false,
-          pendingApprovalId: null,
-        };
-      }
-      return {
-        ...state,
-        messages: state.newSessionState.messages,
-        error: state.newSessionState.error,
-        tokenStats: state.newSessionState.tokenStats,
-        currentTps: state.newSessionState.currentTps,
-        compactingPhases: state.newSessionState.compactingPhases,
-        lastDoneReason: state.newSessionState.lastDoneReason,
-        pendingCommand: state.newSessionState.pendingApproval?.command ?? null,
-        showApproval: state.newSessionState.pendingApproval
-          ? state.newSessionState.pendingApproval.command !== null
-          : false,
-        pendingApprovalId: state.newSessionState.pendingApproval?.requestId ?? null,
-      };
     }
     case 'DISCARD_SESSION': {
       const newMap = new Map(state.sessionStates);

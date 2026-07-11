@@ -35,8 +35,7 @@ function HomeInner() {
 
   const { isCompactingRef, isGeneratingTitleRef } = useSyncRefs(
     isCompacting,
-    isGeneratingTitle,
-    state.currentSessionId
+    isGeneratingTitle
   );
 
   const refs = useStableRefs(state);
