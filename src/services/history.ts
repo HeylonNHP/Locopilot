@@ -122,8 +122,14 @@ const stmtLoadMessages = db.prepare<[number]>(
   'SELECT id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at FROM messages WHERE session_id = ? ORDER BY id ASC'
 );
 
+// Session search only considers user prompts and assistant replies. Tool
+// results, subagent logs, and other non-conversational roles are excluded
+// so long tool outputs (fetched pages, command stdout, image base64, etc.)
+// don't dominate the result list. The role filter lives on the JOIN (not
+// in WHERE) so a session with no user/assistant messages can still match
+// by its title.
 const stmtSearchSessions = db.prepare<[string, string]>(
-  `SELECT DISTINCT s.* FROM sessions s\n     LEFT JOIN messages m ON m.session_id = s.id\n     WHERE LOWER(s.name) LIKE ? OR LOWER(m.content) LIKE ?\n     ORDER BY s.updated_at DESC`
+  `SELECT DISTINCT s.* FROM sessions s\n     LEFT JOIN messages m ON m.session_id = s.id AND m.role IN ('user', 'assistant')\n     WHERE LOWER(s.name) LIKE ? OR LOWER(m.content) LIKE ?\n     ORDER BY s.updated_at DESC`
 );
 
 const stmtGetSessionName = db.prepare<[number]>('SELECT name FROM sessions WHERE id = ?');
@@ -176,7 +182,9 @@ export function listSessions(): Session[] {
 }
 
 /**
- * Searches sessions by title and message content.
+ * Searches sessions by title and the content of user/assistant messages.
+ * Tool results, subagent logs, and other non-conversational roles are
+ * intentionally excluded from the message-content half of the match.
  */
 export function searchSessions(query: string): Session[] {
   const escaped = query.toLowerCase().replaceAll(/[%_]/g, String.raw`\$&`);
