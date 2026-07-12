@@ -98,7 +98,26 @@ export interface ChatParams {
   messages: ChatMessage[];
   tools: ToolDefinition[];
   numCtx: number;
+  /**
+   * Boolean think flag — passed verbatim to Ollama's `think` field.
+   * Coexists with `reasoningEffort` (for OpenAI-compatible providers);
+   * each adapter consumes whichever it understands.
+   */
   think?: boolean;
+  /**
+   * Canonical reasoning effort for OpenAI-compatible providers. Maps
+   * to the wire `reasoning_effort` field:
+   *   - 'off'    → 'none'   (explicit off; required for models with
+   *                        reasoning forced on by the provider)
+   *   - 'low'    → 'low'
+   *   - 'medium' → 'medium'
+   *   - 'high'   → 'high'
+   *
+   * When set, the OpenAI-compatible adapter emits the corresponding
+   * value regardless of whether `tools` is present. Coexists with
+   * `think`; Ollama ignores it.
+   */
+  reasoningEffort?: 'off' | 'low' | 'medium' | 'high';
   /**
    * When false, omit image attachments from the outgoing prompt payload.
    * Undefined means unknown and preserves any existing image data.

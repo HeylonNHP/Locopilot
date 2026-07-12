@@ -36,6 +36,7 @@ export interface StableRefs {
   modelsRef: WritableRef<LLmModel[]>;
   yoloRef: WritableRef<boolean>;
   thinkingEnabledRef: WritableRef<boolean>;
+  reasoningEffortRef: WritableRef<'off' | 'low' | 'medium' | 'high'>;
   compactionModelRef: WritableRef<string>;
   chatTimeoutMsRef: WritableRef<number>;
   webSearchRef: WritableRef<WebSearchConfig>;
@@ -54,6 +55,7 @@ interface StableRefsInput {
   models: LLmModel[];
   yolo: boolean;
   thinkingEnabled: boolean;
+  reasoningEffort: 'off' | 'low' | 'medium' | 'high';
   compactionModel: string;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
@@ -77,6 +79,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const modelsRef = useRef(state.models);
   const yoloRef = useRef(state.yolo);
   const thinkingEnabledRef = useRef(state.thinkingEnabled);
+  const reasoningEffortRef = useRef(state.reasoningEffort);
   const compactionModelRef = useRef(state.compactionModel);
   const chatTimeoutMsRef = useRef(state.chatTimeoutMs);
   const webSearchRef = useRef(state.webSearch);
@@ -118,6 +121,9 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
     thinkingEnabledRef.current = state.thinkingEnabled;
   }, [state.thinkingEnabled]);
   useEffect(() => {
+    reasoningEffortRef.current = state.reasoningEffort;
+  }, [state.reasoningEffort]);
+  useEffect(() => {
     compactionModelRef.current = state.compactionModel;
   }, [state.compactionModel]);
   useEffect(() => {
@@ -149,6 +155,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       modelsRef,
       yoloRef,
       thinkingEnabledRef,
+      reasoningEffortRef,
       compactionModelRef,
       chatTimeoutMsRef,
       webSearchRef,

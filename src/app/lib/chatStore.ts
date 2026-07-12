@@ -160,6 +160,14 @@ interface ChatState {
   yolo: boolean;
   thinkingEnabled: boolean;
   /**
+   * Reasoning effort for OpenAI-compatible providers. Maps to the
+   * wire `reasoning_effort` field (`'off' → 'none'`, otherwise
+   * passthrough). Distinct from `thinkingEnabled` (Ollama-only).
+   * Defaults to 'off' so models with reasoning on by default don't
+   * silently reject chat-completions requests that include tools.
+   */
+  reasoningEffort: 'off' | 'low' | 'medium' | 'high';
+  /**
    * When true, the server-side chat route prepends a `[Sent …]` header to
    * each user-role message before sending it to the LLM. The
    * messages.created_at column is always populated regardless of this flag.
@@ -1114,6 +1122,7 @@ const initialState: ChatState = {
   pendingApprovalId: null,
   yolo: false,
   thinkingEnabled: true,
+  reasoningEffort: 'off',
   promptTimestamps: true,
   compactionModel: '',
   chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,

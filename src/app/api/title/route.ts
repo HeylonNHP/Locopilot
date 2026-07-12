@@ -25,6 +25,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const compactionModel = body.compactionModel;
   const sessionId = body.sessionId;
   const think: boolean | undefined = body.think as boolean | undefined;
+  const reasoningEffortRaw: unknown = body.reasoningEffort;
+  const reasoningEffort: 'off' | 'low' | 'medium' | 'high' | undefined =
+    reasoningEffortRaw === 'off' || reasoningEffortRaw === 'low' ||
+    reasoningEffortRaw === 'medium' || reasoningEffortRaw === 'high'
+      ? reasoningEffortRaw
+      : undefined;
 
   if (typeof model !== 'string' || !model.trim()) {
     return NextResponse.json({ error: 'Model name is required.' }, { status: 400 });
@@ -117,7 +123,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       conversationMessages,
       effectiveNumCtx,
       undefined,
-      typeof think === 'boolean' ? think : undefined
+      typeof think === 'boolean' ? think : undefined,
+      reasoningEffort
     );
 
     await enqueueSessionRename(parsedSessionId, title);

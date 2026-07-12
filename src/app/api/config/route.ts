@@ -24,6 +24,7 @@ const KNOWN_TOP_KEYS: Set<string> = new Set([
   'chatTimeoutMs',
   'yolo',
   'thinkingEnabled',
+  'reasoningEffort',
   'promptTimestamps',
   'webSearch',
   'skills',
@@ -162,6 +163,17 @@ function validateConfig(
       return { ok: false, error: "Invalid config: 'thinkingEnabled' must be a boolean" };
     }
     out.thinkingEnabled = input.thinkingEnabled;
+  }
+
+  if ('reasoningEffort' in input) {
+    const v = input.reasoningEffort;
+    if (typeof v !== 'string' || (v !== 'off' && v !== 'low' && v !== 'medium' && v !== 'high')) {
+      return {
+        ok: false,
+        error: "Invalid config: 'reasoningEffort' must be 'off', 'low', 'medium', or 'high'",
+      };
+    }
+    out.reasoningEffort = v;
   }
 
   if ('promptTimestamps' in input) {

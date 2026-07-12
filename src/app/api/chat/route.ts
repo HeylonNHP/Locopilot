@@ -199,6 +199,12 @@ export async function POST(req: NextRequest): Promise<Response> {
     const sessionId: number | undefined = body.sessionId as number | undefined;
     const baseUrl: string | undefined = body.baseUrl as string | undefined;
     const think: boolean | undefined = body.think as boolean | undefined;
+    const reasoningEffortRaw: unknown = body.reasoningEffort;
+    const reasoningEffort: 'off' | 'low' | 'medium' | 'high' | undefined =
+      reasoningEffortRaw === 'off' || reasoningEffortRaw === 'low' ||
+      reasoningEffortRaw === 'medium' || reasoningEffortRaw === 'high'
+        ? reasoningEffortRaw
+        : undefined;
     const chatTimeoutMs: number | undefined = body.chatTimeoutMs as number | undefined;
     const completionMode: string | undefined = body.completionMode as string | undefined;
     const maxPromptLoopIterations: number | undefined = body.maxPromptLoopIterations as number | undefined;
@@ -1022,6 +1028,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                     };
                     if (thinkEnabled !== undefined) {
                         params.think = thinkEnabled;
+                    }
+                    if (reasoningEffort !== undefined) {
+                        params.reasoningEffort = reasoningEffort;
                     }
                     if (visionSupported !== undefined) {
                         params.visionSupported = visionSupported;

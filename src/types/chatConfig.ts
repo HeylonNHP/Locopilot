@@ -32,6 +32,22 @@ export interface Config {
   yolo?: boolean;
   thinkingEnabled?: boolean;
   /**
+   * Reasoning effort for OpenAI-compatible providers. Maps to the
+   * `reasoning_effort` field on the wire:
+   *   - 'off'   → 'none'   (forced off, even for models with reasoning on by default)
+   *   - 'low'   → 'low'
+   *   - 'medium'→ 'medium'
+   *   - 'high'  → 'high'
+   *
+   * Distinct from `thinkingEnabled` (a boolean) which maps to Ollama's
+   * `think` field. The two coexist: `reasoningEffort` is for
+   * OpenAI-compatible providers, `thinkingEnabled` is for Ollama.
+   * Defaults to 'off' so models with reasoning on by default (e.g.
+   * gpt-5.6-luna on the Airia gateway) are not silently forced into
+   * reasoning when called with tools.
+   */
+  reasoningEffort?: 'off' | 'low' | 'medium' | 'high';
+  /**
    * When true, the chat route prepends a `[Sent YYYY-MM-DD HH:MM]` header
    * to each user-role message in the LLM-bound conversation. The
    * messages.created_at column is always populated regardless of this flag,

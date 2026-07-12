@@ -17,6 +17,7 @@ export default function SettingsModal({ onClose }: Props) {
   const [numCtx, setNumCtx] = useState(String(state.requestedNumCtx));
   const [yolo, setYolo] = useState(state.yolo);
   const [thinkingEnabled, setThinkingEnabled] = useState(state.thinkingEnabled);
+  const [reasoningEffort, setReasoningEffort] = useState(state.reasoningEffort);
   const [promptTimestamps, setPromptTimestamps] = useState(state.promptTimestamps ?? true);
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
   const totalSeconds = Math.floor((state.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000);
@@ -61,6 +62,7 @@ export default function SettingsModal({ onClose }: Props) {
       model,
       yolo,
       thinkingEnabled,
+      reasoningEffort,
       promptTimestamps,
       compactionModel,
       chatTimeoutMs: parsedChatTimeoutMs,
@@ -252,6 +254,27 @@ export default function SettingsModal({ onClose }: Props) {
                 </label>
               </div>
             </div>
+
+            {state.provider === 'openai-compatible' && (
+              <div className="settings-row">
+                <label className="settings-label" htmlFor="reasoning-effort-select">
+                  Reasoning Effort
+                </label>
+                <select
+                  id="reasoning-effort-select"
+                  value={reasoningEffort}
+                  onChange={(e) =>
+                    setReasoningEffort(e.target.value as 'off' | 'low' | 'medium' | 'high')
+                  }
+                  className="settings-input"
+                >
+                  <option value="off">Off (none)</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="settings-row">

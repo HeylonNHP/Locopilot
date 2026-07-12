@@ -822,6 +822,7 @@ export function useChatStream(
         sessionId: refs.sessionIdRef.current,
         yolo: refs.yoloRef.current,
         think: refs.thinkingEnabledRef.current,
+        reasoningEffort: refs.reasoningEffortRef.current,
         compactionModel: refs.compactionModelRef.current,
         chatTimeoutMs: refs.chatTimeoutMsRef.current,
         webSearch: refs.webSearchRef.current,

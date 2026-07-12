@@ -533,6 +533,7 @@ export function useSlashCommands({
                 compactionModel: refs.compactionModelRef.current,
                 sessionId: refs.sessionIdRef.current,
                 think: refs.thinkingEnabledRef.current,
+                reasoningEffort: refs.reasoningEffortRef.current,
               }),
               signal: abortController.signal,
             });
