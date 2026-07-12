@@ -78,6 +78,7 @@ export default function SettingsModal({ onClose }: Props) {
 
     // Update the in-memory requested value optimistically so the
     // StatusBar reflects the new setting before the next chat turn.
+    const oldRequestedNumCtx = state.requestedNumCtx;
     dispatch({ type: 'SET_CONFIG', config: { requestedNumCtx: parsedNumCtx } });
     setIsSaving(true);
 
@@ -112,6 +113,8 @@ export default function SettingsModal({ onClose }: Props) {
 
       onClose();
     } catch (err) {
+      // Revert the optimistic update for requestedNumCtx
+      dispatch({ type: 'SET_CONFIG', config: { requestedNumCtx: oldRequestedNumCtx } });
       const message = err instanceof Error ? err.message : 'Failed to save config.';
       setSaveError(message);
     } finally {
