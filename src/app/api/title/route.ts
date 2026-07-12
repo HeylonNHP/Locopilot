@@ -7,7 +7,7 @@ import { listSessions, loadSessionMessages } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { generateSessionTitle } from '@/services/titleGeneration';
 
-import { type ChatMessage, buildLlmRequestContext, getLlmApiErrorMessage, type LlmRequestContext } from '../../../services/llm';
+import { buildLlmRequestContext, type ChatMessage, getLlmApiErrorMessage, type LlmRequestContext } from '../../../services/llm';
 
 export const dynamic = 'force-dynamic';
 

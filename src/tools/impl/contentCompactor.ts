@@ -13,8 +13,8 @@ import { APPROX_CHARS_PER_TOKEN } from '@/constants';
 import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
 
 import {
-  type ChatMessage,
   buildLlmRequestContext,
+  type ChatMessage,
   type LlmRequestContext,
   sendLlmChatStream,
   type StreamChatParams,
