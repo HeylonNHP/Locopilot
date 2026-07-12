@@ -37,7 +37,7 @@ const TITLE_BLOCKLIST = new Set([
 /** Returns whether a title is semantically useful, plus an optional rejection reason. */
 export function isValidTitle(title: string): { valid: boolean; reason?: string } {
   const stripped = title
-    .replace(/^\p{Extended_Pictographic}\s*/u, '')
+    .replace(/^(?:\p{Emoji}\p{Emoji_Modifier}?)+/u, '')
     .trim()
     .toLowerCase();
   const plain = stripped.replaceAll(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -281,7 +281,7 @@ export async function generateSessionTitle(
         continue;
       }
 
-      if (!/^\p{Extended_Pictographic}/u.test(title)) {
+      if (!/^(?:\p{Emoji}\p{Emoji_Modifier}?)+/u.test(title)) {
         // LLM ignored the emoji requirement — retry with the next strategy
         // unless this is the last one, in which case prepend the fallback.
         if (attempt < strategies.length - 1) {
