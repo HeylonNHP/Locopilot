@@ -58,11 +58,12 @@ import {
   resolveEffectiveNumCtx,
 } from '../../../services/capResolver';
 import {
+  buildLlmRequestContext,
   type ChatMessage,
-  configureLlmAdapterAndAuth,
   fetchLlmModelInfo,
   getLlmApiErrorMessage,
   getLlmModelVisionSupportAsync,
+  type LlmRequestContext,
   type PersistedChatMessage,
   sendLlmChatStream,
   type StreamChatParams,
@@ -559,6 +560,15 @@ export async function POST(req: NextRequest): Promise<Response> {
                 return;
             }
 
+            // Hoisted so the outer `catch` (line 1792) can use it to format
+            // a sensible error message.  The inner try block at 563 sets the
+            // real value from the loaded config; this default is the
+            // ollama-default fallback for the very rare case where the
+            // error fires before config is loaded.
+            let llmRequestContext: LlmRequestContext = buildLlmRequestContext({
+                baseUrl: effectiveBaseUrl,
+            });
+
             try {
                 if (!activeSessionId) {
                     activeSessionId = createSession(DEFAULT_SESSION_NAME, model as string);
@@ -639,6 +649,16 @@ export async function POST(req: NextRequest): Promise<Response> {
                     return decision;
                 };
 
+                // Per-request LLM context — passed through every LLM call in
+                // this request's scope. Replaces the previous
+                // `configureLlmAdapterAndAuth` singleton, which was a single
+                // module-level axios instance shared by every concurrent
+                // request. Two simultaneous requests with different
+                // providers / api keys no longer race on a global.
+                // (llmRequestContext is hoisted to the outer scope above
+                // so the catch block at 1792 can see it; we just reassign
+                // it here from the loaded config.)
+
                 // Hoisted config so the merged-tool-list decision below
                 // can read `config.mcpToolSearch` even when loadConfig()
                 // throws. The inner try/catch owns the user-config
@@ -646,7 +666,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                 let config: Config | null = null;
                 try {
                     config = await loadConfig();
-                    configureLlmAdapterAndAuth(config?.provider, config?.apiKey);
+                    llmRequestContext = buildLlmRequestContext({
+                        ...(config?.provider ? { provider: config.provider } : {}),
+                        ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
+                        baseUrl: effectiveBaseUrl,
+                    });
                     if (config) {
                         if (typeof config.yolo === 'boolean') {
                             effectiveYolo = config.yolo;
@@ -673,7 +697,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             : requestedNumCtx;
                         try {
                             const resolved = await resolveEffectiveNumCtx(
-                                effectiveBaseUrl,
+                                llmRequestContext,
                                 model as string,
                                 requested
                             );
@@ -718,6 +742,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                             compactionModel: resolveCompactionModel(config?.compactionModel ?? '', model as string),
                         },
                         subAgent: {
+                            ...(config?.provider ? { provider: config.provider } : {}),
+                            ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
                             baseUrl: config?.baseUrl || effectiveBaseUrl,
                             model: model as string,
                             numCtx: effectiveNumCtx,
@@ -737,6 +763,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                     };
                 } catch {
                     // Config load is best-effort; defaults already apply.
+                    llmRequestContext = buildLlmRequestContext({
+                        baseUrl: effectiveBaseUrl,
+                    });
                     requestContext = {
                         yoloMode: false,
                         allowedTools: undefined,
@@ -764,7 +793,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                         },
                     };
                 }
-
                 // Build the merged tool list (static native TOOLS + dynamic MCP
                 // tool defs from already-connected servers). Computed once per
                 // request — tool additions/removals only take effect on the
@@ -841,7 +869,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // returned `false` and the adapter stripped the image).
                 let visionSupported: boolean | undefined = undefined;
                 try {
-                    const modelInfo = await fetchLlmModelInfo(effectiveBaseUrl, model as string);
+                    const modelInfo = await fetchLlmModelInfo(llmRequestContext, model as string);
                     const resolved = await getLlmModelVisionSupportAsync(
                         effectiveBaseUrl,
                         model as string,
@@ -888,7 +916,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             let writeError: string | null = null;
                             try {
                                 const compactResult = await compactHistory(
-                                    effectiveBaseUrl,
+                                    llmRequestContext,
                                     effectiveCompactionModel,
                                     currentMessages,
                                     effectiveNumCtx,
@@ -1029,7 +1057,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             roughTokens = 0;
                             lastTpsStatusMs = 0;
 
-                            const llmStream = sendLlmChatStream(effectiveBaseUrl, params);
+                            const llmStream = sendLlmChatStream(llmRequestContext, params);
 
                             for await (const chunk of llmStream) {
                                 const msg = chunk.message;
@@ -1634,7 +1662,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             }
 
                             const { satisfied, feedback } = await checkCompleteness(
-                                effectiveBaseUrl,
+                                llmRequestContext,
                                 model as string,
                                 effectiveNumCtx,
                                 originalUserRequest,
@@ -1711,7 +1739,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                         // Fire-and-forget background task to generate a proper LLM-based title.
                         // The fallback title is already set above, so this is purely an upgrade.
                         generateSessionTitle(
-                            effectiveBaseUrl,
+                            llmRequestContext,
                             effectiveCompactionModel,
                             currentMessages,
                             effectiveNumCtx,
@@ -1784,7 +1812,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     return;
                 }
 
-                const message = await getLlmApiErrorMessage(err);
+                const message = await getLlmApiErrorMessage(llmRequestContext, err);
                 logger.error('ollama', message, { error: err });
 
                 // Parse the model's actual context limit from 400 error responses.

@@ -18,6 +18,7 @@
 import {
   type ChatMessage,
   getLlmTurnStats,
+  type LlmRequestContext,
   sendLlmChat,
   sendLlmChatStream,
 } from './llm';
@@ -97,9 +98,9 @@ interface HistorySplit {
 }
 
 async function measureConversationTokens(
-  baseUrl: string,
-  model: string,
+  ctx: LlmRequestContext,
   messages: ChatMessage[],
+  model: string,
   numCtx: number,
   onProgress?: (message: string) => void,
   signal?: AbortSignal
@@ -112,7 +113,7 @@ async function measureConversationTokens(
     const measurementCtx = Math.max(numCtx * 2, 32768);
 
     const response = await sendLlmChat(
-      baseUrl,
+      ctx,
       {
         model,
         messages,
@@ -128,7 +129,7 @@ async function measureConversationTokens(
       signal
     );
 
-    const stats = getLlmTurnStats(response);
+    const stats = getLlmTurnStats(ctx, response);
     if (stats) {
       return stats.promptEvalCount + stats.evalCount;
     }
@@ -390,10 +391,10 @@ function findMatchingAssistantIndex(
 }
 
 async function distillToolMessages(
-  baseUrl: string,
-  model: string,
+  ctx: LlmRequestContext,
   historyMessages: ChatMessage[],
   numCtx: number,
+  model: string,
   onProgress?: (message: string) => void,
   signal?: AbortSignal
 ): Promise<ChatMessage[]> {
@@ -443,7 +444,7 @@ async function distillToolMessages(
 
     let distilledContent = '';
     const distillResponse = await sendLlmChat(
-      baseUrl,
+      ctx,
       {
         model,
         messages: [
@@ -494,14 +495,16 @@ async function distillToolMessages(
  * Compacts the provided conversation history by asking the LLM to summarise
  * it. Returns the new message array and stats comparing old vs new sizes.
  *
- * @param baseUrl   - Ollama base URL (e.g. http://localhost:11434)
- * @param model     - Model name to use for summarisation
- * @param messages  - Current conversation history (should include system prompt)
- * @param numCtx    - Context length to pass to the API
+ * @param ctx        - Per-request LLM context (provider, baseUrl, apiKey).
+ *                     Threaded through every nested call so concurrent
+ *                     compaction requests cannot clobber each other.
+ * @param model      - Model name to use for summarisation
+ * @param messages   - Current conversation history (should include system prompt)
+ * @param numCtx     - Context length to pass to the API
  * @param onProgress - Optional callback for live progress updates
  */
 export async function compactHistory(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   model: string,
   messages: ChatMessage[],
   numCtx: number,
@@ -512,9 +515,9 @@ export async function compactHistory(
   signal?: AbortSignal
 ): Promise<CompactResult> {
   const oldTokenCount = await measureConversationTokens(
-    baseUrl,
-    model,
+    ctx,
     messages,
+    model,
     numCtx,
     onProgress,
     signal
@@ -607,10 +610,10 @@ export async function compactHistory(
   );
 
   const preparedHistoryMessages = await distillToolMessages(
-    baseUrl,
-    model,
+    ctx,
     historySplit.messagesToSummarise,
     numCtx,
+    model,
     onProgress,
     signal
   );
@@ -619,10 +622,10 @@ export async function compactHistory(
   // land in newMessages at full size, which is the main cause of compaction
   // failing to bring token counts under the model context limit.
   const preparedRecentMessages = await distillToolMessages(
-    baseUrl,
-    model,
+    ctx,
     historySplit.preservedRecentMessages,
     numCtx,
+    model,
     onProgress,
     signal
   );
@@ -685,7 +688,7 @@ export async function compactHistory(
 
     const streamSummary = async (msgs: ChatMessage[], numPredict?: number): Promise<string> => {
       let text = '';
-      for await (const chunk of sendLlmChatStream(baseUrl, {
+      for await (const chunk of sendLlmChatStream(ctx, {
         model,
         messages: msgs,
         tools: [],
@@ -744,9 +747,9 @@ export async function compactHistory(
   ];
 
   const newTokenCount = await measureConversationTokens(
-    baseUrl,
-    model,
+    ctx,
     newMessages,
+    model,
     numCtx,
     onProgress,
     signal
@@ -770,7 +773,7 @@ export async function compactHistory(
         `retrying with ${retryFactor.toFixed(1)}x stronger compression (${remainingRetries} attempt(s) left)...`
     );
     const retryResult = await compactHistory(
-      baseUrl,
+      ctx,
       model,
       newMessages,
       numCtx,

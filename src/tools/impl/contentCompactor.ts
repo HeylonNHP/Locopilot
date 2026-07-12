@@ -12,7 +12,13 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { APPROX_CHARS_PER_TOKEN } from '@/constants';
 import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
 
-import { type ChatMessage, sendLlmChatStream, type StreamChatParams } from '../../services/llm';
+import {
+  type ChatMessage,
+  buildLlmRequestContext,
+  type LlmRequestContext,
+  sendLlmChatStream,
+  type StreamChatParams,
+} from '../../services/llm';
 import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
 import { type WebExtractionSettings } from '../web/htmlExtractor';
 
@@ -316,7 +322,13 @@ export class ContentCompactor {
     let reasoningText = '';
     let chunkCount = 0;
     let lastChunkDebug = 'none';
-    for await (const chunk of sendLlmChatStream(this.baseUrl, params)) {
+    // Use the LlmRequestContext threaded through the ContentCompactor's
+    // own baseUrl. We build the context here so the per-request
+    // Authorization header (openai-compatible) is the right one.
+    const compactorContext: LlmRequestContext = buildLlmRequestContext({
+      baseUrl: this.baseUrl,
+    });
+    for await (const chunk of sendLlmChatStream(compactorContext, params)) {
       chunkCount += 1;
       const thinking = chunk.message?.thinking ?? '';
       const content = chunk.message?.content ?? '';

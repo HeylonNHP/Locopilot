@@ -12,7 +12,7 @@
 import type { ToolDefinition } from './adapters/llmAdapter';
 
 import { logger } from '../app/lib/logger';
-import { type ChatMessage, sendLlmChat } from './llm';
+import { type ChatMessage, type LlmRequestContext, sendLlmChat } from './llm';
 
 const JUDGE_SYSTEM_PROMPT =
   'You are a completeness checker. Your only job is to determine whether ' +
@@ -89,17 +89,17 @@ function formatTraceSection(traceMessages: ChatMessage[]): string {
  * Asks the LLM to explain what is missing or incomplete in the assistant's
  * reply. Called only when the classifier returns NO.
  *
- * @param baseUrl        - Ollama base URL
- * @param model          - Model name (same model used for the main turn)
- * @param numCtx         - Context window size
- * @param userRequest    - The user's original prompt for this turn
- * @param assistantReply - The assistant's (presumed) final response
- * @param traceMessages  - Intermediate messages (tool calls, thinking, results) between the user request and final reply
- * @param signal         - AbortSignal from the HTTP request
+ * @param ctx             - Per-request LLM context (provider, baseUrl, apiKey).
+ * @param model           - Model name (same model used for the main turn)
+ * @param numCtx          - Context window size
+ * @param userRequest     - The user's original prompt for this turn
+ * @param assistantReply  - The assistant's (presumed) final response
+ * @param traceMessages   - Intermediate messages (tool calls, thinking, results) between the user request and final reply
+ * @param signal          - AbortSignal from the HTTP request
  * @returns An object containing the feedback string (may be empty).
  */
 export async function generateJudgeFeedback(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   model: string,
   numCtx: number,
   userRequest: string,
@@ -112,17 +112,17 @@ export async function generateJudgeFeedback(
     {
       role: 'user',
       content:
-        `ORIGINAL REQUEST:\n${userRequest}\n\n${ 
+        `ORIGINAL REQUEST:\n${userRequest}\n\n${
         traceMessages && traceMessages.length > 0
           ? `${formatTraceSection(traceMessages)  }\n\n`
-          : '' 
+          : ''
         }ASSISTANT REPLY:\n${assistantReply}\n\n` +
         `Explain specifically what is missing, incomplete, or incorrect in the assistant's reply.`,
     },
   ];
 
   try {
-    const response = await sendLlmChat(baseUrl, {
+    const response = await sendLlmChat(ctx, {
       model,
       messages,
       tools: [] as ToolDefinition[],
@@ -172,7 +172,7 @@ export async function generateJudgeFeedback(
  *          as a satisfied reply.
  */
 export async function checkCompleteness(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   model: string,
   numCtx: number,
   userRequest: string,
@@ -185,17 +185,17 @@ export async function checkCompleteness(
     {
       role: 'user',
       content:
-        `ORIGINAL REQUEST:\n${userRequest}\n\n${ 
+        `ORIGINAL REQUEST:\n${userRequest}\n\n${
         traceMessages && traceMessages.length > 0
           ? `${formatTraceSection(traceMessages)  }\n\n`
-          : '' 
+          : ''
         }ASSISTANT REPLY:\n${assistantReply}\n\n` +
         `Is the request fully satisfied? Reply YES or NO.`,
     },
   ];
 
   try {
-    const response = await sendLlmChat(baseUrl, {
+    const response = await sendLlmChat(ctx, {
       model,
       messages,
       tools: [] as ToolDefinition[],
@@ -218,7 +218,7 @@ export async function checkCompleteness(
 
     if (!satisfied) {
       const { feedback } = await generateJudgeFeedback(
-        baseUrl,
+        ctx,
         model,
         numCtx,
         userRequest,

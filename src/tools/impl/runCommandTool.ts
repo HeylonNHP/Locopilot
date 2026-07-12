@@ -67,10 +67,6 @@ interface RequestProcessState {
 
 const requestProcessState = new AsyncLocalStorage<RequestProcessState>();
 
-// Global fallback registry for direct module usage in tests
-const globalFallbackRegistry = new Map<number, ProcessEntry>();
-let globalFallbackNextId = 1;
-
 interface ProcessEntry {
   process: ChildProcess;
   command: string;
@@ -81,6 +77,24 @@ interface ProcessEntry {
   done: boolean;
   exitCode: number | null;
   ttlTimer?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * Returns the per-request process registry and id counter, throwing
+ * if the caller has not entered the request scope. Concurrent
+ * `run_command` calls from different sessions each carry their own
+ * per-request Map and id counter, so cross-session contention cannot
+ * happen.
+ */
+function getRequestState(): RequestProcessState {
+  const store = requestProcessState.getStore();
+  if (!store) {
+    throw new Error(
+      'runCommand / checkProcessOutput called outside of an HTTP request scope. ' +
+        'Call enterRequestScope() at the top of every request that uses these tools.'
+    );
+  }
+  return store;
 }
 
 /**
@@ -262,8 +276,8 @@ export async function runCommand(
   output.writeLine(`  Shell:   ${effectiveShell}`);
   output.writeLine(`  Command: ${command}\n`);
 
-  const store = requestProcessState.getStore();
-  const processId = store ? store.nextId++ : globalFallbackNextId++;
+  const store = getRequestState();
+  const processId = store.nextId++;
   output.writeLine(`  Running (id=${processId})...\n`);
 
   const entry: ProcessEntry = {
@@ -276,8 +290,7 @@ export async function runCommand(
     done: false,
     exitCode: null,
   };
-  const procRegistry = store?.registry ?? globalFallbackRegistry;
-  procRegistry.set(processId, entry);
+  store.registry.set(processId, entry);
 
   const config = getShellConfig(effectiveShell);
   const child = spawn(config.bin, config.args, {
@@ -329,8 +342,14 @@ export async function runCommand(
       entry.done = true;
       entry.exitCode = code;
       if (!returnedPartial) {
-        const procRegistry = requestProcessState.getStore()?.registry ?? globalFallbackRegistry;
-        procRegistry.delete(processId);
+        // The entry's owning registry is the one that was created in
+        // the request scope when the command was spawned. The store
+        // must still be live here because no async hop has happened
+        // since then. If it isn't, something has torn down the
+        // request scope early — fall through (the process has exited
+        // and the entry is no longer useful to any other consumer).
+        const currentStore = requestProcessState.getStore();
+        currentStore?.registry.delete(processId);
       }
       resolve(result || buildOutput(entry, true, null));
     };
@@ -343,9 +362,13 @@ export async function runCommand(
 
       // TTL cleanup: if the LLM never polls the process again, forcibly kill
       // it and remove the registry entry after 5 minutes to prevent leaks.
+      // Capture the request store here so the timer callback doesn't have
+      // to re-enter AsyncLocalStorage (the request scope may already be
+      // gone by the time the timer fires).
+      const owningStore = store;
       entry.ttlTimer = setTimeout(() => {
         killProcessTree(child);
-        procRegistry.delete(processId);
+        owningStore.registry.delete(processId);
       }, 300_000);
 
       // We don't unregister interrupt handler here because the process
@@ -470,8 +493,8 @@ export async function checkProcessOutput(
   onProgress?: (message: string) => void,
   signal?: AbortSignal
 ): Promise<string> {
-  const procRegistry = requestProcessState.getStore()?.registry ?? globalFallbackRegistry;
-  const entry = procRegistry.get(processId);
+  const store = getRequestState();
+  const entry = store.registry.get(processId);
   if (!entry) {
     return `[No process found with process_id=${processId}]`;
   }
@@ -483,9 +506,8 @@ export async function checkProcessOutput(
 
   if (entry.done) {
     const output = buildOutput(entry, true, null);
-    const procRegistry = requestProcessState.getStore()?.registry ?? globalFallbackRegistry;
     if (entry.ttlTimer) clearTimeout(entry.ttlTimer);
-    procRegistry.delete(processId);
+    store.registry.delete(processId);
     return output;
   }
 

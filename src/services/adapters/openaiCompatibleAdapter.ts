@@ -10,34 +10,67 @@ import type {
   LlmAdapter,
   LlmModel,
   LlmModelInfo,
+  LlmRequestContext,
   StreamChatParams,
   ToolCall,
 } from './llmAdapter';
 
 import { getModelContextLimitFromInfo } from '../llmContextLimit';
 
-// ── Auth support ──────────────────────────────────────────────────────────────
-// The adapter interface doesn't pass an apiKey parameter, so we use a
-// module-level axios instance that the caller can configure via setApiKey().
-let client: AxiosInstance = axios;
+// ── Per-request axios client ──────────────────────────────────────────────────
+// We must NOT keep a single module-level `client` axios instance configured
+// for one provider/apiKey — two concurrent requests (e.g. a chat request
+// against an openai-compatible provider that needs a Bearer token, plus a
+// parallel chat request against ollama) would race on the singleton and
+// leak each other's Authorization headers or even the wrong base URL.
+//
+// Instead, `buildRequestClient(ctx)` returns a fresh axios instance per
+// call. The Ollama adapter does the same but returns the shared default.
+// `setApiKey` / `clearApiKey` remain as no-op shims so older call sites
+// that haven't been migrated don't crash, but they no longer mutate any
+// shared state.
+let legacyClientWarningShown = false;
 
-/**
- * Configure the API key used for all OpenAI-compatible requests.
- * Call this once at startup (e.g. from configureLlmAdapter) before
- * any chat requests are made.
- */
-export function setApiKey(apiKey: string): void {
-  client = axios.create({
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
+function legacyClientWarning(): void {
+  if (legacyClientWarningShown) return;
+  legacyClientWarningShown = true;
+  console.warn(
+    '[openaiCompatibleAdapter] setApiKey/clearApiKey are deprecated no-ops; ' +
+      'pass apiKey via the per-request LlmRequestContext instead.'
+  );
 }
 
 /**
- * Reset the client to its default unauthenticated state (useful when
- * switching back to Ollama or to a provider that doesn't need a key).
+ * Build a per-request axios client for the OpenAI-compatible provider. If
+ * the request context carries an apiKey, the returned client injects the
+ * `Authorization: Bearer <key>` header on every call. Otherwise the shared
+ * `axios` default is returned.
+ */
+function buildOpenAIRequestClient(ctx: LlmRequestContext): AxiosInstance {
+  if (ctx.apiKey && ctx.apiKey.length > 0) {
+    return axios.create({
+      headers: { Authorization: `Bearer ${ctx.apiKey}` },
+    });
+  }
+  return axios;
+}
+
+/**
+ * @deprecated Configure the apiKey via the per-request LlmRequestContext
+ * passed to `sendChat`/`sendChatStream`. This no-op is kept so legacy
+ * callers do not crash; it is removed in a future release.
+ */
+export function setApiKey(_apiKey: string): void {
+  legacyClientWarning();
+}
+
+/**
+ * @deprecated Configure the apiKey via the per-request LlmRequestContext
+ * passed to `sendChat`/`sendChatStream`. This no-op is kept so legacy
+ * callers do not crash; it is removed in a future release.
  */
 export function clearApiKey(): void {
-  client = axios;
+  legacyClientWarning();
 }
 
 // ── OpenAI API types (concrete, matching the official spec) ───────────────────
@@ -631,9 +664,10 @@ function toChatApiResponse(response: OpenAIChatCompletionResponse): ChatApiRespo
 
 // ── API methods ──────────────────────────────────────────────────────────────
 
-async function fetchOpenAICompatibleModels(baseUrl: string): Promise<LlmModel[]> {
+async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmModel[]> {
+  const client = buildOpenAIRequestClient(ctx);
   const response = await client.get<OpenAIListModelsResponse>(
-    `${baseUrl.replace(/\/+$/, '')}/v1/models`
+    `${ctx.baseUrl.replace(/\/+$/, '')}/v1/models`
   );
   return (response.data.data ?? []).map((model) => {
     const { id, object: _object, created: _created, owned_by, ...extra } = model;
@@ -649,10 +683,10 @@ async function fetchOpenAICompatibleModels(baseUrl: string): Promise<LlmModel[]>
 }
 
 async function fetchOpenAICompatibleModelInfo(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   modelName: string
 ): Promise<LlmModelInfo> {
-  const models = await fetchOpenAICompatibleModels(baseUrl);
+  const models = await fetchOpenAICompatibleModels(ctx);
   const foundModel = models.find((model) => model.name === modelName);
   return {
     model_info: {
@@ -680,13 +714,14 @@ async function fetchOpenAICompatibleModelInfo(
 // text for `num_ctx N` declarations.
 
 async function sendOpenAICompatibleChat(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   params: ChatParams,
   onChunk?: (chunk: ChatApiResponse) => void,
   timeoutMs?: number,
   signal?: AbortSignal
 ): Promise<ChatApiResponse> {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const client = buildOpenAIRequestClient(ctx);
+  const normalizedBaseUrl = ctx.baseUrl.replace(/\/+$/, '');
 
   if (onChunk) {
     // Streaming path with callback — accumulate content/thinking/tool_calls
@@ -697,7 +732,7 @@ async function sendOpenAICompatibleChat(
     const fullMessage: ChatMessage = { role: 'assistant', content: '' };
     let lastChunk: ChatApiResponse | null = null;
 
-    for await (const chunk of sendOpenAICompatibleChatStream(normalizedBaseUrl, streamParams)) {
+    for await (const chunk of sendOpenAICompatibleChatStream(ctx, streamParams)) {
       if (chunk.message?.content) {
         fullMessage.content += chunk.message.content;
       }
@@ -734,10 +769,11 @@ async function sendOpenAICompatibleChat(
 }
 
 async function* sendOpenAICompatibleChatStream(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   params: StreamChatParams
 ): AsyncGenerator<ChatApiResponse> {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const client = buildOpenAIRequestClient(ctx);
+  const normalizedBaseUrl = ctx.baseUrl.replace(/\/+$/, '');
 
   const config: AxiosRequestConfig = {
     responseType: 'stream',
@@ -1048,6 +1084,7 @@ async function getOpenAICompatibleApiErrorMessage(error: unknown): Promise<strin
 
 export const openaiCompatibleAdapter: LlmAdapter = {
   id: 'openai-compatible',
+  buildRequestClient: buildOpenAIRequestClient,
   fetchModels: fetchOpenAICompatibleModels,
   fetchModelInfo: fetchOpenAICompatibleModelInfo,
   getModelContextLimit: getModelContextLimitFromInfo,

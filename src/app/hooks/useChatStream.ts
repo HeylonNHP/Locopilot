@@ -146,11 +146,28 @@ export function useChatStream(
         }
       }
 
+      // ── Compute the owning session id for every dispatch ──────────────
+      // The owning session is the request's `bufferOwnerMapRef` entry if
+      // known, otherwise the currently-visible session. The reducer's
+      // `targetSessionId` guard then routes the action to the correct
+      // session slot when two streams are live. Passing `targetSessionId`
+      // on every dispatch (instead of relying on a no-target default
+      // that would always hit the current session) is what fixes the
+      // cross-stream state contamination: a `chunk` from stream A no
+      // longer mutates the message list for stream B's session.
+      const ownerSessionId =
+        requestId === undefined
+          ? refs.sessionIdRef.current ?? undefined
+          : bufferOwnerMapRef.current.get(requestId);
+      const targetSessionId =
+        ownerSessionId === undefined ? undefined : ownerSessionId;
+
       switch (event) {
         case 'thinking': {
           dispatch({
             type: 'APPLY_ASSISTANT_DELTA',
             ...(typeof data.content === 'string' ? { thinking: data.content } : {}),
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
           break;
         }
@@ -159,6 +176,7 @@ export function useChatStream(
           dispatch({
             type: 'APPLY_ASSISTANT_DELTA',
             ...(typeof data.content === 'string' ? { content: data.content } : {}),
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
           break;
         }
@@ -171,6 +189,7 @@ export function useChatStream(
               content: `🔧 **${data.name ?? ''}**\n\`\`\`json\n${JSON.stringify(data.arguments, null, 2)}\n\`\`\``,
                ...(data.name === undefined ? {} : { name: data.name }),
             },
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
           trace('tool_call event', { name: data.name, hasToolCallId: false });
           break;
@@ -197,6 +216,7 @@ export function useChatStream(
               ...(data.name === undefined ? {} : { name: data.name }),
                ...(data.toolCallId === undefined ? {} : { tool_call_id: data.toolCallId }),
             },
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
           trace('tool_result event', {
             name: data.name,
@@ -211,6 +231,7 @@ export function useChatStream(
             type: 'APPEND_TOOL_PROGRESS',
             ...(data.name === undefined ? {} : { name: data.name }),
             content: data.message ?? data.content ?? String(data),
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
           trace('tool_progress event', { name: data.name, contentPreview: (data.message ?? '').slice(0, 80) });
           break;
@@ -220,6 +241,7 @@ export function useChatStream(
             type: 'SUBAGENT_OUTPUT',
             agentId: typeof data.agentId === 'string' ? data.agentId : '__subagent__',
             message: typeof data.message === 'string' ? data.message : String(data.message ?? ''),
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
           break;
         }
@@ -246,6 +268,7 @@ export function useChatStream(
               type: 'SUBAGENT_CHUNK',
               agentId,
               text: entry.text,
+              ...(ownerSessionId === undefined ? {} : { targetSessionId: ownerSessionId }),
             });
             subagentBufferRef.current.delete(agentId);
           }, 50);
@@ -270,10 +293,15 @@ export function useChatStream(
                 // response has arrived.
                 modelContextLimit: data.modelContextLimit ?? null,
               },
+              ...(targetSessionId === undefined ? {} : { targetSessionId }),
             });
           }
           if (data.tps !== undefined) {
-            dispatch({ type: 'SET_CURRENT_TPS', tps: data.tps });
+            dispatch({
+              type: 'SET_CURRENT_TPS',
+              tps: data.tps,
+              ...(targetSessionId === undefined ? {} : { targetSessionId }),
+            });
           }
           // The server emits a `vision_unsupported` status phase when
           // a 400 indicates the active model rejected image input. The
@@ -290,7 +318,11 @@ export function useChatStream(
 
         case 'compact_progress': {
           if (typeof data.message === 'string') {
-            dispatch({ type: 'COMPACT_PROGRESS', message: data.message });
+            dispatch({
+              type: 'COMPACT_PROGRESS',
+              message: data.message,
+              ...(targetSessionId === undefined ? {} : { targetSessionId }),
+            });
           }
           break;
         }
@@ -299,7 +331,7 @@ export function useChatStream(
           // Clear stale compaction phases so the streaming indicator
           // switches back to "Streaming..." once compaction finishes
           // and the model resumes generating.
-          dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
+          dispatch({ type: 'CLEAR_COMPACT_PROGRESS', ...(targetSessionId === undefined ? {} : { targetSessionId }) });
 
           // Guard SET_MESSAGES and SET_TOKEN_STATS with the owning session so a
           // compaction that completes after the user has switched sessions cannot
@@ -325,7 +357,7 @@ export function useChatStream(
               ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
             });
           } else {
-            dispatch({ type: 'CLEAR_TOKEN_STATS' });
+            dispatch({ type: 'CLEAR_TOKEN_STATS', ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }) });
           }
           dispatch({
             type: 'ADD_MESSAGE',
@@ -333,6 +365,7 @@ export function useChatStream(
               role: 'system',
               content: `⚡ Conversation auto-compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`,
             },
+            ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
           });
            break;
         }
@@ -344,7 +377,13 @@ export function useChatStream(
           // existing sessions this dispatch was always a redundant no-op at best.
           // This event is in DELTA_EVENTS so it is buffered when the user is away
           // and replayed (applying the final tokenStats) when they return.
-           if (data.tokenStats) dispatch({ type: 'SET_TOKEN_STATS', stats: data.tokenStats });
+           if (data.tokenStats) {
+            dispatch({
+              type: 'SET_TOKEN_STATS',
+              stats: data.tokenStats,
+              ...(targetSessionId === undefined ? {} : { targetSessionId }),
+            });
+          }
           const doneToolCalls = (data as { tool_calls?: Array<{ id?: string }> }).tool_calls;
           trace('done event', {
             hasToolCalls: !!(doneToolCalls?.length),
@@ -368,9 +407,17 @@ export function useChatStream(
         }
 
         case 'error': {
+          // LLM / network failure during streaming. Mark the request
+          // as failed (so the user's `retryPayloadRef` is preserved)
+          // and surface the message to the owning session.
           if (requestId !== undefined) requestFailedMapRef.current.set(requestId, true);
-          dispatch({ type: 'SET_ERROR', error: data.message ?? 'Unknown error' });
-          dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+          const errorMessage = typeof data.message === 'string' ? data.message : 'Unknown error';
+          if (targetSessionId === undefined) {
+            dispatch({ type: 'SET_ERROR', error: errorMessage });
+          } else {
+            dispatch({ type: 'SET_ERROR', error: errorMessage, targetSessionId });
+          }
+          dispatch({ type: 'SET_CURRENT_TPS', tps: null, ...(targetSessionId === undefined ? {} : { targetSessionId }) });
           break;
         }
 
@@ -380,16 +427,21 @@ export function useChatStream(
           // state have diverged. Marking the request as failed prevents
           // `retryPayloadRef` from being cleared so the user can retry.
           if (requestId !== undefined) requestFailedMapRef.current.set(requestId, true);
-          dispatch({
-            type: 'SET_ERROR',
-            error: `Failed to save message to database: ${data.message ?? 'Unknown error'}`,
-          });
-          dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+          const writeErrorMessage =
+            typeof data.message === 'string'
+              ? `Failed to save message to database: ${data.message}`
+              : 'Failed to save message to database: Unknown error';
+          if (targetSessionId === undefined) {
+            dispatch({ type: 'SET_ERROR', error: writeErrorMessage });
+          } else {
+            dispatch({ type: 'SET_ERROR', error: writeErrorMessage, targetSessionId });
+          }
+          dispatch({ type: 'SET_CURRENT_TPS', tps: null, ...(targetSessionId === undefined ? {} : { targetSessionId }) });
           break;
         }
 
         case 'clear_assistant': {
-          dispatch({ type: 'REMOVE_LAST_ASSISTANT' });
+          dispatch({ type: 'REMOVE_LAST_ASSISTANT', ...(targetSessionId === undefined ? {} : { targetSessionId }) });
           break;
         }
 
@@ -509,7 +561,15 @@ export function useChatStream(
       for (const [agentId, entry] of subagentBufferRef.current.entries()) {
         if (entry.sessionId === ownerId || entry.sessionId === undefined) {
           if (entry.timer) clearTimeout(entry.timer);
-          dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
+          // Flush against the owning session so a background stream's
+          // pending sub-agent bubble is not appended to the visible
+          // session when the request lifecycle ends.
+          dispatch({
+            type: 'SUBAGENT_CHUNK',
+            agentId,
+            text: entry.text,
+            ...(ownerId === undefined ? {} : { targetSessionId: ownerId }),
+          });
           subagentBufferRef.current.delete(agentId);
         }
       }
@@ -876,7 +936,15 @@ export function useChatStream(
         for (const [agentId, entry] of subagentBufferRef.current.entries()) {
           if (entry.sessionId === ownerId || entry.sessionId === undefined) {
             if (entry.timer) clearTimeout(entry.timer);
-            dispatch({ type: 'SUBAGENT_CHUNK', agentId, text: entry.text });
+            // Flush against the owning session so a background stream's
+            // pending sub-agent bubble is not appended to the visible
+            // session when the request lifecycle ends.
+            dispatch({
+              type: 'SUBAGENT_CHUNK',
+              agentId,
+              text: entry.text,
+              ...(ownerId === undefined ? {} : { targetSessionId: ownerId }),
+            });
             subagentBufferRef.current.delete(agentId);
           }
         }

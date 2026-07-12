@@ -41,6 +41,7 @@ import {
   fetchLlmModelInfo,
   fetchLlmRunningModelContextLength,
   getLlmModelContextLimit,
+  type LlmRequestContext,
 } from './llm';
 
 /** Result of resolving a chat request's effective numCtx. */
@@ -174,12 +175,16 @@ export function invalidateCapCache(baseUrl?: string, modelName?: string): void {
  * updates the config).
  */
 export async function resolveEffectiveNumCtx(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   modelName: string,
   requestedNumCtx: number
 ): Promise<ResolvedNumCtx> {
   const now = Date.now();
   const requested = Math.max(0, Math.floor(requestedNumCtx));
+  // The cap cache is keyed on (baseUrl, modelName). baseUrl is part of
+  // the per-request context, so two tabs with different baseUrls still
+  // see independent caps.
+  const baseUrl = ctx.baseUrl;
 
   // 1. Cache hit.
   const cached = getCachedCap(baseUrl, modelName, now);
@@ -197,7 +202,7 @@ export async function resolveEffectiveNumCtx(
   let cap: number | null = null;
   let source: ResolvedNumCtx['source'] = 'unknown';
   try {
-    const modelInfo = await fetchLlmModelInfo(baseUrl, modelName);
+    const modelInfo = await fetchLlmModelInfo(ctx, modelName);
     cap = getLlmModelContextLimit(modelInfo);
     if (cap !== null) {
       source = 'static-show';
@@ -211,7 +216,7 @@ export async function resolveEffectiveNumCtx(
   //    negligible (one extra HTTP call) and serial is simpler.
   let runtime: number | null = null;
   try {
-    runtime = await fetchLlmRunningModelContextLength(baseUrl, modelName);
+    runtime = await fetchLlmRunningModelContextLength(ctx, modelName);
   } catch {
     // Runtime probe is best-effort.
   }

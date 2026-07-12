@@ -84,6 +84,12 @@ export interface RequestContext {
 }
 
 export interface SubAgentConfig {
+  /** LLM provider (e.g. 'ollama', 'openai-compatible'). Threaded into the
+   *  per-request LlmRequestContext so concurrent sub-agent runs do not
+   *  clobber a shared adapter singleton. */
+  provider?: 'ollama' | 'openai-compatible';
+  /** Optional Bearer token for openai-compatible providers. */
+  apiKey?: string;
   baseUrl: string;
   model: string;
   numCtx: number;

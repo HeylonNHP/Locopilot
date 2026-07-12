@@ -19,7 +19,7 @@ import { useScrollManager } from './hooks/useScrollManager';
 import { useSendHandler } from './hooks/useSendHandler';
 import { useSessionActions } from './hooks/useSessionActions';
 import { useSessionUrlParam } from './hooks/useSessionUrlParam';
-import { useSlashCommands } from './hooks/useSlashCommands';
+import { COMPACTION_ABORT_KEY, useSlashCommands } from './hooks/useSlashCommands';
 import { useStableRefs } from './hooks/useStableRefs';
 import { useSyncRefs } from './hooks/useSyncRefs';
 import { useChat } from './lib/chatStore';
@@ -97,11 +97,21 @@ function HomeInner() {
 
   const handleSend = useSendHandler(dispatch, handleSlashCommand, sendChatMessage);
 
+  // The set of abort-controller map keys that `handleStop` must NOT
+  // touch. Reserved for non-session work (compact / title / dump) so
+  // the user can keep using these in a background tab while pressing
+  // Stop in the foreground.
+  const reservedAbortKeys = useRef<ReadonlySet<number>>(
+    new Set<number>([COMPACTION_ABORT_KEY])
+  );
+
   const { handleStop, handleSkillPrompt } = useActionHandlers(
     abortControllersRef,
     isCurrentSessionStreaming,
     handleSend,
-    dispatch
+    dispatch,
+    refs.sessionIdRef.current,
+    reservedAbortKeys.current
   );
 
   useEffect(() => {

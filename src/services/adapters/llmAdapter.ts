@@ -1,4 +1,36 @@
+import type { LlmProvider } from '../../types/chatConfig';
 import type { ToolCallArguments } from '../../tools/tools';
+
+/**
+ * Per-request LLM context. Threaded through every LLM call so concurrent
+ * requests do not clobber each other's provider, baseUrl, apiKey, or `think`
+ * flag. Previously these were read from module-level singletons
+ * (`activeAdapter` in `services/llm.ts`, the `client` axios instance in the
+ * OpenAI-compatible adapter), which meant two simultaneous requests with
+ * different providers (or one with `think: true` and one without) would
+ * race on the singleton and pick up the wrong values.
+ *
+ * Adapters receive this object in `sendChat`/`sendChatStream`/`fetchModels`
+ * and use it instead of any module state. The `apiKey` is only consulted by
+ * the OpenAI-compatible adapter; the Ollama adapter ignores it.
+ */
+export interface LlmRequestContext {
+  provider?: LlmProvider;
+  baseUrl: string;
+  apiKey?: string;
+}
+
+/**
+ * Minimal shape of the axios-like HTTP client the LLM adapters use. The
+ * real `AxiosInstance` from `axios` satisfies this structurally; declaring
+ * the narrow type here keeps the adapter contract free of a hard axios
+ * dependency in the interface.
+ */
+export interface AxiosLike {
+  get<T = unknown>(url: string, config?: unknown): Promise<{ data: T }>;
+  post<T = unknown>(url: string, data?: unknown, config?: unknown): Promise<{ data: T }>;
+  isAxiosError?(error: unknown): boolean;
+}
 
 export interface ToolCall {
   id: string;
@@ -134,18 +166,26 @@ export interface LlmTurnStats {
 }
 
 export interface LlmAdapter {
-  readonly id: string;
-  fetchModels(baseUrl: string): Promise<LlmModel[]>;
-  fetchModelInfo(baseUrl: string, modelName: string): Promise<LlmModelInfo>;
+  readonly id: LlmProvider;
+  /**
+   * Build the adapter-scoped axios client for this request. Adapters that
+   * need per-request headers (e.g. OpenAI-compatible Authorization) create
+   * a fresh client here so concurrent requests cannot leak each other's
+   * credentials. Adapters that don't need per-request state may return the
+   * shared `axios` default.
+   */
+  buildRequestClient(ctx: LlmRequestContext): AxiosLike;
+  fetchModels(ctx: LlmRequestContext): Promise<LlmModel[]>;
+  fetchModelInfo(ctx: LlmRequestContext, modelName: string): Promise<LlmModelInfo>;
   getModelContextLimit(modelInfo: LlmModelInfo): number | null;
   sendChat(
-    baseUrl: string,
+    ctx: LlmRequestContext,
     params: ChatParams,
     onChunk?: (chunk: ChatApiResponse) => void,
     timeoutMs?: number,
     signal?: AbortSignal
   ): Promise<ChatApiResponse>;
-  sendChatStream(baseUrl: string, params: StreamChatParams): AsyncGenerator<ChatApiResponse>;
+  sendChatStream(ctx: LlmRequestContext, params: StreamChatParams): AsyncGenerator<ChatApiResponse>;
   getApiErrorMessage(error: unknown): Promise<string>;
   getTurnStats(response: ChatApiResponse): LlmTurnStats | null;
   /**
@@ -155,5 +195,5 @@ export interface LlmAdapter {
    * effective cap over the modelfile's declared value when reconciling
    * the model context limit.
    */
-  fetchRunningModelContextLength?(baseUrl: string, modelName: string): Promise<number | null>;
+  fetchRunningModelContextLength?(ctx: LlmRequestContext, modelName: string): Promise<number | null>;
 }

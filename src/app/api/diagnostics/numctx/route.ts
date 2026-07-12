@@ -29,7 +29,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_NUM_CTX } from '../../../../constants';
 import { resolveEffectiveNumCtx } from '../../../../services/capResolver';
 import { loadConfig } from '../../../../services/configManager';
-import { configureLlmAdapterAndAuth } from '../../../../services/llm';
+import { buildLlmRequestContext } from '../../../../services/llm';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,9 +62,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    configureLlmAdapterAndAuth(config.provider, config.apiKey);
+    const llmRequestContext = buildLlmRequestContext({
+      ...(config.provider ? { provider: config.provider } : {}),
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      baseUrl: config.baseUrl,
+    });
 
-    const resolved = await resolveEffectiveNumCtx(config.baseUrl, modelName, requested);
+    const resolved = await resolveEffectiveNumCtx(llmRequestContext, modelName, requested);
 
     return NextResponse.json({
       model: modelName,

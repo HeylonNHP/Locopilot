@@ -5,70 +5,81 @@ import type {
   LlmAdapter,
   LlmModel,
   LlmModelInfo,
+  LlmRequestContext,
   LlmTurnStats,
   StreamChatParams,
 } from './adapters/llmAdapter';
 
 import { ollamaAdapter } from './adapters/ollamaAdapter';
-import {
-  clearApiKey as clearOpenAIApiKey,
-  openaiCompatibleAdapter,
-  setApiKey as setOpenAIApiKey,
-} from './adapters/openaiCompatibleAdapter';
+import { openaiCompatibleAdapter } from './adapters/openaiCompatibleAdapter';
 import { resolveVisionSupport, type VisionSupportState } from './visionCache';
 
-let activeAdapter: LlmAdapter = ollamaAdapter;
+export type { LlmRequestContext } from './adapters/llmAdapter';
 
-export function getLlmAdapter(): LlmAdapter {
-  return activeAdapter;
-}
-
-export function setLlmAdapter(adapter: LlmAdapter): void {
-  activeAdapter = adapter;
-}
-
+/**
+ * Select the right adapter for a given provider. Pure function — no module
+ * state mutation, so two concurrent requests with different providers each
+ * receive the correct adapter without racing on a singleton.
+ */
 export function selectLlmAdapter(provider?: LlmProvider): LlmAdapter {
   switch (provider) {
     case 'openai-compatible': {
       return openaiCompatibleAdapter;
     }
+    case 'ollama':
     default: {
       return ollamaAdapter;
     }
   }
 }
 
-export function configureLlmAdapter(provider?: LlmProvider): LlmAdapter {
-  const adapter = selectLlmAdapter(provider);
-  setLlmAdapter(adapter);
-  return adapter;
+/**
+ * Build the per-request LLM context. Callers should construct one of these
+ * per HTTP request (or per parallel sub-task) and pass it through every LLM
+ * call in that request's scope. The context is the only thing that ties an
+ * outbound LLM call to its provider, baseUrl, and apiKey — there is no
+ * module-level adapter or client anymore.
+ */
+export function buildLlmRequestContext(options: {
+  provider?: LlmProvider;
+  baseUrl: string;
+  apiKey?: string;
+}): LlmRequestContext {
+  const ctx: LlmRequestContext = {
+    baseUrl: options.baseUrl,
+  };
+  if (options.provider) {
+    ctx.provider = options.provider;
+  }
+  if (options.apiKey && options.apiKey.length > 0) {
+    ctx.apiKey = options.apiKey;
+  }
+  return ctx;
 }
 
 /**
- * Configure the active adapter and its authentication key in one call.
- * This should be invoked once per request after loading config so the
- * correct provider and credentials are always in scope.
+ * Convenience: look up the right adapter for a given context and return it.
+ * The adapter object is stateless — the per-request data lives on the
+ * context, so concurrent requests with different providers still each see
+ * the correct adapter without any singleton to race on.
  */
-export function configureLlmAdapterAndAuth(provider?: LlmProvider, apiKey?: string): LlmAdapter {
-  const adapter = configureLlmAdapter(provider);
-  if (provider === 'openai-compatible' && apiKey) {
-    setOpenAIApiKey(apiKey);
-  } else {
-    clearOpenAIApiKey();
-  }
-  return adapter;
+function adapterForContext(ctx: LlmRequestContext): LlmAdapter {
+  return selectLlmAdapter(ctx.provider);
 }
 
-export function fetchLlmModels(baseUrl: string): Promise<LlmModel[]> {
-  return activeAdapter.fetchModels(baseUrl);
+export function fetchLlmModels(ctx: LlmRequestContext): Promise<LlmModel[]> {
+  return adapterForContext(ctx).fetchModels(ctx);
 }
 
-export function fetchLlmModelInfo(baseUrl: string, modelName: string): Promise<LlmModelInfo> {
-  return activeAdapter.fetchModelInfo(baseUrl, modelName);
+export function fetchLlmModelInfo(
+  ctx: LlmRequestContext,
+  modelName: string
+): Promise<LlmModelInfo> {
+  return adapterForContext(ctx).fetchModelInfo(ctx, modelName);
 }
 
 export function getLlmModelContextLimit(modelInfo: LlmModelInfo): number | null {
-  return activeAdapter.getModelContextLimit(modelInfo);
+  return ollamaAdapter.getModelContextLimit(modelInfo);
 }
 
 export function getLlmModelVisionSupport(info: LlmModelInfo): boolean {
@@ -120,38 +131,39 @@ export async function getLlmModelVisionSupportAsync(
 }
 
 export function sendLlmChat(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   params: ChatParams,
   onChunk?: (chunk: ChatApiResponse) => void,
   timeoutMs?: number,
   signal?: AbortSignal
 ): Promise<ChatApiResponse> {
-  return activeAdapter.sendChat(baseUrl, params, onChunk, timeoutMs, signal);
+  return adapterForContext(ctx).sendChat(ctx, params, onChunk, timeoutMs, signal);
 }
 
 export function sendLlmChatStream(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   params: StreamChatParams
 ): AsyncGenerator<ChatApiResponse> {
-  return activeAdapter.sendChatStream(baseUrl, params);
+  return adapterForContext(ctx).sendChatStream(ctx, params);
 }
 
-export function getLlmApiErrorMessage(error: unknown): Promise<string> {
-  return activeAdapter.getApiErrorMessage(error);
+export function getLlmApiErrorMessage(ctx: LlmRequestContext, error: unknown): Promise<string> {
+  return adapterForContext(ctx).getApiErrorMessage(error);
 }
 
-export function getLlmTurnStats(response: ChatApiResponse): LlmTurnStats | null {
-  return activeAdapter.getTurnStats(response);
+export function getLlmTurnStats(ctx: LlmRequestContext, response: ChatApiResponse): LlmTurnStats | null {
+  return adapterForContext(ctx).getTurnStats(response);
 }
 
 export function fetchLlmRunningModelContextLength(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   modelName: string
 ): Promise<number | null> {
-  if (!activeAdapter.fetchRunningModelContextLength) {
+  const adapter = adapterForContext(ctx);
+  if (!adapter.fetchRunningModelContextLength) {
     return Promise.resolve(null);
   }
-  return activeAdapter.fetchRunningModelContextLength(baseUrl, modelName);
+  return adapter.fetchRunningModelContextLength(ctx, modelName);
 }
 
 export type { LlmTurnStats, StreamChatParams } from './adapters/llmAdapter';

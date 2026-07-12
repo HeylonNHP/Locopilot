@@ -65,39 +65,47 @@ await initializeWasm().catch((err) => {
   console.error('Failed to initialize tiktoken WASM; using heuristic fallback:', err);
 });
 
-let encoder: TiktokenLike | null = null;
-let currentEncoderModel: string | null = null;
+// Cache of one encoder per model name. The previous design cached a
+// SINGLE encoder in module-level mutable state and reassigned it on
+// every `getEncoder(model)` call — that meant two concurrent chat
+// routes encoding for two different models would race on the global
+// and produce wildly-wrong (and nondeterministic, since tiktoken's
+// WASM state is not safe to interleave) token counts. The persisted
+// `last_total_tokens` and the 92% auto-compact decision both rely on
+// these counts, so a wrong value here was a silent data-integrity
+// bug. We now keep one encoder per model so concurrent calls for
+// different models return the right encoder without clobbering each
+// other. A request for the same model still hits the cache.
+const encoderCache: Map<string, TiktokenLike> = new Map();
 
 function getEncoder(model: string): TiktokenLike {
-  if (encoder && currentEncoderModel === model) return encoder;
+  const cached = encoderCache.get(model);
+  if (cached) {
+    return cached;
+  }
 
   if (!wasmReady) {
-    encoder = fallbackEncoder;
-    currentEncoderModel = model;
-    return encoder;
+    encoderCache.set(model, fallbackEncoder);
+    return fallbackEncoder;
   }
 
+  let resolved: TiktokenLike;
   try {
-    encoder = encoding_for_model(model as never);
-    currentEncoderModel = model;
+    resolved = encoding_for_model(model as never) as TiktokenLike;
   } catch {
-    // Model doesn't have a known encoding — keep whatever encoder we already
-    // have (or fall back to cl100k_base on first load). We still record
-    // currentEncoderModel so we don't retry encoding_for_model every call.
-    if (encoder) {
-      currentEncoderModel = model;
-    } else {
-      try {
-        encoder = get_encoding('cl100k_base');
-        currentEncoderModel = 'cl100k_base';
-      } catch {
-        encoder = fallbackEncoder;
-        currentEncoderModel = 'cl100k_base';
-      }
+    // Model doesn't have a known encoding — fall back to cl100k_base
+    // (the closest stable baseline for unknown GPT-like models). The
+    // per-model cache stores the fallback keyed on the model name so
+    // a single failed model probe doesn't penalise every other model
+    // going through the same encoder.
+    try {
+      resolved = get_encoding('cl100k_base') as TiktokenLike;
+    } catch {
+      resolved = fallbackEncoder;
     }
   }
-
-  return encoder ?? fallbackEncoder;
+  encoderCache.set(model, resolved);
+  return resolved;
 }
 
 function countTextTokensWithEncoder(text: string, activeEncoder: TiktokenLike): number {

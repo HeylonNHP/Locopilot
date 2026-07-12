@@ -7,6 +7,7 @@ import type { CompletionMode, Config, LlmProvider } from '../../../types/chatCon
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
 import { invalidateCapCache, resolveEffectiveNumCtx } from '../../../services/capResolver';
 import { loadConfig, saveConfig } from '../../../services/configManager';
+import { buildLlmRequestContext } from '../../../services/llm';
 import { invalidateVisionCache } from '../../../services/visionCache';
 
 const KNOWN_TOP_KEYS: Set<string> = new Set([
@@ -349,7 +350,11 @@ export async function GET(): Promise<NextResponse> {
     if (config.baseUrl && config.model) {
       try {
         const resolved = await resolveEffectiveNumCtx(
-          config.baseUrl,
+          buildLlmRequestContext({
+            ...(config.provider ? { provider: config.provider } : {}),
+            ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+            baseUrl: config.baseUrl,
+          }),
           config.model,
           config.numCtx ?? DEFAULT_NUM_CTX
         );

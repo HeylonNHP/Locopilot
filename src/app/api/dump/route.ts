@@ -8,7 +8,7 @@ import {
   buildDumpFileName,
   type ConversationDumpInput,
 } from '../../../services/historyDump';
-import { type ChatMessage } from '../../../services/llm';
+import { buildLlmRequestContext, type ChatMessage } from '../../../services/llm';
 import { getLastWebCompactionDebug } from '../../../tools/impl/contentCompactor';
 
 export const dynamic = 'force-dynamic';
@@ -69,7 +69,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     if (requested > 0) {
       try {
         const resolved = await resolveEffectiveNumCtx(
-          effectiveBaseUrl,
+          buildLlmRequestContext({
+            ...(config?.provider ? { provider: config.provider } : {}),
+            ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
+            baseUrl: effectiveBaseUrl,
+          }),
           model,
           requested
         );

@@ -38,7 +38,9 @@ export const subAgentToolSchema: ToolSchema = {
 import { AUTO_COMPACT_THRESHOLD_PCT } from '../../constants';
 import { compactHistory } from '../../services/compact';
 import {
+  buildLlmRequestContext,
   type ChatMessage,
+  type LlmRequestContext,
   sendLlmChat,
   type ToolCall,
   type ToolDefinition,
@@ -183,8 +185,13 @@ async function autoCompactSubAgentIfNeeded(
   );
 
   try {
+    const subAgentContext: LlmRequestContext = buildLlmRequestContext({
+      ...(config.provider ? { provider: config.provider } : {}),
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      baseUrl: config.baseUrl,
+    });
     const result = await compactHistory(
-      config.baseUrl,
+      subAgentContext,
       config.compactionModel,
       messages,
       config.numCtx,
@@ -450,8 +457,14 @@ async function runSingleAgent(
     let subagentRoughTokens = 0;
     let subagentLastTpsStatusMs = 0;
 
+    const subAgentContext: LlmRequestContext = buildLlmRequestContext({
+      ...(config.provider ? { provider: config.provider } : {}),
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      baseUrl: config.baseUrl,
+    });
+
     const response = await sendLlmChat(
-      config.baseUrl,
+      subAgentContext,
       {
         model: config.model,
         messages,

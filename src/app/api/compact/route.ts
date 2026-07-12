@@ -6,9 +6,10 @@ import { resolveEffectiveNumCtx } from '../../../services/capResolver';
 import { compactHistory } from '../../../services/compact';
 import { loadConfig } from '../../../services/configManager';
 import {
+  buildLlmRequestContext,
   type ChatMessage,
-  configureLlmAdapterAndAuth,
   getLlmApiErrorMessage,
+  type LlmRequestContext,
   type PersistedChatMessage,
   type SubagentLogMessage,
 } from '../../../services/llm';
@@ -75,13 +76,25 @@ export async function POST(request: NextRequest): Promise<Response> {
         }
       }
 
-      try {
-        const config = await loadConfig();
-        configureLlmAdapterAndAuth(config?.provider, config?.apiKey);
-        const effectiveBaseUrl =
+      // Hoisted so the catch at 170 can use it. The inner try sets the
+      // real value from the loaded config; this default is the
+      // ollama-default fallback if the error fires before config loads.
+      let llmRequestContext: LlmRequestContext = buildLlmRequestContext({
+        baseUrl:
           typeof baseUrl === 'string' && baseUrl.trim().length > 0
             ? baseUrl.trim()
-            : config?.baseUrl?.trim() || 'http://localhost:11434';
+            : 'http://localhost:11434',
+      });
+      try {
+        const config = await loadConfig();
+        llmRequestContext = buildLlmRequestContext({
+          ...(config?.provider ? { provider: config.provider } : {}),
+          ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
+          baseUrl:
+            typeof baseUrl === 'string' && baseUrl.trim().length > 0
+              ? baseUrl.trim()
+              : config?.baseUrl?.trim() || 'http://localhost:11434',
+        });
         // Resolve the effective numCtx against the model's runtime
         // cap. The body numCtx is informational; the resolver
         // prefers the persisted config value (which is the user's
@@ -100,7 +113,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         if (requested !== null) {
           try {
             const resolved = await resolveEffectiveNumCtx(
-              effectiveBaseUrl,
+              llmRequestContext,
               model as string,
               requested
             );
@@ -126,7 +139,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         );
 
         const result = await compactHistory(
-          effectiveBaseUrl,
+          llmRequestContext,
           effectiveCompactionModel,
           conversationMessages,
           effectiveNumCtx,
@@ -163,7 +176,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         });
       } catch (err) {
         const fallbackMessage = err instanceof Error ? err.message : 'Unknown error';
-        const message = await getLlmApiErrorMessage(err).catch(() => fallbackMessage);
+        const message = await getLlmApiErrorMessage(llmRequestContext, err).catch(() => fallbackMessage);
         sendEvent('error', { message: message || fallbackMessage });
       } finally {
         controller.close();

@@ -229,39 +229,119 @@ interface ChatState {
 
 export type ChatAction =
   | { type: 'SET_MESSAGES'; messages: ChatMessage[]; targetSessionId?: number }
-  | { type: 'ADD_MESSAGE'; message: ChatMessage }
-  | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string }
-  | { type: 'APPLY_ASSISTANT_DELTA'; content?: string; thinking?: string }
-  | { type: 'APPEND_TOOL_PROGRESS'; content: string; name?: string }
-  | { type: 'SUBAGENT_OUTPUT'; agentId: string; message: string }
-  | { type: 'SUBAGENT_CHUNK'; agentId: string; text: string }
+  | { type: 'ADD_MESSAGE'; message: ChatMessage; targetSessionId?: number }
+  | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string; targetSessionId?: number }
+  | { type: 'APPLY_ASSISTANT_DELTA'; content?: string; thinking?: string; targetSessionId?: number }
+  | { type: 'APPEND_TOOL_PROGRESS'; content: string; name?: string; targetSessionId?: number }
+  | { type: 'SUBAGENT_OUTPUT'; agentId: string; message: string; targetSessionId?: number }
+  | { type: 'SUBAGENT_CHUNK'; agentId: string; text: string; targetSessionId?: number }
   | { type: 'SET_SESSIONS'; sessions: Session[] }
   | { type: 'ADD_SESSION'; session: Session }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
   | { type: 'SET_MODELS'; models: LLmModel[] }
   | { type: 'SET_MODEL'; model: string }
-  | { type: 'SET_ERROR'; error: string | null }
+  | { type: 'SET_ERROR'; error: string | null; targetSessionId?: number }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
   | {
       type: 'SHOW_APPROVAL';
       command: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
       requestId?: string;
     }
-  | { type: 'CLEAR_MESSAGES' }
-  | { type: 'REMOVE_LAST_ASSISTANT' }
+  | { type: 'CLEAR_MESSAGES'; targetSessionId?: number }
+  | { type: 'REMOVE_LAST_ASSISTANT'; targetSessionId?: number }
   | { type: 'SET_TOKEN_STATS'; stats: Partial<NonNullable<ChatState['tokenStats']>>; targetSessionId?: number }
   | { type: 'SET_DONE_REASON'; reason: DoneReason | undefined; targetSessionId?: number }
-  | { type: 'SET_CURRENT_TPS'; tps: number | null }
-  | { type: 'CLEAR_TOKEN_STATS' }
-  | { type: 'COMPACT_PROGRESS'; message: string }
+  | { type: 'SET_CURRENT_TPS'; tps: number | null; targetSessionId?: number }
+  | { type: 'CLEAR_TOKEN_STATS'; targetSessionId?: number }
+  | { type: 'COMPACT_PROGRESS'; message: string; targetSessionId?: number }
   | { type: 'DISCARD_SESSION'; sessionId: number }
-  | { type: 'CLEAR_COMPACT_PROGRESS' }
+  | { type: 'CLEAR_COMPACT_PROGRESS'; targetSessionId?: number }
   | { type: 'START_STREAMING'; sessionId: number }
   | { type: 'STOP_STREAMING'; sessionId: number }
   | { type: 'SAVE_INPUT_DRAFT'; draft: string }
   | { type: 'SET_HISTORY_INDEX'; index: number | null }
   | { type: 'CLEAR_HISTORY_NAVIGATION' }
   | { type: 'SET_VISION_STATE'; state: VisionSupportState };
+
+/**
+ * Create a fresh SessionState slot for a session that does not have one
+ * yet. Used when an action targets a session id that exists in
+ * `state.streamingSessions` (or otherwise known) but the slot has not been
+ * created yet. Mirrors the initial `newSessionState` shape in
+ * `initialState` below.
+ */
+function emptySessionState(): SessionState {
+  return {
+    messages: [],
+    error: null,
+    tokenStats: null,
+    currentTps: null,
+    compactingPhases: [],
+    pendingApproval: null,
+    lastDoneReason: undefined,
+  };
+}
+
+/**
+ * Apply a per-session mutation. If `targetId` matches the current
+ * session, mutate the top-level state fields (which is what the
+ * rendered UI reads). If `targetId` is for a different session
+ * (including the placeholder -1 for a not-yet-created session), update
+ * the entry in `sessionStates` (or `newSessionState` when targetId is
+ * -1) and leave the top-level state alone — the user is viewing a
+ * different session and the buffered event will be replayed when they
+ * return.
+ *
+ * `mutate` is invoked with the SessionState to update and a `setField`
+ * helper that patches one of the top-level SessionState fields back
+ * into the parent state. When `targetId` matches the current session
+ * the helper is a no-op (the parent state is already updated by the
+ * reducer case directly); when it does not match, the helper updates
+ * the slot in `sessionStates`.
+ */
+type SessionMutation = (slot: SessionState) => SessionState;
+type ApplyResult = { nextState: ChatState; fieldUpdated: boolean };
+
+function applyToSession(
+  state: ChatState,
+  targetId: number | undefined,
+  mutate: SessionMutation
+): ApplyResult {
+  // No target id provided: legacy callers dispatch against whatever
+  // the current session is. This is the buggy "global" path that
+  // useChatStream now avoids, but we still support it for callers
+  // (e.g. SET_ERROR dispatched from sendChatMessage's catch) that
+  // intentionally want the current-session behaviour.
+  if (targetId === undefined) {
+    return { nextState: state, fieldUpdated: false };
+  }
+
+  if (targetId === state.currentSessionId) {
+    return { nextState: state, fieldUpdated: false };
+  }
+
+  if (targetId === -1) {
+    // Placeholder for a not-yet-created session (e.g. mid-creation
+    // before the server has assigned a real id). Buffer in
+    // `newSessionState` and replay when the session_created event
+    // arrives.
+    return {
+      nextState: {
+        ...state,
+        newSessionState: mutate(state.newSessionState),
+      },
+      fieldUpdated: true,
+    };
+  }
+
+  const slot = state.sessionStates.get(targetId) ?? emptySessionState();
+  const newMap = new Map(state.sessionStates);
+  newMap.set(targetId, mutate(slot));
+  return {
+    nextState: { ...state, sessionStates: newMap },
+    fieldUpdated: true,
+  };
+}
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -306,6 +386,20 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, visionState: action.state };
     }
     case 'ADD_MESSAGE': {
+      // If the action targets a session other than the current one, append
+      // the message to that session's slot. The current-session branch
+      // preserves the original user-input side effects (inputDraft /
+      // historyIndex reset).
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          messages: [...slot.messages, withId(action.message)],
+        }));
+        return nextState;
+      }
       if (action.message.role === 'user') {
         return {
           ...state,
@@ -331,6 +425,36 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, messages: msgs };
     }
     case 'APPLY_ASSISTANT_DELTA': {
+      // Non-current target: append to that session's slot without
+      // touching the top-level state.
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
+          const msgs = [...slot.messages];
+          const last = msgs.at(-1);
+          if (!last || last.role !== 'assistant') {
+            msgs.push(
+              withId({
+                role: 'assistant',
+                content: action.content ?? '',
+                ...(action.thinking === undefined ? {} : { thinking: action.thinking }),
+              })
+            );
+            return { ...slot, messages: msgs };
+          }
+          msgs[msgs.length - 1] = {
+            ...last,
+            ...(action.content === undefined ? {} : { content: last.content + action.content }),
+            ...(action.thinking === undefined
+              ? {}
+              : { thinking: (last.thinking || '') + action.thinking }),
+          };
+          return { ...slot, messages: msgs };
+        });
+        return nextState;
+      }
       const msgs = [...state.messages];
       const last = msgs.at(-1);
 
@@ -355,6 +479,40 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, messages: msgs };
     }
     case 'APPEND_TOOL_PROGRESS': {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
+          const msgs = [...slot.messages];
+          for (let i = msgs.length - 1; i >= 0; i -= 1) {
+            const candidate = msgs[i];
+            if (!candidate || candidate.role !== 'tool') {
+              continue;
+            }
+            if (action.name && candidate.name && candidate.name !== action.name) {
+              continue;
+            }
+            msgs[i] = {
+              ...candidate,
+              content: candidate.content ? `${candidate.content}\n${action.content}` : action.content,
+            };
+            return { ...slot, messages: msgs };
+          }
+          return {
+            ...slot,
+            messages: [
+              ...slot.messages,
+              withId({
+                role: 'tool',
+                content: action.content,
+                ...(action.name ? { name: action.name } : {}),
+              }),
+            ],
+          };
+        });
+        return nextState;
+      }
       const msgs = [...state.messages];
       for (let i = msgs.length - 1; i >= 0; i -= 1) {
         const candidate = msgs[i];
@@ -385,6 +543,37 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case 'SUBAGENT_CHUNK': {
+      // When the event targets a different session, route the bubble
+      // to that session's slot.  The agentId keying is unchanged — two
+      // sessions with the same agentId will both have a bubble each,
+      // and a session's own sub-agent_id is unique within that run.
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
+          const msgs = [...slot.messages];
+          for (let i = msgs.length - 1; i >= 0; i -= 1) {
+            const candidate = msgs[i];
+            if (!candidate || candidate.role !== 'subagent_log') {
+              continue;
+            }
+            if (candidate.subagentId !== action.agentId) {
+              continue;
+            }
+            msgs[i] = { ...candidate, content: candidate.content + action.text };
+            return { ...slot, messages: msgs };
+          }
+          return {
+            ...slot,
+            messages: [
+              ...slot.messages,
+              withId({ role: 'subagent_log', content: action.text, subagentId: action.agentId }),
+            ],
+          };
+        });
+        return nextState;
+      }
       // Append raw token text (thinking or content) inline to the same content
       // field so it reads in order alongside tool call output.
       const msgs = [...state.messages];
@@ -409,6 +598,40 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case 'SUBAGENT_OUTPUT': {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
+          const msgs = [...slot.messages];
+          for (let i = msgs.length - 1; i >= 0; i -= 1) {
+            const candidate = msgs[i];
+            if (!candidate || candidate.role !== 'subagent_log') {
+              continue;
+            }
+            if (candidate.subagentId !== action.agentId) {
+              continue;
+            }
+            msgs[i] = {
+              ...candidate,
+              content: candidate.content ? `${candidate.content}\n${action.message}` : action.message,
+            };
+            return { ...slot, messages: msgs };
+          }
+          return {
+            ...slot,
+            messages: [
+              ...slot.messages,
+              withId({
+                role: 'subagent_log',
+                content: action.message,
+                subagentId: action.agentId,
+              }),
+            ],
+          };
+        });
+        return nextState;
+      }
       const msgs = [...state.messages];
       for (let i = msgs.length - 1; i >= 0; i -= 1) {
         const candidate = msgs[i];
@@ -557,6 +780,16 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, model: action.model };
     }
     case 'SET_ERROR': {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          error: action.error,
+        }));
+        return nextState;
+      }
       return { ...state, error: action.error };
     }
     case 'SET_CONFIG': {
@@ -566,6 +799,27 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, ...action.config };
     }
     case 'SHOW_APPROVAL': {
+      // ── Determine the session this approval request belongs to ──────
+      // The SHOW_APPROVAL action has no `targetSessionId` field, but
+      // the chat route only ever shows the modal for the request the
+      // user is approving (and the registry keys approvals by a UUID
+      // that the route captures). For the hide-modal case
+      // (command === null) we resolve the target by `requestId`: the
+      // session whose `pendingApproval.requestId` matches is the
+      // owning session. Falls back to `currentSessionId` for callers
+      // that omit `requestId` (e.g. local test code).
+      const owningSessionId = (() => {
+        if (action.command === null && action.requestId !== undefined) {
+          for (const [id, sess] of state.sessionStates) {
+            if (sess.pendingApproval?.requestId === action.requestId) return id;
+          }
+          if (state.newSessionState.pendingApproval?.requestId === action.requestId) {
+            return -1;
+          }
+        }
+        return state.currentSessionId;
+      })();
+
       let nextState: ChatState = {
         ...state,
         pendingCommand: action.command,
@@ -573,27 +827,46 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         pendingApprovalId: action.requestId ?? null,
       };
 
-      // Bug 5 fix: when hiding the modal, clear pendingApproval from ALL sessions
-      // so stale approvals don't reappear when switching back to a session.
+      // When hiding the modal, only clear the owning session's
+      // `pendingApproval` slot — NOT every session in the map. The
+      // pre-fix code did a `for ... newMap` over every session and
+      // wiped unrelated pending approvals, so a user who had a
+      // background stream waiting on its own approval would see that
+      // approval silently disappear the moment they approved or
+      // rejected the foreground request.
       if (action.command === null) {
-        const newMap = new Map(nextState.sessionStates);
-        for (const [id, sess] of newMap) {
-          if (sess.pendingApproval !== null) {
-            newMap.set(id, { ...sess, pendingApproval: null });
-          }
+        if (owningSessionId === null) {
+          // No owning session (no current session, no requestId match).
+          // Old behaviour: clear both. This is the rare case where the
+          // server's `command: null` dispatch lands with no other
+          // context, so the safe option is to clear the
+          // not-yet-claimed session slot.
+          return {
+            ...nextState,
+            newSessionState: { ...nextState.newSessionState, pendingApproval: null },
+          };
         }
-        nextState = { ...nextState, sessionStates: newMap };
-        nextState = {
-          ...nextState,
-          newSessionState: { ...nextState.newSessionState, pendingApproval: null },
-        };
-        return nextState;
+        if (owningSessionId === -1) {
+          return {
+            ...nextState,
+            newSessionState: { ...nextState.newSessionState, pendingApproval: null },
+          };
+        }
+        const newMap = new Map(nextState.sessionStates);
+        const sess = newMap.get(owningSessionId);
+        if (sess && sess.pendingApproval !== null) {
+          newMap.set(owningSessionId, { ...sess, pendingApproval: null });
+        }
+        return { ...nextState, sessionStates: newMap };
       }
 
-      // Also persist into the active session's state so it survives switching
-      if (state.currentSessionId !== null) {
-        let session = nextState.sessionStates.get(state.currentSessionId);
-        // Bug 4 fix: auto-initialize the session slot if it doesn't exist yet
+      // Also persist into the owning session's state so it survives switching.
+      // Prefer the resolved owning session id (which may be a background
+      // session whose approval we just showed the user) over the current
+      // session id — this is what fixes the "second stream's modal
+      // stomps the first stream's modal" bug for the modal-display case.
+      if (owningSessionId !== null && owningSessionId !== -1) {
+        let session = nextState.sessionStates.get(owningSessionId);
         if (!session) {
           const newMap = new Map(nextState.sessionStates);
           session = {
@@ -605,11 +878,11 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             pendingApproval: null,
             lastDoneReason: undefined,
           };
-          newMap.set(state.currentSessionId, session);
+          newMap.set(owningSessionId, session);
           nextState = { ...nextState, sessionStates: newMap };
         }
         const newMap = new Map(nextState.sessionStates);
-        newMap.set(state.currentSessionId, {
+        newMap.set(owningSessionId, {
           ...session,
           pendingApproval: action.command
             ? {
@@ -621,7 +894,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         return { ...nextState, sessionStates: newMap };
       }
 
-      // New session (currentSessionId is null)
+      // No owning session id resolved (e.g. very early in a new-session
+      // creation, before any real session id is known). Fall back to
+      // the not-yet-claimed slot.
       nextState = {
         ...nextState,
         newSessionState: {
@@ -637,9 +912,35 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return nextState;
     }
     case 'CLEAR_MESSAGES': {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          messages: [],
+        }));
+        return nextState;
+      }
       return { ...state, messages: [] };
     }
     case 'REMOVE_LAST_ASSISTANT': {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
+          const msgs = slot.messages;
+          if (msgs.length > 0) {
+            const last = msgs.at(-1);
+            if (last && last.role === 'assistant') {
+              return { ...slot, messages: msgs.slice(0, -1) };
+            }
+          }
+          return slot;
+        });
+        return nextState;
+      }
       const msgs = state.messages;
       if (msgs.length > 0) {
         const last = msgs.at(-1);
@@ -654,7 +955,19 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         action.targetSessionId !== undefined &&
         action.targetSessionId !== state.currentSessionId
       ) {
-        return state;
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
+          // Merge with existing stats so durable fields like evalTps /
+          // promptTps (sent once on the `done` event) survive transient
+          // `status` updates that only carry tokensUsed / tokenLimit.
+          const base = slot.tokenStats ?? {
+            promptEvalCount: 0,
+            evalCount: 0,
+            totalTokens: 0,
+            tokenLimit: 0,
+          };
+          return { ...slot, tokenStats: { ...base, ...action.stats } };
+        });
+        return nextState;
       }
       // Merge with existing stats so that durable fields like evalTps /
       // promptTps (sent once on the `done` event) survive transient
@@ -687,17 +1000,51 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         action.targetSessionId !== undefined &&
         action.targetSessionId !== state.currentSessionId
       ) {
-        return state;
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          lastDoneReason: action.reason,
+        }));
+        return nextState;
       }
       return { ...state, lastDoneReason: action.reason };
     }
     case 'SET_CURRENT_TPS': {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          currentTps: action.tps,
+        }));
+        return nextState;
+      }
       return { ...state, currentTps: action.tps };
     }
     case 'CLEAR_TOKEN_STATS': {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          tokenStats: null,
+        }));
+        return nextState;
+      }
       return { ...state, tokenStats: null };
     }
     case 'COMPACT_PROGRESS': {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          compactingPhases: [...slot.compactingPhases, action.message],
+        }));
+        return nextState;
+      }
       return { ...state, compactingPhases: [...state.compactingPhases, action.message] };
     }
     case 'DISCARD_SESSION': {
@@ -733,6 +1080,16 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case 'CLEAR_COMPACT_PROGRESS': {
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          compactingPhases: [],
+        }));
+        return nextState;
+      }
       return { ...state, compactingPhases: [] };
     }
     default: {

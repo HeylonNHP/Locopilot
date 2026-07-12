@@ -3,12 +3,14 @@ import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 
 import type {
+  AxiosLike,
   ChatApiResponse,
   ChatMessage,
   ChatParams,
   LlmAdapter,
   LlmModel,
   LlmModelInfo,
+  LlmRequestContext,
   LlmTurnStats,
   StreamChatParams,
 } from './llmAdapter';
@@ -116,11 +118,11 @@ function getOllamaTurnStats(response: ChatApiResponse): LlmTurnStats | null {
  * start; this function returns the *effective* value.
  */
 async function fetchOllamaRunningModelContextLength(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   modelName: string
 ): Promise<number | null> {
   try {
-    const response = await axios.get<PsResponse>(`${baseUrl}/api/ps`);
+    const response = await axios.get<PsResponse>(`${ctx.baseUrl}/api/ps`);
     const models = response.data.models || [];
     const model = models.find((m) => m.name === modelName || m.name.startsWith(`${modelName}:`));
     const contextLength = model?.context_length;
@@ -133,18 +135,21 @@ async function fetchOllamaRunningModelContextLength(
   }
 }
 
-async function fetchOllamaModels(baseUrl: string): Promise<LlmModel[]> {
-  const response = await axios.get<TagsResponse>(`${baseUrl}/api/tags`);
+async function fetchOllamaModels(ctx: LlmRequestContext): Promise<LlmModel[]> {
+  const response = await axios.get<TagsResponse>(`${ctx.baseUrl}/api/tags`);
   return response.data.models || [];
 }
 
-async function fetchOllamaModelInfo(baseUrl: string, modelName: string): Promise<LlmModelInfo> {
-  const response = await axios.post<LlmModelInfo>(`${baseUrl}/api/show`, { name: modelName });
+async function fetchOllamaModelInfo(
+  ctx: LlmRequestContext,
+  modelName: string
+): Promise<LlmModelInfo> {
+  const response = await axios.post<LlmModelInfo>(`${ctx.baseUrl}/api/show`, { name: modelName });
   return response.data;
 }
 
 async function sendOllamaChat(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   params: ChatParams,
   onChunk?: (chunk: ChatApiResponse) => void,
   timeoutMs?: number | undefined,
@@ -160,7 +165,7 @@ async function sendOllamaChat(
     const fullMessage: ChatMessage = { role: 'assistant', content: '' };
     let lastChunk: ChatApiResponse | null = null;
 
-    for await (const chunk of sendOllamaChatStream(baseUrl, streamParams)) {
+    for await (const chunk of sendOllamaChatStream(ctx, streamParams)) {
       if (chunk.message?.content) {
         fullMessage.content += chunk.message.content;
       }
@@ -182,7 +187,7 @@ async function sendOllamaChat(
   }
 
   const response = await axios.post<ChatApiResponse>(
-    `${baseUrl}/api/chat`,
+    `${ctx.baseUrl}/api/chat`,
     buildChatPayload(params, false),
     config
   );
@@ -191,7 +196,7 @@ async function sendOllamaChat(
 }
 
 async function* sendOllamaChatStream(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   params: StreamChatParams
 ): AsyncGenerator<ChatApiResponse> {
   const requestConfig: AxiosRequestConfig = {
@@ -205,7 +210,7 @@ async function* sendOllamaChatStream(
   }
 
   const response = await axios.post<NodeJS.ReadableStream>(
-    `${baseUrl}/api/chat`,
+    `${ctx.baseUrl}/api/chat`,
     buildChatPayload(params, true),
     requestConfig
   );
@@ -270,6 +275,10 @@ async function getOllamaApiErrorMessage(error: unknown): Promise<string> {
 
 export const ollamaAdapter: LlmAdapter = {
   id: 'ollama',
+  // Ollama does not need a per-request client; the shared `axios` default
+  // is fine. Returning it (rather than a new instance) avoids the
+  // per-request axios.create() overhead in the common case.
+  buildRequestClient: (_ctx: LlmRequestContext): AxiosLike => axios,
   fetchModels: fetchOllamaModels,
   fetchModelInfo: fetchOllamaModelInfo,
   getModelContextLimit: getModelContextLimitFromInfo,

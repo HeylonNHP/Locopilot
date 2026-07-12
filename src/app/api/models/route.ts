@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import type { Config } from '../../../types/chatConfig';
 
-import { configureLlmAdapterAndAuth, fetchLlmModelInfo, fetchLlmModels } from '../../../services/llm';
+import { buildLlmRequestContext, fetchLlmModelInfo, fetchLlmModels, type LlmRequestContext } from '../../../services/llm';
 import { resolveVisionSupport } from '../../../services/visionCache';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
@@ -31,9 +31,13 @@ export async function GET(): Promise<NextResponse> {
       );
     }
 
-    configureLlmAdapterAndAuth(config.provider, config.apiKey);
+    const llmRequestContext: LlmRequestContext = buildLlmRequestContext({
+      ...(config.provider ? { provider: config.provider } : {}),
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      baseUrl: config.baseUrl,
+    });
 
-    const models = await fetchLlmModels(config.baseUrl);
+    const models = await fetchLlmModels(llmRequestContext);
     const provider = config.provider ?? 'ollama';
     const modelsWithCapabilities = await Promise.all(
       models.map(async (model) => {
@@ -41,7 +45,7 @@ export async function GET(): Promise<NextResponse> {
         // populates this; OpenAI-compatible leaves it empty).
         const caps = new Set<string>();
         try {
-          const modelInfo = await fetchLlmModelInfo(config.baseUrl, model.name);
+          const modelInfo = await fetchLlmModelInfo(llmRequestContext, model.name);
           if (Array.isArray(modelInfo.capabilities)) {
             for (const cap of modelInfo.capabilities) {
               caps.add(String(cap));

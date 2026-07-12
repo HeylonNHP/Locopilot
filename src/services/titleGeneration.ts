@@ -5,7 +5,7 @@
  * input sanitization, and post-response validation to reject junk titles.
  */
 
-import { type ChatMessage, sendLlmChat } from './llm';
+import { type ChatMessage, type LlmRequestContext, sendLlmChat } from './llm';
 
 const TITLE_MAX_LEN = 80;
 const TITLE_MIN_LEN = 3;
@@ -121,7 +121,7 @@ function extractTitleFromResponse(raw: string): string {
 }
 
 export async function generateSessionTitle(
-  baseUrl: string,
+  ctx: LlmRequestContext,
   model: string,
   messages: ChatMessage[],
   numCtx: number,
@@ -231,7 +231,7 @@ export async function generateSessionTitle(
     );
 
     try {
-      const response = await sendLlmChat(baseUrl, {
+      const response = await sendLlmChat(ctx, {
         model,
         messages: [
           { role: 'system', content: strategy.system },
