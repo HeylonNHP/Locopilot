@@ -3,6 +3,8 @@ import * as cheerio from 'cheerio';
 
 import type { ToolSchema } from '@/tools/tools';
 
+import { DEFAULT_WEB_REQUEST_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES } from '@/constants';
+
 import type { ToolOutputSink } from '../toolOutput';
 import type { ExtractedLink } from '../web/linkExtractor';
 
@@ -11,7 +13,6 @@ import {
   fetchAndExtract,
 } from '../web/htmlExtractor';
 import { BrowserPool, DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
-import { DEFAULT_WEB_REQUEST_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES } from '@/constants';
 
 export const webSearchToolSchema: ToolSchema = {
   name: 'web_search',
@@ -209,15 +210,14 @@ export class WebSearchTool {
           continue;
         }
 
-        const pages = (
-          await this.fetchPagesWithConcurrency(
-            searchResults,
-            queryIndex,
-            queries.length,
-            args.use_playwright,
-            signal
-          )
-        ).filter((p): p is ExtractedPage => p !== null);
+        const fetched = await this.fetchPagesWithConcurrency(
+          searchResults,
+          queryIndex,
+          queries.length,
+          args.use_playwright,
+          signal
+        );
+        const pages: ExtractedPage[] = fetched.filter((p): p is ExtractedPage => p !== null);
 
         const resultLines: string[] = [`query: ${query}`, `results: ${pages.length}`];
 
@@ -482,7 +482,7 @@ export class WebSearchTool {
       this.fetchAndExtractText(result, usePlaywright, signal)
     );
 
-    const settled: (ExtractedPage | null | undefined)[] = new Array(tasks.length);
+    const settled: (ExtractedPage | null | undefined)[] = Array.from({ length: tasks.length });
     const limit = Math.max(1, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES);
 
     // Shared cursor — each worker pulls the next index until exhausted.

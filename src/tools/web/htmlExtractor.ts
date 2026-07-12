@@ -16,6 +16,8 @@ import * as cheerio from 'cheerio';
  */
 import { JSDOM, VirtualConsole } from 'jsdom';
 
+import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
+
 import type { ToolOutputSink } from '../toolOutput';
 
 import { ContentCompactor } from '../impl/contentCompactor';
@@ -27,7 +29,6 @@ import {
   shouldTryBrowserFallback,
 } from './playwrightRenderer';
 import { buildWebRequestHeaders } from './webRequestHeaders';
-import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
 
 export interface WebExtractionSettings {
   requestTimeoutMs: number;

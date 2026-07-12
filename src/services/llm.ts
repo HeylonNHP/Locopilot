@@ -26,7 +26,6 @@ export function selectLlmAdapter(provider?: LlmProvider): LlmAdapter {
     case 'openai-compatible': {
       return openaiCompatibleAdapter;
     }
-    case 'ollama':
     default: {
       return ollamaAdapter;
     }
@@ -184,12 +183,12 @@ export {
 // entry point (mirrors the `capResolver` + `llmContextLimit` pattern
 // that the chat route uses). The actual implementations live in
 // `visionCache.ts` and `llmContextLimit.ts`.
+export { parseVisionUnsupportedFromError } from './llmContextLimit';
 export {
   clearVisionCache,
   invalidateVisionCache,
   recordDiscoveredNonVision,
-  resolveVisionSupport,
   type ResolvedVisionSupport,
+  resolveVisionSupport,
   type VisionSupportState,
 } from './visionCache';
-export { parseVisionUnsupportedFromError } from './llmContextLimit';

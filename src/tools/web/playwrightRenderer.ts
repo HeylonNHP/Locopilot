@@ -1,7 +1,8 @@
 import type { Browser, BrowserContext, Page } from 'playwright';
 
-import { buildWebRequestHeaders } from './webRequestHeaders';
 import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
+
+import { buildWebRequestHeaders } from './webRequestHeaders';
 
 export const DEFAULT_USER_AGENT = 'Locopilot/1.0 (+https://ollama.com)';
 const BROWSER_RENDER_TIMEOUT_MS = 15_000;

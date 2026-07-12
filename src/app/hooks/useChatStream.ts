@@ -13,7 +13,7 @@ import type { StableRefs, WritableRef } from './useStableRefs';
 
 const trace = (label: string, data?: Record<string, unknown>) => {
   if (process.env.NODE_ENV === 'development') {
-    console.debug(`[trace] ${label}`, data ?? {});
+    console.warn(`[trace] ${label}`, data ?? {});
   }
 };
 

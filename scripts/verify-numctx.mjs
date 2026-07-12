@@ -164,15 +164,15 @@ async function main() {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ model: MODEL_B }),
   });
-  if (!putRes.ok) {
-    console.log(`  SKIP  PUT /api/config returned ${putRes.status}; cannot exercise invalidation`);
-  } else {
+  if (putRes.ok) {
     const bFresh = await resolve(MODEL_B, REQUESTED);
     console.log(`  response: ${JSON.stringify(bFresh)}`);
     assert(
       bFresh.source !== 'cache' || bFresh.modelCap === bWarm.modelCap,
       'after model change, either re-probed (source != cache) or cap unchanged'
     );
+  } else {
+    console.log(`  SKIP  PUT /api/config returned ${putRes.status}; cannot exercise invalidation`);
   }
   console.log('');
 

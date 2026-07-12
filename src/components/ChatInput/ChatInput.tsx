@@ -2,9 +2,10 @@
 import Image from 'next/image';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { useInputHistory } from '@/app/hooks/useInputHistory';
-import type { LlmProvider } from '@/types/chatConfig';
 import type { VisionSupportState } from '@/services/visionCache';
+import type { LlmProvider } from '@/types/chatConfig';
+
+import { useInputHistory } from '@/app/hooks/useInputHistory';
 
 import './ChatInput.scss';
 

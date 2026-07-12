@@ -1,8 +1,7 @@
 'use client';
 
-import ChatInput, { type Attachment } from '@/components/ChatInput';
-
 import { useChat } from '@/app/lib/chatStore';
+import ChatInput, { type Attachment } from '@/components/ChatInput';
 
 interface InputAreaProps {
   isStreaming: boolean;
