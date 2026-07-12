@@ -94,6 +94,15 @@ export interface SubAgentConfig {
   model: string;
   numCtx: number;
   compactionModel: string;
+  /**
+   * Reasoning effort for OpenAI-compatible providers. Maps to the
+   * wire `reasoning_effort` field. When 'off', sub-agents send
+   * `reasoning_effort: 'none'` which is required for models that
+   * have reasoning forced on by the provider (e.g. gpt-5.6-luna
+   * on the Airia gateway) when function tools are present.
+   * Inherited from the parent session's setting.
+   */
+  reasoningEffort?: 'off' | 'low' | 'medium' | 'high';
   tools: ToolDefinition[];
   /**
    * Sub-agent-local approval ledger for `mcp_call`. The chat route
