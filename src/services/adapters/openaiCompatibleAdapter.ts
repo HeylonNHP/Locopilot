@@ -116,7 +116,7 @@ interface OpenAIChatCompletionRequest {
   messages: OpenAIMessage[];
   stream: boolean;
   tools?: OpenAITool[];
-  reasoning_effort?: 'none' | 'low' | 'medium' | 'high';
+  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   response_format?: string | Record<string, unknown>;
   stream_options?: { include_usage: boolean };
   max_tokens?: number;
@@ -552,12 +552,10 @@ function buildChatPayload(params: ChatParams, stream: boolean): OpenAIChatComple
     payload.max_tokens = params.options.max_tokens as number;
   }
 
-  // Canonical reasoning effort for OpenAI-compatible providers. The
-  // canonical field is 'off' | 'low' | 'medium' | 'high'; 'off' maps
-  // to wire value 'none' (some models with reasoning forced on by the
-  // provider — e.g. gpt-5.6-luna on the Airia gateway — require
-  // `reasoning_effort: 'none'` to disable it when tools are present).
-  // When set, the field wins over the legacy `params.think` boolean.
+  // Canonical reasoning effort for OpenAI-compatible providers.
+  // The value is passed through as‑is, except that the internal
+  // 'off' alias is converted to 'none' for backward compatibility.
+  // Accepted values: 'off'|'none'|'minimal'|'low'|'medium'|'high'|'xhigh'.
   if (params.reasoningEffort !== undefined) {
     payload.reasoning_effort = params.reasoningEffort === 'off' ? 'none' : params.reasoningEffort;
   } else if (params.think !== undefined && (!params.tools || params.tools.length === 0)) {

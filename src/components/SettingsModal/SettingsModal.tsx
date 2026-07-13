@@ -267,14 +267,17 @@ export default function SettingsModal({ onClose }: Props) {
                   id="reasoning-effort-select"
                   value={reasoningEffort}
                   onChange={(e) =>
-                    setReasoningEffort(e.target.value as 'off' | 'low' | 'medium' | 'high')
+                    setReasoningEffort(e.target.value as 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh')
                   }
                   className="settings-input"
                 >
                   <option value="off">Off (none)</option>
+                  <option value="none">None</option>
+                  <option value="minimal">Minimal</option>
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
+                  <option value="xhigh">XHigh</option>
                 </select>
               </div>
             )}

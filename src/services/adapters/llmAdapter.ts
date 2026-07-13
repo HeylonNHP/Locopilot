@@ -109,15 +109,18 @@ export interface ChatParams {
    * to the wire `reasoning_effort` field:
    *   - 'off'    → 'none'   (explicit off; required for models with
    *                        reasoning forced on by the provider)
+   *   - 'none'   → 'none'
+   *   - 'minimal'→ 'minimal'
    *   - 'low'    → 'low'
    *   - 'medium' → 'medium'
    *   - 'high'   → 'high'
+   *   - 'xhigh'  → 'xhigh'
    *
    * When set, the OpenAI-compatible adapter emits the corresponding
    * value regardless of whether `tools` is present. Coexists with
    * `think`; Ollama ignores it.
    */
-  reasoningEffort?: 'off' | 'low' | 'medium' | 'high';
+  reasoningEffort?: 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   /**
    * When false, omit image attachments from the outgoing prompt payload.
    * Undefined means unknown and preserves any existing image data.

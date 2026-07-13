@@ -167,10 +167,11 @@ function validateConfig(
 
   if ('reasoningEffort' in input) {
     const v = input.reasoningEffort;
-    if (typeof v !== 'string' || (v !== 'off' && v !== 'low' && v !== 'medium' && v !== 'high')) {
+    const allowed = ['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+    if (typeof v !== 'string' || !allowed.includes(v)) {
       return {
         ok: false,
-        error: "Invalid config: 'reasoningEffort' must be 'off', 'low', 'medium', or 'high'",
+        error: "Invalid config: 'reasoningEffort' must be one of: off, none, minimal, low, medium, high, xhigh",
       };
     }
     out.reasoningEffort = v;

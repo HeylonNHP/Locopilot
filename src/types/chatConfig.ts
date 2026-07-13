@@ -35,18 +35,21 @@ export interface Config {
    * Reasoning effort for OpenAI-compatible providers. Maps to the
    * `reasoning_effort` field on the wire:
    *   - 'off'   → 'none'   (forced off, even for models with reasoning on by default)
+   *   - 'none'  → 'none'
+   *   - 'minimal' → 'minimal'
    *   - 'low'   → 'low'
    *   - 'medium'→ 'medium'
    *   - 'high'  → 'high'
+   *   - 'xhigh' → 'xhigh'
    *
    * Distinct from `thinkingEnabled` (a boolean) which maps to Ollama's
    * `think` field. The two coexist: `reasoningEffort` is for
    * OpenAI-compatible providers, `thinkingEnabled` is for Ollama.
-   * Defaults to 'off' so models with reasoning on by default (e.g.
-   * gpt-5.6-luna on the Airia gateway) are not silently forced into
-   * reasoning when called with tools.
+   * Defaults to 'off' (which resolves to 'none') so models with reasoning
+   * on by default (e.g. gpt-5.6-luna on the Airia gateway) are not silently
+   * forced into reasoning when called with tools.
    */
-  reasoningEffort?: 'off' | 'low' | 'medium' | 'high';
+  reasoningEffort?: 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   /**
    * When true, the chat route prepends a `[Sent YYYY-MM-DD HH:MM]` header
    * to each user-role message in the LLM-bound conversation. The
