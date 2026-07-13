@@ -82,7 +82,7 @@ function formatTraceSection(traceMessages: ChatMessage[]): string {
     // Skip 'system' and 'user' messages in the trace
   }
   if (lines.length === 0) return '';
-  return `ACTIONS TAKEN (tool calls, thinking, and intermediate results):\n${  lines.join('\n')}`;
+  return `ACTIONS TAKEN (tool calls, thinking, and intermediate results):\n${lines.join('\n')}`;
 }
 
 /**
@@ -113,9 +113,9 @@ export async function generateJudgeFeedback(
       role: 'user',
       content:
         `ORIGINAL REQUEST:\n${userRequest}\n\n${
-        traceMessages && traceMessages.length > 0
-          ? `${formatTraceSection(traceMessages)  }\n\n`
-          : ''
+          traceMessages && traceMessages.length > 0
+            ? `${formatTraceSection(traceMessages)}\n\n`
+            : ''
         }ASSISTANT REPLY:\n${assistantReply}\n\n` +
         `Explain specifically what is missing, incomplete, or incorrect in the assistant's reply.`,
     },
@@ -186,9 +186,9 @@ export async function checkCompleteness(
       role: 'user',
       content:
         `ORIGINAL REQUEST:\n${userRequest}\n\n${
-        traceMessages && traceMessages.length > 0
-          ? `${formatTraceSection(traceMessages)  }\n\n`
-          : ''
+          traceMessages && traceMessages.length > 0
+            ? `${formatTraceSection(traceMessages)}\n\n`
+            : ''
         }ASSISTANT REPLY:\n${assistantReply}\n\n` +
         `Is the request fully satisfied? Reply YES or NO.`,
     },

@@ -24,7 +24,12 @@ import path from 'node:path';
 import { isDangerousEnvKey } from './dangerousEnv';
 import { expandEnvRefs, expandEnvRefsInRecord } from './envExpansion';
 import { MCP_FORBIDDEN_SERVER_NAMES } from './schemaAdapter';
-import { MCPConfigError, type MCPOAuthConfig, type MCPRootConfig, type MCPServerConfig } from './types';
+import {
+  MCPConfigError,
+  type MCPOAuthConfig,
+  type MCPRootConfig,
+  type MCPServerConfig,
+} from './types';
 
 const VALID_NAME_REGEX = /^[\w-]+$/i;
 const MAX_NAME_LENGTH = 64;
@@ -67,7 +72,7 @@ export async function ensureMCPConfigFile(): Promise<void> {
   try {
     const dir = path.join(os.homedir(), MCP_CONFIG_DIRNAME);
     await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
-    const tmpPath = `${configPath  }.tmp`;
+    const tmpPath = `${configPath}.tmp`;
     // Open with mode 0o600 BEFORE writing so the file is
     // never briefly world-readable (bug #21). The previous
     // implementation used `fsp.writeFile` with a mode
@@ -188,9 +193,12 @@ function validateStdioConfig(server: MCPServerConfig, key: string): void {
   if (typeof transport.command !== 'string' || transport.command.trim().length === 0) {
     throw new MCPConfigError(`MCP server "${key}": stdio transport requires a non-empty "command"`);
   }
-  if (transport.args !== undefined && (!Array.isArray(transport.args) || !transport.args.every((arg) => typeof arg === 'string'))) {
-      throw new MCPConfigError(`MCP server "${key}": stdio "args" must be an array of strings`);
-    }
+  if (
+    transport.args !== undefined &&
+    (!Array.isArray(transport.args) || !transport.args.every((arg) => typeof arg === 'string'))
+  ) {
+    throw new MCPConfigError(`MCP server "${key}": stdio "args" must be an array of strings`);
+  }
   if (transport.env !== undefined) {
     if (
       !isPlainObject(transport.env) ||
@@ -210,27 +218,30 @@ function validateStdioConfig(server: MCPServerConfig, key: string): void {
   if (transport.cwd !== undefined && typeof transport.cwd !== 'string') {
     throw new MCPConfigError(`MCP server "${key}": stdio "cwd" must be a string`);
   }
-  if (server.autoApprove !== undefined && (
-      !Array.isArray(server.autoApprove) ||
-      !server.autoApprove.every((entry) => typeof entry === 'string')
-    )) {
-      throw new MCPConfigError(`MCP server "${key}": "autoApprove" must be an array of strings`);
-    }
-  if (server.timeoutSeconds !== undefined && (
-      typeof server.timeoutSeconds !== 'number' ||
+  if (
+    server.autoApprove !== undefined &&
+    (!Array.isArray(server.autoApprove) ||
+      !server.autoApprove.every((entry) => typeof entry === 'string'))
+  ) {
+    throw new MCPConfigError(`MCP server "${key}": "autoApprove" must be an array of strings`);
+  }
+  if (
+    server.timeoutSeconds !== undefined &&
+    (typeof server.timeoutSeconds !== 'number' ||
       !Number.isFinite(server.timeoutSeconds) ||
-      server.timeoutSeconds <= 0
-    )) {
-      throw new MCPConfigError(
-        `MCP server "${key}": "timeoutSeconds" must be a positive finite number`
-      );
-    }
-  if (server.disabledTools !== undefined && (
-      !Array.isArray(server.disabledTools) ||
-      !server.disabledTools.every((entry) => typeof entry === 'string')
-    )) {
-      throw new MCPConfigError(`MCP server "${key}": "disabledTools" must be an array of strings`);
-    }
+      server.timeoutSeconds <= 0)
+  ) {
+    throw new MCPConfigError(
+      `MCP server "${key}": "timeoutSeconds" must be a positive finite number`
+    );
+  }
+  if (
+    server.disabledTools !== undefined &&
+    (!Array.isArray(server.disabledTools) ||
+      !server.disabledTools.every((entry) => typeof entry === 'string'))
+  ) {
+    throw new MCPConfigError(`MCP server "${key}": "disabledTools" must be an array of strings`);
+  }
 }
 
 function normaliseServer(raw: unknown, key: string): MCPServerConfig {
@@ -303,9 +314,7 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
       ? {
           type: 'stdio',
           command: String(transportRaw.command ?? ''),
-          args: Array.isArray(transportRaw.args)
-            ? transportRaw.args.map(String)
-            : undefined,
+          args: Array.isArray(transportRaw.args) ? transportRaw.args.map(String) : undefined,
           env: expandedStdioEnv,
           cwd: typeof transportRaw.cwd === 'string' ? transportRaw.cwd : undefined,
         }
@@ -364,10 +373,7 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
  * apply the same check for symmetry, since a blank `client_id`
  * is just as broken as a blank `client_secret`.)
  */
-function normaliseOAuthConfig(
-  raw: Record<string, unknown>,
-  key: string
-): MCPOAuthConfig {
+function normaliseOAuthConfig(raw: Record<string, unknown>, key: string): MCPOAuthConfig {
   const result: MCPOAuthConfig = {};
   if (typeof raw.clientId === 'string' && raw.clientId.length > 0) {
     const expanded = expandEnvRefs(raw.clientId, `MCP server "${key}" oauth.clientId`);
@@ -516,8 +522,7 @@ export async function loadMCPConfig(): Promise<MCPRootConfig> {
  * Used by the API layer to list servers without exposing internal state.
  */
 export function listMCPServers(config: MCPRootConfig): MCPServerConfig[] {
-  return Object.values(config.mcpServers)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  return Object.values(config.mcpServers).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -649,7 +654,7 @@ export async function saveMCPServerDisabled(name: string, disabled: boolean): Pr
     // writeback could leave a zero-length `mcp.json` on
     // disk. The mode is set at `open` time so the file is
     // never briefly world-readable on a multi-user host.
-    const tmpPath = `${configPath  }.tmp`;
+    const tmpPath = `${configPath}.tmp`;
     const json = JSON.stringify(nextRoot, null, 2);
     const fh = await fsp.open(tmpPath, 'w', 0o600);
     try {

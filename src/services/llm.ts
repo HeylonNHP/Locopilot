@@ -91,7 +91,9 @@ export function getLlmModelVisionSupport(info: LlmModelInfo): boolean {
   }
   if (Array.isArray(info.capabilities)) {
     const capabilities = new Set(info.capabilities.map(String));
-    return capabilities.has('vision') || capabilities.has('multimodal') || capabilities.has('image');
+    return (
+      capabilities.has('vision') || capabilities.has('multimodal') || capabilities.has('image')
+    );
   }
   return false;
 }
@@ -150,7 +152,10 @@ export function getLlmApiErrorMessage(ctx: LlmRequestContext, error: unknown): P
   return adapterForContext(ctx).getApiErrorMessage(error);
 }
 
-export function getLlmTurnStats(ctx: LlmRequestContext, response: ChatApiResponse): LlmTurnStats | null {
+export function getLlmTurnStats(
+  ctx: LlmRequestContext,
+  response: ChatApiResponse
+): LlmTurnStats | null {
   return adapterForContext(ctx).getTurnStats(response);
 }
 

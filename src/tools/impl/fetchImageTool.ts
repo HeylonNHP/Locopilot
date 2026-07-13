@@ -9,8 +9,7 @@ export const fetchImageToolSchema: ToolSchema = {
     properties: {
       source: {
         type: 'string',
-        description:
-          String.raw`A full http/https URL (e.g. https://example.com/photo.jpg) or an absolute local file path (e.g. /home/user/photo.png or C:\Users\user\photo.png).`,
+        description: String.raw`A full http/https URL (e.g. https://example.com/photo.jpg) or an absolute local file path (e.g. /home/user/photo.png or C:\Users\user\photo.png).`,
       },
     },
     required: ['source'],

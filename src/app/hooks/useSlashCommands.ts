@@ -245,9 +245,9 @@ export function useSlashCommands({
             addSystem('No saved sessions yet.');
           } else {
             addSystem(
-              `Saved sessions:\n${ 
-                sessions.map((s) => `[${s.id}] ${s.name} (${s.model})`).join('\n') 
-                }\n\nClick a session in the sidebar to switch.`
+              `Saved sessions:\n${sessions
+                .map((s) => `[${s.id}] ${s.name} (${s.model})`)
+                .join('\n')}\n\nClick a session in the sidebar to switch.`
             );
           }
           return;
@@ -278,8 +278,9 @@ export function useSlashCommands({
             }
           } else {
             addSystem(
-              `Usage: /delete <session_id>\nSessions:\n${ 
-                sessions.map((s) => `[${s.id}] ${s.name}`).join('\n')}`
+              `Usage: /delete <session_id>\nSessions:\n${sessions
+                .map((s) => `[${s.id}] ${s.name}`)
+                .join('\n')}`
             );
           }
           return;
@@ -311,10 +312,11 @@ export function useSlashCommands({
           } else {
             const modelNames = availableModels.map((m) => (typeof m === 'string' ? m : m.name));
             addSystem(
-              `Available models:\n${ 
+              `Available models:\n${
                 modelNames.length > 0
                   ? modelNames.map((m) => `- ${m}`).join('\n')
-                  : 'No models loaded yet.'}`
+                  : 'No models loaded yet.'
+              }`
             );
           }
           return;
@@ -691,9 +693,7 @@ export function useSlashCommands({
                 );
               }
             } catch (err) {
-              addSystem(
-                `MCP auth failed: ${err instanceof Error ? err.message : 'Unknown error'}`
-              );
+              addSystem(`MCP auth failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
             }
             return;
           }
@@ -756,12 +756,13 @@ export function useSlashCommands({
                 lines.push(`      • ${tool.fullName}${toolDesc}`);
               }
             }
-            lines.push('\nUse /mcp reload after editing mcp.json to apply changes.', 'Use /mcp auth <server> to re-authenticate an OAuth-protected server.');
+            lines.push(
+              '\nUse /mcp reload after editing mcp.json to apply changes.',
+              'Use /mcp auth <server> to re-authenticate an OAuth-protected server.'
+            );
             addSystem(lines.join('\n'));
           } catch (err) {
-            addSystem(
-              `MCP list failed: ${err instanceof Error ? err.message : 'Unknown error'}`
-            );
+            addSystem(`MCP list failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
           }
           return;
         }

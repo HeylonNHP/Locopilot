@@ -58,12 +58,12 @@ function getCapabilityBadges(capabilities?: string[]): string[] {
   const unknown = [...normalized]
     .filter((capability) => !knownSet.has(capability as (typeof capabilityOrder)[number]))
     .sort()
-    .map((capability) => CAPABILITY_LABELS[capability] ?? capability.charAt(0).toUpperCase() + capability.slice(1));
+    .map(
+      (capability) =>
+        CAPABILITY_LABELS[capability] ?? capability.charAt(0).toUpperCase() + capability.slice(1)
+    );
 
-  return [
-    ...known.map((capability) => CAPABILITY_LABELS[capability]!),
-    ...unknown,
-  ];
+  return [...known.map((capability) => CAPABILITY_LABELS[capability]!), ...unknown];
 }
 
 interface ModelSelectorProps {
@@ -87,8 +87,16 @@ export default function ModelSelector({
   // Destructure only the fields used by this component so callbacks do not
   // depend on the entire state object (which changes on every render during
   // streaming, defeating useCallback).
-  const { models, model, baseUrl, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch } =
-    state;
+  const {
+    models,
+    model,
+    baseUrl,
+    yolo,
+    thinkingEnabled,
+    compactionModel,
+    chatTimeoutMs,
+    webSearch,
+  } = state;
 
   const activeModel = mode === 'compaction' ? compactionModel : model;
 
@@ -96,9 +104,7 @@ export default function ModelSelector({
   const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 420 });
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const filteredModels = models.filter((m) =>
-    m.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredModels = models.filter((m) => m.name.toLowerCase().includes(search.toLowerCase()));
 
   // Position the dropdown above the anchor when opened, centred horizontally.
   // We measure in a layout effect to avoid a flash of wrong position, and

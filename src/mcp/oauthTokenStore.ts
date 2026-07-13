@@ -208,7 +208,7 @@ export async function saveOAuthState(serverName: string, state: MCPSavedOAuthSta
     } else {
       delete current.servers[serverName];
     }
-    const tmpPath = `${storePath  }.tmp`;
+    const tmpPath = `${storePath}.tmp`;
     const json = JSON.stringify(current, null, 2);
     // Best-effort mkdir. `fsp.mkdir` with recursive: true is
     // idempotent and won't throw on EEXIST.

@@ -173,16 +173,18 @@ export async function runMCPCall(
   // Skill-based allowlist: if any active always-apply skill restricts
   // the available tool set, gate the call through the same check the
   // registry uses for native tools.
-  if (context?.allowedTools && context.allowedTools.length > 0 && 
-      !context.allowedTools.includes(namespacedName) &&
-      !context.allowedTools.includes('mcp_call')
-    ) {
-      return {
-        content:
-          `[Error: tool "${namespacedName}" is not allowed by the currently active skills. ` +
-          `Allowed tools: ${context.allowedTools.join(', ')}]`,
-      };
-    }
+  if (
+    context?.allowedTools &&
+    context.allowedTools.length > 0 &&
+    !context.allowedTools.includes(namespacedName) &&
+    !context.allowedTools.includes('mcp_call')
+  ) {
+    return {
+      content:
+        `[Error: tool "${namespacedName}" is not allowed by the currently active skills. ` +
+        `Allowed tools: ${context.allowedTools.join(', ')}]`,
+    };
+  }
 
   // Build the dispatcher options, layering in approval tokens.
   const approvedTools: Set<string> | undefined = context?.mcpApprovals

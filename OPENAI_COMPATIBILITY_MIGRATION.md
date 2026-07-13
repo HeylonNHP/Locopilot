@@ -32,71 +32,82 @@ Callers (e.g. web content compaction, history compaction/distillation, token mea
 ### 1) Added a provider field to config
 
 File:
+
 - `C:\git\Locopilot-dev\src\types\chatConfig.ts`
 
 Change made:
+
 - Added:
   - `export type LlmProvider = 'ollama' | 'openai-compatible';`
   - `provider?: LlmProvider;`
 
 Why this matters:
+
 - The app now has a place to remember which backend style the user wants.
 - This is the first step in separating configuration from backend implementation.
 
 ### 2) Added provider to the saved root config
 
 File:
+
 - `C:\git\Locopilot-dev\config.json`
 
 Current value:
+
 - `"provider": "ollama"`
 
 Why this matters:
+
 - The current default still preserves existing Ollama behavior.
 - The file format now carries the provider choice forward.
 
 ### 3) Introduced adapter-selection scaffolding in the LLM service layer
 
 File:
+
 - `C:\git\Locopilot-dev\src\services\llm.ts`
 
 Current state:
+
 - `selectLlmAdapter()` now **actually switches on the provider** — returns `openaiCompatibleAdapter` for `'openai-compatible'`, falls back to `ollamaAdapter` for everything else.
 - `configureLlmAdapter(provider)` calls `selectLlmAdapter` and sets the active adapter.
 - `configureLlmAdapterAndAuth(provider, apiKey)` also configures the adapter **and** sets/clears the OpenAI API key in one call.
 - The switch statement uses proper case braces and has no redundant cases (satisfies `unicorn/switch-case-braces`).
 
 Why this matters:
+
 - The runtime can now choose a backend based on config.
 - The adapter selection is no longer a stub — it makes a real decision.
 
 ### 4) Created the OpenAI-compatible adapter (Step B)
 
 File:
+
 - `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
 
 This is a complete adapter implementing the `LlmAdapter` interface for any OpenAI-compatible API endpoint. It handles:
 
-| Capability | Implementation |
-|---|---|
-| **Connection validation** | `GET /v1/models` with configurable timeout |
-| **Model listing** | `GET /v1/models` → maps to `LlmModel[]` |
-| **Model info** | Derived from model list (OpenAI doesn't have a `/api/show` equivalent) |
-| **Chat (non-streaming)** | `POST /v1/chat/completions` → maps response to `ChatApiResponse` |
-| **Chat (streaming)** | SSE stream from `POST /v1/chat/completions?stream=true`, parses `data:` lines |
-| **Tool calls (non-streaming)** | Converts OpenAI `tool_calls` → app's `ToolCall[]` format with parsed JSON arguments |
-| **Tool calls (streaming)** | Accumulates incremental `delta.tool_calls` by `index` across chunks, yields complete calls on the final chunk |
-| **Token usage stats** | Maps `usage.prompt_tokens` / `usage.completion_tokens` → `prompt_eval_count` / `eval_count` |
-| **Error messages** | Parses OpenAI error format `{ error: { message, type, param, code } }` and common provider variants |
-| **Auth** | `setApiKey(apiKey)` / `clearApiKey()` — configures a module-level axios instance with `Authorization: Bearer` header |
-| **Reasoning effort** | Maps `params.think` → `reasoning_effort: 'low' | 'medium'` |
-| **Stream options** | Sends `stream_options: { include_usage: true }` to get token counts in streaming |
-| **Output token cap** | Maps the canonical `params.maxOutputTokens` field to `max_completion_tokens`. Legacy `options.max_tokens` / `options.max_completion_tokens` are fallback-only. |
-| **Standard params passthrough** | Forwards `temperature`, `top_p`, `stop`, `seed`, `frequency_penalty`, `presence_penalty`, `logit_bias`, `user` from `params.options` |
-| **Response format** | Passes through `params.format` as `response_format` |
-| **Provider extras** | Passes through `params.options.extra_body` for provider-specific parameters |
+| Capability                      | Implementation                                                                                                                                                 |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| **Connection validation**       | `GET /v1/models` with configurable timeout                                                                                                                     |
+| **Model listing**               | `GET /v1/models` → maps to `LlmModel[]`                                                                                                                        |
+| **Model info**                  | Derived from model list (OpenAI doesn't have a `/api/show` equivalent)                                                                                         |
+| **Chat (non-streaming)**        | `POST /v1/chat/completions` → maps response to `ChatApiResponse`                                                                                               |
+| **Chat (streaming)**            | SSE stream from `POST /v1/chat/completions?stream=true`, parses `data:` lines                                                                                  |
+| **Tool calls (non-streaming)**  | Converts OpenAI `tool_calls` → app's `ToolCall[]` format with parsed JSON arguments                                                                            |
+| **Tool calls (streaming)**      | Accumulates incremental `delta.tool_calls` by `index` across chunks, yields complete calls on the final chunk                                                  |
+| **Token usage stats**           | Maps `usage.prompt_tokens` / `usage.completion_tokens` → `prompt_eval_count` / `eval_count`                                                                    |
+| **Error messages**              | Parses OpenAI error format `{ error: { message, type, param, code } }` and common provider variants                                                            |
+| **Auth**                        | `setApiKey(apiKey)` / `clearApiKey()` — configures a module-level axios instance with `Authorization: Bearer` header                                           |
+| **Reasoning effort**            | Maps `params.think` → `reasoning_effort: 'low'                                                                                                                 | 'medium'` |
+| **Stream options**              | Sends `stream_options: { include_usage: true }` to get token counts in streaming                                                                               |
+| **Output token cap**            | Maps the canonical `params.maxOutputTokens` field to `max_completion_tokens`. Legacy `options.max_tokens` / `options.max_completion_tokens` are fallback-only. |
+| **Standard params passthrough** | Forwards `temperature`, `top_p`, `stop`, `seed`, `frequency_penalty`, `presence_penalty`, `logit_bias`, `user` from `params.options`                           |
+| **Response format**             | Passes through `params.format` as `response_format`                                                                                                            |
+| **Provider extras**             | Passes through `params.options.extra_body` for provider-specific parameters                                                                                    |
 
 **Key design decisions:**
+
 - All OpenAI API types are defined as concrete interfaces matching the official spec (no `Record<string, unknown>` for API shapes).
 - Tool call arguments (`parsedArgs`) use `Record<string, unknown>` — genuinely dynamic, depends on tool definition.
 - The `sendChat` method with `onChunk` callback accumulates `content`, `thinking`, and `tool_calls` across chunks (matching the Ollama adapter pattern).
@@ -105,6 +116,7 @@ This is a complete adapter implementing the `LlmAdapter` interface for any OpenA
 ### 5) Wired provider selection and auth into every API route (Step A + Step C)
 
 Files changed:
+
 - `C:\git\Locopilot-dev\src\services\llm.ts`
 - `C:\git\Locopilot-dev\src\types\chatConfig.ts`
 - `C:\git\Locopilot-dev\src\app\api\config\route.ts`
@@ -114,6 +126,7 @@ Files changed:
 - `C:\git\Locopilot-dev\src\app\api\title\route.ts`
 
 What changed:
+
 - Added `apiKey?: string` to the `Config` interface.
 - Added `configureLlmAdapterAndAuth(provider, apiKey)` helper in `llm.ts`.
 - Every route that talks to the LLM now:
@@ -124,6 +137,7 @@ What changed:
 - The models route error message is now provider-agnostic ("LLM base URL not configured" instead of "Ollama base URL").
 
 Why this matters:
+
 - The app now reads provider and API key from config at request time and routes to the right backend.
 - OpenAI-compatible endpoints actually work end-to-end once config is set.
 - No route accidentally falls back to the stale module-level Ollama adapter.
@@ -131,6 +145,7 @@ Why this matters:
 ### 6) Fixed regressions from earlier work
 
 File:
+
 - `C:\git\Locopilot-dev\src\services\configManager.ts`
 
 An earlier attempt (GPT 5.4-mini) had stripped all `// eslint-disable-next-line unicorn/no-process-exit` comments from this file, causing 4 build errors. These have been restored.
@@ -138,6 +153,7 @@ An earlier attempt (GPT 5.4-mini) had stripped all `// eslint-disable-next-line 
 ### 7) Removed unnecessary `raw?: unknown` from ChatApiResponse
 
 File:
+
 - `C:\git\Locopilot-dev\src\services\adapters\llmAdapter.ts`
 
 The `raw?: unknown` field was added to stash the raw OpenAI response for token stats extraction, but it was redundant — `toChatApiResponse()` already maps `usage.prompt_tokens` → `prompt_eval_count` and `usage.completion_tokens` → `eval_count` directly onto `ChatApiResponse`. The adapter's `getTurnStats` now reads from `ChatApiResponse` directly, matching the Ollama adapter pattern. Removed one unnecessary `unknown` type.
@@ -145,6 +161,7 @@ The `raw?: unknown` field was added to stash the raw OpenAI response for token s
 ### 8) Fixed Airia API 400 error — strip nested descriptions from tool schemas
 
 File:
+
 - `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
 
 **Root cause:** The Airia API gateway rejects `description` fields inside nested `items.properties` in tool parameter JSON Schemas. The `run_subagents` tool has descriptions on its nested `id` and `prompt` properties, which caused every chat request to fail with HTTP 400 "Invalid request body format".
@@ -156,6 +173,7 @@ File:
 ### 9) Fixed Airia API 400 error — never send `reasoning_effort` with function tools
 
 File:
+
 - `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
 
 **Root cause:** The Airia API gateway rejects the combination of `reasoning_effort` and `tools` in the same `/v1/chat/completions` request:
@@ -173,6 +191,7 @@ File:
 **Fix:** `buildChatPayload()` now only adds `reasoning_effort` when **no tools** are present. It also has a defensive post-check that deletes `reasoning_effort` from the payload if tools were somehow included.
 
 **Verified:**
+
 - Tested the exact failing payload (`tools` + `reasoning_effort: "medium"`) against the live Airia API — it reproduces the 400.
 - Tested the corrected payload (`tools` without `reasoning_effort`) against the same endpoint — it streams successfully.
 - Added explicit 400 debug logging that prints the payload summary and flags `reasoning_effort` + tools as the probable cause.
@@ -180,6 +199,7 @@ File:
 ### 10) Fixed circular JSON crash that masked the real 400 error
 
 File:
+
 - `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
 
 **Root cause:** When a streaming request fails, `err.response.data` can be an axios response stream containing circular references (`TLSSocket` → `ClientRequest` → `Agent` → ...). The 400 debug logging was calling `JSON.stringify(data)` on it, which threw `TypeError: Converting circular structure to JSON`. That secondary error replaced the actual 400 and propagated up through the sub-agent web search path, making it look like content compaction had failed.
@@ -189,6 +209,7 @@ File:
 ### 11) Fixed `/api/models/[name]/info` using the wrong adapter
 
 File:
+
 - `C:\git\Locopilot-dev\src\app\api\models\[name]\info\route.ts`
 
 **Root cause:** This route was not calling `configureLlmAdapterAndAuth()`, so it kept using the default Ollama adapter against the configured OpenAI-compatible base URL, returning HTTP 500.
@@ -212,6 +233,7 @@ The app can now:
 6. **List models, compact history, and generate titles** through the correct provider adapter.
 
 What's still missing for full user-facing OpenAI support:
+
 - The UI doesn't expose provider selection or an API-key field yet.
 - The UI doesn't handle providers that don't support model listing (manual model entry).
 
@@ -222,10 +244,12 @@ What's still missing for full user-facing OpenAI support:
 Some OpenAI-compatible providers may not expose models the same way Ollama does.
 
 Expected behavior:
+
 - The UI should not assume the provider has Ollama-style model listing.
 - Manual model entry may be needed when discovery is unavailable.
 
 Files likely involved:
+
 - `C:\git\Locopilot-dev\src\components\ModelSelector\ModelSelector.tsx`
 - `C:\git\Locopilot-dev\src\app\api\models\route.ts`
 - `C:\git\Locopilot-dev\src\app\api\models\[name]\info\route.ts`
@@ -233,6 +257,7 @@ Files likely involved:
 ### Step E: Convert provider-specific payload/response assumptions
 
 Ollama and OpenAI-compatible APIs differ in details like:
+
 - request body shape
 - streaming event format
 - tool call output shape
@@ -240,6 +265,7 @@ Ollama and OpenAI-compatible APIs differ in details like:
 - model-info endpoint availability
 
 Files likely involved:
+
 - `C:\git\Locopilot-dev\src\services\adapters\ollamaAdapter.ts`
 - `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
 - possibly `C:\git\Locopilot-dev\src\services\adapters\llmAdapter.ts`
@@ -249,6 +275,7 @@ Files likely involved:
 Expose the new config fields in the settings modal so users can switch providers without hand-editing `config.json`.
 
 Files likely involved:
+
 - `C:\git\Locopilot-dev\src\components\SettingsModal\SettingsModal.tsx`
 - `C:\git\Locopilot-dev\src\app\api\config\route.ts`
 

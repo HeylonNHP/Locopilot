@@ -19,14 +19,7 @@ export type LlmProvider = 'ollama' | 'openai-compatible';
  * on by default (e.g. gpt-5.6-luna on the Airia gateway) are not silently
  * forced into reasoning when called with tools.
  */
-export type ReasoningEffort =
-  | 'off'
-  | 'none'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh';
+export type ReasoningEffort = 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface Config {
   provider?: LlmProvider;

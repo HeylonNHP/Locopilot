@@ -66,14 +66,22 @@ console.log('resolveVisionSupport — openai-compatible optimistic default');
 await (async () => {
   clearVisionCache();
   const r = await resolveVisionSupport(URL, 'm1', 'openai-compatible');
-  assertDeepEq(r, { state: 'supported', source: 'default' }, 'first call returns the openai-compatible default');
+  assertDeepEq(
+    r,
+    { state: 'supported', source: 'default' },
+    'first call returns the openai-compatible default'
+  );
 })();
 
 console.log('resolveVisionSupport — ollama pessimistic default');
 await (async () => {
   clearVisionCache();
   const r = await resolveVisionSupport(URL, 'm2', 'ollama');
-  assertDeepEq(r, { state: 'unsupported', source: 'default' }, 'first call returns the ollama pessimistic default');
+  assertDeepEq(
+    r,
+    { state: 'unsupported', source: 'default' },
+    'first call returns the ollama pessimistic default'
+  );
 })();
 
 console.log('resolveVisionSupport — probe overrides the default');
@@ -81,12 +89,20 @@ await (async () => {
   clearVisionCache();
   // Probe returning true forces the result to 'supported' for ollama.
   const r1 = await resolveVisionSupport(URL, 'm3', 'ollama', () => true);
-  assertDeepEq(r1, { state: 'supported', source: 'probe' }, 'ollama + probe(true) → supported/probe');
+  assertDeepEq(
+    r1,
+    { state: 'supported', source: 'probe' },
+    'ollama + probe(true) → supported/probe'
+  );
   // Probe returning false forces the result to 'unsupported' for
   // openai-compatible (the optimistic default is the same here, so
   // verify the source changes to 'probe').
   const r2 = await resolveVisionSupport(URL2, 'm3', 'openai-compatible', () => false);
-  assertDeepEq(r2, { state: 'unsupported', source: 'probe' }, 'openai-compatible + probe(false) → unsupported/probe');
+  assertDeepEq(
+    r2,
+    { state: 'unsupported', source: 'probe' },
+    'openai-compatible + probe(false) → unsupported/probe'
+  );
 })();
 
 console.log('resolveVisionSupport — async probe is awaited');
@@ -128,7 +144,11 @@ await (async () => {
   await resolveVisionSupport(URL, 'm6', 'openai-compatible');
   recordDiscoveredNonVision(URL, 'm6');
   const r = await resolveVisionSupport(URL, 'm6', 'openai-compatible');
-  assertDeepEq(r, { state: 'unsupported', source: 'cache' }, '400-driven record flips state to unsupported');
+  assertDeepEq(
+    r,
+    { state: 'unsupported', source: 'cache' },
+    '400-driven record flips state to unsupported'
+  );
 })();
 
 console.log('recordDiscoveredNonVision — also affects entries that started as probe-cached');
@@ -137,7 +157,11 @@ await (async () => {
   await resolveVisionSupport(URL, 'm7', 'ollama', () => true);
   recordDiscoveredNonVision(URL, 'm7');
   const r = await resolveVisionSupport(URL, 'm7', 'ollama');
-  assertDeepEq(r, { state: 'unsupported', source: 'cache' }, 'probe-cached supported is also flipped to unsupported');
+  assertDeepEq(
+    r,
+    { state: 'unsupported', source: 'cache' },
+    'probe-cached supported is also flipped to unsupported'
+  );
 })();
 
 console.log('');
@@ -150,7 +174,11 @@ await (async () => {
   await resolveVisionSupport(URL, 'm8', 'openai-compatible');
   invalidateVisionCache(URL, 'm8');
   const r = await resolveVisionSupport(URL, 'm8', 'openai-compatible');
-  assertDeepEq(r, { state: 'supported', source: 'default' }, 'invalidate restores the default on next call');
+  assertDeepEq(
+    r,
+    { state: 'supported', source: 'default' },
+    'invalidate restores the default on next call'
+  );
 })();
 
 console.log('invalidateVisionCache — baseUrl-only wipes all entries for that baseUrl');
@@ -200,27 +228,95 @@ console.log('');
 // ── parseVisionUnsupportedFromError ───────────────────────────────────────
 
 console.log('parseVisionUnsupportedFromError — common 400 phrasings');
-assertEq(parseVisionUnsupportedFromError('Image input is not supported'), true, '"Image input is not supported" → true');
-assertEq(parseVisionUnsupportedFromError('image input is not supported by this model'), true, '"image input is not supported by this model" → true');
-assertEq(parseVisionUnsupportedFromError('Image input is not allowed'), true, '"Image input is not allowed" → true');
-assertEq(parseVisionUnsupportedFromError('This model does not support image'), true, '"This model does not support image" → true');
-assertEq(parseVisionUnsupportedFromError('Model does not support vision'), true, '"Model does not support vision" → true');
-assertEq(parseVisionUnsupportedFromError('Model does not support multimodal input'), true, '"Model does not support multimodal input" → true');
-assertEq(parseVisionUnsupportedFromError('Vision input not supported'), true, '"Vision input not supported" → true');
-assertEq(parseVisionUnsupportedFromError('Vision image not supported'), true, '"Vision image not supported" → true');
-assertEq(parseVisionUnsupportedFromError('The model does not accept images'), true, '"The model does not accept images" → true');
-assertEq(parseVisionUnsupportedFromError('The model does not accept image_url content'), true, '"The model does not accept image_url content" → true');
-assertEq(parseVisionUnsupportedFromError('image_url is not supported'), true, '"image_url is not supported" → true');
-assertEq(parseVisionUnsupportedFromError('Unsupported content type: image/png'), true, '"Unsupported content type: image/png" → true');
-assertEq(parseVisionUnsupportedFromError('Unsupported part type: image'), true, '"Unsupported part type: image" → true');
+assertEq(
+  parseVisionUnsupportedFromError('Image input is not supported'),
+  true,
+  '"Image input is not supported" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('image input is not supported by this model'),
+  true,
+  '"image input is not supported by this model" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('Image input is not allowed'),
+  true,
+  '"Image input is not allowed" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('This model does not support image'),
+  true,
+  '"This model does not support image" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('Model does not support vision'),
+  true,
+  '"Model does not support vision" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('Model does not support multimodal input'),
+  true,
+  '"Model does not support multimodal input" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('Vision input not supported'),
+  true,
+  '"Vision input not supported" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('Vision image not supported'),
+  true,
+  '"Vision image not supported" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('The model does not accept images'),
+  true,
+  '"The model does not accept images" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('The model does not accept image_url content'),
+  true,
+  '"The model does not accept image_url content" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('image_url is not supported'),
+  true,
+  '"image_url is not supported" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('Unsupported content type: image/png'),
+  true,
+  '"Unsupported content type: image/png" → true'
+);
+assertEq(
+  parseVisionUnsupportedFromError('Unsupported part type: image'),
+  true,
+  '"Unsupported part type: image" → true'
+);
 
 console.log('parseVisionUnsupportedFromError — non-vision 400s do NOT match');
-assertEq(parseVisionUnsupportedFromError("This model's maximum context length is 4096 tokens"), false, 'context-length 400 → false');
+assertEq(
+  parseVisionUnsupportedFromError("This model's maximum context length is 4096 tokens"),
+  false,
+  'context-length 400 → false'
+);
 assertEq(parseVisionUnsupportedFromError('Invalid API key'), false, '"Invalid API key" → false');
-assertEq(parseVisionUnsupportedFromError('Rate limit exceeded'), false, '"Rate limit exceeded" → false');
-assertEq(parseVisionUnsupportedFromError('Internal server error'), false, '"Internal server error" → false');
+assertEq(
+  parseVisionUnsupportedFromError('Rate limit exceeded'),
+  false,
+  '"Rate limit exceeded" → false'
+);
+assertEq(
+  parseVisionUnsupportedFromError('Internal server error'),
+  false,
+  '"Internal server error" → false'
+);
 assertEq(parseVisionUnsupportedFromError('Model not found'), false, '"Model not found" → false');
-assertEq(parseVisionUnsupportedFromError('Bad Request: missing required field "model"'), false, 'missing-field 400 → false');
+assertEq(
+  parseVisionUnsupportedFromError('Bad Request: missing required field "model"'),
+  false,
+  'missing-field 400 → false'
+);
 
 console.log('parseVisionUnsupportedFromError — defensive against bad input');
 assertEq(parseVisionUnsupportedFromError(''), false, 'empty string → false');
@@ -236,10 +332,18 @@ console.log('getLlmModelVisionSupport — sync heuristic is unchanged');
 assertEq(getLlmModelVisionSupport({ capabilities: ['vision'] }), true, '["vision"] → true');
 assertEq(getLlmModelVisionSupport({ capabilities: ['multimodal'] }), true, '["multimodal"] → true');
 assertEq(getLlmModelVisionSupport({ capabilities: ['image'] }), true, '["image"] → true');
-assertEq(getLlmModelVisionSupport({ capabilities: ['completion'] }), false, '["completion"] → false (no vision capability)');
+assertEq(
+  getLlmModelVisionSupport({ capabilities: ['completion'] }),
+  false,
+  '["completion"] → false (no vision capability)'
+);
 assertEq(getLlmModelVisionSupport({ capabilities: [] }), false, '[] → false');
 assertEq(getLlmModelVisionSupport({}), false, '{} → false (no capabilities key)');
-assertEq(getLlmModelVisionSupport({ capabilities: 'vision' }), false, 'string capability → false (must be array)');
+assertEq(
+  getLlmModelVisionSupport({ capabilities: 'vision' }),
+  false,
+  'string capability → false (must be array)'
+);
 assertEq(getLlmModelVisionSupport(null), false, 'null → false (defensive)');
 
 console.log('');

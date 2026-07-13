@@ -194,7 +194,9 @@ function buildOutput(entry: ProcessEntry, finished: boolean, processId: number |
       );
     }
   } else {
-    parts.push(`elapsed_seconds: ${elapsedSeconds}`, `status: still running (process_id=${processId})`, 
+    parts.push(
+      `elapsed_seconds: ${elapsedSeconds}`,
+      `status: still running (process_id=${processId})`,
       'Use check_process_output(process_id, poll_interval_seconds?) to get updated output.'
     );
   }
@@ -430,7 +432,7 @@ export async function runCommand(
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     try {
-      child.stdin.write(`${commandToExecute  }\n`);
+      child.stdin.write(`${commandToExecute}\n`);
       child.stdin.end();
     } catch (err: unknown) {
       entry.stderr += `\nstdin write error: ${err instanceof Error ? err.message : String(err)}`;

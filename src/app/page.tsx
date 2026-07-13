@@ -33,10 +33,7 @@ function HomeInner() {
 
   const abortControllersRef = useRef<Map<number, AbortController>>(new Map());
 
-  const { isCompactingRef, isGeneratingTitleRef } = useSyncRefs(
-    isCompacting,
-    isGeneratingTitle
-  );
+  const { isCompactingRef, isGeneratingTitleRef } = useSyncRefs(isCompacting, isGeneratingTitle);
 
   const refs = useStableRefs(state);
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
@@ -101,9 +98,7 @@ function HomeInner() {
   // touch. Reserved for non-session work (compact / title / dump) so
   // the user can keep using these in a background tab while pressing
   // Stop in the foreground.
-  const reservedAbortKeys = useRef<ReadonlySet<number>>(
-    new Set<number>([COMPACTION_ABORT_KEY])
-  );
+  const reservedAbortKeys = useRef<ReadonlySet<number>>(new Set<number>([COMPACTION_ABORT_KEY]));
 
   const { handleStop, handleSkillPrompt } = useActionHandlers(
     abortControllersRef,

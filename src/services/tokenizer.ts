@@ -43,7 +43,10 @@ async function initializeWasm(): Promise<void> {
       const { fileURLToPath } = await import('node:url');
       // Resolve relative to this module so the path is statically scoped to
       // node_modules and Turbopack's NFT trace does not mark the whole project.
-      const wasmUrl = new URL('../../node_modules/@dqbd/tiktoken/tiktoken_bg.wasm', import.meta.url);
+      const wasmUrl = new URL(
+        '../../node_modules/@dqbd/tiktoken/tiktoken_bg.wasm',
+        import.meta.url
+      );
       const wasmPath = fileURLToPath(wasmUrl);
       const bytes = readFileSync(wasmPath);
       return WebAssembly.instantiate(bytes, imports);
@@ -128,7 +131,7 @@ function countMessageTokensWithEncoder(message: ChatMessage, activeEncoder: Tikt
       total += countTextTokensWithEncoder(toolCall.function?.name ?? '', activeEncoder);
       total += countTextTokensWithEncoder(
         JSON.stringify(toolCall.function?.arguments ?? {}),
-        activeEncoder,
+        activeEncoder
       );
     }
   }

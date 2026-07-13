@@ -114,7 +114,9 @@ function computeEffectiveCharLimit(charLimit: number, attempt: number): number {
     return Math.max(1, charLimit - headroom);
   }
   return Math.max(
-    Math.floor(charLimit * Math.max(MIN_RETRY_OUTPUT_SCALE, 1 - (attempt - 1) * RETRY_OUTPUT_SCALE_STEP)),
+    Math.floor(
+      charLimit * Math.max(MIN_RETRY_OUTPUT_SCALE, 1 - (attempt - 1) * RETRY_OUTPUT_SCALE_STEP)
+    ),
     Math.floor(charLimit * 0.5)
   );
 }
@@ -161,10 +163,7 @@ function estimateCompactionContext(
   const effectiveCharLimit = computeEffectiveCharLimit(charLimit, attempt);
 
   const roughOutputTokens = Math.max(1, Math.ceil(effectiveCharLimit / charsPerToken));
-  const numPredict = Math.max(
-    1,
-    Math.floor(roughOutputTokens * OUTPUT_TOKEN_BUFFER_RATIO)
-  );
+  const numPredict = Math.max(1, Math.floor(roughOutputTokens * OUTPUT_TOKEN_BUFFER_RATIO));
 
   return {
     numCtx: Math.max(
@@ -362,7 +361,9 @@ export class ContentCompactor {
       this.recordDebugLine(`Web content compaction generating: ${compactedText.length} chars`);
     }
 
-    this.recordDebugLine(`Web content compaction stream ended: ${chunkCount} chunks, last chunk ${lastChunkDebug}`);
+    this.recordDebugLine(
+      `Web content compaction stream ended: ${chunkCount} chunks, last chunk ${lastChunkDebug}`
+    );
 
     // Some providers/models (e.g. OpenAI-compatible reasoning models) stream
     // their output as `reasoning_content` with an empty `content` field.

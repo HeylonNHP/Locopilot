@@ -257,7 +257,11 @@ export type ChatAction =
     }
   | { type: 'CLEAR_MESSAGES'; targetSessionId?: number }
   | { type: 'REMOVE_LAST_ASSISTANT'; targetSessionId?: number }
-  | { type: 'SET_TOKEN_STATS'; stats: Partial<NonNullable<ChatState['tokenStats']>>; targetSessionId?: number }
+  | {
+      type: 'SET_TOKEN_STATS';
+      stats: Partial<NonNullable<ChatState['tokenStats']>>;
+      targetSessionId?: number;
+    }
   | { type: 'SET_DONE_REASON'; reason: DoneReason | undefined; targetSessionId?: number }
   | { type: 'SET_CURRENT_TPS'; tps: number | null; targetSessionId?: number }
   | { type: 'CLEAR_TOKEN_STATS'; targetSessionId?: number }
@@ -503,7 +507,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             }
             msgs[i] = {
               ...candidate,
-              content: candidate.content ? `${candidate.content}\n${action.content}` : action.content,
+              content: candidate.content
+                ? `${candidate.content}\n${action.content}`
+                : action.content,
             };
             return { ...slot, messages: msgs };
           }
@@ -622,7 +628,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
             }
             msgs[i] = {
               ...candidate,
-              content: candidate.content ? `${candidate.content}\n${action.message}` : action.message,
+              content: candidate.content
+                ? `${candidate.content}\n${action.message}`
+                : action.message,
             };
             return { ...slot, messages: msgs };
           }
@@ -767,17 +775,19 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const targetSession = action.id === null ? null : nextState.sessionStates.get(action.id);
       const pendingApproval =
         targetSession?.pendingApproval ?? nextState.newSessionState.pendingApproval;
-      nextState = pendingApproval ? {
-          ...nextState,
-          pendingCommand: pendingApproval.command,
-          showApproval: pendingApproval.command !== null,
-          pendingApprovalId: pendingApproval.requestId,
-        } : {
-          ...nextState,
-          pendingCommand: null,
-          showApproval: false,
-          pendingApprovalId: null,
-        };
+      nextState = pendingApproval
+        ? {
+            ...nextState,
+            pendingCommand: pendingApproval.command,
+            showApproval: pendingApproval.command !== null,
+            pendingApprovalId: pendingApproval.requestId,
+          }
+        : {
+            ...nextState,
+            pendingCommand: null,
+            showApproval: false,
+            pendingApprovalId: null,
+          };
 
       return { ...nextState, inputDraft: '', historyIndex: null };
     }
@@ -1173,4 +1183,3 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 export function useChat() {
   return useContext(ChatContext);
 }
-

@@ -60,7 +60,10 @@ export default function ChatMessageBubble({ message }: Props) {
           <CopyMarkdownButton content={message.content ?? ''} disabled={!hasContent} />
           {hasThinking && (
             <div className="mb-4">
-              <button onClick={() => setShowThinking(!showThinking)} className="bubble-thinking-btn">
+              <button
+                onClick={() => setShowThinking(!showThinking)}
+                className="bubble-thinking-btn"
+              >
                 {showThinking ? 'Hide' : 'Show'} reasoning ({message.thinking?.length ?? 0} chars)
               </button>
               {showThinking && (
@@ -81,7 +84,9 @@ export default function ChatMessageBubble({ message }: Props) {
           )}
           {hasContent || !hasThinking || !showThinking ? (
             <div
-              onClick={hasThinking && !hasContent ? () => setShowThinking((prev) => !prev) : undefined}
+              onClick={
+                hasThinking && !hasContent ? () => setShowThinking((prev) => !prev) : undefined
+              }
               onKeyDown={
                 hasThinking && !hasContent
                   ? (event) => {

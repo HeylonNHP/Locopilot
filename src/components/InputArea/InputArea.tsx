@@ -36,8 +36,7 @@ export function InputArea({
   const provider = state.provider;
 
   if (isStreaming) {
-    const phase =
-      compactingPhases.length > 0 ? compactingPhases.at(-1) : 'Streaming...';
+    const phase = compactingPhases.length > 0 ? compactingPhases.at(-1) : 'Streaming...';
     return (
       <div className="streaming-indicator">
         <span className="text-accent font-14">● {phase}</span>
@@ -50,9 +49,7 @@ export function InputArea({
 
   if (isCompacting) {
     const phase =
-      compactingPhases.length > 0
-        ? compactingPhases.at(-1)
-        : 'Compacting conversation...';
+      compactingPhases.length > 0 ? compactingPhases.at(-1) : 'Compacting conversation...';
     return (
       <div className="streaming-indicator">
         <span className="text-accent font-14">● {phase}</span>
@@ -68,5 +65,7 @@ export function InputArea({
     );
   }
 
-  return <ChatInput onSend={onSend} disabled={false} visionState={visionState} provider={provider} />;
+  return (
+    <ChatInput onSend={onSend} disabled={false} visionState={visionState} provider={provider} />
+  );
 }

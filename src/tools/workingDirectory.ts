@@ -35,14 +35,14 @@ export function getAgentWorkingDirectory(scope?: WorkingDirectoryScope): string 
 
 export function setAgentWorkingDirectory(
   scope: WorkingDirectoryScope | undefined,
-  workingDirectory: string,
+  workingDirectory: string
 ): void {
   workingDirectories.set(normalizeScope(scope), path.resolve(workingDirectory));
 }
 
 export function resolveAgentPath(
   scope: WorkingDirectoryScope | undefined,
-  rawPath: string,
+  rawPath: string
 ): string {
   return path.resolve(getAgentWorkingDirectory(scope), rawPath);
 }

@@ -179,7 +179,8 @@ function validateConfig(
     if (typeof v !== 'string' || !allowed.includes(v as Config['reasoningEffort'])) {
       return {
         ok: false,
-        error: "Invalid config: 'reasoningEffort' must be one of: off, none, minimal, low, medium, high, xhigh",
+        error:
+          "Invalid config: 'reasoningEffort' must be one of: off, none, minimal, low, medium, high, xhigh",
       };
     }
     out.reasoningEffort = v as NonNullable<Config['reasoningEffort']>;

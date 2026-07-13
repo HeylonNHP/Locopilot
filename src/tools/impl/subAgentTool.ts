@@ -106,9 +106,7 @@ function buildSubAgentSystemPrompt(skillInfo?: string): string {
   if (skillInfo) {
     prompt +=
       `\n## Inherited Skills\n` +
-      `The following skills from the parent conversation are active:\n${ 
-      skillInfo 
-      }\n`;
+      `The following skills from the parent conversation are active:\n${skillInfo}\n`;
   }
 
   return prompt;
@@ -470,7 +468,9 @@ async function runSingleAgent(
         messages,
         tools,
         numCtx: config.numCtx,
-        ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
+        ...(config.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: config.reasoningEffort }),
       },
       (chunk) => {
         // Route live thinking/content tokens to the output sink so web
@@ -584,7 +584,8 @@ async function runSingleAgent(
         toolResults.push(
           sanitizeChatMessage({
             role: 'tool',
-            content: '[Tool response missing: the tool call was interrupted before a result was produced.]',
+            content:
+              '[Tool response missing: the tool call was interrupted before a result was produced.]',
             tool_call_id: tc.id,
           })
         );
@@ -639,13 +640,14 @@ export class SubAgentTool implements IToolCommand {
         const parts: string[] = [];
         if (alwaysApply.length > 0) {
           parts.push(
-            `Always active:\n${  alwaysApply.map((s) => `- ${s.name}: ${s.description}`).join('\n')}`
+            `Always active:\n${alwaysApply.map((s) => `- ${s.name}: ${s.description}`).join('\n')}`
           );
         }
         if (autoInvoke.length > 0) {
           parts.push(
-            `Available on demand:\n${ 
-              autoInvoke.map((s) => `- ${s.name}: ${s.description}`).join('\n')}`
+            `Available on demand:\n${autoInvoke
+              .map((s) => `- ${s.name}: ${s.description}`)
+              .join('\n')}`
           );
         }
         if (parts.length > 0) skillSummary = parts.join('\n\n');

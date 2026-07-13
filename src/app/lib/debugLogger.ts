@@ -25,7 +25,10 @@ try {
     fs.mkdirSync(logDir, { recursive: true });
   }
 } catch (err) {
-  console.error(`[debugLogger] Warning: could not create logs directory at ${logDir}:`, err instanceof Error ? err.message : String(err));
+  console.error(
+    `[debugLogger] Warning: could not create logs directory at ${logDir}:`,
+    err instanceof Error ? err.message : String(err)
+  );
   console.error('[debugLogger] Debug logging will be disabled for this session.');
 }
 
@@ -36,10 +39,13 @@ try {
       level: 'debug',
       timestamp: pino.stdTimeFunctions.isoTime,
     },
-    pino.destination(path.join(logDir, 'locopilot-debug.log')),
+    pino.destination(path.join(logDir, 'locopilot-debug.log'))
   );
 } catch (err) {
-  console.error('[debugLogger] Warning: could not initialise pino logger:', err instanceof Error ? err.message : String(err));
+  console.error(
+    '[debugLogger] Warning: could not initialise pino logger:',
+    err instanceof Error ? err.message : String(err)
+  );
   console.error('[debugLogger] Debug logging will be disabled for this session.');
   pinoLogger = pino({ level: 'silent' });
 }
@@ -48,7 +54,17 @@ export interface ToolTraceEntry {
   /** Which layer produced this log entry */
   layer: 'frontend' | 'route' | 'adapter' | 'history' | 'chatSession';
   /** What happened at this boundary */
-  action: 'push' | 'convert' | 'persist' | 'load' | 'merge' | 'normalize' | 'synthesize' | 'send' | 'receive' | 'filter';
+  action:
+    | 'push'
+    | 'convert'
+    | 'persist'
+    | 'load'
+    | 'merge'
+    | 'normalize'
+    | 'synthesize'
+    | 'send'
+    | 'receive'
+    | 'filter';
   /** Message index in the working array (if applicable) */
   messageIndex?: number;
   /** Message role */
@@ -83,7 +99,7 @@ export const debugLog = {
         ...rest,
         contentPreview: truncate(contentPreview, 120),
       },
-      `[trace] layer=${entry.layer} action=${entry.action} role=${entry.role ?? 'n/a'}`,
+      `[trace] layer=${entry.layer} action=${entry.action} role=${entry.role ?? 'n/a'}`
     );
   },
 
@@ -91,7 +107,7 @@ export const debugLog = {
   messageArraySummary(
     label: string,
     messages: Array<{ role?: string; tool_call_id?: string; tool_calls?: unknown[] }>,
-    context?: { sessionId?: number; requestId?: string },
+    context?: { sessionId?: number; requestId?: string }
   ) {
     const summary = messages.map((m, i) => ({
       i,
@@ -108,7 +124,7 @@ export const debugLog = {
         messageCount: messages.length,
         messages: summary,
       },
-      `[trace] ${label}: ${messages.length} messages`,
+      `[trace] ${label}: ${messages.length} messages`
     );
   },
 

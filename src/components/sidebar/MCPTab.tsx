@@ -21,7 +21,7 @@ function toolCountLabel(n: number): string {
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
-  return `${s.slice(0, Math.max(0, max - 1)).trimEnd()  }…`;
+  return `${s.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
 export default function MCPTab() {

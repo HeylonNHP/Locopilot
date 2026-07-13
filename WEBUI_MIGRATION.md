@@ -382,7 +382,7 @@ that writes `numCtx` to disk.
 
 `numCtx` enforcement (the clamp against the model's runtime context-window
 size) is the server's responsibility. The client ships the user's raw
-*requested* value in the request body; the server resolves the cap and
+_requested_ value in the request body; the server resolves the cap and
 applies the clamp before sending the request to the LLM. The client
 never applies the clamp itself.
 
@@ -391,13 +391,13 @@ given `(baseUrl, modelName)` pair and a requested value, it returns
 `{ effective, requested, modelCap, source }` where `effective` is what
 the LLM actually receives. The resolution order is:
 
-  1. Cache hit (TTL 5 minutes, keyed on the full `(baseUrl, modelName)`
-     pair).
-  2. Runtime probe — Ollama `/api/ps` `context_length` for currently
-     loaded runners. Authoritative when the model is loaded.
-  3. Static probe — per-adapter `getModelContextLimit` (typically
-     `/api/show`).
-  4. `null` cap — the effective value is then the requested value.
+1. Cache hit (TTL 5 minutes, keyed on the full `(baseUrl, modelName)`
+   pair).
+2. Runtime probe — Ollama `/api/ps` `context_length` for currently
+   loaded runners. Authoritative when the model is loaded.
+3. Static probe — per-adapter `getModelContextLimit` (typically
+   `/api/show`).
+4. `null` cap — the effective value is then the requested value.
 
 The cap is reported back to the client on every chat turn's `status`
 SSE event (`status.modelContextLimit`) and on the `done` event
@@ -425,11 +425,11 @@ across tabs), keyed on `(baseUrl, modelName)` with NUL separator. The
 key discipline prevents one tab's model from leaking into another
 tab's cap:
 
-  - `baseUrl` is part of the key because two Ollama instances on
-    different URLs can host the same model name with different caps.
-  - The model name is the exact string supplied — no normalisation,
-    no case folding, no tag stripping. `qwen3:6.35b` and
-    `qwen3:6.35b-instruct` are two distinct cache entries.
+- `baseUrl` is part of the key because two Ollama instances on
+  different URLs can host the same model name with different caps.
+- The model name is the exact string supplied — no normalisation,
+  no case folding, no tag stripping. `qwen3:6.35b` and
+  `qwen3:6.35b-instruct` are two distinct cache entries.
 
 Two tabs using two different models therefore see two different caps
 on their respective chat responses, and neither tab's in-flight turn
@@ -445,16 +445,16 @@ each other's requested-numCtx setting on the disk-persisted
 
 #### Known deferred concerns
 
-  - **Two tabs in the same session row.** `sessions.id` is a single
-    primary key; two tabs both working on session 5 share the row's
-    `effective_num_ctx`. Per-tab `sessionId` allocation is a separate
-    refactor.
-  - **Cross-process `config.json` racing.** Two Next.js instances
-    pointed at the same disk would race on `saveConfig`. File
-    locking is out of scope.
-  - **Cross-tab UI sync.** A model change in tab A is not pushed to
-    tab B. The second tab only learns on its own next chat turn or
-    its own `loadConfig` call.
+- **Two tabs in the same session row.** `sessions.id` is a single
+  primary key; two tabs both working on session 5 share the row's
+  `effective_num_ctx`. Per-tab `sessionId` allocation is a separate
+  refactor.
+- **Cross-process `config.json` racing.** Two Next.js instances
+  pointed at the same disk would race on `saveConfig`. File
+  locking is out of scope.
+- **Cross-tab UI sync.** A model change in tab A is not pushed to
+  tab B. The second tab only learns on its own next chat turn or
+  its own `loadConfig` call.
 
 ---
 

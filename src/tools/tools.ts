@@ -59,7 +59,13 @@ export function sanitize(text: string): string {
       // Remove remaining lone Carriage Returns that could overwrite text
       .replaceAll('\r', '')
       // Strip ANSI escape codes (colors, cursor moves, screen clears)
-      .replaceAll(new RegExp(`[${String.fromCodePoint(0x1b)}${String.fromCodePoint(0x9b)}][#();?[]*(?:\\d{1,4}(?:;\\d{0,4})*)?[\\d<=>A-ORZcf-nqry]`, 'g'), '')
+      .replaceAll(
+        new RegExp(
+          `[${String.fromCodePoint(0x1b)}${String.fromCodePoint(0x9b)}][#();?[]*(?:\\d{1,4}(?:;\\d{0,4})*)?[\\d<=>A-ORZcf-nqry]`,
+          'g'
+        ),
+        ''
+      )
   );
 }
 
@@ -167,29 +173,19 @@ export const TOOLS: OllamaTool[] = [
  */
 export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean): string {
   return (
-    `You have access to the following tools that let you interact with the host machine:\n\n${ 
-    getRunCommandPrompt(yoloMode) 
-    }${getWebSearchPrompt() 
-    }${getSubAgentPrompt() 
-    }${getFetchUrlPrompt() 
-    }${visionSupported === false ? '' : getFetchImagePrompt() 
-    }${getReadFilePrompt() 
-    }${getPatchFilePrompt() 
-    }${getWriteFilePrompt() 
-    }${getLoadSkillPrompt() 
-    }${getCreateSkillPrompt() 
-    }${getReadPdfPrompt() 
-    }${getMCPCallPrompt() 
-    }${getSearchMcpToolsPrompt() 
-    }Tool-use policy:\n` +
+    `You have access to the following tools that let you interact with the host machine:\n\n${getRunCommandPrompt(
+      yoloMode
+    )}${getWebSearchPrompt()}${getSubAgentPrompt()}${getFetchUrlPrompt()}${
+      visionSupported === false ? '' : getFetchImagePrompt()
+    }${getReadFilePrompt()}${getPatchFilePrompt()}${getWriteFilePrompt()}${getLoadSkillPrompt()}${getCreateSkillPrompt()}${getReadPdfPrompt()}${getMCPCallPrompt()}${getSearchMcpToolsPrompt()}Tool-use policy:\n` +
     `- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n` +
     `- Use sub-agents aggressively for any information-heavy or multi-step work — they absorb intermediate results into isolated contexts, preserving your own context window for high-level reasoning. You do NOT need the user to request them.\n` +
     `- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n` +
     `- If a URL or local path ends in .pdf, prefer read_pdf over fetch_url or read_file.\n` +
-    `- Do NOT ask the user for permission yourself; ${ 
-    yoloMode
-      ? 'the user has already provided implicit consent via YOLO mode.'
-      : 'the application already prompts for approval.' 
+    `- Do NOT ask the user for permission yourself; ${
+      yoloMode
+        ? 'the user has already provided implicit consent via YOLO mode.'
+        : 'the application already prompts for approval.'
     }\n` +
     `- Do NOT only print a shell snippet/code block when the task requires execution.\n` +
     `- If run_command returns a process_id, periodically call check_process_output until completion. ` +
@@ -221,4 +217,4 @@ export async function handleToolCall(
   return command.execute(args, onProgress, output, context, signal);
 }
 
-export {type RequestContext, type ToolCallArguments, type ToolCallResult} from './toolRegistry';
+export { type RequestContext, type ToolCallArguments, type ToolCallResult } from './toolRegistry';

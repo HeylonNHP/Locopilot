@@ -6,7 +6,12 @@ import path from 'node:path';
 
 import type { Config } from '../../../types/chatConfig';
 
-import { buildLlmRequestContext, fetchLlmModelInfo, fetchLlmModels, type LlmRequestContext } from '../../../services/llm';
+import {
+  buildLlmRequestContext,
+  fetchLlmModelInfo,
+  fetchLlmModels,
+  type LlmRequestContext,
+} from '../../../services/llm';
 import { resolveVisionSupport } from '../../../services/visionCache';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');

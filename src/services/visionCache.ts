@@ -89,11 +89,7 @@ function cacheKey(baseUrl: string, modelName: string): string {
   return `${baseUrl}\0${modelName}`;
 }
 
-function getCachedEntry(
-  baseUrl: string,
-  modelName: string,
-  now: number
-): CacheEntry | undefined {
+function getCachedEntry(baseUrl: string, modelName: string, now: number): CacheEntry | undefined {
   const entry = cache.get(cacheKey(baseUrl, modelName));
   if (!entry) {
     return undefined; // miss

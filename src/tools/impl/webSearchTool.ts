@@ -3,15 +3,15 @@ import * as cheerio from 'cheerio';
 
 import type { ToolSchema } from '@/tools/tools';
 
-import { DEFAULT_WEB_REQUEST_TIMEOUT_MS, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES } from '@/constants';
+import {
+  DEFAULT_WEB_REQUEST_TIMEOUT_MS,
+  DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES,
+} from '@/constants';
 
 import type { ToolOutputSink } from '../toolOutput';
 import type { ExtractedLink } from '../web/linkExtractor';
 
-import {
-  cleanText,
-  fetchAndExtract,
-} from '../web/htmlExtractor';
+import { cleanText, fetchAndExtract } from '../web/htmlExtractor';
 import { BrowserPool, DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
 
 export const webSearchToolSchema: ToolSchema = {
@@ -217,7 +217,11 @@ export class WebSearchTool {
           `Web search: fetching DuckDuckGo results (${queryIndex + 1}/${queries.length}) for "${query}"...`
         );
 
-        const searchResults = await this.fetchSearchResults(query, effectiveResultsPerQuery, signal);
+        const searchResults = await this.fetchSearchResults(
+          query,
+          effectiveResultsPerQuery,
+          signal
+        );
         if (searchResults.length === 0) {
           querySections.push([`query: ${query}`, 'results: 0'].join('\n'));
           continue;
@@ -491,9 +495,7 @@ export class WebSearchTool {
     // Start every fetch eagerly so the workers below can fan out across the
     // pool without serializing on the first await. Each task already swallows
     // its own errors and resolves with either an ExtractedPage or null.
-    const tasks = results.map((result) =>
-      this.fetchAndExtractText(result, usePlaywright, signal)
-    );
+    const tasks = results.map((result) => this.fetchAndExtractText(result, usePlaywright, signal));
 
     const settled: (ExtractedPage | null | undefined)[] = Array.from({ length: tasks.length });
     const limit = Math.max(1, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES);
@@ -511,9 +513,7 @@ export class WebSearchTool {
       }
     };
 
-    await Promise.all(
-      Array.from({ length: Math.min(limit, tasks.length) }, () => worker())
-    );
+    await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
 
     return settled as (ExtractedPage | null)[];
   }

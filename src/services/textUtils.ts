@@ -24,7 +24,9 @@ const SPECIAL_LLM_TOKENS = [
 ];
 
 const SPECIAL_LLM_TOKENS_PATTERN = new RegExp(
-  SPECIAL_LLM_TOKENS.map((token) => token.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`)).join('|'),
+  SPECIAL_LLM_TOKENS.map((token) => token.replaceAll(/[$()*+.?[\\\]^{|}]/g, String.raw`\$&`)).join(
+    '|'
+  ),
   'g'
 );
 

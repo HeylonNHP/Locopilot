@@ -7,7 +7,12 @@ import { listSessions, loadSessionMessages } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { generateSessionTitle } from '@/services/titleGeneration';
 
-import { buildLlmRequestContext, type ChatMessage, getLlmApiErrorMessage, type LlmRequestContext } from '../../../services/llm';
+import {
+  buildLlmRequestContext,
+  type ChatMessage,
+  getLlmApiErrorMessage,
+  type LlmRequestContext,
+} from '../../../services/llm';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,8 +32,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const think: boolean | undefined = body.think as boolean | undefined;
   const reasoningEffortRaw: unknown = body.reasoningEffort;
   const reasoningEffort: 'off' | 'low' | 'medium' | 'high' | undefined =
-    reasoningEffortRaw === 'off' || reasoningEffortRaw === 'low' ||
-    reasoningEffortRaw === 'medium' || reasoningEffortRaw === 'high'
+    reasoningEffortRaw === 'off' ||
+    reasoningEffortRaw === 'low' ||
+    reasoningEffortRaw === 'medium' ||
+    reasoningEffortRaw === 'high'
       ? reasoningEffortRaw
       : undefined;
 
@@ -90,9 +97,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // the persisted config value (the user's authoritative
     // requested cap) and falls back to the body value if config
     // is missing. The clamp is the server's responsibility.
-    const bodyRequested = typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-      ? Math.floor(numCtx)
-      : null;
+    const bodyRequested =
+      typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
+        ? Math.floor(numCtx)
+        : null;
     const configRequested =
       config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
         ? Math.floor(config.numCtx)
@@ -135,7 +143,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   } catch (err) {
     const fallbackMessage = err instanceof Error ? err.message : 'Unknown error';
-    const message = await getLlmApiErrorMessage(llmRequestContext, err).catch(() => fallbackMessage);
+    const message = await getLlmApiErrorMessage(llmRequestContext, err).catch(
+      () => fallbackMessage
+    );
 
     return NextResponse.json({ error: message || fallbackMessage }, { status: 500 });
   }

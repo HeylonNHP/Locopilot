@@ -237,8 +237,9 @@ function formatPatchError(
   }
 
   lines.push(
-    'The patch text did not match the current file exactly, even after normalizing line endings and trimming whitespace.'
-  , 'Use read_file to refresh the surrounding lines and try again.');
+    'The patch text did not match the current file exactly, even after normalizing line endings and trimming whitespace.',
+    'Use read_file to refresh the surrounding lines and try again.'
+  );
   return lines.join('\n');
 }
 

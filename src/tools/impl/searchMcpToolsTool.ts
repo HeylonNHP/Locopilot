@@ -136,7 +136,7 @@ interface FormattedToolBlock {
 function formatToolBlock(stub: MCPToolStub, tool: MCPToolInfo | undefined): FormattedToolBlock {
   const description =
     tool?.description ?? stub.description ?? '(no description provided by the server)';
-  const truncatedDesc = description.length > 240 ? `${description.slice(0, 240)  }…` : description;
+  const truncatedDesc = description.length > 240 ? `${description.slice(0, 240)}…` : description;
 
   const params = tool?.inputSchema ?? { type: 'object' as const };
   let paramsText: string;
@@ -155,11 +155,9 @@ function formatToolBlock(stub: MCPToolStub, tool: MCPToolInfo | undefined): Form
     '',
     `You can now call this tool with the full schema in mind. The mcp__` +
       `${stub.server}__${stub.name} tool is available in your current tool list as a stub; ` +
-      `treat this result as the parameter specification. Use mcp_call(server="${ 
-      stub.server 
-      }", tool="${ 
-      stub.name 
-      }", arguments={...}) to actually invoke it.`,
+      `treat this result as the parameter specification. Use mcp_call(server="${
+        stub.server
+      }", tool="${stub.name}", arguments={...}) to actually invoke it.`,
   ].join('\n');
 
   return { namespacedName: stub.namespacedName, text };
@@ -298,7 +296,8 @@ export async function runSearchMCPTools(
   return {
     content:
       `Found ${blocks.length} tool(s) on server "${server}".\n` +
-      `Each tool below is a self-contained schema block; you can call any of them via mcp_call.\n\n${ 
-      blocks.join('\n---\n')}`,
+      `Each tool below is a self-contained schema block; you can call any of them via mcp_call.\n\n${blocks.join(
+        '\n---\n'
+      )}`,
   };
 }

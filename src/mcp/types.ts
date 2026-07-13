@@ -276,5 +276,3 @@ export class MCPConnectionError extends Error {
     this.name = 'MCPConnectionError';
   }
 }
-
-

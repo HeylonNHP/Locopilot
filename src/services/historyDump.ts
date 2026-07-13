@@ -89,9 +89,7 @@ function summarizeRoles(messages: ChatMessage[]): string {
     counts.set(message.role, (counts.get(message.role) ?? 0) + 1);
   }
 
-  return [...counts.entries()]
-    .map(([role, count]) => `${role}=${count}`)
-    .join(', ');
+  return [...counts.entries()].map(([role, count]) => `${role}=${count}`).join(', ');
 }
 
 function countToolCalls(messages: ChatMessage[]): number {
@@ -166,7 +164,11 @@ function renderMessageSection(message: ChatMessage, index: number): string {
   }
 
   const extraSuffix = extras.length > 0 ? ` (${extras.join(', ')})` : '';
-  sections.push(`### Message ${index + 1} - ${message.role}${extraSuffix}`, '', renderTextSection('Content', message.content));
+  sections.push(
+    `### Message ${index + 1} - ${message.role}${extraSuffix}`,
+    '',
+    renderTextSection('Content', message.content)
+  );
 
   if (message.thinking?.trim()) {
     sections.push('', renderTextSection('Thinking', message.thinking, 'text'));
@@ -265,4 +267,3 @@ export function buildConversationDumpMarkdown(input: ConversationDumpInput): str
 
   return sections.join('\n');
 }
-

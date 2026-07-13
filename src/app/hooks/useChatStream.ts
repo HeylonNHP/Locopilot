@@ -35,7 +35,11 @@ function getStreamErrorDetails(err: unknown): StreamErrorDetails | null {
  *  src/types/sse.ts so the producer and consumer stay in sync. */
 type SseEventPayload = SseEventPayloadMap[keyof SseEventPayloadMap];
 
-type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (k: infer I) => void ? I : never;
+type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (
+  k: infer I
+) => void
+  ? I
+  : never;
 
 type SseEventData = Partial<UnionToIntersection<SseEventPayload>>;
 
@@ -68,7 +72,9 @@ export function useChatStream(
   const [streamingSessions, setStreamingSessions] = useState<Set<number>>(new Set());
   const nextRequestIdRef = useRef(0);
   const bufferOwnerMapRef = useRef<Map<number, number>>(new Map());
-  const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: SseEventData }>>>(new Map());
+  const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: SseEventData }>>>(
+    new Map()
+  );
   const subagentBufferRef = useRef<
     Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null; sessionId?: number }>
   >(new Map());
@@ -157,10 +163,9 @@ export function useChatStream(
       // longer mutates the message list for stream B's session.
       const ownerSessionId =
         requestId === undefined
-          ? refs.sessionIdRef.current ?? undefined
+          ? (refs.sessionIdRef.current ?? undefined)
           : bufferOwnerMapRef.current.get(requestId);
-      const targetSessionId =
-        ownerSessionId === undefined ? undefined : ownerSessionId;
+      const targetSessionId = ownerSessionId === undefined ? undefined : ownerSessionId;
 
       switch (event) {
         case 'thinking': {
@@ -187,7 +192,7 @@ export function useChatStream(
             message: {
               role: 'tool',
               content: `🔧 **${data.name ?? ''}**\n\`\`\`json\n${JSON.stringify(data.arguments, null, 2)}\n\`\`\``,
-               ...(data.name === undefined ? {} : { name: data.name }),
+              ...(data.name === undefined ? {} : { name: data.name }),
             },
             ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
@@ -195,7 +200,8 @@ export function useChatStream(
           break;
         }
 
-        case 'approval_request': {          dispatch({
+        case 'approval_request': {
+          dispatch({
             type: 'SHOW_APPROVAL',
             command: {
               name: data.toolName ?? data.name ?? '',
@@ -214,7 +220,7 @@ export function useChatStream(
               role: 'tool',
               content: `✅ **${data.name ?? ''}** (${data.duration ?? 0}ms)\n\n\`\`\`\n${data.result ?? ''}\n\`\`\``,
               ...(data.name === undefined ? {} : { name: data.name }),
-               ...(data.toolCallId === undefined ? {} : { tool_call_id: data.toolCallId }),
+              ...(data.toolCallId === undefined ? {} : { tool_call_id: data.toolCallId }),
             },
             ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
@@ -233,7 +239,10 @@ export function useChatStream(
             content: data.message ?? data.content ?? String(data),
             ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
-          trace('tool_progress event', { name: data.name, contentPreview: (data.message ?? '').slice(0, 80) });
+          trace('tool_progress event', {
+            name: data.name,
+            contentPreview: (data.message ?? '').slice(0, 80),
+          });
           break;
         }
         case 'subagent_output': {
@@ -331,7 +340,10 @@ export function useChatStream(
           // Clear stale compaction phases so the streaming indicator
           // switches back to "Streaming..." once compaction finishes
           // and the model resumes generating.
-          dispatch({ type: 'CLEAR_COMPACT_PROGRESS', ...(targetSessionId === undefined ? {} : { targetSessionId }) });
+          dispatch({
+            type: 'CLEAR_COMPACT_PROGRESS',
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
+          });
 
           // Guard SET_MESSAGES and SET_TOKEN_STATS with the owning session so a
           // compaction that completes after the user has switched sessions cannot
@@ -357,7 +369,10 @@ export function useChatStream(
               ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
             });
           } else {
-            dispatch({ type: 'CLEAR_TOKEN_STATS', ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }) });
+            dispatch({
+              type: 'CLEAR_TOKEN_STATS',
+              ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
+            });
           }
           dispatch({
             type: 'ADD_MESSAGE',
@@ -367,17 +382,18 @@ export function useChatStream(
             },
             ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
           });
-           break;
+          break;
         }
 
-        case 'done': {          // Do NOT call SET_CURRENT_SESSION here. If the user switched sessions
+        case 'done': {
+          // Do NOT call SET_CURRENT_SESSION here. If the user switched sessions
           // while a stream was running, dispatching SET_CURRENT_SESSION(A) would
           // forcibly snap the UI back to session A against the user's will.
           // session_created already handles new-session ID assignment; for
           // existing sessions this dispatch was always a redundant no-op at best.
           // This event is in DELTA_EVENTS so it is buffered when the user is away
           // and replayed (applying the final tokenStats) when they return.
-           if (data.tokenStats) {
+          if (data.tokenStats) {
             dispatch({
               type: 'SET_TOKEN_STATS',
               stats: data.tokenStats,
@@ -386,11 +402,12 @@ export function useChatStream(
           }
           const doneToolCalls = (data as { tool_calls?: Array<{ id?: string }> }).tool_calls;
           trace('done event', {
-            hasToolCalls: !!(doneToolCalls?.length),
+            hasToolCalls: !!doneToolCalls?.length,
             toolCallCount: doneToolCalls?.length ?? 0,
             toolCallIds: doneToolCalls?.map((tc) => tc.id),
           });
-          if (typeof data.doneReason === 'string') {            // Normalize the server-side value to our DoneReason union. The server
+          if (typeof data.doneReason === 'string') {
+            // Normalize the server-side value to our DoneReason union. The server
             // coerces missing values to 'stop' and is the source of truth for
             // valid values; this is purely defensive.
             const reason: DoneReason = isDoneReason(data.doneReason) ? data.doneReason : 'unknown';
@@ -417,7 +434,11 @@ export function useChatStream(
           } else {
             dispatch({ type: 'SET_ERROR', error: errorMessage, targetSessionId });
           }
-          dispatch({ type: 'SET_CURRENT_TPS', tps: null, ...(targetSessionId === undefined ? {} : { targetSessionId }) });
+          dispatch({
+            type: 'SET_CURRENT_TPS',
+            tps: null,
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
+          });
           break;
         }
 
@@ -436,12 +457,19 @@ export function useChatStream(
           } else {
             dispatch({ type: 'SET_ERROR', error: writeErrorMessage, targetSessionId });
           }
-          dispatch({ type: 'SET_CURRENT_TPS', tps: null, ...(targetSessionId === undefined ? {} : { targetSessionId }) });
+          dispatch({
+            type: 'SET_CURRENT_TPS',
+            tps: null,
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
+          });
           break;
         }
 
         case 'clear_assistant': {
-          dispatch({ type: 'REMOVE_LAST_ASSISTANT', ...(targetSessionId === undefined ? {} : { targetSessionId }) });
+          dispatch({
+            type: 'REMOVE_LAST_ASSISTANT',
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
+          });
           break;
         }
 
@@ -510,7 +538,7 @@ export function useChatStream(
           }
         }
         throw new Error(
-          `HTTP ${response.status}: ${errorText.length > 200 ? `${errorText.slice(0, 200)  }...` : errorText}`
+          `HTTP ${response.status}: ${errorText.length > 200 ? `${errorText.slice(0, 200)}...` : errorText}`
         );
       }
 
@@ -749,7 +777,7 @@ export function useChatStream(
       }
     }
 
-    const prefix = textBlocks.length > 0 ? `${textBlocks.join('\n\n')  }\n\n` : '';
+    const prefix = textBlocks.length > 0 ? `${textBlocks.join('\n\n')}\n\n` : '';
     return { content: prefix + message, images };
   }
 
@@ -794,7 +822,7 @@ export function useChatStream(
       bufferOwnerMapRef.current.set(requestId, sessionId);
       bufferedEventsRef.current.delete(sessionId);
 
-       const allMessages = [...currentMessages, userMessage];
+      const allMessages = [...currentMessages, userMessage];
       const filteredMessages = allMessages.filter((m) => {
         if (m.role === 'system') return false;
         // Drop display-only tool messages created by the 'tool_call' and
@@ -802,7 +830,8 @@ export function useChatStream(
         // and are not part of the LLM protocol. Keep real tool results, even
         // legacy rows whose tool_call_id is an empty string (the backend
         // normalization pass will assign them a missing id if needed).
-        if (m.role === 'tool' && (m.tool_call_id === null || m.tool_call_id === undefined)) return false;
+        if (m.role === 'tool' && (m.tool_call_id === null || m.tool_call_id === undefined))
+          return false;
         return true;
       });
       const toolMessages = filteredMessages.filter((m) => m.role === 'tool');
@@ -817,7 +846,8 @@ export function useChatStream(
       });
       const bodyObj = {
         messages: filteredMessages,
-        model: refs.modelRef.current,        numCtx: refs.requestedNumCtxRef.current,
+        model: refs.modelRef.current,
+        numCtx: refs.requestedNumCtxRef.current,
         baseUrl: refs.baseUrlRef.current,
         sessionId: refs.sessionIdRef.current,
         yolo: refs.yoloRef.current,
@@ -885,7 +915,7 @@ export function useChatStream(
             }
           }
 
-          const truncated = errorText.length > 200 ? `${errorText.slice(0, 200)  }...` : errorText;
+          const truncated = errorText.length > 200 ? `${errorText.slice(0, 200)}...` : errorText;
           throw new Error(`HTTP ${response.status}: ${truncated}`);
         }
 

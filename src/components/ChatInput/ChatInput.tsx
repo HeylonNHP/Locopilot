@@ -145,7 +145,8 @@ interface Props {
 const MIN_TEXTAREA_HEIGHT = 44;
 const MAX_TEXTAREA_HEIGHT = 200;
 
-const useIsomorphicLayoutEffect = typeof globalThis.window === 'undefined' ? useEffect : useLayoutEffect;
+const useIsomorphicLayoutEffect =
+  typeof globalThis.window === 'undefined' ? useEffect : useLayoutEffect;
 
 const COMMANDS = [
   { command: '/clear', description: 'Clear conversation' },
@@ -347,8 +348,7 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
       if (
         e.dataTransfer &&
         (e.dataTransfer.types.includes('Files') ||
-          (e.dataTransfer.items &&
-            [...e.dataTransfer.items].some((item) => item.kind === 'file')))
+          (e.dataTransfer.items && [...e.dataTransfer.items].some((item) => item.kind === 'file')))
       ) {
         e.preventDefault();
       }
@@ -358,8 +358,7 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
       if (
         e.dataTransfer &&
         (e.dataTransfer.types.includes('Files') ||
-          (e.dataTransfer.items &&
-            [...e.dataTransfer.items].some((item) => item.kind === 'file')))
+          (e.dataTransfer.items && [...e.dataTransfer.items].some((item) => item.kind === 'file')))
       ) {
         e.preventDefault();
       }
@@ -418,7 +417,7 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
   );
 
   const applySuggestion = (suggestion: string) => {
-    setInput(`${suggestion  } `);
+    setInput(`${suggestion} `);
     setShowSuggestions(false);
     textareaRef.current?.focus();
   };
@@ -562,10 +561,10 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
 
     let insert = joined;
     if (before.length > 0 && !/\s$/.test(before)) {
-      insert = ` ${  insert}`;
+      insert = ` ${insert}`;
     }
     if (after.length > 0 && !/^\s/.test(after)) {
-      insert = `${insert  } `;
+      insert = `${insert} `;
     }
 
     const newValue = before + insert + after;
@@ -589,7 +588,7 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
         accept="image/*,application/pdf,text/plain,text/markdown,text/html,text/css,.ts,.tsx,.js,.jsx,.py,.rb,.rs,.go,.java,.c,.cpp,.cs,.sh,.zsh,.json,.yaml,.yml,.toml,.md,.scss,.sql,.xml"
         style={{ display: 'none' }}
         onChange={(e) => {
-          const files = [...e.target.files ?? []];
+          const files = [...(e.target.files ?? [])];
           if (files.length > 0) void addAttachments(files);
           // Reset so the same file can be re-added if removed
           e.target.value = '';
@@ -604,10 +603,9 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
                 key={s.command}
                 onClick={() => applySuggestion(s.command)}
                 onMouseEnter={() => setSelectedIndex(i)}
-                className={
-                  `chat-input-suggestion-item${ 
-                  i === selectedIndex ? ' chat-input-suggestion-active' : ''}`
-                }
+                className={`chat-input-suggestion-item${
+                  i === selectedIndex ? ' chat-input-suggestion-active' : ''
+                }`}
               >
                 <span className="chat-input-suggestion-cmd">{s.command}</span>
                 <span className="chat-input-suggestion-desc">{s.description}</span>
@@ -742,19 +740,16 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
           The attach control stays enabled in both cases — the
           warning is informational, not a block.
         */}
-        {attachments.some((att) => att.type === 'image') &&
-          visionState === 'unsupported' && (
-            <div className="chat-input-vision-warn" role="status">
-              ⚠ This model does not support image input. The image
-              will be sent as a text description.
-            </div>
-          )}
+        {attachments.some((att) => att.type === 'image') && visionState === 'unsupported' && (
+          <div className="chat-input-vision-warn" role="status">
+            ⚠ This model does not support image input. The image will be sent as a text description.
+          </div>
+        )}
         {attachments.some((att) => att.type === 'image') &&
           visionState === 'unknown' &&
           provider === 'openai-compatible' && (
             <div className="chat-input-vision-hint" role="status">
-              ℹ Vision support unconfirmed for this model — the first
-              request may fail.
+              ℹ Vision support unconfirmed for this model — the first request may fail.
             </div>
           )}
 

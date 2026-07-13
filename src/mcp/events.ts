@@ -103,4 +103,3 @@ export function emitMCPEvent(event: MCPEvent): void {
     }
   }
 }
-

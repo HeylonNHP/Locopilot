@@ -357,7 +357,7 @@ export class ReadPdfTool {
         for (const p of textPages) {
           pageLines.push(`=== Page ${p.num} ===`, p.text.trimEnd());
         }
-        pageContent = `\n${  pageLines.join('\n')}`;
+        pageContent = `\n${pageLines.join('\n')}`;
       } else {
         // Fallback: label the range
         pageContent = `\n=== Pages ${startPage}–${endPage} ===\n${extractedText.trimEnd()}`;

@@ -61,7 +61,7 @@ function formatFields(fields?: Record<string, unknown>): string {
     // mid-sequence (which would leave the trailing log lines mis-colored).
     // The plain ellipsis is appended after stripping, so it does not get
     // mangled by chalk's color-codes and renders consistently.
-    return `${visible.slice(0, FIELDS_MAX_LENGTH - 1)  }…`;
+    return `${visible.slice(0, FIELDS_MAX_LENGTH - 1)}…`;
   }
   return inspected;
 }

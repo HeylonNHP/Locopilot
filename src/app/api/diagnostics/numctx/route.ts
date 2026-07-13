@@ -40,10 +40,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const requestedParam = url.searchParams.get('requested');
 
     if (!modelName) {
-      return NextResponse.json(
-        { error: 'Query parameter "model" is required.' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Query parameter "model" is required.' }, { status: 400 });
     }
 
     let requested = DEFAULT_NUM_CTX;
@@ -79,9 +76,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json(
-      { error: `Failed to resolve numCtx: ${message}` },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: `Failed to resolve numCtx: ${message}` }, { status: 500 });
   }
 }

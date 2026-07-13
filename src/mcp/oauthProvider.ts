@@ -575,26 +575,26 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       return;
     }
     switch (scope) {
-    case 'client': {
-      delete next.clientInformation;
-    
-    break;
-    }
-    case 'tokens': {
-      delete next.tokens;
-    
-    break;
-    }
-    case 'verifier': {
-      delete next.codeVerifier;
-    
-    break;
-    }
-    default: {
-      // 'discovery' — drop the cached authorization server
-      // URL so the SDK re-discovers it.
-      delete next.authorizationServerUrl;
-    }
+      case 'client': {
+        delete next.clientInformation;
+
+        break;
+      }
+      case 'tokens': {
+        delete next.tokens;
+
+        break;
+      }
+      case 'verifier': {
+        delete next.codeVerifier;
+
+        break;
+      }
+      default: {
+        // 'discovery' — drop the cached authorization server
+        // URL so the SDK re-discovers it.
+        delete next.authorizationServerUrl;
+      }
     }
     await this.mutateState(next);
   }

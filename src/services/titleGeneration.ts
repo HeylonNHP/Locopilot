@@ -184,21 +184,18 @@ export async function generateSessionTitle(
       system:
         `You are a concise session title generator. Given a conversation between a user and an AI assistant, ` +
         `generate a short human-readable title. The title MUST start with a single relevant emoji.\n` +
-        `Respond with ONLY a JSON object in this exact format: {"title": "<emoji> <title>"}\n\n${ 
-        SHARED_EXAMPLES 
-        }\n\nRules:\n${ 
-        SHARED_RULES}`,
+        `Respond with ONLY a JSON object in this exact format: {"title": "<emoji> <title>"}\n\n${
+          SHARED_EXAMPLES
+        }\n\nRules:\n${SHARED_RULES}`,
       user: `Generate a short session title for this conversation:\n\n${conversationText}\n\nRespond with JSON only.`,
       format: 'json',
     },
     {
       system:
         `You are a concise session title generator. Given a conversation between a user and an AI assistant, ` +
-        `generate a short human-readable title. The title MUST start with a single relevant emoji.\n\n${ 
-        SHARED_EXAMPLES 
-        }\n\nRules:\n${ 
-        SHARED_RULES 
-        }\n` +
+        `generate a short human-readable title. The title MUST start with a single relevant emoji.\n\n${
+          SHARED_EXAMPLES
+        }\n\nRules:\n${SHARED_RULES}\n` +
         `- Return ONLY the emoji + title — no quotes, no prefixes, no explanation`,
       user: `Generate a short session title for this conversation:\n\n${conversationText}\n\nTitle (emoji first):`,
     },

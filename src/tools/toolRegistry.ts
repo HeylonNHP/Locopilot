@@ -216,9 +216,13 @@ export interface IToolCommand {
  * Returns an error string if the tool is not allowed, or null if it is.
  */
 function checkToolAllowed(toolName: string, context?: RequestContext): string | null {
-  if (context?.allowedTools && context.allowedTools.length > 0 && !context.allowedTools.includes(toolName)) {
-      return `[Error: tool "${toolName}" is not allowed by the currently active skills. Allowed tools: ${context.allowedTools.join(', ')}]`;
-    }
+  if (
+    context?.allowedTools &&
+    context.allowedTools.length > 0 &&
+    !context.allowedTools.includes(toolName)
+  ) {
+    return `[Error: tool "${toolName}" is not allowed by the currently active skills. Allowed tools: ${context.allowedTools.join(', ')}]`;
+  }
   return null;
 }
 
@@ -512,7 +516,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
             resolveWebSearchSettings(context) ?? defaultWebSearchSettings(),
             onProgress,
             output,
-            context?.model,  // Use parent's Airia model, not the subagent's local model
+            context?.model, // Use parent's Airia model, not the subagent's local model
             context?.numCtx,
             signal
           ),
@@ -697,7 +701,11 @@ export const toolRegistry = new Map<string, IToolCommand>([
             content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]`,
           };
         }
-        if (sanitizedName.includes('\0') || /[/\\]/.test(sanitizedName) || sanitizedName.includes('..')) {
+        if (
+          sanitizedName.includes('\0') ||
+          /[/\\]/.test(sanitizedName) ||
+          sanitizedName.includes('..')
+        ) {
           return {
             content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]`,
           };

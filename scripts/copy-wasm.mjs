@@ -16,5 +16,7 @@ try {
   // eslint-disable-next-line no-console
   console.log(`Copied tiktoken_bg.wasm to ${destination}`);
 } catch (err) {
-  throw new Error(`Failed to copy tiktoken_bg.wasm: ${err instanceof Error ? err.message : String(err)}`);
+  throw new Error(
+    `Failed to copy tiktoken_bg.wasm: ${err instanceof Error ? err.message : String(err)}`
+  );
 }

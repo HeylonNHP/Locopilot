@@ -246,10 +246,7 @@ export async function enableSkill(name: string, projectDir?: string): Promise<vo
       enabled.add(name);
       disabled.delete(name);
 
-      await saveSkillStateUnqueued(
-        { enabled: [...enabled], disabled: [...disabled] },
-        projectDir
-      );
+      await saveSkillStateUnqueued({ enabled: [...enabled], disabled: [...disabled] }, projectDir);
     },
     async () => {
       const state = loadSkillState(projectDir);
@@ -259,10 +256,7 @@ export async function enableSkill(name: string, projectDir?: string): Promise<vo
       enabled.add(name);
       disabled.delete(name);
 
-      await saveSkillStateUnqueued(
-        { enabled: [...enabled], disabled: [...disabled] },
-        projectDir
-      );
+      await saveSkillStateUnqueued({ enabled: [...enabled], disabled: [...disabled] }, projectDir);
     }
   );
   return skillStateWriteQueue;
@@ -282,10 +276,7 @@ export async function disableSkill(name: string, projectDir?: string): Promise<v
       disabled.add(name);
       enabled.delete(name);
 
-      await saveSkillStateUnqueued(
-        { enabled: [...enabled], disabled: [...disabled] },
-        projectDir
-      );
+      await saveSkillStateUnqueued({ enabled: [...enabled], disabled: [...disabled] }, projectDir);
     },
     async () => {
       const state = loadSkillState(projectDir);
@@ -295,10 +286,7 @@ export async function disableSkill(name: string, projectDir?: string): Promise<v
       disabled.add(name);
       enabled.delete(name);
 
-      await saveSkillStateUnqueued(
-        { enabled: [...enabled], disabled: [...disabled] },
-        projectDir
-      );
+      await saveSkillStateUnqueued({ enabled: [...enabled], disabled: [...disabled] }, projectDir);
     }
   );
   return skillStateWriteQueue;
@@ -357,14 +345,14 @@ function globToRegex(pattern: string): RegExp {
       out += '.';
       i += 1;
     } else if ('.+^${}()|[]\\'.includes(ch)) {
-      out += `\\${  ch}`;
+      out += `\\${ch}`;
       i += 1;
     } else {
       out += ch;
       i += 1;
     }
   }
-  return new RegExp(`^${  out  }$`);
+  return new RegExp(`^${out}$`);
 }
 
 /**
@@ -433,7 +421,7 @@ export function buildAlwaysApplyPrompt(skills: Skill[], filePaths?: string[]): s
   const bodies = filtered.map((s) => s.body.trim()).filter(Boolean);
   if (bodies.length === 0) return '';
 
-  return `\n## Active Skills\n\n${  bodies.join('\n\n')  }\n`;
+  return `\n## Active Skills\n\n${bodies.join('\n\n')}\n`;
 }
 
 /**
@@ -450,7 +438,7 @@ export function buildAvailableSkillsSummary(skills: Skill[], filePaths?: string[
   if (filtered.length === 0) return '';
 
   const lines = filtered.map((s) => `- **${s.name}**: ${s.description}`);
-  return `\n## Available Skills\n\n${  lines.join('\n')  }\n`;
+  return `\n## Available Skills\n\n${lines.join('\n')}\n`;
 }
 
 // ── Lookup ───────────────────────────────────────────────────────────────────

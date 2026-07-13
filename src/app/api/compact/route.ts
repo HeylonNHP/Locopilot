@@ -65,12 +65,10 @@ export async function POST(request: NextRequest): Promise<Response> {
     async start(controller): Promise<void> {
       function sendEvent<N extends keyof SseEventPayloadMap>(
         event: N,
-        data: SseEventPayloadMap[N],
+        data: SseEventPayloadMap[N]
       ): void {
         try {
-          controller.enqueue(
-            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-          );
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         } catch {
           // Client disconnected — safe to ignore
         }
@@ -101,9 +99,10 @@ export async function POST(request: NextRequest): Promise<Response> {
         // authoritative requested cap) and falls back to the body
         // value if config is missing. The clamp is the server's
         // responsibility, not the client's.
-        const bodyRequested = typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-          ? Math.floor(numCtx)
-          : null;
+        const bodyRequested =
+          typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
+            ? Math.floor(numCtx)
+            : null;
         const configRequested =
           config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
             ? Math.floor(config.numCtx)
@@ -176,7 +175,9 @@ export async function POST(request: NextRequest): Promise<Response> {
         });
       } catch (err) {
         const fallbackMessage = err instanceof Error ? err.message : 'Unknown error';
-        const message = await getLlmApiErrorMessage(llmRequestContext, err).catch(() => fallbackMessage);
+        const message = await getLlmApiErrorMessage(llmRequestContext, err).catch(
+          () => fallbackMessage
+        );
         sendEvent('error', { message: message || fallbackMessage });
       } finally {
         controller.close();
@@ -188,7 +189,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
     },
   });
 }

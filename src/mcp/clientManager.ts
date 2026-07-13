@@ -378,14 +378,14 @@ class MCPClientManager {
     // exists so the UI can show the "Connecting..." pill.
     emitMCPEvent({ kind: 'state', serverName });
 
-      // Pass the AbortSignal into client.connect() so the SDK
-      // tears down the handshake cleanly if the user aborts /
-      // disconnects while we're still initialising.
-      // The cast to `Transport` is required because the SDK
-      // ships a known type mismatch on `StreamableHTTPClientTransport.sessionId`
-      // (getter is `string | undefined` but the interface declares
-      // `sessionId?: string`). All three concrete classes do
-      // structurally implement the interface at runtime.
+    // Pass the AbortSignal into client.connect() so the SDK
+    // tears down the handshake cleanly if the user aborts /
+    // disconnects while we're still initialising.
+    // The cast to `Transport` is required because the SDK
+    // ships a known type mismatch on `StreamableHTTPClientTransport.sessionId`
+    // (getter is `string | undefined` but the interface declares
+    // `sessionId?: string`). All three concrete classes do
+    // structurally implement the interface at runtime.
     try {
       await client.connect(transport as unknown as Transport, { signal: abortController.signal });
     } catch (err) {

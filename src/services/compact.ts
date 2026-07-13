@@ -193,10 +193,7 @@ function adjustSplitForToolBlockIntegrity(
   }
 
   // Case 2: splitIndex sits immediately after an assistant with tool_calls.
-  if (
-    assistantIndex < 0 &&
-    historyMessages[splitIndex - 1]?.role === 'assistant'
-  ) {
+  if (assistantIndex < 0 && historyMessages[splitIndex - 1]?.role === 'assistant') {
     const assistant = historyMessages[splitIndex - 1];
     if (assistant?.tool_calls && assistant.tool_calls.length > 0) {
       assistantIndex = splitIndex - 1;
@@ -213,9 +210,7 @@ function adjustSplitForToolBlockIntegrity(
     return splitIndex;
   }
   const toolCallIds = new Set(
-    assistant.tool_calls
-      ?.map((tc) => tc.id)
-      .filter((id): id is string => typeof id === 'string')
+    assistant.tool_calls?.map((tc) => tc.id).filter((id): id is string => typeof id === 'string')
   );
   if (toolCallIds.size === 0) {
     return splitIndex;
@@ -368,10 +363,7 @@ function getToolMessageName(message: ChatMessage): string {
  * `toolIndex`, or -1 if no matching assistant is found in the same contiguous
  * tool block.
  */
-function findMatchingAssistantIndex(
-  messages: ChatMessage[],
-  toolIndex: number
-): number {
+function findMatchingAssistantIndex(messages: ChatMessage[], toolIndex: number): number {
   if (toolIndex <= 0) return -1;
   const toolCallId = messages[toolIndex]?.tool_call_id;
   if (!toolCallId) return -1;
@@ -432,15 +424,16 @@ async function distillToolMessages(
     const DISTILL_INPUT_MAX_CHARS = Math.min(50_000, numCtx * 8);
     const distillInputContent =
       message.content.length > DISTILL_INPUT_MAX_CHARS
-        ? `${message.content.slice(0, DISTILL_INPUT_MAX_CHARS) 
-          }\n\n[...truncated ${message.content.length - DISTILL_INPUT_MAX_CHARS} chars for distillation]`
+        ? `${message.content.slice(
+            0,
+            DISTILL_INPUT_MAX_CHARS
+          )}\n\n[...truncated ${message.content.length - DISTILL_INPUT_MAX_CHARS} chars for distillation]`
         : message.content;
 
     const input =
       `Tool name: ${toolName}\n` +
       `Tool output length: ${message.content.length} chars${message.content.length > DISTILL_INPUT_MAX_CHARS ? ' (truncated for distillation)' : ''}\n\n` +
-      `Tool output:\n${ 
-      distillInputContent}`;
+      `Tool output:\n${distillInputContent}`;
 
     let distilledContent = '';
     const distillResponse = await sendLlmChat(
@@ -478,9 +471,9 @@ async function distillToolMessages(
 
     distilledMessages.push({
       ...message,
-      content:
-        `[Distilled tool output from ${toolName}; original length ${message.content.length} chars]\n${ 
-        digest}`,
+      content: `[Distilled tool output from ${toolName}; original length ${message.content.length} chars]\n${
+        digest
+      }`,
     });
 
     onProgress?.(
@@ -682,23 +675,23 @@ export async function compactHistory(
     },
     {
       role: 'user',
-      content: `Please summarise the following conversation history:\n\n${  historyText}`,
+      content: `Please summarise the following conversation history:\n\n${historyText}`,
     },
   ];
 
-    const streamSummary = async (msgs: ChatMessage[], numPredict?: number): Promise<string> => {
-      let text = '';
-      for await (const chunk of sendLlmChatStream(ctx, {
-        model,
-        messages: msgs,
-        tools: [],
-        numCtx,
-        ...(numPredict === undefined ? {} : { maxOutputTokens: numPredict }),
-        options: {
-          temperature: 0,
-        },
-        ...(signal ? { signal } : {}),
-      })) {
+  const streamSummary = async (msgs: ChatMessage[], numPredict?: number): Promise<string> => {
+    let text = '';
+    for await (const chunk of sendLlmChatStream(ctx, {
+      model,
+      messages: msgs,
+      tools: [],
+      numCtx,
+      ...(numPredict === undefined ? {} : { maxOutputTokens: numPredict }),
+      options: {
+        temperature: 0,
+      },
+      ...(signal ? { signal } : {}),
+    })) {
       const content = chunk.message?.content ?? '';
       if (content.length > 0) {
         text += content;
@@ -723,7 +716,7 @@ export async function compactHistory(
       },
       {
         role: 'user',
-        content: `Summarise this conversation:\n\n${  historyText}`,
+        content: `Summarise this conversation:\n\n${historyText}`,
       },
     ];
     summary = await streamSummary(retryMessages);
@@ -806,5 +799,3 @@ export async function compactHistory(
     },
   };
 }
-
-

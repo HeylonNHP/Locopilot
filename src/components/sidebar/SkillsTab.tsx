@@ -108,7 +108,9 @@ export default function SkillsTab({ onPromptAI }: Props) {
     if (!onPromptAI || !trimmedName) return;
     pendingCreationNameRef.current = trimmedName;
     setCreating(true);
-    const message = newGenerateAI ? `Please create a skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.` : `Please create a minimal skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Use a simple placeholder body like "# ${trimmedName}\n\nSkill instructions go here." Use the create_skill tool.`;
+    const message = newGenerateAI
+      ? `Please create a skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.`
+      : `Please create a minimal skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Use a simple placeholder body like "# ${trimmedName}\n\nSkill instructions go here." Use the create_skill tool.`;
     onPromptAI(message);
     setShowCreateForm(false);
     setNewName('');

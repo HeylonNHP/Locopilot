@@ -14,10 +14,7 @@ const APP_TITLE = 'Locopilot';
  *   - Active session with a name → "{session.name} — Locopilot"
  *   - Active session without a name → "Session {id} — Locopilot"
  */
-export function useDocumentTitle(
-  currentSessionId: number | null,
-  sessions: Session[]
-): void {
+export function useDocumentTitle(currentSessionId: number | null, sessions: Session[]): void {
   useEffect(() => {
     if (currentSessionId === null) {
       document.title = APP_TITLE;

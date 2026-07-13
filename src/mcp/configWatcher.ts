@@ -219,4 +219,3 @@ export function stopMCPConfigWatcher(): void {
   }
   state.started = false;
 }
-

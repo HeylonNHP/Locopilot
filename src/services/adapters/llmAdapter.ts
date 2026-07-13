@@ -217,5 +217,8 @@ export interface LlmAdapter {
    * effective cap over the modelfile's declared value when reconciling
    * the model context limit.
    */
-  fetchRunningModelContextLength?(ctx: LlmRequestContext, modelName: string): Promise<number | null>;
+  fetchRunningModelContextLength?(
+    ctx: LlmRequestContext,
+    modelName: string
+  ): Promise<number | null>;
 }

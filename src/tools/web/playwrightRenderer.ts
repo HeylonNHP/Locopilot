@@ -94,7 +94,8 @@ export class BrowserPool {
       settings.cookieHeader ? { cookieHeader: settings.cookieHeader } : undefined
     );
     const extraHTTPHeaders: Record<string, string> = {};
-    if (headers['Accept-Language']) extraHTTPHeaders['Accept-Language'] = headers['Accept-Language'];
+    if (headers['Accept-Language'])
+      extraHTTPHeaders['Accept-Language'] = headers['Accept-Language'];
     if (headers.Referer) extraHTTPHeaders.Referer = headers.Referer;
     if (headers.Cookie) extraHTTPHeaders['Cookie'] = headers.Cookie;
 

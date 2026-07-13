@@ -285,9 +285,7 @@ export default function SettingsModal({ onClose }: Props) {
                 <select
                   id="reasoning-effort-select"
                   value={reasoningEffort}
-                  onChange={(e) =>
-                    setReasoningEffort(e.target.value as ReasoningEffort)
-                  }
+                  onChange={(e) => setReasoningEffort(e.target.value as ReasoningEffort)}
                   className="settings-input"
                 >
                   <option value="off">Off (none)</option>
@@ -317,9 +315,9 @@ export default function SettingsModal({ onClose }: Props) {
                 </label>
               </div>
               <span className="font-12 text-secondary">
-                Adds a [Sent YYYY-MM-DD HH:MM] header to each prompt the LLM sees. The
-                wall-clock time of every message is always recorded, so toggling this
-                back on later reveals the date for past messages.
+                Adds a [Sent YYYY-MM-DD HH:MM] header to each prompt the LLM sees. The wall-clock
+                time of every message is always recorded, so toggling this back on later reveals the
+                date for past messages.
               </span>
             </div>
           </div>
@@ -398,10 +396,9 @@ export default function SettingsModal({ onClose }: Props) {
             <button
               onClick={handleSave}
               disabled={isSaving}
-              className={
-                `settings-btn-save ${
-                isSaving ? 'settings-btn-save-disabled' : 'settings-btn-save-active'}`
-              }
+              className={`settings-btn-save ${
+                isSaving ? 'settings-btn-save-disabled' : 'settings-btn-save-active'
+              }`}
             >
               {isSaving ? 'Saving...' : 'Save'}
             </button>
