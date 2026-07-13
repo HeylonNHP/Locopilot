@@ -223,6 +223,60 @@ function checkToolAllowed(toolName: string, context?: RequestContext): string | 
 
 // --- Private adapter helpers ---
 
+/**
+ * Resolves a `WebSearchSettings` from a `RequestContext`.
+ *
+ * The web content compactor (`ContentCompactor`, see
+ * `src/tools/impl/contentCompactor.ts`) needs a real `baseUrl` and
+ * `compactionModel` to make its LLM call — it cannot fall back to Ollama
+ * defaults because the request may be running on an OpenAI-compatible
+ * provider (Airia etc.). When `context.webSearch` is present it wins
+ * (the chat route populates it with the resolved main-agent values).
+ * Otherwise we inherit from `context.subAgent`, which the chat route
+ * also populates for every request and is always available inside a
+ * sub-agent loop. The hardcoded empty-string defaults that used to live
+ * inline at the call sites caused 404s on the compactor's LLM call —
+ * see the comment at the call sites below for the full history.
+ */
+function resolveWebSearchSettings(
+  context: RequestContext | undefined
+): WebSearchSettings | undefined {
+  if (context?.webSearch) {
+    return context.webSearch;
+  }
+  if (context?.subAgent?.baseUrl && context.subAgent.compactionModel) {
+    return {
+      maxQueries: 3,
+      resultsPerQuery: 3,
+      requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+      perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+      baseUrl: context.subAgent.baseUrl,
+      compactionModel: context.subAgent.compactionModel,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Last-resort fallback used only when neither `context.webSearch` nor
+ * `context.subAgent` are populated (e.g. legacy test fixtures that
+ * construct a `RequestContext` without either field). It mirrors the
+ * defaults the chat route would have used so behaviour stays sensible,
+ * and the `ContentCompactor`'s skip-when-unconfigured guard will detect
+ * the missing `compactionModel` and degrade to a hard slice instead of
+ * 404-ing.
+ */
+function defaultWebSearchSettings(): WebSearchSettings {
+  return {
+    maxQueries: 3,
+    resultsPerQuery: 3,
+    requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+    perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+    baseUrl: '',
+    compactionModel: '',
+  };
+}
+
 async function runWebSearch(
   args: WebSearchToolArgs,
   settings: WebSearchSettings,
@@ -428,14 +482,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
         return {
           content: await runWebSearch(
             webArgs,
-            context?.webSearch ?? {
-              maxQueries: 3,
-              resultsPerQuery: 3,
-              requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-              perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-              baseUrl: '',
-              compactionModel: '',
-            },
+            resolveWebSearchSettings(context) ?? defaultWebSearchSettings(),
             onProgress,
             output,
             signal
@@ -460,14 +507,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
               use_playwright: args.use_playwright === true,
               full_content: args.full_content === true,
             },
-            context?.webSearch ?? {
-              maxQueries: 3,
-              resultsPerQuery: 3,
-              requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-              perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-              baseUrl: '',
-              compactionModel: '',
-            },
+            resolveWebSearchSettings(context) ?? defaultWebSearchSettings(),
             onProgress,
             output,
             context?.model,  // Use parent's Airia model, not the subagent's local model

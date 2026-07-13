@@ -201,6 +201,31 @@ export class ContentCompactor {
       return content;
     }
 
+    // ── Skip-when-unconfigured guard ─────────────────────────────────
+    // The web content compactor needs a valid `compactionModel` and
+    // `baseUrl` to make its LLM call. If either is empty, the LLM
+    // request would 404 (or hit the wrong provider) and `compactContent`
+    // would throw — the catch below would still recover, but the LLM
+    // round-trip is wasted and the user sees a noisy failure log. Skip
+    // the LLM call entirely and degrade to a hard slice so the page is
+    // still returned within the per-page budget. This is the last line
+    // of defence: the upstream tool registry
+    // (`src/tools/toolRegistry.ts`) already tries to inherit a real
+    // baseUrl/compactionModel from the per-request subAgent config.
+    const compactionModel = this.settings.compactionModel?.trim() ?? '';
+    const baseUrl = this.settings.baseUrl?.trim() ?? '';
+    if (!compactionModel || !baseUrl) {
+      this.debugLines = [];
+      this.logCompactionRequested(content.length, limit);
+      this.logCompactionLine(
+        `Web content compaction skipped: compactionModel or baseUrl not configured; falling back to hard truncation.`
+      );
+      const truncated = content.slice(0, limit);
+      this.logCompactionComplete(content.length, truncated.length);
+      compactionDebugStore.enterWith([...this.debugLines]);
+      return truncated;
+    }
+
     this.debugLines = [];
     let compactedContent = content;
     this.logCompactionRequested(content.length, limit);
