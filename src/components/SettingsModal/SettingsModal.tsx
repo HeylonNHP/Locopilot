@@ -13,7 +13,7 @@ interface Props {
 }
 
 export default function SettingsModal({ onClose }: Props) {
-  const { state, dispatch } = useChat();
+  const { state } = useChat();
   const [model, setModel] = useState(state.model);
   const [baseUrl, setBaseUrl] = useState(state.baseUrl);
   const [numCtx, setNumCtx] = useState(String(state.requestedNumCtx));
@@ -36,7 +36,6 @@ export default function SettingsModal({ onClose }: Props) {
     String(state.webSearch?.perPageCharLimit ?? 5000)
   );
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async () => {
     setSaveError(null);
@@ -78,12 +77,6 @@ export default function SettingsModal({ onClose }: Props) {
       clientConfig.numCtx = parsedNumCtx;
     }
 
-    // Update the in-memory requested value optimistically so the
-    // StatusBar reflects the new setting before the next chat turn.
-    const oldRequestedNumCtx = state.requestedNumCtx;
-    dispatch({ type: 'SET_CONFIG', config: { requestedNumCtx: parsedNumCtx } });
-    setIsSaving(true);
-
     try {
       const response = await fetch('/api/config', {
         method: 'PUT',
@@ -115,12 +108,8 @@ export default function SettingsModal({ onClose }: Props) {
 
       onClose();
     } catch (err) {
-      // Revert the optimistic update for requestedNumCtx
-      dispatch({ type: 'SET_CONFIG', config: { requestedNumCtx: oldRequestedNumCtx } });
       const message = err instanceof Error ? err.message : 'Failed to save config.';
       setSaveError(message);
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -378,15 +367,8 @@ export default function SettingsModal({ onClose }: Props) {
             <button onClick={onClose} className="settings-btn-cancel">
               Cancel
             </button>
-            <button
-              onClick={handleSave}
-              disabled={isSaving}
-              className={
-                `settings-btn-save ${ 
-                isSaving ? 'settings-btn-save-disabled' : 'settings-btn-save-active'}`
-              }
-            >
-              {isSaving ? 'Saving...' : 'Save'}
+            <button onClick={handleSave} className="settings-btn-save">
+              Save
             </button>
           </div>
         </div>

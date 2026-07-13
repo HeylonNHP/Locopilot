@@ -754,7 +754,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             model: model as string,
                             numCtx: effectiveNumCtx,
                             compactionModel: resolveCompactionModel(config?.compactionModel ?? '', model as string),
-                            ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+                            ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
                             // Seed the sub-agent's mcpApprovals ledger with
                             // whatever the parent route has already approved
@@ -794,7 +794,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                             model: model as string,
                             numCtx: effectiveNumCtx,
                             compactionModel: model as string,
-                            ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+                            ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
                             tools: TOOLS.filter((tool) => tool.function.name !== 'run_subagents' && !disabledSubAgent.includes(tool.function.name)),
                             mcpApprovals: [...mcpApprovalsSet],
                             approvalRequester: requestSubAgentApproval,

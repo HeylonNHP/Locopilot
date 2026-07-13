@@ -470,7 +470,7 @@ async function runSingleAgent(
         messages,
         tools,
         numCtx: config.numCtx,
-        ...(config.reasoningEffort !== undefined ? { reasoningEffort: config.reasoningEffort } : {}),
+        ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
       },
       (chunk) => {
         // Route live thinking/content tokens to the output sink so web
