@@ -13,7 +13,7 @@ interface Props {
 }
 
 export default function SettingsModal({ onClose }: Props) {
-  const { state } = useChat();
+  const { state, dispatch } = useChat();
   const [model, setModel] = useState(state.model);
   const [baseUrl, setBaseUrl] = useState(state.baseUrl);
   const [numCtx, setNumCtx] = useState(String(state.requestedNumCtx));
@@ -36,9 +36,11 @@ export default function SettingsModal({ onClose }: Props) {
     String(state.webSearch?.perPageCharLimit ?? 5000)
   );
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async () => {
     setSaveError(null);
+    setIsSaving(true);
 
     const parsedNumCtx = Number.parseInt(numCtx) || DEFAULT_NUM_CTX;
     const parsedHours = Number.parseInt(chatTimeoutHours) || 0;
@@ -106,10 +108,36 @@ export default function SettingsModal({ onClose }: Props) {
         throw new Error(message);
       }
 
+      // The server is the source of truth. Mirror the values it just
+      // confirmed into the local store so subsequent reads (status
+      // bar, model picker, modal reopens) reflect the new config
+      // without a second /api/config fetch.
+      dispatch({
+        type: 'SET_CONFIG',
+        config: {
+          baseUrl,
+          model,
+          yolo,
+          thinkingEnabled,
+          reasoningEffort,
+          promptTimestamps,
+          compactionModel,
+          chatTimeoutMs: parsedChatTimeoutMs,
+          webSearch: {
+            maxQueries: parsedWebMaxQueries,
+            resultsPerQuery: parsedWebResultsPerQuery,
+            perPageCharLimit: parsedWebPerPageCharLimit,
+          },
+          ...(numCtxChanged ? { requestedNumCtx: parsedNumCtx } : {}),
+        },
+      });
+
       onClose();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save config.';
       setSaveError(message);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -117,7 +145,7 @@ export default function SettingsModal({ onClose }: Props) {
     <div
       className="settings-overlay"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (!isSaving && e.target === e.currentTarget) onClose();
       }}
     >
       <div className="settings-panel">
@@ -364,11 +392,18 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
 
           <div className="settings-actions">
-            <button onClick={onClose} className="settings-btn-cancel">
+            <button onClick={onClose} disabled={isSaving} className="settings-btn-cancel">
               Cancel
             </button>
-            <button onClick={handleSave} className="settings-btn-save">
-              Save
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className={
+                `settings-btn-save ${
+                isSaving ? 'settings-btn-save-disabled' : 'settings-btn-save-active'}`
+              }
+            >
+              {isSaving ? 'Saving...' : 'Save'}
             </button>
           </div>
         </div>
