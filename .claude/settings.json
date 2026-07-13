@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/present_lint_errors.py",
+            "statusMessage": "Checking lint on edited file...",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/check_project_lint.py",
+            "statusMessage": "Running full project lint and type-check...",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}
