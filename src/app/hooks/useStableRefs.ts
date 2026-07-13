@@ -36,7 +36,7 @@ export interface StableRefs {
   modelsRef: WritableRef<LLmModel[]>;
   yoloRef: WritableRef<boolean>;
   thinkingEnabledRef: WritableRef<boolean>;
-  reasoningEffortRef: WritableRef<'off' | 'low' | 'medium' | 'high'>;
+  reasoningEffortRef: WritableRef<'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'>;
   compactionModelRef: WritableRef<string>;
   chatTimeoutMsRef: WritableRef<number>;
   webSearchRef: WritableRef<WebSearchConfig>;
@@ -55,7 +55,7 @@ interface StableRefsInput {
   models: LLmModel[];
   yolo: boolean;
   thinkingEnabled: boolean;
-  reasoningEffort: 'off' | 'low' | 'medium' | 'high';
+  reasoningEffort: 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   compactionModel: string;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;

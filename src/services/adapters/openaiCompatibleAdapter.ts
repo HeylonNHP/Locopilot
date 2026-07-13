@@ -798,6 +798,7 @@ async function* sendOpenAICompatibleChatStream(
     // is a ReadableStream — the standard OpenAI error body is in there.
     if (axios.isAxiosError(err) && err.response?.status === 400) {
       let apiMessage = '';
+      let rawBody = '';
       try {
         const stream = err.response.data as NodeJS.ReadableStream;
         // Read the first chunk (the error body is typically small).
@@ -823,19 +824,58 @@ async function* sendOpenAICompatibleChatStream(
           stream.once('end', onEnd);
           stream.once('error', onError);
         });
-        if (chunk.length > 0) {
-          const text = chunk.toString('utf8');
+        const collectedChunks: Buffer[] = [];
+        if (chunk.length > 0) collectedChunks.push(chunk);
+        // If the error body spans multiple chunks, drain a bit more
+        // (capped) so we don't lose the actual rejection reason.
+        const MAX_BODY_BYTES = 64 * 1024;
+        let totalBytes = chunk.length;
+        const drainMore = (): Promise<boolean> =>
+          new Promise((resolve) => {
+            if (totalBytes >= MAX_BODY_BYTES) {
+              resolve(false);
+              return;
+            }
+            const onData = (data: Buffer) => {
+              cleanup();
+              collectedChunks.push(data);
+              totalBytes += data.length;
+              resolve(true);
+            };
+            const onEnd = () => {
+              cleanup();
+              resolve(false);
+            };
+            const cleanup = () => {
+              stream.off('data', onData);
+              stream.off('end', onEnd);
+              stream.off('error', onEnd);
+            };
+            stream.once('data', onData);
+            stream.once('end', onEnd);
+            stream.once('error', onEnd);
+          });
+        // Drain up to a handful of extra chunks.
+        for (let i = 0; i < 8; i++) {
+          const gotMore = await drainMore();
+          if (!gotMore) break;
+        }
+
+        rawBody = Buffer.concat(collectedChunks).toString('utf8');
+        if (rawBody.length > 0) {
           // Try standard OpenAI error shape: { error: { message } }
           try {
-            const parsed = JSON.parse(text);
+            const parsed = JSON.parse(rawBody);
             if (parsed?.error?.message) {
               apiMessage = parsed.error.message;
             } else if (parsed?.message) {
               apiMessage = parsed.message;
+            } else if (typeof parsed?.error === 'string') {
+              apiMessage = parsed.error;
             }
           } catch {
             // Not JSON — use the raw text (truncated).
-            apiMessage = text.slice(0, 500);
+            apiMessage = rawBody.slice(0, 500);
           }
         }
       } catch {
@@ -843,29 +883,44 @@ async function* sendOpenAICompatibleChatStream(
       }
 
       // Attach the real message to the error so getLlmApiErrorMessage
-      // and disk logging both see it.
+      // and disk logging both see it. If we couldn't extract a message,
+      // surface the raw body (truncated) so the UI shows something useful.
       if (apiMessage) {
         err.message = `OpenAI-compatible API error (400): ${apiMessage}`;
+      } else if (rawBody && rawBody.length > 0) {
+        const preview = rawBody.slice(0, 500).replaceAll(/\s+/g, ' ').trim();
+        err.message = `OpenAI-compatible API error (400): ${preview || 'empty response body'}`;
       }
 
-      // Debug logging (kept simple — no circular-ref risk since we
-      // already consumed the stream above).
+      // Debug logging. Use a timestamped filename so consecutive 400s
+      // don't overwrite each other and we can correlate the exact
+      // request body that the gateway rejected.
+      const stamp = new Date().toISOString().replaceAll(/[.:]/g, '-');
+      const dumpPath = `debug_400_${stamp}.json`;
       console.error('=== OPENAI ADAPTER 400 ERROR ===');
       console.error('URL:', `${normalizedBaseUrl}/v1/chat/completions`);
-      console.error('API message:', apiMessage || '(none)');
+      console.error('API message:', apiMessage || '(none — see rawBody in dump)');
       try {
         await writeFile(
-          'debug_400_payload.json',
+          dumpPath,
           JSON.stringify(
             {
+              url: `${normalizedBaseUrl}/v1/chat/completions`,
+              model: params.model,
               request: payload,
-              response: { message: apiMessage || null },
+              response: {
+                status: err.response?.status,
+                statusText: err.response?.statusText,
+                headers: err.response?.headers,
+                message: apiMessage || null,
+                rawBody: rawBody || null,
+              },
             },
             null,
             2
           )
         );
-        console.error('Debug data saved to:', 'debug_400_payload.json');
+        console.error('Debug data saved to:', dumpPath);
       } catch {
         // Ignore file write errors in debug logging.
       }

@@ -166,7 +166,7 @@ interface ChatState {
    * Defaults to 'off' so models with reasoning on by default don't
    * silently reject chat-completions requests that include tools.
    */
-  reasoningEffort: 'off' | 'low' | 'medium' | 'high';
+  reasoningEffort: 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   /**
    * When true, the server-side chat route prepends a `[Sent …]` header to
    * each user-role message before sending it to the LLM. The

@@ -167,14 +167,22 @@ function validateConfig(
 
   if ('reasoningEffort' in input) {
     const v = input.reasoningEffort;
-    const allowed = ['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-    if (typeof v !== 'string' || !allowed.includes(v)) {
+    const allowed: ReadonlyArray<Config['reasoningEffort']> = [
+      'off',
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+    ];
+    if (typeof v !== 'string' || !allowed.includes(v as Config['reasoningEffort'])) {
       return {
         ok: false,
         error: "Invalid config: 'reasoningEffort' must be one of: off, none, minimal, low, medium, high, xhigh",
       };
     }
-    out.reasoningEffort = v;
+    out.reasoningEffort = v as NonNullable<Config['reasoningEffort']>;
   }
 
   if ('promptTimestamps' in input) {
