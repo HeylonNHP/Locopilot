@@ -895,36 +895,13 @@ async function* sendOpenAICompatibleChatStream(
       // Debug logging. Use a timestamped filename so consecutive 400s
       // don't overwrite each other and we can correlate the exact
       // request body that the gateway rejected.
-      const stamp = new Date().toISOString().replaceAll(/[.:]/g, '-');
-      const dumpPath = `debug_400_${stamp}.json`;
-      console.error('=== OPENAI ADAPTER 400 ERROR ===');
-      console.error('URL:', `${normalizedBaseUrl}/v1/chat/completions`);
-      console.error('API message:', apiMessage || '(none — see rawBody in dump)');
-      try {
-        await writeFile(
-          dumpPath,
-          JSON.stringify(
-            {
-              url: `${normalizedBaseUrl}/v1/chat/completions`,
-              model: params.model,
-              request: payload,
-              response: {
-                status: err.response?.status,
-                statusText: err.response?.statusText,
-                headers: err.response?.headers,
-                message: apiMessage || null,
-                rawBody: rawBody || null,
-              },
-            },
-            null,
-            2
-          )
-        );
-        console.error('Debug data saved to:', dumpPath);
-      } catch {
-        // Ignore file write errors in debug logging.
-      }
-      console.error('=== END 400 DEBUG ===');
+      await writeOpenAICompatDebugDump('400', normalizedBaseUrl, params.model, payload, {
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        headers: err.response?.headers,
+        message: apiMessage || null,
+        rawBody: rawBody || null,
+      });
     }
     throw err;
   }
@@ -947,6 +924,16 @@ async function* sendOpenAICompatibleChatStream(
   // usage-only chunk, so the consumer sees authoritative token counts on
   // the same chunk that signals completion.
   let bufferedDoneChunk: ChatApiResponse | undefined;
+
+  // Some OpenAI-compatible providers (e.g. NVIDIA NIM) return HTTP 200
+  // with a body that contains an `error` field but no `choices` —
+  // semantically a 500, transport-wise a 200. We capture the first such
+  // error chunk so we can (a) dump it to disk for debugging, and
+  // (b) re-throw it as a normal `Error` if the rest of the stream was
+  // empty (no `choices` chunks ever arrived), so the chat route's outer
+  // catch surfaces the real reason in the UI instead of silently ending.
+  let lastStreamError: { message: string; raw: string } | null = null;
+  let yieldedAnyChunk = false;
 
   let buffered = '';
   for await (const rawChunk of response.data) {
@@ -976,6 +963,41 @@ async function* sendOpenAICompatibleChatStream(
           parsed = JSON.parse(data) as OpenAIChatCompletionChunk;
         } catch {
           // Malformed JSON — skip this chunk.
+          continue;
+        }
+
+        // Detect 200-with-error-shape: the chunk parses as JSON but
+        // carries an `error` field instead of `choices`. Keep streaming
+        // so any later content chunks still reach the consumer, but
+        // remember the error and dump it for debugging.
+        const parsedAsError = parsed as unknown as { error?: unknown };
+        if (parsedAsError.error) {
+          const errObj = parsedAsError.error;
+          const errMessage =
+            (typeof errObj === 'object' && errObj !== null && 'message' in errObj
+              ? String((errObj as { message: unknown }).message)
+              : typeof errObj === 'string'
+                ? errObj
+                : '') || '(no message)';
+          // Only capture the first error chunk so the dump file doesn't
+          // accumulate duplicates on streams that emit the same error
+          // repeatedly before closing.
+          if (!lastStreamError) {
+            lastStreamError = { message: errMessage, raw: data };
+            await writeOpenAICompatDebugDump(
+              '200_error',
+              normalizedBaseUrl,
+              params.model,
+              payload,
+              {
+                status: 200,
+                statusText: 'OK',
+                headers: undefined,
+                message: errMessage,
+                rawBody: data,
+              }
+            );
+          }
           continue;
         }
 
@@ -1068,9 +1090,11 @@ async function* sendOpenAICompatibleChatStream(
 
         if (bufferedDoneChunk) {
           yield bufferedDoneChunk;
+          yieldedAnyChunk = true;
           bufferedDoneChunk = undefined;
         }
         yield chunk;
+        yieldedAnyChunk = true;
       }
     }
   }
@@ -1079,6 +1103,17 @@ async function* sendOpenAICompatibleChatStream(
   // providers that do not send a trailing usage-only chunk.
   if (bufferedDoneChunk) {
     yield bufferedDoneChunk;
+    yieldedAnyChunk = true;
+  }
+
+  // If the stream was error-only (e.g. NVIDIA NIM returning 200 with
+  // an `error` field and no `choices`), surface it as a real Error so
+  // the chat route's outer catch can render it in the UI. The dump
+  // file was already written above; the route's
+  // `getOpenAICompatibleApiErrorMessage` will format the message with
+  // the standard `OpenAI-compatible API error (NNN): …` prefix.
+  if (lastStreamError && !yieldedAnyChunk) {
+    throw new Error(`OpenAI-compatible API error (200): ${lastStreamError.message}`);
   }
 }
 
@@ -1135,6 +1170,62 @@ async function getOpenAICompatibleApiErrorMessage(error: unknown): Promise<strin
 
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+/**
+ * Write a debug dump of a failed OpenAI-compatible request to disk and mirror
+ * it to `console.error`. Shared between the 400 catch and the 200+error
+ * streaming case so the dump shape stays consistent and the file naming
+ * convention (`debug_<tag>_<timestamp>.json`) doesn't drift.
+ *
+ * The tag is included verbatim in the filename, so the 400 case still writes
+ * `debug_400_*.json` (matching what was written before the helper existed) and
+ * the 200+error case writes `debug_200_error_*.json`.
+ */
+async function writeOpenAICompatDebugDump(
+  tag: string,
+  normalizedBaseUrl: string,
+  model: string | undefined,
+  request: unknown,
+  response: {
+    status: number | undefined;
+    statusText: string | undefined;
+    headers: unknown;
+    message: string | null;
+    rawBody: string | null;
+  }
+): Promise<void> {
+  const stamp = new Date().toISOString().replaceAll(/[.:]/g, '-');
+  const dumpPath = `debug_${tag}_${stamp}.json`;
+  console.error(`=== OPENAI ADAPTER ${tag} ERROR ===`);
+  console.error('URL:', `${normalizedBaseUrl}/v1/chat/completions`);
+  console.error('API message:', response.message || '(none — see rawBody in dump)');
+  try {
+    await writeFile(
+      dumpPath,
+      JSON.stringify(
+        {
+          url: `${normalizedBaseUrl}/v1/chat/completions`,
+          model,
+          request,
+          response: {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+            message: response.message,
+            rawBody: response.rawBody,
+          },
+        },
+        null,
+        2
+      )
+    );
+    console.error('Debug data saved to:', dumpPath);
+  } catch {
+    // Ignore file write errors in debug logging — they must never
+    // block the error path that the caller is about to throw on.
+  }
+  console.error(`=== END ${tag} DEBUG ===`);
 }
 
 // ── Adapter export ───────────────────────────────────────────────────────────
