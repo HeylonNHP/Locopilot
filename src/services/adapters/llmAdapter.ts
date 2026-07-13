@@ -1,5 +1,5 @@
 import type { ToolCallArguments } from '../../tools/tools';
-import type { LlmProvider } from '../../types/chatConfig';
+import type { LlmProvider, ReasoningEffort } from '../../types/chatConfig';
 
 /**
  * Per-request LLM context. Threaded through every LLM call so concurrent
@@ -120,7 +120,7 @@ export interface ChatParams {
    * value regardless of whether `tools` is present. Coexists with
    * `think`; Ollama ignores it.
    */
-  reasoningEffort?: 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningEffort?: ReasoningEffort;
   /**
    * When false, omit image attachments from the outgoing prompt payload.
    * Undefined means unknown and preserves any existing image data.

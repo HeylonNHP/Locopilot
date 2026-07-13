@@ -5,7 +5,7 @@ import React, { createContext, type ReactNode, useContext, useReducer } from 're
 import type { ToolCall } from '@/services/llm';
 import type { VisionSupportState } from '@/services/visionCache';
 import type { ToolCallArguments } from '@/tools/tools';
-import type { CompletionMode } from '@/types/chatConfig';
+import type { CompletionMode, ReasoningEffort } from '@/types/chatConfig';
 
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
@@ -166,7 +166,7 @@ interface ChatState {
    * Defaults to 'off' so models with reasoning on by default don't
    * silently reject chat-completions requests that include tools.
    */
-  reasoningEffort: 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningEffort: ReasoningEffort;
   /**
    * When true, the server-side chat route prepends a `[Sent …]` header to
    * each user-role message before sending it to the LLM. The

@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 
 import type { ChatMessage, LLmModel, Session, WebSearchConfig } from '@/app/lib/chatStore';
-import type { CompletionMode } from '@/types/chatConfig';
+import type { CompletionMode, ReasoningEffort } from '@/types/chatConfig';
 
 /** A mutable ref container (the writable counterpart to React 19's read-only RefObject). */
 export type WritableRef<T> = { current: T };
@@ -36,7 +36,7 @@ export interface StableRefs {
   modelsRef: WritableRef<LLmModel[]>;
   yoloRef: WritableRef<boolean>;
   thinkingEnabledRef: WritableRef<boolean>;
-  reasoningEffortRef: WritableRef<'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'>;
+  reasoningEffortRef: WritableRef<ReasoningEffort>;
   compactionModelRef: WritableRef<string>;
   chatTimeoutMsRef: WritableRef<number>;
   webSearchRef: WritableRef<WebSearchConfig>;
@@ -55,7 +55,7 @@ interface StableRefsInput {
   models: LLmModel[];
   yolo: boolean;
   thinkingEnabled: boolean;
-  reasoningEffort: 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningEffort: ReasoningEffort;
   compactionModel: string;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;

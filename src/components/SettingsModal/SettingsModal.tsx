@@ -1,6 +1,8 @@
 'use client';
 import { useState } from 'react';
 
+import type { ReasoningEffort } from '@/types/chatConfig';
+
 import { useChat } from '@/app/lib/chatStore';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
@@ -267,7 +269,7 @@ export default function SettingsModal({ onClose }: Props) {
                   id="reasoning-effort-select"
                   value={reasoningEffort}
                   onChange={(e) =>
-                    setReasoningEffort(e.target.value as 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh')
+                    setReasoningEffort(e.target.value as ReasoningEffort)
                   }
                   className="settings-input"
                 >
