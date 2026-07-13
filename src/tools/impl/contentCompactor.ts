@@ -13,7 +13,6 @@ import { APPROX_CHARS_PER_TOKEN } from '@/constants';
 import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
 
 import {
-  buildLlmRequestContext,
   type ChatMessage,
   type LlmRequestContext,
   sendLlmChatStream,
@@ -178,17 +177,26 @@ function estimateCompactionContext(
 
 export interface ContentCompactorOptions {
   settings: WebExtractionSettings;
-  baseUrl: string; // REQUIRED - always from config, never optional
+  /**
+   * The per-request LLM context the compactor must use. Must include the
+   * `provider` and `apiKey` so the right adapter is selected — without
+   * `provider`, `selectLlmAdapter(undefined)` falls back to the Ollama
+   * adapter, which POSTs to `${baseUrl}/api/chat` and 404s on
+   * OpenAI-compatible endpoints. `baseUrl` is also taken from this
+   * context, not from `settings.baseUrl`, so the Authorization header
+   * matches the rest of the request.
+   */
+  llmRequestContext: LlmRequestContext;
 }
 
 export class ContentCompactor {
   private readonly settings: WebExtractionSettings;
-  private readonly baseUrl: string;
+  private readonly llmRequestContext: LlmRequestContext;
   private debugLines: string[] = [];
 
   constructor(options: ContentCompactorOptions) {
     this.settings = options.settings;
-    this.baseUrl = options.baseUrl;
+    this.llmRequestContext = options.llmRequestContext;
   }
 
   /**
@@ -199,31 +207,6 @@ export class ContentCompactor {
     const limit = this.settings.perPageCharLimit;
     if (limit <= 0 || content.length <= limit) {
       return content;
-    }
-
-    // ── Skip-when-unconfigured guard ─────────────────────────────────
-    // The web content compactor needs a valid `compactionModel` and
-    // `baseUrl` to make its LLM call. If either is empty, the LLM
-    // request would 404 (or hit the wrong provider) and `compactContent`
-    // would throw — the catch below would still recover, but the LLM
-    // round-trip is wasted and the user sees a noisy failure log. Skip
-    // the LLM call entirely and degrade to a hard slice so the page is
-    // still returned within the per-page budget. This is the last line
-    // of defence: the upstream tool registry
-    // (`src/tools/toolRegistry.ts`) already tries to inherit a real
-    // baseUrl/compactionModel from the per-request subAgent config.
-    const compactionModel = this.settings.compactionModel?.trim() ?? '';
-    const baseUrl = this.settings.baseUrl?.trim() ?? '';
-    if (!compactionModel || !baseUrl) {
-      this.debugLines = [];
-      this.logCompactionRequested(content.length, limit);
-      this.logCompactionLine(
-        `Web content compaction skipped: compactionModel or baseUrl not configured; falling back to hard truncation.`
-      );
-      const truncated = content.slice(0, limit);
-      this.logCompactionComplete(content.length, truncated.length);
-      compactionDebugStore.enterWith([...this.debugLines]);
-      return truncated;
     }
 
     this.debugLines = [];
@@ -347,13 +330,11 @@ export class ContentCompactor {
     let reasoningText = '';
     let chunkCount = 0;
     let lastChunkDebug = 'none';
-    // Use the LlmRequestContext threaded through the ContentCompactor's
-    // own baseUrl. We build the context here so the per-request
-    // Authorization header (openai-compatible) is the right one.
-    const compactorContext: LlmRequestContext = buildLlmRequestContext({
-      baseUrl: this.baseUrl,
-    });
-    for await (const chunk of sendLlmChatStream(compactorContext, params)) {
+    // Use the LlmRequestContext the compactor was constructed with. It
+    // carries the right provider + apiKey + baseUrl for the current
+    // request, so the adapter is selected correctly and the Authorization
+    // header (openai-compatible) matches the rest of the request.
+    for await (const chunk of sendLlmChatStream(this.llmRequestContext, params)) {
       chunkCount += 1;
       const thinking = chunk.message?.thinking ?? '';
       const content = chunk.message?.content ?? '';
@@ -428,9 +409,17 @@ export class ContentCompactor {
 
   /**
    * Creates a new ContentCompactor instance with the provided settings.
+   *
+   * The caller must pass an `LlmRequestContext` that includes the
+   * `provider` and `apiKey` for the current request. The compactor
+   * reuses that context for its own LLM call so it hits the same
+   * endpoint (and authenticates the same way) as the main chat loop.
    */
-  static create(settings: WebExtractionSettings, baseUrl: string): ContentCompactor {
-    return new ContentCompactor({ settings, baseUrl });
+  static create(
+    settings: WebExtractionSettings,
+    llmRequestContext: LlmRequestContext
+  ): ContentCompactor {
+    return new ContentCompactor({ settings, llmRequestContext });
   }
 
   private get output(): ToolOutputSink {

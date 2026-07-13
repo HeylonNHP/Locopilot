@@ -107,6 +107,19 @@ export interface WebSearchSettings {
   perPageCharLimit: number;
   baseUrl: string; // Required - always from config
   compactionModel: string;
+  /**
+   * LLM provider (e.g. 'ollama', 'openai-compatible'). Threaded into
+   * the per-request LlmRequestContext so the content compactor picks
+   * the right adapter. Without this, the compactor defaults to the
+   * Ollama adapter and POSTs to `${baseUrl}/api/chat`, which 404s on
+   * OpenAI-compatible endpoints (Airia, LM Studio, vLLM, …).
+   */
+  provider?: 'ollama' | 'openai-compatible';
+  /**
+   * Optional Bearer token for OpenAI-compatible providers. Must match
+   * the Authorization header used by the main LLM call in this request.
+   */
+  apiKey?: string;
   output?: ToolOutputSink;
 }
 

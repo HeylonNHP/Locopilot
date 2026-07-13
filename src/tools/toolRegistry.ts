@@ -14,13 +14,14 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
-import type { ToolDefinition } from '../services/llm';
-import type { WorkingDirectoryScope } from './workingDirectory';
-
 import {
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-} from '../constants';
+} from '@/constants';
+
+import type { ToolDefinition } from '../services/llm';
+import type { WorkingDirectoryScope } from './workingDirectory';
+
 import { parsePositiveInteger, parsePositiveTimeoutMs, parseQueriesInput } from './commandHelpers';
 import {
   type FetchImageResult,
@@ -221,50 +222,49 @@ function checkToolAllowed(toolName: string, context?: RequestContext): string | 
   return null;
 }
 
-// --- Private adapter helpers ---
+// --- Web search settings resolution ---
 
 /**
- * Resolves a `WebSearchSettings` from a `RequestContext`.
+ * Resolves a `WebSearchSettings` for the current request, threading
+ * `provider` and `apiKey` from the parent sub-agent config so the
+ * content compactor hits the same endpoint and authenticates the same
+ * way as the main LLM call.
  *
- * The web content compactor (`ContentCompactor`, see
- * `src/tools/impl/contentCompactor.ts`) needs a real `baseUrl` and
- * `compactionModel` to make its LLM call — it cannot fall back to Ollama
- * defaults because the request may be running on an OpenAI-compatible
- * provider (Airia etc.). When `context.webSearch` is present it wins
- * (the chat route populates it with the resolved main-agent values).
- * Otherwise we inherit from `context.subAgent`, which the chat route
- * also populates for every request and is always available inside a
- * sub-agent loop. The hardcoded empty-string defaults that used to live
- * inline at the call sites caused 404s on the compactor's LLM call —
- * see the comment at the call sites below for the full history.
+ * The sub-agent config (always populated by the chat route) is the
+ * source of truth for the user's actual `baseUrl`, `provider`, and
+ * `apiKey`. Falling back to `context?.webSearch` preserves the legacy
+ * path for callers that still supply a pre-built `WebSearchSettings`.
+ *
+ * Returns `null` when neither side is available — callers fall back to
+ * `defaultWebSearchSettings()` to keep the tool callable from contexts
+ * that do not populate the request context (e.g. unit tests).
  */
-function resolveWebSearchSettings(
-  context: RequestContext | undefined
-): WebSearchSettings | undefined {
-  if (context?.webSearch) {
-    return context.webSearch;
-  }
-  if (context?.subAgent?.baseUrl && context.subAgent.compactionModel) {
+function resolveWebSearchSettings(context?: RequestContext): WebSearchSettings | null {
+  const subAgent = context?.subAgent;
+  if (subAgent?.baseUrl && subAgent.compactionModel) {
     return {
       maxQueries: 3,
       resultsPerQuery: 3,
       requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
       perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-      baseUrl: context.subAgent.baseUrl,
-      compactionModel: context.subAgent.compactionModel,
+      baseUrl: subAgent.baseUrl,
+      compactionModel: subAgent.compactionModel,
+      ...(subAgent.provider ? { provider: subAgent.provider } : {}),
+      ...(subAgent.apiKey ? { apiKey: subAgent.apiKey } : {}),
     };
   }
-  return undefined;
+
+  if (context?.webSearch?.baseUrl && context.webSearch.compactionModel) {
+    return context.webSearch;
+  }
+
+  return null;
 }
 
 /**
- * Last-resort fallback used only when neither `context.webSearch` nor
- * `context.subAgent` are populated (e.g. legacy test fixtures that
- * construct a `RequestContext` without either field). It mirrors the
- * defaults the chat route would have used so behaviour stays sensible,
- * and the `ContentCompactor`'s skip-when-unconfigured guard will detect
- * the missing `compactionModel` and degrade to a hard slice instead of
- * 404-ing.
+ * Last-resort defaults for contexts that do not populate a request
+ * context (e.g. unit tests calling the tool directly). Production
+ * callers always go through `resolveWebSearchSettings(context)` first.
  */
 function defaultWebSearchSettings(): WebSearchSettings {
   return {
@@ -276,6 +276,8 @@ function defaultWebSearchSettings(): WebSearchSettings {
     compactionModel: '',
   };
 }
+
+// --- Private adapter helpers ---
 
 async function runWebSearch(
   args: WebSearchToolArgs,

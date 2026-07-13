@@ -17,6 +17,7 @@ import * as cheerio from 'cheerio';
 import { JSDOM, VirtualConsole } from 'jsdom';
 
 import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
+import { buildLlmRequestContext } from '@/services/llm';
 
 import type { ToolOutputSink } from '../toolOutput';
 
@@ -35,6 +36,18 @@ export interface WebExtractionSettings {
   perPageCharLimit: number;
   baseUrl: string; // REQUIRED - always from config, never optional
   compactionModel: string;
+  /**
+   * Provider identifier (`'ollama'` | `'openai-compatible'`). Required for
+   * the content compactor to pick the right adapter — without this, the
+   * compactor defaults to Ollama and POSTs to `${baseUrl}/api/chat`, which
+   * 404s on OpenAI-compatible endpoints (Airia, LM Studio, vLLM, …).
+   */
+  provider?: 'ollama' | 'openai-compatible';
+  /**
+   * Optional Bearer token for OpenAI-compatible providers. Must be the
+   * same token used for the main LLM call in this request.
+   */
+  apiKey?: string;
   cookieHeader?: string;
   output?: ToolOutputSink;
 }
@@ -250,9 +263,19 @@ export async function fetchAndExtract(
     return { title, text, finalUrl: extractionUrl, links };
   }
 
-  // Use content compactor if text exceeds the character limit
-  // baseUrl is REQUIRED and always comes from config
-  const compactor = ContentCompactor.create(settings, settings.baseUrl);
+  // Use content compactor if text exceeds the character limit.
+  // The compactor must use the same provider/apiKey as the main LLM call,
+  // otherwise it defaults to the Ollama adapter and POSTs to
+  // `${baseUrl}/api/chat` — which 404s on OpenAI-compatible endpoints.
+  // Build an LlmRequestContext from the settings so the compactor
+  // authenticates the same way as the parent chat loop and the right
+  // adapter (ollama vs openai-compatible) is selected.
+  const compactorContext = buildLlmRequestContext({
+    baseUrl: settings.baseUrl,
+    ...(settings.provider ? { provider: settings.provider } : {}),
+    ...(settings.apiKey ? { apiKey: settings.apiKey } : {}),
+  });
+  const compactor = ContentCompactor.create(settings, compactorContext);
   const processedText = await compactor.compactIfNeeded(text);
 
   return { title, text: processedText, finalUrl: extractionUrl, links };
