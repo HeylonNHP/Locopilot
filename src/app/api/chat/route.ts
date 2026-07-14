@@ -34,6 +34,9 @@ import {
   DEFAULT_NUM_CTX,
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_SESSION_NAME,
+  DEFAULT_WEB_SEARCH_MAX_QUERIES,
+  DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+  DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
   MCP_TOOL_SEARCH_THRESHOLD,
 } from '@/constants';
 import {
@@ -664,6 +667,55 @@ export async function POST(req: NextRequest): Promise<Response> {
         let requestContext: RequestContext;
         let disabledSubAgent: string[] = [];
 
+        const buildRequestContext = (config: Config | null): RequestContext => {
+          const disabledMain = config?.tools?.disabledMain ?? [];
+          disabledSubAgent = config?.tools?.disabledSubAgent ?? [];
+          const providerSettings = {
+            ...(config?.provider ? { provider: config.provider } : {}),
+            ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
+          };
+          const configuredBaseUrl = config?.baseUrl || effectiveBaseUrl;
+          const compactionModel = resolveCompactionModel(
+            config?.compactionModel ?? '',
+            model as string
+          );
+          return {
+            yoloMode: config?.yolo ?? false,
+            allowedTools: undefined,
+            disabledMainTools: disabledMain,
+            mcpApprovals: [...mcpApprovalsSet],
+            model: model as string,
+            numCtx: effectiveNumCtx,
+            workingDirectoryScope,
+            webSearch: {
+              ...providerSettings,
+              maxQueries: config?.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
+              resultsPerQuery:
+                config?.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+              requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+              perPageCharLimit:
+                config?.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+              baseUrl: configuredBaseUrl,
+              compactionModel,
+            },
+            subAgent: {
+              ...providerSettings,
+              baseUrl: configuredBaseUrl,
+              model: model as string,
+              numCtx: effectiveNumCtx,
+              compactionModel,
+              ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+              tools: TOOLS.filter(
+                (tool) =>
+                  tool.function.name !== 'run_subagents' &&
+                  !disabledSubAgent.includes(tool.function.name)
+              ),
+              mcpApprovals: [...mcpApprovalsSet],
+              approvalRequester: requestSubAgentApproval,
+            },
+          };
+        };
+
         // Phase 2 (sub-agent approval UX): build a closure that lets a
         // sub-agent bubble an approval request up to the main route's
         // SSE stream. The closure captures the SSE `sendEvent` from
@@ -773,93 +825,14 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Skills discovery is best-effort; leave allowedTools undefined
           }
 
-          const disabledMain = config?.tools?.disabledMain ?? [];
-          disabledSubAgent = config?.tools?.disabledSubAgent ?? [];
-          requestContext = {
-            yoloMode: config?.yolo ?? false,
-            allowedTools,
-            disabledMainTools: disabledMain,
-            mcpApprovals: [...mcpApprovalsSet],
-            model: model as string,
-            numCtx: effectiveNumCtx,
-            workingDirectoryScope,
-            webSearch: {
-              ...(config?.provider ? { provider: config.provider } : {}),
-              ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-              maxQueries: config?.webSearch?.maxQueries ?? 3,
-              resultsPerQuery: config?.webSearch?.resultsPerQuery ?? 3,
-              requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-              perPageCharLimit: config?.webSearch?.perPageCharLimit ?? 5000,
-              baseUrl: config?.baseUrl || effectiveBaseUrl,
-              compactionModel: resolveCompactionModel(
-                config?.compactionModel ?? '',
-                model as string
-              ),
-            },
-            subAgent: {
-              ...(config?.provider ? { provider: config.provider } : {}),
-              ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-              baseUrl: config?.baseUrl || effectiveBaseUrl,
-              model: model as string,
-              numCtx: effectiveNumCtx,
-              compactionModel: resolveCompactionModel(
-                config?.compactionModel ?? '',
-                model as string
-              ),
-              ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-              tools: TOOLS.filter(
-                (tool) =>
-                  tool.function.name !== 'run_subagents' &&
-                  !disabledSubAgent.includes(tool.function.name)
-              ),
-              // Seed the sub-agent's mcpApprovals ledger with
-              // whatever the parent route has already approved
-              // this turn (e.g. an earlier `mcp_call` from the
-              // main agent on the same target). The route hands
-              // over a fresh `Array.from(...)` snapshot; the
-              // sub-agent's loop maintains its OWN local set
-              // (Phase 3.4) so the parent's per-turn ledger is
-              // never mutated by the sub-agent's own approvals.
-              mcpApprovals: [...mcpApprovalsSet],
-              approvalRequester: requestSubAgentApproval,
-            },
-          };
+          requestContext = buildRequestContext(config);
+          requestContext.allowedTools = allowedTools;
         } catch {
           // Config load is best-effort; defaults already apply.
           llmRequestContext = buildLlmRequestContext({
             baseUrl: effectiveBaseUrl,
           });
-          requestContext = {
-            yoloMode: false,
-            allowedTools: undefined,
-            disabledMainTools: [],
-            mcpApprovals: [...mcpApprovalsSet],
-            model: model as string,
-            numCtx: effectiveNumCtx,
-            workingDirectoryScope,
-            webSearch: {
-              maxQueries: 3,
-              resultsPerQuery: 3,
-              requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-              perPageCharLimit: 5000,
-              baseUrl: effectiveBaseUrl,
-              compactionModel: model as string,
-            },
-            subAgent: {
-              baseUrl: effectiveBaseUrl,
-              model: model as string,
-              numCtx: effectiveNumCtx,
-              compactionModel: model as string,
-              ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-              tools: TOOLS.filter(
-                (tool) =>
-                  tool.function.name !== 'run_subagents' &&
-                  !disabledSubAgent.includes(tool.function.name)
-              ),
-              mcpApprovals: [...mcpApprovalsSet],
-              approvalRequester: requestSubAgentApproval,
-            },
-          };
+          requestContext = buildRequestContext(null);
         }
         // Build the merged tool list (static native TOOLS + dynamic MCP
         // tool defs from already-connected servers). Computed once per
