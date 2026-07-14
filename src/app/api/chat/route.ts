@@ -784,6 +784,8 @@ export async function POST(req: NextRequest): Promise<Response> {
             numCtx: effectiveNumCtx,
             workingDirectoryScope,
             webSearch: {
+              ...(config?.provider ? { provider: config.provider } : {}),
+              ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
               maxQueries: config?.webSearch?.maxQueries ?? 3,
               resultsPerQuery: config?.webSearch?.resultsPerQuery ?? 3,
               requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
