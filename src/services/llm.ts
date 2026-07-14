@@ -107,10 +107,14 @@ export function getLlmModelVisionSupport(info: LlmModelInfo): boolean {
  * for the resolution order (cache → probe → provider default).
  *
  * The injected probe is a thin wrapper around the existing
- * `info.capabilities` heuristic; for openai-compatible the probe
- * returns `false` (no capabilities), so the resolver falls through
- * to the optimistic default. For ollama the probe reads
- * `info.capabilities` directly and the resolver caches its result.
+ * `info.capabilities` heuristic. For `ollama` the probe is
+ * consulted because `/api/show` exposes `capabilities` and the
+ * absence of `vision` is a real signal. For `openai-compatible`
+ * the resolver ignores the probe entirely and uses the optimistic
+ * default, because `/v1/models` has no standard `capabilities`
+ * field; the only way to learn that an openai-compatible model
+ * rejects images is the 400-driven `recordDiscoveredNonVision`
+ * path.
  *
  * The `provider` argument comes from the active `Config.provider`
  * and selects the optimistic default (`'supported'` for

@@ -84,35 +84,48 @@ await (async () => {
   );
 })();
 
-console.log('resolveVisionSupport — probe overrides the default');
+console.log('resolveVisionSupport — probe respected for ollama, ignored for openai-compatible');
 await (async () => {
   clearVisionCache();
-  // Probe returning true forces the result to 'supported' for ollama.
+  // ollama + probe(true) → supported/probe (uses capabilities)
   const r1 = await resolveVisionSupport(URL, 'm3', 'ollama', () => true);
   assertDeepEq(
     r1,
     { state: 'supported', source: 'probe' },
     'ollama + probe(true) → supported/probe'
   );
-  // Probe returning false forces the result to 'unsupported' for
-  // openai-compatible (the optimistic default is the same here, so
-  // verify the source changes to 'probe').
-  const r2 = await resolveVisionSupport(URL2, 'm3', 'openai-compatible', () => false);
+  // ollama + probe(false) → unsupported/probe (capabilities missing vision)
+  const r2 = await resolveVisionSupport(URL2, 'm3', 'ollama', () => false);
   assertDeepEq(
     r2,
     { state: 'unsupported', source: 'probe' },
-    'openai-compatible + probe(false) → unsupported/probe'
+    'ollama + probe(false) → unsupported/probe'
+  );
+  // openai-compatible + probe(true) → supported/default (probe ignored, optimistic default wins)
+  const r3 = await resolveVisionSupport(URL, 'm3b', 'openai-compatible', () => true);
+  assertDeepEq(
+    r3,
+    { state: 'supported', source: 'default' },
+    'openai-compatible + probe(true) → supported/default (probe ignored)'
+  );
+  // openai-compatible + probe(false) → supported/default (probe ignored, no false-poisoning)
+  const r4 = await resolveVisionSupport(URL2, 'm3b', 'openai-compatible', () => false);
+  assertDeepEq(
+    r4,
+    { state: 'supported', source: 'default' },
+    'openai-compatible + probe(false) → supported/default (probe ignored, no false-poisoning)'
   );
 })();
 
 console.log('resolveVisionSupport — async probe is awaited');
 await (async () => {
   clearVisionCache();
-  const r = await resolveVisionSupport(URL, 'm4', 'openai-compatible', async () => {
+  // ollama so the probe is actually consulted (openai-compatible ignores the probe).
+  const r = await resolveVisionSupport(URL, 'm4', 'ollama', async () => {
     await Promise.resolve();
     return true;
   });
-  assertDeepEq(r, { state: 'supported', source: 'probe' }, 'async probe(true) is awaited');
+  assertDeepEq(r, { state: 'supported', source: 'probe' }, 'async ollama probe(true) is awaited');
 })();
 
 console.log('resolveVisionSupport — second call hits the cache');
@@ -134,6 +147,25 @@ await (async () => {
   assertEq(r3.source, 'cache', 'first key is cached after the second lookup');
 })();
 
+console.log('resolveVisionSupport — chat route and /api/models agree on the openai-compatible default');
+await (async () => {
+  clearVisionCache();
+  // Simulate the chat route (with a probe that historically poisoned the cache).
+  const chatRoute = await resolveVisionSupport(URL, 'shared-model', 'openai-compatible', () => false);
+  // Simulate the /api/models route (no probe).
+  const modelsRoute = await resolveVisionSupport(URL, 'shared-model', 'openai-compatible');
+  assertDeepEq(
+    chatRoute,
+    { state: 'supported', source: 'default' },
+    'chat route yields optimistic default for openai-compatible'
+  );
+  assertDeepEq(
+    modelsRoute,
+    { state: 'supported', source: 'cache' },
+    '/api/models reads the same cache entry the chat route wrote'
+  );
+})();
+
 console.log('');
 
 // ── recordDiscoveredNonVision ──────────────────────────────────────────────
@@ -148,6 +180,23 @@ await (async () => {
     r,
     { state: 'unsupported', source: 'cache' },
     '400-driven record flips state to unsupported'
+  );
+})();
+
+console.log('recordDiscoveredNonVision — 400 catch flips openai-compatible default → unsupported');
+await (async () => {
+  clearVisionCache();
+  // Probe-ignored default for openai-compatible.
+  const r1 = await resolveVisionSupport(URL, 'flipped', 'openai-compatible', () => false);
+  assertEq(r1.state, 'supported', 'initial state is supported (optimistic default)');
+  // Simulate the chat route's 400 catch calling recordDiscoveredNonVision.
+  recordDiscoveredNonVision(URL, 'flipped');
+  // Next chat turn reads the flipped state.
+  const r2 = await resolveVisionSupport(URL, 'flipped', 'openai-compatible');
+  assertDeepEq(
+    r2,
+    { state: 'unsupported', source: 'cache' },
+    'next read returns the 400-driven unsupported state'
   );
 })();
 

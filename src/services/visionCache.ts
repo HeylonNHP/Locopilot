@@ -67,9 +67,12 @@ export interface ResolvedVisionSupport {
    *  - `default`: no probe and no cache hit; used the provider's
    *    optimistic default (`supported` for openai-compatible,
    *    `unsupported` for ollama).
-   *  - `400`: folded in via `recordDiscoveredNonVision`.
+   *
+   * The 400-driven `recordDiscoveredNonVision` flip is observable
+   * only via the cached `state: 'unsupported'` value, not via a
+   * distinct source — the next read returns `source: 'cache'`.
    */
-  source: 'probe' | 'cache' | 'default' | '400';
+  source: 'probe' | 'cache' | 'default';
 }
 
 interface CacheEntry {
@@ -184,13 +187,19 @@ export async function resolveVisionSupport(
     return { state: cached.state, source: 'cache' };
   }
 
-  // 2. Probe (if provided). The chat route injects a probe that
-  //    wraps the existing `getLlmModelVisionSupport(info)` call so
-  //    the OpenAI adapter's lack of `/v1/models` capabilities still
-  //    surfaces as `'supported'` for vision-capable providers that
-  //    surface capabilities via other means (e.g. a /v1/models
-  //    pass-through field).
-  if (probe) {
+  // 2. Probe (if provided AND the provider trusts it). The chat
+  //    route injects a probe that wraps the existing
+  //    `getLlmModelVisionSupport(info)` call. For `ollama`,
+  //    `/api/show` exposes a `capabilities` array and the absence
+  //    of `vision` is a real signal — we use it. For
+  //    `openai-compatible`, `/v1/models` has no standard
+  //    `capabilities` field, so the probe would always return
+  //    `false` and poison the cache. We skip the probe for that
+  //    provider and fall through to the optimistic default; the
+  //    400-driven `recordDiscoveredNonVision` path is the only
+  //    way to flip a previously-defaulted openai-compatible model
+  //    to `'unsupported'`.
+  if (probe && provider !== 'openai-compatible') {
     const result = await probe();
     const state: Exclude<VisionSupportState, 'unknown'> = result ? 'supported' : 'unsupported';
     setCachedEntry(baseUrl, modelName, state, now);
