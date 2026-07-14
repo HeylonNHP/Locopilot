@@ -244,25 +244,7 @@ function checkToolAllowed(toolName: string, context?: RequestContext): string | 
  * that do not populate the request context (e.g. unit tests).
  */
 function resolveWebSearchSettings(context?: RequestContext): WebSearchSettings | null {
-  const subAgent = context?.subAgent;
-  if (subAgent?.baseUrl && subAgent.compactionModel) {
-    return {
-      maxQueries: 3,
-      resultsPerQuery: 3,
-      requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-      perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-      baseUrl: subAgent.baseUrl,
-      compactionModel: subAgent.compactionModel,
-      ...(subAgent.provider ? { provider: subAgent.provider } : {}),
-      ...(subAgent.apiKey ? { apiKey: subAgent.apiKey } : {}),
-    };
-  }
-
-  if (context?.webSearch?.baseUrl && context.webSearch.compactionModel) {
-    return context.webSearch;
-  }
-
-  return null;
+  return context?.webSearch ?? null;
 }
 
 /**
