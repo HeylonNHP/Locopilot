@@ -20,14 +20,12 @@
  *   event: error\ndata: {"message":"…"}\n\n
  */
 
-import axios from 'axios';
 import { type NextRequest } from 'next/server';
 import { randomUUID } from 'node:crypto';
 
 import type { DoneReason } from '@/app/lib/chatStore';
 import type { ToolDefinition } from '@/services/adapters/llmAdapter';
 import type { Config } from '@/types/chatConfig';
-import type { SseEventPayloadMap } from '@/types/sse';
 
 import {
   AUTO_COMPACT_THRESHOLD_PCT,
@@ -97,6 +95,7 @@ import {
 import { debugLog } from '../../lib/debugLogger';
 import { logger } from '../../lib/logger';
 import { enqueueSessionRename, enqueueSessionWrite } from '../../lib/sessionWriteQueue';
+import { createSseStream, isRetryableError } from './sseStream';
 
 // Prevent static generation – this route must always run on the server.
 export const dynamic = 'force-dynamic';
@@ -320,7 +319,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const thinkEnabled = typeof think === 'boolean' ? think : undefined;
 
   // ── SSE streaming setup ───────────────────────────────────────────
-  const encoder = new TextEncoder();
+
 
   const stream = new ReadableStream({
     async start(controller): Promise<void> {
@@ -328,78 +327,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       // cannot see each other's running commands.
       enterRequestScope();
 
-      function sendEvent<N extends keyof SseEventPayloadMap>(
-        event: N,
-        data: SseEventPayloadMap[N]
-      ): void {
-        try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        } catch {
-          // Client disconnected — safe to ignore
-        }
-      }
-
-      let keepaliveInterval: ReturnType<typeof setInterval> | null = null;
-
-      function isRetryableStatus(value: number): value is 429 | 502 | 503 | 504 {
-        return value === 429 || value === 502 || value === 503 || value === 504;
-      }
-
-      function isRetryableNetworkCode(
-        value: string
-      ): value is 'ECONNRESET' | 'ETIMEDOUT' | 'EPIPE' {
-        return value === 'ECONNRESET' || value === 'ETIMEDOUT' || value === 'EPIPE';
-      }
-
-      function hasRetryableMessage(value: string): boolean {
-        return value.includes('fetch failed') || value.includes('network timeout');
-      }
-
-      function isRetryableError(err: unknown): boolean {
-        // axios-style HTTP errors
-        if (axios.isAxiosError(err)) {
-          const status = err.response?.status;
-          if (typeof status === 'number' && isRetryableStatus(status)) {
-            return true;
-          }
-        }
-
-        // axios / Node.js network-level error codes
-        if (
-          err instanceof Error &&
-          'code' in err &&
-          typeof err.code === 'string' &&
-          isRetryableNetworkCode(err.code)
-        ) {
-          return true;
-        }
-
-        // generic fetch/network failures
-        if (err instanceof Error && hasRetryableMessage(err.message)) {
-          return true;
-        }
-
-        return false;
-      }
-
-      function startKeepalive(): void {
-        if (keepaliveInterval) return;
-        keepaliveInterval = setInterval(() => {
-          try {
-            controller.enqueue(encoder.encode(': \n\n'));
-          } catch {
-            // Client disconnected – ignore.
-          }
-        }, 5000);
-      }
-
-      function stopKeepalive(): void {
-        if (keepaliveInterval) {
-          clearInterval(keepaliveInterval);
-          keepaliveInterval = null;
-        }
-      }
-
+      const { sendEvent, startKeepalive, stopKeepalive } = createSseStream(controller);
       startKeepalive();
 
       // Strip any system messages from the client and inject a fresh system prompt
