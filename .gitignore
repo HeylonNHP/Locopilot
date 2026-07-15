@@ -31,6 +31,9 @@ coverage/
 .env
 .env.*
 
+# But keep the example file tracked
+!.env.example
+
 # Build output
 dist/
 build/

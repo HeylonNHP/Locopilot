@@ -26,7 +26,8 @@
  *     $MODEL_A and $MODEL_B env vars.
  */
 
-const BASE_URL = process.env.LOCOPILOT_URL ?? 'http://localhost:3000';
+const PORT = process.env.PORT ?? '3000';
+const BASE_URL = process.env.LOCOPILOT_URL ?? `http://localhost:${PORT}`;
 const MODEL_A = process.env.MODEL_A ?? 'qwen3:6.35b';
 const MODEL_B = process.env.MODEL_B ?? 'qwen3:6.35b-instruct';
 const REQUESTED = 1_000_000; // intentionally oversized
