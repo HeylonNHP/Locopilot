@@ -1,4 +1,3 @@
-/* global console */
 import { copyFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +12,6 @@ const destination = path.resolve(destDir, 'tiktoken_bg.wasm');
 try {
   mkdirSync(destDir, { recursive: true });
   copyFileSync(source, destination);
-  // eslint-disable-next-line no-console
   console.log(`Copied tiktoken_bg.wasm to ${destination}`);
 } catch (err) {
   throw new Error(

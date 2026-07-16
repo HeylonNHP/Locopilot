@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-/* global console, process */
-/* eslint-disable no-console -- CLI test harness; output is the user-facing test report. */
 /**
  * Unit tests for the model-cap discovery logic.
  *

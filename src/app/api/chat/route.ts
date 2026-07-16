@@ -46,14 +46,10 @@ import {
 import { createSystemPrompt } from '@/services/chatSession';
 import { compactHistory } from '@/services/compact';
 import { loadConfig } from '@/services/configManager';
-import {
-  getProviderNumCtx,
-  resolveProvider,
-  resolveProviderRequestContext,
-} from '@/services/providerResolver';
 import { createSession, getSessionName, renameSession, sessionExists } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { checkCompleteness } from '@/services/promptLoop';
+import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
 import {
   discoverSkills,
   getAllowedToolsFromSkills,

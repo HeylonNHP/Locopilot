@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-/* global console, process, fetch */
-/* eslint-disable no-console -- CLI test harness; output is the user-facing test report. */
 /**
  * Multi-tab numCtx smoke test.
  *

@@ -4,6 +4,7 @@ import nextPlugin from '@next/eslint-plugin-next';
 import eslintConfigPrettier from 'eslint-config-prettier/flat';
 import perfectionist from 'eslint-plugin-perfectionist';
 import eslintPluginUnicorn from 'eslint-plugin-unicorn';
+import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -115,6 +116,19 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-require-imports': 'error',
     },
+  },
+
+  // Node scripts in scripts/ need browser globals disabled and Node
+  // globals enabled. The default ESLint environment is the browser,
+  // so process/console/etc. are flagged as no-undef without this.
+  // `no-console` is also relaxed here because the wrapper scripts
+  // need to print progress messages to the terminal. This block
+  // must come AFTER the "Additional sensible defaults" block so
+  // the `no-console: off` override actually wins.
+  {
+    files: ['scripts/**/*.{js,mjs,cjs,ts,mts,cts}'],
+    languageOptions: { globals: { ...globals.node } },
+    rules: { 'no-console': 'off' },
   },
 
   // Prettier compatibility — MUST be last to turn off conflicting rules
