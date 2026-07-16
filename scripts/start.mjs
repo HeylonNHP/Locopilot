@@ -12,8 +12,32 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(__dirname, '..');
+
+/**
+ * Load PORT from .env so the wrapper sees it before Next.js starts.
+ * Next.js loads .env internally, but by then we've already resolved
+ * the port — so we read it ourselves here.
+ */
+function loadEnvPort() {
+  if (process.env.PORT) return;
+  const envPath = join(ROOT, '.env');
+  if (!existsSync(envPath)) return;
+  const lines = readFileSync(envPath, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('PORT=')) {
+      const val = trimmed.slice(5).replace(/^["']|["']$/g, '');
+      if (val) process.env.PORT = val;
+      return;
+    }
+  }
+}
+
+loadEnvPort();
 const PREFERRED = Number(process.env.PORT) || 3000;
 const MAX_ATTEMPTS = 100;
 
