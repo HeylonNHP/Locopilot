@@ -5,7 +5,7 @@ import { resolveEffectiveNumCtx } from '@/services/capResolver';
 import { loadConfig } from '@/services/configManager';
 import { listSessions, loadSessionMessages } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
-import { resolveProviderRequestContext } from '@/services/providerResolver';
+import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
 import { generateSessionTitle } from '@/services/titleGeneration';
 
 import {
@@ -93,30 +93,37 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (resolved) {
       llmRequestContext = resolved.ctx;
     } else {
+      // No provider resolved (legacy config or a stale providerId with no
+      // model match). Prefer the persisted config baseUrl and fall back to
+      // the body value only when config has none — this matches the chat
+      // route's precedence and avoids sending config's apiKey to an
+      // arbitrary caller-supplied host.
       llmRequestContext = buildLlmRequestContext({
         baseUrl:
-          typeof baseUrl === 'string' && baseUrl.trim().length > 0
+          config?.baseUrl?.trim() ||
+          (typeof baseUrl === 'string' && baseUrl.trim().length > 0
             ? baseUrl.trim()
-            : config?.baseUrl?.trim() || 'http://localhost:11434',
+            : 'http://localhost:11434'),
         ...(config?.provider ? { provider: config.provider } : {}),
         ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
       });
     }
 
-    // Resolve the effective numCtx against the model's runtime
-    // cap. The body numCtx is informational; the resolver prefers
-    // the persisted config value (the user's authoritative
-    // requested cap) and falls back to the body value if config
-    // is missing. The clamp is the server's responsibility.
+    // Resolve the effective numCtx against the model's runtime cap. The
+    // body numCtx is an explicit per-request override; otherwise the
+    // resolved provider's numCtx wins, falling back to the global config
+    // value and finally DEFAULT_NUM_CTX. The clamp itself is the server's
+    // responsibility.
     const bodyRequested =
       typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
         ? Math.floor(numCtx)
         : null;
-    const configRequested =
-      config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
+    const providerRequested = resolved
+      ? getProviderNumCtx(resolved.provider, config?.numCtx)
+      : config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
         ? Math.floor(config.numCtx)
         : null;
-    const requested = bodyRequested ?? configRequested ?? 0;
+    const requested = bodyRequested ?? providerRequested ?? 0;
     let effectiveNumCtx = requested;
     if (requested > 0) {
       try {

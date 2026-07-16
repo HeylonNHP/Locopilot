@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
 
@@ -129,7 +129,10 @@ export function useDataLoaders(refs: StableRefs) {
     [dispatch]
   );
 
-  // Called only on mount — no stability guarantee needed.
+  // Called only on mount — no stability guarantee needed. Populates the
+  // model list only; selecting a default model / active provider is the
+  // reconciler effect's job (see below), so it stays correct regardless of
+  // whether /api/models or /api/config resolves first.
   const loadModels = async () => {
     try {
       const res = await fetch('/api/models');
@@ -138,25 +141,38 @@ export function useDataLoaders(refs: StableRefs) {
         const models = data.models ?? data ?? [];
         const modelList = Array.isArray(models) ? models : [];
         dispatch({ type: 'SET_MODELS', models: modelList });
-        if (!refs.modelRef.current && modelList.length > 0) {
-          const firstModel =
-            typeof modelList[0] === 'string' ? modelList[0] : (modelList[0].name ?? '');
-          const firstProviderId =
-            typeof modelList[0] === 'string' ? null : (modelList[0].providerId ?? null);
-          if (firstModel) {
-            dispatch({ type: 'SET_MODEL', model: firstModel });
-            if (firstProviderId) {
-              dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: firstProviderId });
-            }
-            // Cap discovery is server-driven; the chat route will
-            // populate effectiveNumCtx on the next turn's status event.
-          }
-        }
       }
     } catch {
       // Silently ignore – models will be empty
     }
   };
+
+  // Reconcile the active provider against the loaded model list. This runs
+  // reactively (keyed on state, not refs) so it converges correctly no matter
+  // which mount fetch finishes first:
+  //   - No model selected yet → adopt the first model and its provider.
+  //   - Model selected but no active provider (e.g. a legacy config migrated
+  //     with `model` but no `activeProviderId`) → derive the provider from
+  //     the selected model so the next turn uses the right credentials.
+  useEffect(() => {
+    if (state.models.length === 0) return;
+    if (!state.model) {
+      const first = state.models[0];
+      if (first?.name) {
+        dispatch({ type: 'SET_MODEL', model: first.name });
+        if (first.providerId) {
+          dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: first.providerId });
+        }
+      }
+      return;
+    }
+    if (!state.activeProviderId) {
+      const match = state.models.find((m) => m.name === state.model && m.providerId);
+      if (match?.providerId) {
+        dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: match.providerId });
+      }
+    }
+  }, [state.models, state.model, state.activeProviderId, dispatch]);
 
   // Called only on mount — no stability guarantee needed.
   const loadConfig = async () => {

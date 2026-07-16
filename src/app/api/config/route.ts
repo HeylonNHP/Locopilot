@@ -459,8 +459,11 @@ export async function GET(): Promise<NextResponse> {
     // unreachable, model not loaded, etc.) we silently omit the
     // field rather than 500ing the config read.
     let modelContextLimit: number | null = null;
-    const normalizedProviders = getNormalizedProviders(config);
-    const activeProvider = resolveProvider(config, config.activeProviderId);
+    // Pass `config.model` so a stale `activeProviderId` can still recover via
+    // model match instead of silently resolving the first provider (which
+    // would report a cap for the wrong model). Returns null when neither
+    // resolves, in which case we omit the cap hint.
+    const activeProvider = resolveProvider(config, config.activeProviderId, config.model);
     if (activeProvider?.baseUrl && activeProvider?.model) {
       try {
         const resolved = await resolveEffectiveNumCtx(

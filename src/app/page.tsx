@@ -111,8 +111,14 @@ function HomeInner() {
 
   useEffect(() => {
     loadSessions();
-    loadModels();
-    loadConfig();
+    // Apply config before fetching models so the reconciler sees the
+    // persisted model/activeProviderId first and never briefly adopts a
+    // wrong default from the model list. Sessions are independent and stay
+    // parallel.
+    void (async () => {
+      await loadConfig();
+      await loadModels();
+    })();
   }, []);
 
   return (

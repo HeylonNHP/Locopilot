@@ -11,19 +11,16 @@
 
 import type { Config, LlmProvider, ProviderConfig } from '../types/chatConfig';
 
+import { DEFAULT_NUM_CTX } from '../constants';
 import { buildLlmRequestContext, type LlmRequestContext } from './llm';
 
 /**
- * Generate a short, deterministic ID from a provider name. Used for the
- * synthetic provider created from legacy top-level config fields.
+ * Stable id for the synthetic provider created from legacy top-level config
+ * fields. Using a constant (rather than slugifying the display name) keeps
+ * the id deterministic across name changes and avoids colliding with a
+ * user-authored provider id that happens to slug-match the synthetic name.
  */
-function slugFromProviderName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    || 'default';
-}
+const LEGACY_PROVIDER_ID = 'legacy';
 
 /**
  * Normalize any config into a non-empty providers array. If the config
@@ -46,7 +43,7 @@ export function getNormalizedProviders(config: Config | null): ProviderConfig[] 
 
   return [
     {
-      id: slugFromProviderName(name),
+      id: LEGACY_PROVIDER_ID,
       name,
       provider,
       baseUrl,
@@ -58,10 +55,23 @@ export function getNormalizedProviders(config: Config | null): ProviderConfig[] 
 }
 
 /**
- * Resolve a provider from the config. Prefer `providerId` when supplied,
- * otherwise fall back to a provider whose `model` matches `modelName`, and
- * finally to the first provider. Returns `null` only when there is no
- * config at all.
+ * Resolve a provider from the config.
+ *
+ * Resolution order:
+ *  1. An explicit `providerId` that actually exists — this is the user's
+ *     selection and always wins.
+ *  2. A provider whose default `model` matches `modelName` — the safe
+ *     recovery both for a stale `providerId` and for requests that only
+ *     carry a model name.
+ *  3. If a `providerId` was supplied but neither rule matched, return
+ *     `null` rather than an unrelated provider. Falling back to
+ *     `providers[0]` here would cross-wire another endpoint's apiKey /
+ *     baseUrl to this request.
+ *  4. No `providerId` and no model match — return the first provider as
+ *     the default.
+ *
+ * Returns `null` only when there are no providers at all, or when an
+ * explicit `providerId` could not be resolved safely.
  */
 export function resolveProvider(
   config: Config | null,
@@ -80,6 +90,9 @@ export function resolveProvider(
     const byModel = providers.find((p) => p.model === modelName);
     if (byModel) return byModel;
   }
+
+  // A stale explicit id must not cross-wire to an unrelated provider.
+  if (providerId) return null;
 
   return providers[0] ?? null;
 }
@@ -116,5 +129,5 @@ export function resolveProviderRequestContext(
  * config value and ultimately to a default.
  */
 export function getProviderNumCtx(provider: ProviderConfig, globalNumCtx?: number): number {
-  return provider.numCtx ?? globalNumCtx ?? 8192;
+  return provider.numCtx ?? globalNumCtx ?? DEFAULT_NUM_CTX;
 }
