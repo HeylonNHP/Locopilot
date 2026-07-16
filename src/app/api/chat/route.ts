@@ -25,7 +25,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { DoneReason } from '@/app/lib/chatStore';
 import type { ToolDefinition } from '@/services/adapters/llmAdapter';
-import type { Config } from '@/types/chatConfig';
+import type { Config, ProviderConfig } from '@/types/chatConfig';
 
 import {
   AUTO_COMPACT_THRESHOLD_PCT,
@@ -46,6 +46,11 @@ import {
 import { createSystemPrompt } from '@/services/chatSession';
 import { compactHistory } from '@/services/compact';
 import { loadConfig } from '@/services/configManager';
+import {
+  getProviderNumCtx,
+  resolveProvider,
+  resolveProviderRequestContext,
+} from '@/services/providerResolver';
 import { createSession, getSessionName, renameSession, sessionExists } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { checkCompleteness } from '@/services/promptLoop';
@@ -227,6 +232,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const numCtx: number | undefined = body.numCtx as number | undefined;
   const sessionId: number | undefined = body.sessionId as number | undefined;
   const baseUrl: string | undefined = body.baseUrl as string | undefined;
+  const providerId: string | undefined = typeof body.providerId === 'string' ? body.providerId : undefined;
   const think: boolean | undefined = body.think as boolean | undefined;
   const reasoningEffortRaw: unknown = body.reasoningEffort;
   const reasoningEffort: 'off' | 'low' | 'medium' | 'high' | undefined =
@@ -539,6 +545,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       let llmRequestContext: LlmRequestContext = buildLlmRequestContext({
         baseUrl: effectiveBaseUrl,
       });
+      let activeProvider: ProviderConfig | null = null;
 
       try {
         if (!activeSessionId) {
@@ -595,14 +602,19 @@ export async function POST(req: NextRequest): Promise<Response> {
         let requestContext: RequestContext;
         let disabledSubAgent: string[] = [];
 
-        const buildRequestContext = (config: Config | null): RequestContext => {
+        const buildRequestContext = (config: Config | null, activeProv: ProviderConfig | null): RequestContext => {
           const disabledMain = config?.tools?.disabledMain ?? [];
           disabledSubAgent = config?.tools?.disabledSubAgent ?? [];
-          const providerSettings = {
-            ...(config?.provider ? { provider: config.provider } : {}),
-            ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-          };
-          const configuredBaseUrl = config?.baseUrl || effectiveBaseUrl;
+          const providerSettings = activeProv
+            ? {
+                provider: activeProv.provider,
+                ...(activeProv.apiKey ? { apiKey: activeProv.apiKey } : {}),
+              }
+            : {
+                ...(config?.provider ? { provider: config.provider } : {}),
+                ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
+              };
+          const configuredBaseUrl = activeProv?.baseUrl ?? config?.baseUrl ?? effectiveBaseUrl;
           const compactionModel = resolveCompactionModel(
             config?.compactionModel ?? '',
             model as string
@@ -692,11 +704,13 @@ export async function POST(req: NextRequest): Promise<Response> {
         let config: Config | null = null;
         try {
           config = await loadConfig();
-          llmRequestContext = buildLlmRequestContext({
-            ...(config?.provider ? { provider: config.provider } : {}),
-            ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-            baseUrl: effectiveBaseUrl,
-          });
+          const resolved = resolveProviderRequestContext(config, providerId, model);
+          if (resolved) {
+            activeProvider = resolved.provider;
+            llmRequestContext = resolved.ctx;
+          } else {
+            llmRequestContext = buildLlmRequestContext({ baseUrl: effectiveBaseUrl });
+          }
           if (config) {
             if (typeof config.yolo === 'boolean') {
               effectiveYolo = config.yolo;
@@ -715,16 +729,19 @@ export async function POST(req: NextRequest): Promise<Response> {
           // cap. This is the single backend source of truth for the
           // clamp; the client never applies it. The body numCtx
           // (requestedNumCtx) wins over the persisted config value
-          // for this turn, falling back to config.numCtx when the
-          // body omitted the field, then to DEFAULT_NUM_CTX.
+          // for this turn, falling back to the active provider's
+          // numCtx, then the global config.numCtx, then DEFAULT_NUM_CTX.
           {
+            const providerRequested = activeProvider ? getProviderNumCtx(activeProvider, config?.numCtx) : undefined;
             const configRequested = config?.numCtx;
             const requested =
-              typeof configRequested === 'number' &&
-              Number.isFinite(configRequested) &&
-              configRequested > 0
-                ? Math.floor(configRequested)
-                : requestedNumCtx;
+              typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
+                ? Math.floor(numCtx)
+                : providerRequested !== undefined && Number.isFinite(providerRequested) && providerRequested > 0
+                  ? providerRequested
+                  : typeof configRequested === 'number' && Number.isFinite(configRequested) && configRequested > 0
+                    ? Math.floor(configRequested)
+                    : requestedNumCtx;
             try {
               const resolved = await resolveEffectiveNumCtx(
                 llmRequestContext,
@@ -753,14 +770,14 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Skills discovery is best-effort; leave allowedTools undefined
           }
 
-          requestContext = buildRequestContext(config);
+          requestContext = buildRequestContext(config, activeProvider);
           requestContext.allowedTools = allowedTools;
         } catch {
           // Config load is best-effort; defaults already apply.
           llmRequestContext = buildLlmRequestContext({
             baseUrl: effectiveBaseUrl,
           });
-          requestContext = buildRequestContext(null);
+          requestContext = buildRequestContext(null, null);
         }
         // Build the merged tool list (static native TOOLS + dynamic MCP
         // tool defs from already-connected servers). Computed once per
@@ -841,9 +858,9 @@ export async function POST(req: NextRequest): Promise<Response> {
         try {
           const modelInfo = await fetchLlmModelInfo(llmRequestContext, model as string);
           const resolved = await getLlmModelVisionSupportAsync(
-            effectiveBaseUrl,
+            activeProvider?.baseUrl ?? effectiveBaseUrl,
             model as string,
-            config?.provider ?? 'ollama',
+            activeProvider?.provider ?? config?.provider ?? 'ollama',
             modelInfo
           );
           visionSupported = resolved.visionSupported;
@@ -1859,7 +1876,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         if (discoveredLimit !== null && discoveredLimit !== effectiveNumCtx) {
           effectiveNumCtx = discoveredLimit;
           modelContextLimit = discoveredLimit;
-          recordDiscoveredCap(effectiveBaseUrl, model as string, discoveredLimit);
+          recordDiscoveredCap(activeProvider?.baseUrl ?? effectiveBaseUrl, model as string, discoveredLimit);
           try {
             sendEvent('status', {
               phase: 'context_limit_adjusted',
@@ -1880,7 +1897,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         // `src/services/llmContextLimit.ts` for the matcher details.
         const visionNotSupported = parseVisionUnsupportedFromError(message);
         if (visionNotSupported) {
-          recordDiscoveredNonVision(effectiveBaseUrl, model as string);
+          recordDiscoveredNonVision(activeProvider?.baseUrl ?? effectiveBaseUrl, model as string);
           try {
             sendEvent('status', { phase: 'vision_unsupported' });
           } catch {

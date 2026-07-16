@@ -366,6 +366,7 @@ export function useSlashCommands({
               body: JSON.stringify({
                 messages: currentMessages,
                 model: refs.modelRef.current,
+                providerId: refs.activeProviderIdRef.current,
                 numCtx: refs.requestedNumCtxRef.current,
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
@@ -530,6 +531,7 @@ export function useSlashCommands({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 model: refs.modelRef.current,
+                providerId: refs.activeProviderIdRef.current,
                 numCtx: refs.requestedNumCtxRef.current,
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,

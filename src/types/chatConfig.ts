@@ -21,11 +21,47 @@ export type LlmProvider = 'ollama' | 'openai-compatible';
  */
 export type ReasoningEffort = 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
+/**
+ * Configuration for a single LLM provider endpoint. The multi-provider
+ * config stores an array of these; each carries its own authentication,
+ * base URL, default model, and provider adapter.
+ */
+export interface ProviderConfig {
+  /** Stable identifier used in request bodies and the UI state. */
+  id: string;
+  /** Human-readable label shown in the model selector. */
+  name: string;
+  provider: LlmProvider;
+  baseUrl: string;
+  /** API key for OpenAI-compatible providers. Ignored by Ollama. */
+  apiKey?: string;
+  /** Default model for this provider. */
+  model?: string;
+  /** Per-provider default context window. Falls back to the global numCtx. */
+  numCtx?: number;
+}
+
 export interface Config {
   provider?: LlmProvider;
   /** API key for OpenAI-compatible providers. Ignored by Ollama. */
   apiKey?: string;
   baseUrl: string;
+  /**
+   * Multiple provider endpoints, each with their own authentication and
+   * default model. When this array is present and non-empty, the UI
+   * aggregates models from every provider and the user picks which
+   * provider/model to use per turn. The legacy top-level
+   * `provider`/`baseUrl`/`apiKey`/`model` fields still act as the
+   * default (and only) provider when `providers` is absent or empty.
+   */
+  providers?: ProviderConfig[];
+  /**
+   * The id of the provider currently selected in the UI. When absent,
+   * the active provider is inferred from the selected model (falling
+   * back to the first provider). Persisted so the UI remembers which
+   * endpoint credentials to use after reload.
+   */
+  activeProviderId?: string;
   /**
    * Persisted model selection. Renamed from `lastModel` to match the
    * in-memory store key (`state.model`) and the UI label ("Model").

@@ -2,12 +2,16 @@
 // PUT /api/config - update config
 import { type NextRequest, NextResponse } from 'next/server';
 
-import type { CompletionMode, Config, LlmProvider } from '../../../types/chatConfig';
+import type { CompletionMode, Config, LlmProvider, ProviderConfig } from '../../../types/chatConfig';
 
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
 import { invalidateCapCache, resolveEffectiveNumCtx } from '../../../services/capResolver';
 import { loadConfig, saveConfig } from '../../../services/configManager';
 import { buildLlmRequestContext } from '../../../services/llm';
+import {
+  getNormalizedProviders,
+  resolveProvider,
+} from '../../../services/providerResolver';
 import { invalidateVisionCache } from '../../../services/visionCache';
 
 const KNOWN_TOP_KEYS: Set<string> = new Set([
@@ -29,6 +33,8 @@ const KNOWN_TOP_KEYS: Set<string> = new Set([
   'webSearch',
   'skills',
   'tools',
+  'providers',
+  'activeProviderId',
   'mcpToolSearch',
   'completionMode',
   'maxPromptLoopIterations',
@@ -50,6 +56,66 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isFiniteInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function validateProvider(value: unknown, index: number): ProviderConfig | string {
+  if (!isPlainObject(value)) {
+    return `providers[${index}] must be an object`;
+  }
+  if (!isNonEmptyString(value.id)) {
+    return `providers[${index}].id must be a non-empty string`;
+  }
+  if (!isNonEmptyString(value.name)) {
+    return `providers[${index}].name must be a non-empty string`;
+  }
+  if (typeof value.provider !== 'string' || (value.provider !== 'ollama' && value.provider !== 'openai-compatible')) {
+    return `providers[${index}].provider must be 'ollama' or 'openai-compatible'`;
+  }
+  if (typeof value.baseUrl !== 'string' || value.baseUrl.trim().length === 0) {
+    return `providers[${index}].baseUrl must be a non-empty string`;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value.baseUrl);
+  } catch {
+    return `providers[${index}].baseUrl is not a valid URL`;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return `providers[${index}].baseUrl must use http: or https: scheme`;
+  }
+  const out: ProviderConfig = {
+    id: value.id.trim(),
+    name: value.name.trim(),
+    provider: value.provider as LlmProvider,
+    baseUrl: value.baseUrl.trim(),
+  };
+  if ('apiKey' in value) {
+    if (typeof value.apiKey !== 'string') {
+      return `providers[${index}].apiKey must be a string`;
+    }
+    if (value.apiKey.trim().length > 0) {
+      out.apiKey = value.apiKey.trim();
+    }
+  }
+  if ('model' in value) {
+    if (typeof value.model !== 'string') {
+      return `providers[${index}].model must be a string`;
+    }
+    if (value.model.trim().length > 0) {
+      out.model = value.model.trim();
+    }
+  }
+  if ('numCtx' in value) {
+    if (!isFiniteInteger(value.numCtx) || value.numCtx <= 0) {
+      return `providers[${index}].numCtx must be a positive integer`;
+    }
+    out.numCtx = value.numCtx;
+  }
+  return out;
 }
 
 function validateConfig(
@@ -103,6 +169,30 @@ function validateConfig(
       }
     }
     out.baseUrl = input.baseUrl;
+  }
+
+  if ('providers' in input) {
+    if (!Array.isArray(input.providers)) {
+      return { ok: false, error: "Invalid config: 'providers' must be an array" };
+    }
+    const providers: ProviderConfig[] = [];
+    for (const [index, item] of input.providers.entries()) {
+      const validated = validateProvider(item, index);
+      if (typeof validated === 'string') {
+        return { ok: false, error: `Invalid config: ${validated}` };
+      }
+      providers.push(validated);
+    }
+    out.providers = providers;
+  }
+
+  if ('activeProviderId' in input) {
+    if (input.activeProviderId !== null && typeof input.activeProviderId !== 'string') {
+      return { ok: false, error: "Invalid config: 'activeProviderId' must be a string or null" };
+    }
+    if (typeof input.activeProviderId === 'string' && input.activeProviderId.trim().length > 0) {
+      out.activeProviderId = input.activeProviderId.trim();
+    }
   }
 
   if ('model' in input || 'lastModel' in input) {
@@ -369,16 +459,18 @@ export async function GET(): Promise<NextResponse> {
     // unreachable, model not loaded, etc.) we silently omit the
     // field rather than 500ing the config read.
     let modelContextLimit: number | null = null;
-    if (config.baseUrl && config.model) {
+    const normalizedProviders = getNormalizedProviders(config);
+    const activeProvider = resolveProvider(config, config.activeProviderId);
+    if (activeProvider?.baseUrl && activeProvider?.model) {
       try {
         const resolved = await resolveEffectiveNumCtx(
           buildLlmRequestContext({
-            ...(config.provider ? { provider: config.provider } : {}),
-            ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-            baseUrl: config.baseUrl,
+            ...(activeProvider.provider ? { provider: activeProvider.provider } : {}),
+            ...(activeProvider.apiKey ? { apiKey: activeProvider.apiKey } : {}),
+            baseUrl: activeProvider.baseUrl,
           }),
-          config.model,
-          config.numCtx ?? DEFAULT_NUM_CTX
+          activeProvider.model,
+          activeProvider.numCtx ?? config.numCtx ?? DEFAULT_NUM_CTX
         );
         modelContextLimit = resolved.modelCap;
       } catch {
@@ -440,6 +532,18 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       delete updatedConfig.apiKey;
     }
 
+    // Scrub empty per-provider API keys.
+    if (updatedConfig.providers) {
+      for (const provider of updatedConfig.providers) {
+        if (provider.apiKey !== undefined && provider.apiKey.trim() === '') {
+          delete provider.apiKey;
+        }
+        if (provider.model !== undefined && provider.model.trim() === '') {
+          delete provider.model;
+        }
+      }
+    }
+
     // `lastModel` is a legacy alias kept only for backward-compatible reads
     // of older `config.json` files. If we have a `model` (the canonical key),
     // drop the legacy duplicate from the persisted output so the file
@@ -448,27 +552,74 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       delete updatedConfig.lastModel;
     }
 
-    // Invalidate the cap-resolver cache for any field that affects
-    // which model we're talking to or how big a context we're asking
-    // for. Without this, a stale entry from a previous model/runner
-    // state would persist for up to 5 minutes after the user updates
-    // the config.
+    // Invalidate the cap-resolver and vision caches for any provider
+    // whose identity (baseUrl/model) or context size changed, plus the
+    // legacy top-level fields. Without this, stale entries from a
+    // previous model/runner state would persist for up to 5 minutes.
+    const currentProviders = getNormalizedProviders(currentConfig ?? null);
+    const nextProviders = getNormalizedProviders(updatedConfig);
+    const changedProviderIds = new Set<string>();
+    for (const next of nextProviders) {
+      const current = currentProviders.find((p) => p.id === next.id);
+      if (
+        !current ||
+        current.provider !== next.provider ||
+        current.baseUrl !== next.baseUrl ||
+        current.model !== next.model ||
+        current.numCtx !== next.numCtx
+      ) {
+        changedProviderIds.add(next.id);
+      }
+    }
+    for (const current of currentProviders) {
+      const next = nextProviders.find((p) => p.id === current.id);
+      if (!next) {
+        changedProviderIds.add(current.id);
+      }
+    }
+
+    for (const id of changedProviderIds) {
+      const current = currentProviders.find((p) => p.id === id);
+      const next = nextProviders.find((p) => p.id === id);
+      if (next?.baseUrl && next?.model) {
+        invalidateCapCache(next.baseUrl, next.model);
+        invalidateVisionCache(next.baseUrl, next.model);
+      }
+      if (current?.baseUrl && current?.model) {
+        invalidateCapCache(current.baseUrl, current.model);
+        invalidateVisionCache(current.baseUrl, current.model);
+      }
+    }
+
+    // Switching the active provider (without editing provider entries)
+    // changes which credentials/model we talk to next, so invalidate the
+    // old and new active-provider caches as well.
+    const currentActive = resolveProvider(currentConfig ?? null, currentConfig?.activeProviderId);
+    const nextActive = resolveProvider(updatedConfig, updatedConfig.activeProviderId);
+    if (
+      currentActive?.baseUrl &&
+      currentActive?.model &&
+      (currentActive.id !== nextActive?.id || currentActive.model !== nextActive?.model)
+    ) {
+      invalidateCapCache(currentActive.baseUrl, currentActive.model);
+      invalidateVisionCache(currentActive.baseUrl, currentActive.model);
+    }
+    if (nextActive?.baseUrl && nextActive?.model) {
+      invalidateCapCache(nextActive.baseUrl, nextActive.model);
+      invalidateVisionCache(nextActive.baseUrl, nextActive.model);
+    }
+
+    // Legacy top-level fields still participate in cache invalidation so
+    // single-provider configs (or configs during migration) behave correctly.
     const baseUrlChanged = body.baseUrl !== undefined && body.baseUrl !== currentConfig?.baseUrl;
     const modelChanged = body.model !== undefined && body.model !== currentConfig?.model;
     if (baseUrlChanged || modelChanged) {
-      // Invalidate both the old and new (baseUrl, model) pairs to
-      // be safe in case the user swapped them in either order.
-      invalidateCapCache(updatedConfig.baseUrl, updatedConfig.model);
+      if (updatedConfig.baseUrl && updatedConfig.model) {
+        invalidateCapCache(updatedConfig.baseUrl, updatedConfig.model);
+        invalidateVisionCache(updatedConfig.baseUrl, updatedConfig.model);
+      }
       if (currentConfig?.baseUrl && currentConfig?.model) {
         invalidateCapCache(currentConfig.baseUrl, currentConfig.model);
-      }
-      // Mirror the same invalidation on the vision-support cache
-      // (src/services/visionCache.ts). Vision support is keyed on
-      // (baseUrl, modelName) for the same multi-tab reason as the
-      // cap cache, and a model/baseUrl change should re-resolve
-      // optimistic defaults on the next chat turn.
-      invalidateVisionCache(updatedConfig.baseUrl, updatedConfig.model);
-      if (currentConfig?.baseUrl && currentConfig?.model) {
         invalidateVisionCache(currentConfig.baseUrl, currentConfig.model);
       }
     } else if (

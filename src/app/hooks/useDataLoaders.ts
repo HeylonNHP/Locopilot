@@ -141,8 +141,13 @@ export function useDataLoaders(refs: StableRefs) {
         if (!refs.modelRef.current && modelList.length > 0) {
           const firstModel =
             typeof modelList[0] === 'string' ? modelList[0] : (modelList[0].name ?? '');
+          const firstProviderId =
+            typeof modelList[0] === 'string' ? null : (modelList[0].providerId ?? null);
           if (firstModel) {
             dispatch({ type: 'SET_MODEL', model: firstModel });
+            if (firstProviderId) {
+              dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: firstProviderId });
+            }
             // Cap discovery is server-driven; the chat route will
             // populate effectiveNumCtx on the next turn's status event.
           }
@@ -165,6 +170,8 @@ export function useDataLoaders(refs: StableRefs) {
           config: {
             baseUrl: config.baseUrl ?? state.baseUrl,
             provider: config.provider ?? state.provider,
+            providers: config.providers ?? state.providers,
+            activeProviderId: config.activeProviderId ?? state.activeProviderId,
             requestedNumCtx: config.numCtx ?? state.requestedNumCtx,
             model: config.model || config.lastModel || refs.modelRef.current,
             yolo: config.yolo ?? state.yolo,

@@ -5,7 +5,7 @@ import React, { createContext, type ReactNode, useContext, useReducer } from 're
 import type { ToolCall } from '@/services/llm';
 import type { VisionSupportState } from '@/services/visionCache';
 import type { ToolCallArguments } from '@/tools/tools';
-import type { CompletionMode, ReasoningEffort } from '@/types/chatConfig';
+import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
@@ -68,6 +68,10 @@ export interface LLmModel {
   modified_at?: string;
   size?: number;
   capabilities?: string[];
+  /** The provider this model belongs to. */
+  providerId: string;
+  providerName: string;
+  provider: 'ollama' | 'openai-compatible';
 }
 
 export interface WebSearchConfig {
@@ -115,6 +119,15 @@ interface ChatState {
   currentSessionId: number | null;
   model: string;
   models: LLmModel[];
+  /**
+   * Configured provider endpoints. When non-empty, the UI aggregates
+   * models from every provider and the user picks which provider/model
+   * to use per turn. The legacy top-level `provider`/`baseUrl`/`apiKey`
+   * fields are still present for backward compatibility.
+   */
+  providers: ProviderConfig[];
+  /** The id of the currently selected provider, used to pick credentials. */
+  activeProviderId: string | null;
   baseUrl: string;
   /**
    * The user's requested context-window size, persisted to config.json.
@@ -247,6 +260,8 @@ export type ChatAction =
   | { type: 'ADD_SESSION'; session: Session }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
   | { type: 'SET_MODELS'; models: LLmModel[] }
+  | { type: 'SET_PROVIDERS'; providers: ProviderConfig[] }
+  | { type: 'SET_ACTIVE_PROVIDER'; providerId: string | null }
   | { type: 'SET_MODEL'; model: string }
   | { type: 'SET_ERROR'; error: string | null; targetSessionId?: number }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
@@ -794,6 +809,12 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'SET_MODELS': {
       return { ...state, models: action.models };
     }
+    case 'SET_PROVIDERS': {
+      return { ...state, providers: action.providers };
+    }
+    case 'SET_ACTIVE_PROVIDER': {
+      return { ...state, activeProviderId: action.providerId };
+    }
     case 'SET_MODEL': {
       return { ...state, model: action.model };
     }
@@ -1122,6 +1143,8 @@ const initialState: ChatState = {
   currentSessionId: null,
   model: '',
   models: [],
+  providers: [],
+  activeProviderId: null,
   baseUrl: 'http://localhost:11434',
   provider: 'ollama',
   requestedNumCtx: DEFAULT_NUM_CTX,

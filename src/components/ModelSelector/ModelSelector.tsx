@@ -90,6 +90,7 @@ export default function ModelSelector({
   const {
     models,
     model,
+    activeProviderId,
     baseUrl,
     yolo,
     thinkingEnabled,
@@ -171,8 +172,8 @@ export default function ModelSelector({
   useClickOutsideEscape(panelRef, { isOpen, onClose });
 
   const handleSelect = useCallback(
-    async (modelName: string) => {
-      if (modelName === activeModel) {
+    async (modelName: string, providerId?: string) => {
+      if (modelName === activeModel && (!providerId || providerId === activeProviderId)) {
         onClose();
         return;
       }
@@ -202,10 +203,12 @@ export default function ModelSelector({
         return;
       }
 
+      const selectedProviderId = providerId ?? null;
+      dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: selectedProviderId });
       dispatch({ type: 'SET_CONFIG', config: { model: modelName } });
 
       try {
-        // Only persist the model change; do NOT send numCtx so the user's
+        // Only persist the model/provider change; do NOT send numCtx so the user's
         // configured maximum context size is preserved in config.json.
         // The effective (clamped) limit is now applied by the server
         // via the cap resolver and reported back on the next chat
@@ -213,6 +216,7 @@ export default function ModelSelector({
         // cap; the server is authoritative.
         const config = {
           baseUrl,
+          activeProviderId: selectedProviderId,
           model: modelName,
           yolo,
           thinkingEnabled,
@@ -235,6 +239,7 @@ export default function ModelSelector({
       dispatch,
       onClose,
       activeModel,
+      activeProviderId,
       mode,
       baseUrl,
       model,
@@ -298,22 +303,34 @@ export default function ModelSelector({
         {filteredModels.length === 0 ? (
           <div className="model-selector-empty">No models found</div>
         ) : (
-          filteredModels.map((m) => {
-            const capabilityBadges = getCapabilityBadges(m.capabilities);
+          (() => {
+            const byProvider: Record<string, typeof filteredModels> = {};
+            for (const m of filteredModels) {
+              const group = byProvider[m.providerName] ?? [];
+              group.push(m);
+              byProvider[m.providerName] = group;
+            }
+            return Object.entries(byProvider).flatMap(([providerName, providerModels]) => [
+              <div key={`__header__${providerName}`} className="model-selector-provider-header">
+                {providerName}
+              </div>,
+              ...providerModels.map((m) => {
+                const capabilityBadges = getCapabilityBadges(m.capabilities);
+                const isActive = m.name === activeModel && m.providerId === activeProviderId;
 
-            return (
-              <button
-                key={m.name}
-                className={`model-selector-item ${m.name === activeModel ? 'model-selector-item-active' : ''}`}
-                onClick={() => handleSelect(m.name)}
-                title={
-                  capabilityBadges.length > 0
-                    ? `${m.name} (${capabilityBadges.join(', ')})`
-                    : m.name
-                }
-              >
+                return (
+                  <button
+                    key={`${m.providerId}::${m.name}`}
+                    className={`model-selector-item ${isActive ? 'model-selector-item-active' : ''}`}
+                    onClick={() => handleSelect(m.name, m.providerId)}
+                    title={
+                      capabilityBadges.length > 0
+                        ? `${m.name} (${capabilityBadges.join(', ')})`
+                        : m.name
+                    }
+                  >
                 <span className="model-selector-check">
-                  {m.name === activeModel && (
+                  {isActive && (
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                       <path
                         d="M3 8.5L6.5 12L13 5"
@@ -340,9 +357,11 @@ export default function ModelSelector({
                     </span>
                   )}
                 </span>
-              </button>
-            );
-          })
+                  </button>
+                );
+              }),
+            ]);
+          })()
         )}
       </div>
     </div>,

@@ -5,6 +5,7 @@ import { resolveEffectiveNumCtx } from '@/services/capResolver';
 import { loadConfig } from '@/services/configManager';
 import { listSessions, loadSessionMessages } from '@/services/history';
 import { resolveCompactionModel } from '@/services/modelManager';
+import { resolveProviderRequestContext } from '@/services/providerResolver';
 import { generateSessionTitle } from '@/services/titleGeneration';
 
 import {
@@ -27,6 +28,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const model = body.model;
   const numCtx = body.numCtx;
   const baseUrl = body.baseUrl;
+  const providerId = body.providerId;
   const compactionModel = body.compactionModel;
   const sessionId = body.sessionId;
   const think: boolean | undefined = body.think as boolean | undefined;
@@ -83,15 +85,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   });
   try {
     const config = await loadConfig();
-    const effectiveBaseUrl =
-      typeof baseUrl === 'string' && baseUrl.trim().length > 0
-        ? baseUrl.trim()
-        : config?.baseUrl?.trim() || 'http://localhost:11434';
-    llmRequestContext = buildLlmRequestContext({
-      ...(config?.provider ? { provider: config.provider } : {}),
-      ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-      baseUrl: effectiveBaseUrl,
-    });
+    const resolved = resolveProviderRequestContext(
+      config,
+      typeof providerId === 'string' ? providerId : undefined,
+      model as string
+    );
+    if (resolved) {
+      llmRequestContext = resolved.ctx;
+    } else {
+      llmRequestContext = buildLlmRequestContext({
+        baseUrl:
+          typeof baseUrl === 'string' && baseUrl.trim().length > 0
+            ? baseUrl.trim()
+            : config?.baseUrl?.trim() || 'http://localhost:11434',
+        ...(config?.provider ? { provider: config.provider } : {}),
+        ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
+      });
+    }
+
     // Resolve the effective numCtx against the model's runtime
     // cap. The body numCtx is informational; the resolver prefers
     // the persisted config value (the user's authoritative

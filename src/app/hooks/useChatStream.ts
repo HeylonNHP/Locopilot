@@ -847,6 +847,7 @@ export function useChatStream(
       const bodyObj = {
         messages: filteredMessages,
         model: refs.modelRef.current,
+        providerId: refs.activeProviderIdRef.current,
         numCtx: refs.requestedNumCtxRef.current,
         baseUrl: refs.baseUrlRef.current,
         sessionId: refs.sessionIdRef.current,

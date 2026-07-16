@@ -33,7 +33,8 @@ export function InputArea({
   // SSE event for how this state transitions.
   const { state } = useChat();
   const visionState = state.visionState;
-  const provider = state.provider;
+  const activeProvider = state.providers.find((p) => p.id === state.activeProviderId);
+  const provider = activeProvider?.provider ?? state.provider;
 
   if (isStreaming) {
     const phase = compactingPhases.length > 0 ? compactingPhases.at(-1) : 'Streaming...';

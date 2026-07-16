@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 
 import type { ChatMessage, LLmModel, Session, WebSearchConfig } from '@/app/lib/chatStore';
-import type { CompletionMode, ReasoningEffort } from '@/types/chatConfig';
+import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
 /** A mutable ref container (the writable counterpart to React 19's read-only RefObject). */
 export type WritableRef<T> = { current: T };
@@ -34,6 +34,8 @@ export interface StableRefs {
   sessionIdRef: WritableRef<number | null>;
   sessionsRef: WritableRef<Session[]>;
   modelsRef: WritableRef<LLmModel[]>;
+  providersRef: WritableRef<ProviderConfig[]>;
+  activeProviderIdRef: WritableRef<string | null>;
   yoloRef: WritableRef<boolean>;
   thinkingEnabledRef: WritableRef<boolean>;
   reasoningEffortRef: WritableRef<ReasoningEffort>;
@@ -53,6 +55,8 @@ interface StableRefsInput {
   currentSessionId: number | null;
   sessions: Session[];
   models: LLmModel[];
+  providers: ProviderConfig[];
+  activeProviderId: string | null;
   yolo: boolean;
   thinkingEnabled: boolean;
   reasoningEffort: ReasoningEffort;
@@ -77,6 +81,8 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const sessionIdRef = useRef(state.currentSessionId);
   const sessionsRef = useRef(state.sessions);
   const modelsRef = useRef(state.models);
+  const providersRef = useRef(state.providers);
+  const activeProviderIdRef = useRef(state.activeProviderId);
   const yoloRef = useRef(state.yolo);
   const thinkingEnabledRef = useRef(state.thinkingEnabled);
   const reasoningEffortRef = useRef(state.reasoningEffort);
@@ -114,6 +120,12 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   useEffect(() => {
     modelsRef.current = state.models;
   }, [state.models]);
+  useEffect(() => {
+    providersRef.current = state.providers;
+  }, [state.providers]);
+  useEffect(() => {
+    activeProviderIdRef.current = state.activeProviderId;
+  }, [state.activeProviderId]);
   useEffect(() => {
     yoloRef.current = state.yolo;
   }, [state.yolo]);
@@ -153,6 +165,8 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       sessionIdRef,
       sessionsRef,
       modelsRef,
+      providersRef,
+      activeProviderIdRef,
       yoloRef,
       thinkingEnabledRef,
       reasoningEffortRef,

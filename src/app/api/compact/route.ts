@@ -14,6 +14,7 @@ import {
   type SubagentLogMessage,
 } from '../../../services/llm';
 import { resolveCompactionModel } from '../../../services/modelManager';
+import { resolveProviderRequestContext } from '../../../services/providerResolver';
 import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 
 export const dynamic = 'force-dynamic';
@@ -42,6 +43,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const model = body.model;
   const numCtx = body.numCtx;
   const baseUrl = body.baseUrl;
+  const providerId = body.providerId;
   const compactionModel = body.compactionModel;
   const sessionId = body.sessionId;
 
@@ -85,14 +87,23 @@ export async function POST(request: NextRequest): Promise<Response> {
       });
       try {
         const config = await loadConfig();
-        llmRequestContext = buildLlmRequestContext({
-          ...(config?.provider ? { provider: config.provider } : {}),
-          ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-          baseUrl:
-            typeof baseUrl === 'string' && baseUrl.trim().length > 0
-              ? baseUrl.trim()
-              : config?.baseUrl?.trim() || 'http://localhost:11434',
-        });
+        const resolved = resolveProviderRequestContext(
+          config,
+          typeof providerId === 'string' ? providerId : undefined,
+          model as string
+        );
+        if (resolved) {
+          llmRequestContext = resolved.ctx;
+        } else {
+          llmRequestContext = buildLlmRequestContext({
+            baseUrl:
+              typeof baseUrl === 'string' && baseUrl.trim().length > 0
+                ? baseUrl.trim()
+                : config?.baseUrl?.trim() || 'http://localhost:11434',
+            ...(config?.provider ? { provider: config.provider } : {}),
+            ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
+          });
+        }
         // Resolve the effective numCtx against the model's runtime
         // cap. The body numCtx is informational; the resolver
         // prefers the persisted config value (which is the user's
