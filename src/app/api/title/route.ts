@@ -91,24 +91,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       typeof providerId === 'string' ? providerId : undefined,
       model as string
     );
-    if (resolved) {
-      llmRequestContext = resolved.ctx;
-    } else {
-      // No provider resolved (legacy config or a stale providerId with no
-      // model match). Prefer the persisted config baseUrl and fall back to
-      // the body value only when config has none — this matches the chat
-      // route's precedence and avoids sending config's apiKey to an
-      // arbitrary caller-supplied host.
-      llmRequestContext = buildLlmRequestContext({
-        baseUrl:
-          config?.baseUrl?.trim() ||
-          (typeof baseUrl === 'string' && baseUrl.trim().length > 0
-            ? baseUrl.trim()
-            : 'http://localhost:11434'),
-        ...(config?.provider ? { provider: config.provider } : {}),
-        ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-      });
-    }
+    // No provider resolved (legacy config or a stale providerId with no
+    // model match). Prefer the persisted config baseUrl and fall back to
+    // the body value only when config has none. The fallback is
+    // UNauthenticated — never pair config.apiKey with the body baseUrl.
+    // A stale providerId on a multi-provider config could otherwise leak
+    // the user's API key to a caller-supplied host. Matches the chat
+    // route's precedence exactly.
+    llmRequestContext = resolved
+      ? resolved.ctx
+      : buildLlmRequestContext({
+          baseUrl:
+            config?.baseUrl?.trim() ||
+            (typeof baseUrl === 'string' && baseUrl.trim().length > 0
+              ? baseUrl.trim()
+              : 'http://localhost:11434'),
+        });
 
     // Resolve the effective numCtx against the model's runtime cap. The
     // body numCtx is an explicit per-request override; otherwise the

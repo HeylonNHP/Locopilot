@@ -9,10 +9,12 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
+import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join } from 'node:path';
-import { readFileSync, existsSync } from 'node:fs';
+
+const { dirname, join } = path;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -30,7 +32,7 @@ function loadEnvPort() {
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith('PORT=')) {
-      const val = trimmed.slice(5).replace(/^["']|["']$/g, '');
+      const val = trimmed.slice(5).replaceAll(/^["']|["']$/g, '');
       if (val) process.env.PORT = val;
       return;
     }
@@ -86,7 +88,9 @@ async function main() {
   next.on('exit', (code) => process.exit(code));
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}
