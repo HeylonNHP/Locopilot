@@ -144,17 +144,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       model.trim()
     );
 
-    // Resolve a separate provider for the compaction LLM call when the
-    // client supplied a compactionProviderId. This lets the user pick a
-    // compaction model from a different provider than the main chat
-    // model. When no compactionProviderId is supplied (e.g. "Same as main
-    // model", or a legacy client) we fall back to the main resolved
-    // context so today's behavior is preserved.
-    const compactionResolved = resolveProviderRequestContext(
-      config,
-      typeof compactionProviderId === 'string' ? compactionProviderId : undefined,
-      effectiveCompactionModel
-    );
+    // Resolve a separate provider for the compaction LLM call ONLY when
+    // the client explicitly supplied a compactionProviderId. This lets
+    // the user pick a compaction model from a different provider than
+    // the main chat model. When no compactionProviderId is supplied
+    // (e.g. "Same as main model", or a legacy client) we MUST use the
+    // main resolved context directly. Falling back to model-name
+    // resolution here is unsafe: if the active model is not stored as
+    // any provider's default `model`, resolveProvider falls back to
+    // providers[0], sending the title-generation request to the wrong
+    // endpoint (often Ollama localhost) and producing a 404.
+    const explicitCompactionProviderId =
+      typeof compactionProviderId === 'string' && compactionProviderId.trim().length > 0
+        ? compactionProviderId.trim()
+        : undefined;
+    const compactionResolved = explicitCompactionProviderId
+      ? resolveProviderRequestContext(config, explicitCompactionProviderId, effectiveCompactionModel)
+      : null;
     const compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
 
     // numCtx for the compaction LLM call. When a compaction provider
