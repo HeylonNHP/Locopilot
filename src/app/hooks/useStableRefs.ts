@@ -40,6 +40,14 @@ export interface StableRefs {
   thinkingEnabledRef: WritableRef<boolean>;
   reasoningEffortRef: WritableRef<ReasoningEffort>;
   compactionModelRef: WritableRef<string>;
+  /**
+   * Transient companion to `compactionModelRef`: the provider the
+   * compaction model belongs to. Captured at model-pick time in the
+   * ModelSelector so the compaction LLM call can target a different
+   * provider than the main chat. `null` for "Same as main model" (the
+   * route falls back to the active provider's context).
+   */
+  compactionProviderIdRef: WritableRef<string | null>;
   chatTimeoutMsRef: WritableRef<number>;
   webSearchRef: WritableRef<WebSearchConfig>;
   completionModeRef: WritableRef<CompletionMode>;
@@ -61,6 +69,7 @@ interface StableRefsInput {
   thinkingEnabled: boolean;
   reasoningEffort: ReasoningEffort;
   compactionModel: string;
+  compactionProviderId: string | null;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
   completionMode: CompletionMode;
@@ -87,6 +96,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const thinkingEnabledRef = useRef(state.thinkingEnabled);
   const reasoningEffortRef = useRef(state.reasoningEffort);
   const compactionModelRef = useRef(state.compactionModel);
+  const compactionProviderIdRef = useRef(state.compactionProviderId);
   const chatTimeoutMsRef = useRef(state.chatTimeoutMs);
   const webSearchRef = useRef(state.webSearch);
   const completionModeRef = useRef(state.completionMode);
@@ -139,6 +149,9 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
     compactionModelRef.current = state.compactionModel;
   }, [state.compactionModel]);
   useEffect(() => {
+    compactionProviderIdRef.current = state.compactionProviderId;
+  }, [state.compactionProviderId]);
+  useEffect(() => {
     chatTimeoutMsRef.current = state.chatTimeoutMs;
   }, [state.chatTimeoutMs]);
   useEffect(() => {
@@ -171,6 +184,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       thinkingEnabledRef,
       reasoningEffortRef,
       compactionModelRef,
+      compactionProviderIdRef,
       chatTimeoutMsRef,
       webSearchRef,
       completionModeRef,

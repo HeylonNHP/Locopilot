@@ -233,6 +233,8 @@ export async function POST(req: NextRequest): Promise<Response> {
   const sessionId: number | undefined = body.sessionId as number | undefined;
   const baseUrl: string | undefined = body.baseUrl as string | undefined;
   const providerId: string | undefined = typeof body.providerId === 'string' ? body.providerId : undefined;
+  const compactionProviderId: string | undefined =
+    typeof body.compactionProviderId === 'string' ? body.compactionProviderId : undefined;
   const think: boolean | undefined = body.think as boolean | undefined;
   const reasoningEffortRaw: unknown = body.reasoningEffort;
   const reasoningEffort: 'off' | 'low' | 'medium' | 'high' | undefined =
@@ -902,11 +904,25 @@ export async function POST(req: NextRequest): Promise<Response> {
               let persistedOk = true;
               let writeError: string | null = null;
               try {
+                // Resolve a separate provider for the auto-compact LLM
+                // call when the client supplied a compactionProviderId.
+                // Falls back to the main request context when not set
+                // ("Same as main model" or a legacy client) so today's
+                // behavior is preserved.
+                const compactionResolved = resolveProviderRequestContext(
+                  config,
+                  compactionProviderId,
+                  effectiveCompactionModel
+                );
+                const autoCompactCtx = compactionResolved?.ctx ?? llmRequestContext;
+                const autoCompactNumCtx = compactionResolved
+                  ? getProviderNumCtx(compactionResolved.provider, config?.numCtx)
+                  : effectiveNumCtx;
                 const compactResult = await compactHistory(
-                  llmRequestContext,
+                  autoCompactCtx,
                   effectiveCompactionModel,
                   currentMessages,
-                  effectiveNumCtx,
+                  autoCompactNumCtx,
                   (message: string) => {
                     sendEvent('compact_progress', { message });
                   },

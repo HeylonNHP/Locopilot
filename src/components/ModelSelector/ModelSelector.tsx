@@ -95,6 +95,7 @@ export default function ModelSelector({
     yolo,
     thinkingEnabled,
     compactionModel,
+    compactionProviderId,
     chatTimeoutMs,
     webSearch,
   } = state;
@@ -179,7 +180,20 @@ export default function ModelSelector({
       }
 
       if (mode === 'compaction') {
-        dispatch({ type: 'SET_CONFIG', config: { compactionModel: modelName } });
+        // `compactionProviderId` is transient (in-memory + request bodies,
+        // not persisted to config.json). It captures the picked model's
+        // provider so the server's compaction route can resolve the
+        // compaction provider precisely, even when the compaction model
+        // belongs to a different provider than the active chat model.
+        // "Same as main model" passes '' + null together.
+        const nextCompactionProviderId = providerId ?? null;
+        dispatch({
+          type: 'SET_CONFIG',
+          config: {
+            compactionModel: modelName,
+            compactionProviderId: nextCompactionProviderId,
+          },
+        });
 
         try {
           await fetch('/api/config', {
@@ -316,7 +330,13 @@ export default function ModelSelector({
               </div>,
               ...providerModels.map((m) => {
                 const capabilityBadges = getCapabilityBadges(m.capabilities);
-                const isActive = m.name === activeModel && m.providerId === activeProviderId;
+                // For compaction mode, match on the compaction-specific
+                // provider id (transient) instead of the active chat
+                // provider id.
+                const isActive =
+                  mode === 'compaction'
+                    ? m.name === activeModel && m.providerId === compactionProviderId
+                    : m.name === activeModel && m.providerId === activeProviderId;
 
                 return (
                   <button

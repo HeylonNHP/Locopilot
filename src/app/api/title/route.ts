@@ -30,6 +30,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const baseUrl = body.baseUrl;
   const providerId = body.providerId;
   const compactionModel = body.compactionModel;
+  const compactionProviderId = body.compactionProviderId;
   const sessionId = body.sessionId;
   const think: boolean | undefined = body.think as boolean | undefined;
   const reasoningEffortRaw: unknown = body.reasoningEffort;
@@ -143,11 +144,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       model.trim()
     );
 
+    // Resolve a separate provider for the compaction LLM call when the
+    // client supplied a compactionProviderId. This lets the user pick a
+    // compaction model from a different provider than the main chat
+    // model. When no compactionProviderId is supplied (e.g. "Same as main
+    // model", or a legacy client) we fall back to the main resolved
+    // context so today's behavior is preserved.
+    const compactionResolved = resolveProviderRequestContext(
+      config,
+      typeof compactionProviderId === 'string' ? compactionProviderId : undefined,
+      effectiveCompactionModel
+    );
+    const compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
+
+    // numCtx for the compaction LLM call. When a compaction provider
+    // resolved, prefer ITS numCtx so a per-provider context limit (e.g.
+    // NVIDIA 300000 vs Ollama default) is honored. Otherwise the same
+    // main numCtx is used.
+    const compactionNumCtx = compactionResolved
+      ? getProviderNumCtx(compactionResolved.provider, config?.numCtx)
+      : effectiveNumCtx;
+
     const title = await generateSessionTitle(
-      llmRequestContext,
+      compactionLlmRequestContext,
       effectiveCompactionModel,
       conversationMessages,
-      effectiveNumCtx,
+      compactionNumCtx,
       undefined,
       typeof think === 'boolean' ? think : undefined,
       reasoningEffort

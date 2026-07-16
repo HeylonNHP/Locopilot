@@ -855,6 +855,7 @@ export function useChatStream(
         think: refs.thinkingEnabledRef.current,
         reasoningEffort: refs.reasoningEffortRef.current,
         compactionModel: refs.compactionModelRef.current,
+        compactionProviderId: refs.compactionProviderIdRef.current,
         chatTimeoutMs: refs.chatTimeoutMsRef.current,
         webSearch: refs.webSearchRef.current,
         completionMode: refs.completionModeRef.current,

@@ -188,6 +188,15 @@ interface ChatState {
    */
   promptTimestamps: boolean;
   compactionModel: string;
+  /**
+   * Transient: which provider the compaction model belongs to. Captured
+   * when the user picks a compaction model in the ModelSelector (so a model
+   * on a different provider than the main one can be used for compaction)
+   * and reset to `null` for "Same as main model". Not persisted to
+   * config.json — the right provider is re-derived when the user re-picks
+   * a model in the grouped selector.
+   */
+  compactionProviderId: string | null;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
   /** Completion mode: 'normal' (default) or 'prompt-loop' (auto-continue). */
@@ -1158,6 +1167,7 @@ const initialState: ChatState = {
   reasoningEffort: 'off',
   promptTimestamps: true,
   compactionModel: '',
+  compactionProviderId: null,
   chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   webSearch: {
     maxQueries: 3,

@@ -45,6 +45,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const baseUrl = body.baseUrl;
   const providerId = body.providerId;
   const compactionModel = body.compactionModel;
+  const compactionProviderId = body.compactionProviderId;
   const sessionId = body.sessionId;
 
   if (typeof model !== 'string' || !model.trim()) {
@@ -144,6 +145,26 @@ export async function POST(request: NextRequest): Promise<Response> {
           model.trim()
         );
 
+        // Resolve a separate provider for the compaction LLM call when the
+        // client supplied a compactionProviderId. This lets the user pick
+        // a compaction model from a different provider than the main chat
+        // model. When no compactionProviderId is supplied (e.g. "Same as
+        // main model", or a legacy client) we fall back to the main
+        // resolved context so today's behavior is preserved.
+        const compactionResolved = resolveProviderRequestContext(
+          config,
+          typeof compactionProviderId === 'string' ? compactionProviderId : undefined,
+          effectiveCompactionModel
+        );
+        const compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
+
+        // numCtx for the compaction LLM call. When a compaction provider
+        // resolved, prefer ITS numCtx so a per-provider context limit is
+        // honored; otherwise use the main effectiveNumCtx.
+        const compactionNumCtx = compactionResolved
+          ? getProviderNumCtx(compactionResolved.provider, config?.numCtx)
+          : effectiveNumCtx;
+
         // Strip system and subagent_log messages before compacting — system prompt
         // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.
         const subagentLogMessages: SubagentLogMessage[] = typedMessages.filter(
@@ -155,10 +176,10 @@ export async function POST(request: NextRequest): Promise<Response> {
         );
 
         const result = await compactHistory(
-          llmRequestContext,
+          compactionLlmRequestContext,
           effectiveCompactionModel,
           conversationMessages,
-          effectiveNumCtx,
+          compactionNumCtx,
           (message: string) => {
             sendEvent('compact_progress', { message });
           },
