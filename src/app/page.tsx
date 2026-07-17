@@ -85,9 +85,9 @@ function HomeInner() {
   });
 
   const handleDeletePromptCallback = useCallback(
-    (messageId: string) => {
+    (messageId: string | number) => {
       if (state.currentSessionId === null || isCurrentSessionStreaming) return;
-      const numericMessageId = Number(messageId);
+      const numericMessageId = typeof messageId === 'number' ? messageId : Number(messageId);
       if (Number.isNaN(numericMessageId)) return;
       void handleDeletePrompt(state.currentSessionId, numericMessageId);
     },

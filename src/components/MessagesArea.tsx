@@ -20,7 +20,7 @@ interface MessagesAreaProps {
   onRetry: () => void;
   onDismissError: () => void;
   onScrollToLatest: (behavior: ScrollBehavior) => void;
-  onDeletePrompt?: ((messageId: string) => void) | undefined;
+  onDeletePrompt?: ((messageId: string | number) => void) | undefined;
 }
 
 /**

@@ -20,7 +20,7 @@ const MarkdownMessage = dynamic(() => import('@/components/MarkdownMessage'), {
 
 interface Props {
   message: ChatMessage;
-  onDeletePrompt?: ((messageId: string) => void) | undefined;
+  onDeletePrompt?: ((messageId: string | number) => void) | undefined;
   canDelete?: boolean;
 }
 
@@ -49,8 +49,8 @@ export default function ChatMessageBubble({ message, onDeletePrompt, canDelete }
         <UserMessageBubble
           message={message}
           onDelete={
-            canDelete && onDeletePrompt && message.id
-              ? () => onDeletePrompt(message.id as string)
+            canDelete && onDeletePrompt && message.id !== undefined
+              ? () => onDeletePrompt(message.id as string | number)
               : undefined
           }
           disabled={!canDelete}
