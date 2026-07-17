@@ -10,8 +10,12 @@ import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/ch
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
 export interface ChatMessage {
-  /** Stable client-only identity used as React list key. Never sent to the server. */
-  id?: string;
+  /**
+   * Stable identity used as React list key. For messages loaded from the
+   * database this is the numeric row id; for client-side messages it is a
+   * generated UUID. Never sent to the server.
+   */
+  id?: string | number;
   role: 'user' | 'assistant' | 'tool' | 'system' | 'subagent_log';
   content: string;
   thinking?: string;

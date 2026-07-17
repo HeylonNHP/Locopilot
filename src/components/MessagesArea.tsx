@@ -20,6 +20,7 @@ interface MessagesAreaProps {
   onRetry: () => void;
   onDismissError: () => void;
   onScrollToLatest: (behavior: ScrollBehavior) => void;
+  onDeletePrompt?: ((messageId: string) => void) | undefined;
 }
 
 /**
@@ -37,6 +38,7 @@ export function MessagesArea({
   onRetry,
   onDismissError,
   onScrollToLatest,
+  onDeletePrompt,
 }: MessagesAreaProps) {
   return (
     <div className="messages-shell">
@@ -47,7 +49,14 @@ export function MessagesArea({
         {messages.length === 0 ? (
           <EmptyState modelCount={modelCount} />
         ) : (
-          messages.map((msg, i) => <ChatMessageBubble key={msg.id ?? i} message={msg} />)
+          messages.map((msg, i) => (
+            <ChatMessageBubble
+              key={msg.id ?? i}
+              message={msg}
+              onDeletePrompt={onDeletePrompt}
+              canDelete={!isCurrentSessionStreaming}
+            />
+          ))
         )}
 
         {error && (

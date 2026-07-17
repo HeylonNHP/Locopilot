@@ -361,7 +361,7 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
   let loadToolEmptyCallIdCount = 0;
 
   const loaded = rows.map((row, index) => {
-    const rowId = row.id;
+    const rowId = row.id as number;
     const role = row.role;
     const dbToolCallId = row.tool_call_id;
     const isToolMessage = role === 'tool';
@@ -397,6 +397,7 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
       const msg: SubagentLogMessage = {
         role: 'subagent_log',
         content: row.content,
+        id: rowId,
       };
       if (row.subagent_id) {
         msg.subagentId = row.subagent_id;
@@ -422,6 +423,7 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     const msg: ChatMessage = {
       role: row.role as ChatMessage['role'],
       content: row.content,
+      id: rowId,
     };
     if (row.thinking) {
       msg.thinking = row.thinking;
@@ -453,4 +455,52 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
   });
 
   return loaded;
+}
+
+/**
+ * Deletes a user prompt and every message derived from it up to (but not
+ * including) the next user prompt. If there is no next user prompt, all
+ * trailing assistant, tool, subagent_log, and system messages are removed too.
+ *
+ * The implementation reuses `updateSessionMessages` so the write is atomic and
+ * token stats / updated_at are handled consistently.
+ *
+ * @returns The kept messages after deletion, in their original order.
+ * @throws If the target message is not found, is not a user message, or the
+ *         session does not exist.
+ */
+export function deleteMessagesFrom(sessionId: number, messageId: number): PersistedChatMessage[] {
+  if (!sessionExists(sessionId)) {
+    throw new Error(`Session ${sessionId} not found.`);
+  }
+
+  const messages = loadSessionMessages(sessionId);
+  const targetIndex = messages.findIndex((m) => m.id === messageId);
+  if (targetIndex === -1) {
+    throw new Error(`Message ${messageId} not found in session ${sessionId}.`);
+  }
+
+  const targetMessage = messages[targetIndex]!;
+  if (targetMessage.role !== 'user') {
+    throw new Error(`Message ${messageId} is not a user prompt; only user prompts can be deleted.`);
+  }
+
+  // Find the next user message after the target. Everything from the target
+  // up to (but not including) that next user message is removed.
+  let nextUserIndex = -1;
+  for (let i = targetIndex + 1; i < messages.length; i += 1) {
+    const candidate = messages[i];
+    if (candidate && candidate.role === 'user') {
+      nextUserIndex = i;
+      break;
+    }
+  }
+
+  const keptMessages =
+    nextUserIndex === -1
+      ? messages.slice(0, targetIndex)
+      : [...messages.slice(0, targetIndex), ...messages.slice(nextUserIndex)];
+
+  updateSessionMessages(sessionId, keptMessages);
+  return keptMessages;
 }

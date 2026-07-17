@@ -103,5 +103,9 @@ export function sanitizeChatMessage(message: PersistedChatMessage): PersistedCha
     sanitizedMessage.createdAt = message.createdAt;
   }
 
+  if (typeof message.id === 'number') {
+    (sanitizedMessage as ChatMessage & { id?: number }).id = message.id;
+  }
+
   return sanitizedMessage;
 }
