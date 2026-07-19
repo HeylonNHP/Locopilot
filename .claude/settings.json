@@ -6,9 +6,27 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash -c 'FILE=$(cat | jq -r \".tool_input.file_path // .tool_input.path // empty\"); if [ -n \"$FILE\" ] && echo \"$FILE\" | grep -qE \"\\.(ts|tsx|js|jsx|mjs|cjs|json|css|scss|md|html|yml|yaml)$\"; then npx prettier --write \"$FILE\" 2>/dev/null; fi'",
+            "statusMessage": "Auto-formatting with Prettier...",
+            "timeout": 15
+          },
+          {
+            "type": "command",
             "command": "python3 .claude/hooks/present_lint_errors.py",
             "statusMessage": "Checking lint on edited file...",
             "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'if git diff --name-only 2>/dev/null | grep -q \"package.json\"; then echo \"⚠ package.json was modified — remember to run `npm install` if dependencies changed.\"; fi'",
+            "statusMessage": "Checking dependency integrity...",
+            "timeout": 5
           }
         ]
       }
