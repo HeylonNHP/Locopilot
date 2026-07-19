@@ -44,6 +44,23 @@ import {
 import { WriteFileTool, type WriteFileToolArgs } from './impl/writeFileTool';
 import { noopToolOutputSink, type ToolOutputSink } from './toolOutput';
 
+// --- Skill directory resolution ---
+
+/**
+ * Resolve the base directory for `create_skill` based on the optional
+ * `location` argument. Returns null for unknown values so the caller can
+ * surface a clear error. Imports from `skillManager` are done lazily inside
+ * the function to preserve the existing dynamic-import boundary that
+ * avoids the circular dependency with `services/`.
+ */
+async function resolveCreateSkillBaseDir(location: unknown): Promise<string | null> {
+  const { getProjectSkillsDir, getUserSkillsDir } = await import('../services/skillManager');
+  if (location === undefined || location === null) return getProjectSkillsDir();
+  if (location === 'project') return getProjectSkillsDir();
+  if (location === 'user-profile') return getUserSkillsDir();
+  return null;
+}
+
 // --- Per-request context type ---
 
 /**
@@ -181,6 +198,7 @@ export interface ToolCallArguments {
   autoInvoke?: boolean;
   globPatterns?: string[];
   allowedTools?: string[];
+  location?: string;
   start_page?: number;
   end_page?: number;
   extract_images?: boolean;
@@ -674,6 +692,13 @@ export const toolRegistry = new Map<string, IToolCommand>([
 
         const sanitizedName = args.name.trim().toLowerCase().replaceAll(/\s+/g, '-');
 
+        const skillsBaseDir = await resolveCreateSkillBaseDir(args.location);
+        if (skillsBaseDir === null) {
+          return {
+            content: `[Error: invalid location "${String(args.location)}". Must be "project" or "user-profile".]`,
+          };
+        }
+
         // Validate skill name to prevent path traversal
         if (
           sanitizedName.length === 0 ||
@@ -694,7 +719,6 @@ export const toolRegistry = new Map<string, IToolCommand>([
           };
         }
 
-        const skillsBaseDir = path.resolve(process.cwd(), '.locopilot', 'skills');
         const skillDir = path.resolve(skillsBaseDir, sanitizedName);
         if (!skillDir.startsWith(skillsBaseDir + path.sep) && skillDir !== skillsBaseDir) {
           return {

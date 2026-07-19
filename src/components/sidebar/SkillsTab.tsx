@@ -351,7 +351,10 @@ export default function SkillsTab({ onPromptAI }: Props) {
 
       <div className="skills-panel-footer">
         <p className="skills-panel-footer-hint">
-          Place skills in <code>.locopilot/skills/&lt;name&gt;/SKILL.md</code>
+          Skills are loaded from <code>.locopilot/skills/</code> (project) and{' '}
+          <code>~/.locopilot/skills/</code> (user-profile). On Windows,{' '}
+          <code>~/.locopilot/skills/</code> resolves to{' '}
+          <code>%USERPROFILE%\.locopilot\skills\</code>.
         </p>
       </div>
     </>

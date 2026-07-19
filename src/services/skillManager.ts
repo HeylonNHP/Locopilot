@@ -6,11 +6,14 @@
  * into the LLM system prompt as always-apply instructions or listed as
  * available auto-invoke skills.
  *
- * Directory convention:
- *   .locopilot/skills/<name>/SKILL.md   (project-scoped)
- *   ~/.locopilot/skills/<name>/SKILL.md  (personal/global)
+ * Directory convention (two layers, project wins on name collision):
+ *   .locopilot/skills/<name>/SKILL.md      (project — under process.cwd())
+ *   ~/.locopilot/skills/<name>/SKILL.md    (user-profile — under the OS user home)
  *
- * Project skills override personal skills with the same name.
+ * Cross-platform note: `~/.locopilot` resolves to `$HOME/.locopilot` on Linux
+ * and `%USERPROFILE%\.locopilot` on Windows via `os.homedir()`. The
+ * `LOCOPILOT_HOME` environment variable, when set, overrides the user-profile
+ * root (useful for installs that relocate the user directory).
  */
 
 import { promises as fsp } from 'node:fs';
@@ -19,6 +22,9 @@ import * as os from 'node:os';
 import path from 'node:path';
 
 // ── Types ───────────────────────────────────────────────────────────────────
+
+/** Where a skill was loaded from. */
+export type SkillLocation = 'project' | 'user-profile';
 
 /** A loaded skill from disk */
 export interface Skill {
@@ -32,6 +38,8 @@ export interface Skill {
   globPatterns?: string[] | undefined;
   /** Tool names this skill is allowed to use; undefined = no restriction */
   allowedTools?: string[] | undefined;
+  /** Which layer this skill was loaded from */
+  location: SkillLocation;
 }
 
 // ── Frontmatter parsing ─────────────────────────────────────────────────────
@@ -96,7 +104,24 @@ function parseFrontmatter(raw: string): ParsedFrontmatter | null {
 
 // ── Discovery ────────────────────────────────────────────────────────────────
 
-function readSkillsFromDir(baseDir: string): Skill[] {
+/** Absolute path to the project skills directory (under cwd). */
+export function getProjectSkillsDir(): string {
+  return path.join(process.cwd(), '.locopilot', 'skills');
+}
+
+/**
+ * Absolute path to the user-profile skills directory.
+ *
+ * On Linux, this is `$HOME/.locopilot/skills`. On Windows, `os.homedir()`
+ * returns `%USERPROFILE%`, so the directory is `%USERPROFILE%\.locopilot\skills`.
+ * The `LOCOPILOT_HOME` environment variable, when set, overrides the root.
+ */
+export function getUserSkillsDir(): string {
+  const root = process.env.LOCOPILOT_HOME || os.homedir();
+  return path.join(root, '.locopilot', 'skills');
+}
+
+function readSkillsFromDir(baseDir: string, location: SkillLocation): Skill[] {
   const skills: Skill[] = [];
 
   if (!fs.existsSync(baseDir)) return skills;
@@ -123,7 +148,14 @@ function readSkillsFromDir(baseDir: string): Skill[] {
     }
 
     const parsed = parseFrontmatter(raw);
-    if (!parsed) continue;
+    if (!parsed) {
+      // Surface the failure — silently dropping a skill is hostile UX,
+      // especially now that there are two discovery layers.
+      console.warn(
+        `[skillManager] Skipping ${skillMdPath}: SKILL.md is missing the required YAML frontmatter (--- block with at least \`name\` and \`description\`).`
+      );
+      continue;
+    }
 
     skills.push({
       name: parsed.name,
@@ -134,6 +166,7 @@ function readSkillsFromDir(baseDir: string): Skill[] {
       autoInvoke: parsed.autoInvoke,
       globPatterns: parsed.globPatterns,
       allowedTools: parsed.allowedTools,
+      location,
     });
   }
 
@@ -141,19 +174,27 @@ function readSkillsFromDir(baseDir: string): Skill[] {
 }
 
 /**
- * Discover all skills from ~/.locopilot/skills/ and .locopilot/skills/.
- * Project skills override personal skills with the same name.
+ * Discover all skills from the user-profile layer (~/.locopilot/skills/) and
+ * the project layer (.locopilot/skills/ under cwd). Project skills override
+ * user-profile skills with the same name. If both layers resolve to the same
+ * absolute path (e.g. cwd == homedir), the user-profile scan is skipped to
+ * avoid double-counting.
  */
 export function discoverSkills(): Skill[] {
-  const personalDir = path.join(os.homedir(), '.locopilot', 'skills');
-  const projectDir = path.join(process.cwd(), '.locopilot', 'skills');
+  const projectDir = getProjectSkillsDir();
+  const userDir = getUserSkillsDir();
 
-  const personalSkills = readSkillsFromDir(personalDir);
-  const projectSkills = readSkillsFromDir(projectDir);
+  const userSkills = readSkillsFromDir(userDir, 'user-profile');
+  // Skip the project scan if it would read the same directory as the user
+  // layer (e.g. cwd == homedir, or LOCOPILOT_HOME points at cwd).
+  const projectSkills =
+    path.resolve(projectDir) === path.resolve(userDir)
+      ? []
+      : readSkillsFromDir(projectDir, 'project');
 
-  // Merge: project skills override personal skills by name
+  // Merge: project skills override user-profile skills by name
   const merged = new Map<string, Skill>();
-  for (const skill of personalSkills) {
+  for (const skill of userSkills) {
     merged.set(skill.name, skill);
   }
   for (const skill of projectSkills) {

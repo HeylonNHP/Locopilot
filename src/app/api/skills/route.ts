@@ -9,6 +9,7 @@ import {
   enableSkill,
   getEnabledSkills,
   loadSkillState,
+  type SkillLocation,
 } from '@/services/skillManager';
 
 export interface SkillApiItem {
@@ -19,6 +20,23 @@ export interface SkillApiItem {
   enabled: boolean;
   globPatterns?: string[] | undefined;
   allowedTools?: string[] | undefined;
+  location: SkillLocation;
+}
+
+function toApiItem(
+  skill: ReturnType<typeof discoverSkills>[number],
+  enabledSet: Set<string>
+): SkillApiItem {
+  return {
+    name: skill.name,
+    description: skill.description,
+    alwaysApply: skill.alwaysApply,
+    autoInvoke: skill.autoInvoke,
+    enabled: enabledSet.has(skill.name),
+    globPatterns: skill.globPatterns,
+    allowedTools: skill.allowedTools,
+    location: skill.location,
+  };
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -27,15 +45,7 @@ export async function GET(): Promise<NextResponse> {
     const state = loadSkillState();
     const enabledSet = new Set(getEnabledSkills(allSkills, state).map((s) => s.name));
 
-    const items: SkillApiItem[] = allSkills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      alwaysApply: skill.alwaysApply,
-      autoInvoke: skill.autoInvoke,
-      enabled: enabledSet.has(skill.name),
-      globPatterns: skill.globPatterns,
-      allowedTools: skill.allowedTools,
-    }));
+    const items: SkillApiItem[] = allSkills.map((skill) => toApiItem(skill, enabledSet));
 
     return NextResponse.json({ skills: items });
   } catch (err) {
@@ -68,15 +78,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     const state = loadSkillState();
     const enabledSet = new Set(getEnabledSkills(allSkills, state).map((s) => s.name));
 
-    const items: SkillApiItem[] = allSkills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      alwaysApply: skill.alwaysApply,
-      autoInvoke: skill.autoInvoke,
-      enabled: enabledSet.has(skill.name),
-      globPatterns: skill.globPatterns,
-      allowedTools: skill.allowedTools,
-    }));
+    const items: SkillApiItem[] = allSkills.map((skill) => toApiItem(skill, enabledSet));
 
     return NextResponse.json({ skills: items, action, name });
   } catch (err) {

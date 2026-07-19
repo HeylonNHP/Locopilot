@@ -77,6 +77,10 @@ Locopilot is a terminal-based chat client for Ollama, providing a lightweight, l
     - `/delete`: Remove a session from the local database.
     - `/nudge`: Manually inject a tool-use reminder if the AI is hesitant.
     - `/help`: Application control and documentation.
+- **Skills**: Self-contained `SKILL.md` packages with YAML frontmatter (`name`, `description`, optional `alwaysApply`, `autoInvoke`, `globPatterns`, `allowedTools`). Two discovery layers, project wins on name collision:
+  - `project` (highest precedence): `<cwd>/.locopilot/skills/<name>/SKILL.md`
+  - `user-profile` (lowest precedence): `~/.locopilot/skills/<name>/SKILL.md`
+  - On Linux, `~/.locopilot` resolves to `$HOME/.locopilot`; on Windows, `os.homedir()` returns `%USERPROFILE%`, so the path is `%USERPROFILE%\.locopilot\skills\`. The `LOCOPILOT_HOME` env var, when set, overrides the user-profile root (useful for installs that relocate the user directory). The `create_skill` tool's optional `location` argument (`'project'` | `'user-profile'`, default `'project'`) lets the LLM write into either layer; the `Skill` object exposes its source as `skill.location`. See `src/services/skillManager.ts` for the loader and `src/tools/impl/createSkillTool.ts` for the tool schema.
 
 ## Tool-calling / Command-execution
 

@@ -440,6 +440,8 @@
         padding: 1px 3px;
         border-radius: 4px;
         color: var(--text-primary);
+        // Keep filesystem paths readable — wrap between code spans, not inside them.
+        white-space: nowrap;
       }
     }
   }
