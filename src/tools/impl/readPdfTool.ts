@@ -4,18 +4,18 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { PDFParse } = require('pdf-parse');
 
-import type { ToolSchema } from '../../tools/tools';
-import type { ToolCallResult } from '../toolRegistry';
+import type { ToolCallResult } from '@/tools/toolRegistry';
+import type { ToolSchema } from '@/tools/tools';
 
 import {
   IMAGE_TOKEN_ESTIMATE,
   READ_FILE_CHAR_WARN_THRESHOLD,
   READ_FILE_TOKEN_CRITICAL_PCT,
   READ_FILE_TOKEN_WARN_PCT,
-} from '../../constants';
-import { countTextTokens } from '../../services/tokenizer';
-import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { resolveAgentPath, type WorkingDirectoryScope } from '../workingDirectory';
+} from '@/constants';
+import { countTextTokens } from '@/services/tokenizer';
+import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
+import { resolveAgentPath, type WorkingDirectoryScope } from '@/tools/workingDirectory';
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB — warn when no range provided
 const MAX_PAGES_PER_CALL = 50;

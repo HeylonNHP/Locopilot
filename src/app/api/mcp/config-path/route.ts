@@ -11,7 +11,7 @@
 
 import { NextResponse } from 'next/server';
 
-import { getMCPConfigPath } from '../../../../mcp';
+import { getMCPConfigPath } from '@/mcp';
 
 export const dynamic = 'force-dynamic';
 

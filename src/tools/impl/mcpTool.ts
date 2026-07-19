@@ -18,8 +18,8 @@
  *   approval_request event.
  */
 
-import type { RequestContext, ToolCallArguments, ToolCallResult } from '../../tools/toolRegistry';
-import type { ToolSchema } from '../../tools/tools';
+import type { RequestContext, ToolCallArguments, ToolCallResult } from '@/tools/toolRegistry';
+import type { ToolSchema } from '@/tools/tools';
 
 import {
   buildNamespacedName,
@@ -27,7 +27,7 @@ import {
   type DispatchOptions,
   MCP_TOOL_NAMESPACE_PREFIX,
   MCP_TOOL_NAMESPACE_SEPARATOR,
-} from '../../mcp';
+} from '@/mcp';
 
 const SERVER_NAME_REGEX = /^[\w-]+$/i;
 const TOOL_NAME_REGEX = /^[\w.]+$/;

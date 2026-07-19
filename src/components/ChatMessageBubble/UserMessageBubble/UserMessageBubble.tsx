@@ -2,8 +2,7 @@
 import React from 'react';
 
 import { type ChatMessage } from '@/app/lib/chatStore';
-
-import { AttachmentImages } from '../AttachmentImages';
+import { AttachmentImages } from '@/components/ChatMessageBubble/AttachmentImages';
 
 import './UserMessageBubble.scss';
 

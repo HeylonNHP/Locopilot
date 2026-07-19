@@ -17,8 +17,8 @@
  * is effectively a directory lookup.
  */
 
-import type { RequestContext, ToolCallArguments, ToolCallResult } from '../../tools/toolRegistry';
-import type { ToolSchema } from '../../tools/tools';
+import type { RequestContext, ToolCallArguments, ToolCallResult } from '@/tools/toolRegistry';
+import type { ToolSchema } from '@/tools/tools';
 
 import {
   buildMCPToolStubs,
@@ -26,7 +26,7 @@ import {
   type MCPToolInfo,
   type MCPToolStub,
   parseMCPToolName,
-} from '../../mcp';
+} from '@/mcp';
 
 // Match the full `mcp__<server>__<tool>` form. Mirrors the regex in
 // `mcp/schemaAdapter.ts` (used by `parseMCPToolName`); duplicated here

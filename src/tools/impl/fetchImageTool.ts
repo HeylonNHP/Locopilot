@@ -1,4 +1,4 @@
-import type { ToolSchema } from '../../tools/tools';
+import type { ToolSchema } from '@/tools/tools';
 
 export const fetchImageToolSchema: ToolSchema = {
   name: 'fetch_image',
@@ -24,7 +24,7 @@ import imageType from 'image-type';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
+import { DEFAULT_USER_AGENT } from '@/tools/web/playwrightRenderer';
 
 /**
  * Detects the actual image format from the file's magic bytes using the `image-type` library.

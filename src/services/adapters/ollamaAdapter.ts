@@ -2,6 +2,8 @@ import axios, { type AxiosRequestConfig } from 'axios';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 
+import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
+
 import type {
   AxiosLike,
   ChatApiResponse,
@@ -14,8 +16,6 @@ import type {
   LlmTurnStats,
   StreamChatParams,
 } from './llmAdapter';
-
-import { getModelContextLimitFromInfo } from '../llmContextLimit';
 
 interface TagsResponse {
   models: LlmModel[];

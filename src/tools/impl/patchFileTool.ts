@@ -1,9 +1,9 @@
 import { readFile, stat, writeFile } from 'node:fs/promises';
 
-import type { ToolSchema } from '../../tools/tools';
+import type { ToolSchema } from '@/tools/tools';
 
-import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { resolveAgentPath, type WorkingDirectoryScope } from '../workingDirectory';
+import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
+import { resolveAgentPath, type WorkingDirectoryScope } from '@/tools/workingDirectory';
 
 export const patchFileToolSchema: ToolSchema = {
   name: 'patch_file',

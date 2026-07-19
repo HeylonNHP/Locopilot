@@ -1,10 +1,11 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import type { SseEventPayloadMap } from '../../../types/sse';
+import type { SseEventPayloadMap } from '@/types/sse';
 
-import { resolveEffectiveNumCtx } from '../../../services/capResolver';
-import { compactHistory } from '../../../services/compact';
-import { loadConfig } from '../../../services/configManager';
+import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
+import { resolveEffectiveNumCtx } from '@/services/capResolver';
+import { compactHistory } from '@/services/compact';
+import { loadConfig } from '@/services/configManager';
 import {
   buildLlmRequestContext,
   type ChatMessage,
@@ -12,10 +13,9 @@ import {
   type LlmRequestContext,
   type PersistedChatMessage,
   type SubagentLogMessage,
-} from '../../../services/llm';
-import { resolveCompactionModel } from '../../../services/modelManager';
-import { getProviderNumCtx, resolveProviderRequestContext } from '../../../services/providerResolver';
-import { enqueueSessionWrite } from '../../lib/sessionWriteQueue';
+} from '@/services/llm';
+import { resolveCompactionModel } from '@/services/modelManager';
+import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
 
 export const dynamic = 'force-dynamic';
 

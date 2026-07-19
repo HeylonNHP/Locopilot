@@ -1,6 +1,6 @@
-import type { ToolSchema } from '../../tools/tools';
+import type { ToolSchema } from '@/tools/tools';
 
-import { discoverSkills, getEnabledSkills, loadSkillState } from '../../services/skillManager';
+import { discoverSkills, getEnabledSkills, loadSkillState } from '@/services/skillManager';
 
 export const subAgentToolSchema: ToolSchema = {
   name: 'run_subagents',
@@ -35,8 +35,8 @@ export const subAgentToolSchema: ToolSchema = {
   },
 };
 
-import { AUTO_COMPACT_THRESHOLD_PCT } from '../../constants';
-import { compactHistory } from '../../services/compact';
+import { AUTO_COMPACT_THRESHOLD_PCT } from '@/constants';
+import { compactHistory } from '@/services/compact';
 import {
   buildLlmRequestContext,
   type ChatMessage,
@@ -44,10 +44,10 @@ import {
   sendLlmChat,
   type ToolCall,
   type ToolDefinition,
-} from '../../services/llm';
-import { sanitizeChatMessage } from '../../services/textUtils';
-import { countMessagesTokens, countTextTokens } from '../../services/tokenizer';
-import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
+} from '@/services/llm';
+import { sanitizeChatMessage } from '@/services/textUtils';
+import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
+import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import {
   type IToolCommand,
   type RequestContext,
@@ -55,8 +55,8 @@ import {
   type ToolCallArguments,
   type ToolCallResult,
   toolRegistry,
-} from '../toolRegistry';
-import { WorkingDirectoryScope } from '../workingDirectory';
+} from '@/tools/toolRegistry';
+import { WorkingDirectoryScope } from '@/tools/workingDirectory';
 
 function isInterruptOrAbort(signal?: AbortSignal): boolean {
   return signal?.aborted === true;

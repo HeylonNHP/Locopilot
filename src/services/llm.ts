@@ -1,4 +1,5 @@
-import type { LlmProvider } from '../types/chatConfig';
+import type { LlmProvider } from '@/types/chatConfig';
+
 import type {
   ChatApiResponse,
   ChatParams,

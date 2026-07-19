@@ -16,12 +16,12 @@ import * as cheerio from 'cheerio';
  */
 import { JSDOM, VirtualConsole } from 'jsdom';
 
+import type { ToolOutputSink } from '@/tools/toolOutput';
+
 import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
 import { buildLlmRequestContext } from '@/services/llm';
+import { ContentCompactor } from '@/tools/impl/contentCompactor';
 
-import type { ToolOutputSink } from '../toolOutput';
-
-import { ContentCompactor } from '../impl/contentCompactor';
 import { type ExtractedLink, extractLinks } from './linkExtractor';
 import {
   type BrowserPool,

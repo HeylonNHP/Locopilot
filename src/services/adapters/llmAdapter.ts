@@ -1,5 +1,5 @@
-import type { ToolCallArguments } from '../../tools/tools';
-import type { LlmProvider, ReasoningEffort } from '../../types/chatConfig';
+import type { ToolCallArguments } from '@/tools/tools';
+import type { LlmProvider, ReasoningEffort } from '@/types/chatConfig';
 
 /**
  * Per-request LLM context. Threaded through every LLM call so concurrent

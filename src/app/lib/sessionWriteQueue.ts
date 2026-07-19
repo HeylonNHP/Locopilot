@@ -1,4 +1,4 @@
-import type { PersistedChatMessage } from '../../services/llm';
+import type { PersistedChatMessage } from '@/services/llm';
 
 import {
   loadSessionMessages,
@@ -6,7 +6,7 @@ import {
   sessionExists,
   type SessionTokenStats,
   updateSessionMessages,
-} from '../../services/history';
+} from '@/services/history';
 
 const sessionWriteQueues = new Map<number, Promise<void>>();
 const sessionRenameQueues = new Map<number, Promise<void>>();

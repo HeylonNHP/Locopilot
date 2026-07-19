@@ -10,16 +10,15 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { APPROX_CHARS_PER_TOKEN } from '@/constants';
-import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
-
 import {
   type ChatMessage,
   type LlmRequestContext,
   sendLlmChatStream,
   type StreamChatParams,
-} from '../../services/llm';
-import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { type WebExtractionSettings } from '../web/htmlExtractor';
+} from '@/services/llm';
+import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
+import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
+import { type WebExtractionSettings } from '@/tools/web/htmlExtractor';
 
 /**
  * Prompt template for content compaction.

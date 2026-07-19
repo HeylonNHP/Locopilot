@@ -27,7 +27,7 @@
 
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { getClientManager, loadMCPConfig, reauthenticateMCPServer } from '../../../../mcp';
+import { getClientManager, loadMCPConfig, reauthenticateMCPServer } from '@/mcp';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

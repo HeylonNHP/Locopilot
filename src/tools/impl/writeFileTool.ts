@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import type { ToolSchema } from '@/tools/tools';
 
-import { resolveAgentPath, type WorkingDirectoryScope } from '../workingDirectory';
+import { resolveAgentPath, type WorkingDirectoryScope } from '@/tools/workingDirectory';
 
 export const writeFileToolSchema: ToolSchema = {
   name: 'write_file',

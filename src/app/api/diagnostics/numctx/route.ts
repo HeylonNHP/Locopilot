@@ -26,10 +26,10 @@
 // authentication posture with the rest of the API.
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { DEFAULT_NUM_CTX } from '../../../../constants';
-import { resolveEffectiveNumCtx } from '../../../../services/capResolver';
-import { loadConfig } from '../../../../services/configManager';
-import { buildLlmRequestContext } from '../../../../services/llm';
+import { DEFAULT_NUM_CTX } from '@/constants';
+import { resolveEffectiveNumCtx } from '@/services/capResolver';
+import { loadConfig } from '@/services/configManager';
+import { buildLlmRequestContext } from '@/services/llm';
 
 export const dynamic = 'force-dynamic';
 

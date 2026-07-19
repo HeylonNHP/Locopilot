@@ -28,6 +28,14 @@ import type { ToolDefinition } from '@/services/adapters/llmAdapter';
 import type { Config, ProviderConfig } from '@/types/chatConfig';
 
 import {
+  type ApprovalDecision,
+  resolveApproval,
+  waitForApproval,
+} from '@/app/lib/approvalRegistry';
+import { debugLog } from '@/app/lib/debugLogger';
+import { logger } from '@/app/lib/logger';
+import { enqueueSessionRename, enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
+import {
   AUTO_COMPACT_THRESHOLD_PCT,
   DEFAULT_NUM_CTX,
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
@@ -43,10 +51,26 @@ import {
   getMergedMCPToolDefinitions,
   getMergedMCPToolDefinitionsForSearch,
 } from '@/mcp';
+import { recordDiscoveredCap, resolveEffectiveNumCtx } from '@/services/capResolver';
 import { createSystemPrompt } from '@/services/chatSession';
 import { compactHistory } from '@/services/compact';
 import { loadConfig } from '@/services/configManager';
 import { createSession, getSessionName, renameSession, sessionExists } from '@/services/history';
+import {
+  buildLlmRequestContext,
+  type ChatMessage,
+  fetchLlmModelInfo,
+  getLlmApiErrorMessage,
+  getLlmModelVisionSupportAsync,
+  type LlmRequestContext,
+  type PersistedChatMessage,
+  sendLlmChatStream,
+  type StreamChatParams,
+} from '@/services/llm';
+import {
+  parseContextLimitFromError,
+  parseVisionUnsupportedFromError,
+} from '@/services/llmContextLimit';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { checkCompleteness } from '@/services/promptLoop';
 import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
@@ -61,6 +85,7 @@ import { generateSessionTitle, sanitizeContentForTitle } from '@/services/titleG
 import { generateFallbackTitle } from '@/services/titleUtils';
 import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
 import { buildUserMessageStamp } from '@/services/userMessageStamp';
+import { recordDiscoveredNonVision } from '@/services/visionCache';
 import { enterRequestScope } from '@/tools/impl/runCommandTool';
 import {
   handleToolCall,
@@ -71,31 +96,6 @@ import {
 } from '@/tools/tools';
 import { WorkingDirectoryScope } from '@/tools/workingDirectory';
 
-import { recordDiscoveredCap, resolveEffectiveNumCtx } from '../../../services/capResolver';
-import {
-  buildLlmRequestContext,
-  type ChatMessage,
-  fetchLlmModelInfo,
-  getLlmApiErrorMessage,
-  getLlmModelVisionSupportAsync,
-  type LlmRequestContext,
-  type PersistedChatMessage,
-  sendLlmChatStream,
-  type StreamChatParams,
-} from '../../../services/llm';
-import {
-  parseContextLimitFromError,
-  parseVisionUnsupportedFromError,
-} from '../../../services/llmContextLimit';
-import { recordDiscoveredNonVision } from '../../../services/visionCache';
-import {
-  type ApprovalDecision,
-  resolveApproval,
-  waitForApproval,
-} from '../../lib/approvalRegistry';
-import { debugLog } from '../../lib/debugLogger';
-import { logger } from '../../lib/logger';
-import { enqueueSessionRename, enqueueSessionWrite } from '../../lib/sessionWriteQueue';
 import { createSseStream, isRetryableError } from './sseStream';
 
 // Prevent static generation – this route must always run on the server.

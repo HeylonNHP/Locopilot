@@ -2,18 +2,16 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 
-import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { sanitize } from '../tools';
+import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
+import { sanitize, type ToolSchema } from '@/tools/tools';
 import {
   getAgentWorkingDirectory,
   resolveAgentPath,
   setAgentWorkingDirectory,
   type WorkingDirectoryScope,
-} from '../workingDirectory';
+} from '@/tools/workingDirectory';
 
 const isWindows = os.platform() === 'win32';
-
-import type { ToolSchema } from '../../tools/tools';
 
 const APPROVAL_SENTENCE = 'The user will be asked to approve the command before it runs.';
 

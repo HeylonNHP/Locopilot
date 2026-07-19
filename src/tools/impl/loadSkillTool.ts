@@ -1,4 +1,4 @@
-import type { ToolSchema } from '../../tools/tools';
+import type { ToolSchema } from '@/tools/tools';
 
 export const loadSkillToolSchema: ToolSchema = {
   name: 'load_skill',

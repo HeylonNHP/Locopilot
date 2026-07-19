@@ -1,4 +1,4 @@
-import type { ToolSchema } from '../../tools/tools';
+import type { ToolSchema } from '@/tools/tools';
 
 export const fetchUrlToolSchema: ToolSchema = {
   name: 'fetch_url',
@@ -26,11 +26,11 @@ export const fetchUrlToolSchema: ToolSchema = {
   },
 };
 
-import type { WebSearchSettings } from './webSearchTool';
+import { READ_FILE_TOKEN_CRITICAL_PCT, READ_FILE_TOKEN_WARN_PCT } from '@/constants';
+import { countTextTokens } from '@/services/tokenizer';
+import { fetchAndExtract } from '@/tools/web/htmlExtractor';
 
-import { READ_FILE_TOKEN_CRITICAL_PCT, READ_FILE_TOKEN_WARN_PCT } from '../../constants';
-import { countTextTokens } from '../../services/tokenizer';
-import { fetchAndExtract } from '../web/htmlExtractor';
+import type { WebSearchSettings } from './webSearchTool';
 
 export interface FetchUrlToolArgs {
   url?: string;

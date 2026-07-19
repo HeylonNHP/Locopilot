@@ -2,6 +2,7 @@
 import js from '@eslint/js';
 import nextPlugin from '@next/eslint-plugin-next';
 import eslintConfigPrettier from 'eslint-config-prettier/flat';
+import noRelativeImportPaths from 'eslint-plugin-no-relative-import-paths';
 import perfectionist from 'eslint-plugin-perfectionist';
 import eslintPluginUnicorn from 'eslint-plugin-unicorn';
 import globals from 'globals';
@@ -54,6 +55,19 @@ export default tseslint.config(
       'perfectionist/sort-named-imports': ['error', { type: 'natural', order: 'asc' }],
       'perfectionist/sort-named-exports': ['error', { type: 'natural', order: 'asc' }],
       'perfectionist/sort-exports': ['error', { type: 'natural', order: 'asc' }],
+    },
+  },
+
+  // Shorten relative imports to the @/* alias (matches JetBrains' "Import can
+  // be shortened" hint). Allows same-folder ./ imports but flags anything that
+  // climbs out of the current directory. Auto-fix rewrites to the alias.
+  {
+    plugins: { 'no-relative-import-paths': noRelativeImportPaths },
+    rules: {
+      'no-relative-import-paths/no-relative-import-paths': [
+        'error',
+        { allowSameFolder: true, rootDir: 'src', prefix: '@' },
+      ],
     },
   },
 

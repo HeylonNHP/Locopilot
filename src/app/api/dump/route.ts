@@ -1,15 +1,15 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { resolveEffectiveNumCtx } from '../../../services/capResolver';
-import { loadConfig } from '../../../services/configManager';
-import { listSessions } from '../../../services/history';
+import { resolveEffectiveNumCtx } from '@/services/capResolver';
+import { loadConfig } from '@/services/configManager';
+import { listSessions } from '@/services/history';
 import {
   buildConversationDumpMarkdown,
   buildDumpFileName,
   type ConversationDumpInput,
-} from '../../../services/historyDump';
-import { buildLlmRequestContext, type ChatMessage } from '../../../services/llm';
-import { getLastWebCompactionDebug } from '../../../tools/impl/contentCompactor';
+} from '@/services/historyDump';
+import { buildLlmRequestContext, type ChatMessage } from '@/services/llm';
+import { getLastWebCompactionDebug } from '@/tools/impl/contentCompactor';
 
 export const dynamic = 'force-dynamic';
 

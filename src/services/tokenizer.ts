@@ -1,6 +1,7 @@
 import { encoding_for_model, get_encoding, init } from '@dqbd/tiktoken/init';
 
-import { APPROX_CHARS_PER_TOKEN, IMAGE_TOKEN_ESTIMATE } from '../constants';
+import { APPROX_CHARS_PER_TOKEN, IMAGE_TOKEN_ESTIMATE } from '@/constants';
+
 import { type ChatMessage } from './llm';
 import { stripSpecialTokens } from './textUtils';
 

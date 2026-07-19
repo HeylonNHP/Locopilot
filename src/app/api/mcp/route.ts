@@ -23,7 +23,7 @@ import {
   type MCPListResult,
   reloadMCP,
   saveMCPServerDisabled,
-} from '../../../mcp';
+} from '@/mcp';
 
 export const dynamic = 'force-dynamic';
 

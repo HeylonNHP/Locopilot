@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Config } from '../../../types/chatConfig';
+import type { Config } from '@/types/chatConfig';
 
 import {
   buildLlmRequestContext,
@@ -12,9 +12,9 @@ import {
   fetchLlmModels,
   type LlmModel,
   type LlmRequestContext,
-} from '../../../services/llm';
-import { getNormalizedProviders } from '../../../services/providerResolver';
-import { resolveVisionSupport } from '../../../services/visionCache';
+} from '@/services/llm';
+import { getNormalizedProviders } from '@/services/providerResolver';
+import { resolveVisionSupport } from '@/services/visionCache';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 

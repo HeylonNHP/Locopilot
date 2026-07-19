@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { loadSessionMessages, updateSessionMessages } from '../../../services/history';
+import { loadSessionMessages, updateSessionMessages } from '@/services/history';
 
 export const dynamic = 'force-dynamic';
 

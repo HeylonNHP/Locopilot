@@ -1,9 +1,9 @@
 import { access, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Config } from '../types/chatConfig';
+import type { Config } from '@/types/chatConfig';
 
-import { logger } from '../app/lib/logger';
+import { logger } from '@/app/lib/logger';
 
 const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 const CONFIG_TMP_PATH = `${CONFIG_PATH}.tmp`;

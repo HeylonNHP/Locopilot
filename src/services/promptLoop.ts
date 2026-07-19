@@ -9,9 +9,10 @@
  * handling, same use of `sendLlmChat` (non-streaming).
  */
 
+import { logger } from '@/app/lib/logger';
+
 import type { ToolDefinition } from './adapters/llmAdapter';
 
-import { logger } from '../app/lib/logger';
 import { type ChatMessage, type LlmRequestContext, sendLlmChat } from './llm';
 
 const JUDGE_SYSTEM_PROMPT =

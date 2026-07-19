@@ -2,6 +2,7 @@ import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { writeFile } from 'node:fs/promises';
 
 import { debugLog } from '@/app/lib/debugLogger';
+import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
 
 import type {
   ChatApiResponse,
@@ -14,8 +15,6 @@ import type {
   StreamChatParams,
   ToolCall,
 } from './llmAdapter';
-
-import { getModelContextLimitFromInfo } from '../llmContextLimit';
 
 // ── Per-request axios client ──────────────────────────────────────────────────
 // We must NOT keep a single module-level `client` axios instance configured

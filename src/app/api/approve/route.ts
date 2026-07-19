@@ -14,7 +14,7 @@
 
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { type ApprovalDecision, resolveApproval } from '../../lib/approvalRegistry';
+import { type ApprovalDecision, resolveApproval } from '@/app/lib/approvalRegistry';
 
 export const dynamic = 'force-dynamic';
 

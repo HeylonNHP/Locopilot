@@ -42,7 +42,7 @@
  * entry — matching the multi-tab contract of `capResolver.ts`.
  */
 
-import type { LlmProvider } from '../types/chatConfig';
+import type { LlmProvider } from '@/types/chatConfig';
 
 /**
  * The tri-state vision-support verdict the UI and the chat route

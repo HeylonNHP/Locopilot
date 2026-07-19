@@ -2,9 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
-
-import CompletionModeSelector from '../CompletionModeSelector';
-import ModelSelector from '../ModelSelector';
+import CompletionModeSelector from '@/components/CompletionModeSelector';
+import ModelSelector from '@/components/ModelSelector';
 
 import './StatusBar.scss';
 

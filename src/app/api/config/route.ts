@@ -2,17 +2,17 @@
 // PUT /api/config - update config
 import { type NextRequest, NextResponse } from 'next/server';
 
-import type { CompletionMode, Config, LlmProvider, ProviderConfig } from '../../../types/chatConfig';
+import type { CompletionMode, Config, LlmProvider, ProviderConfig } from '@/types/chatConfig';
 
-import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '../../../constants';
-import { invalidateCapCache, resolveEffectiveNumCtx } from '../../../services/capResolver';
-import { loadConfig, saveConfig } from '../../../services/configManager';
-import { buildLlmRequestContext } from '../../../services/llm';
+import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+import { invalidateCapCache, resolveEffectiveNumCtx } from '@/services/capResolver';
+import { loadConfig, saveConfig } from '@/services/configManager';
+import { buildLlmRequestContext } from '@/services/llm';
 import {
   getNormalizedProviders,
   resolveProvider,
-} from '../../../services/providerResolver';
-import { invalidateVisionCache } from '../../../services/visionCache';
+} from '@/services/providerResolver';
+import { invalidateVisionCache } from '@/services/visionCache';
 
 const KNOWN_TOP_KEYS: Set<string> = new Set([
   'provider',

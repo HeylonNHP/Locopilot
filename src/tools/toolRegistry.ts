@@ -14,12 +14,13 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
+import type { ToolDefinition } from '@/services/llm';
+
 import {
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
 } from '@/constants';
 
-import type { ToolDefinition } from '../services/llm';
 import type { WorkingDirectoryScope } from './workingDirectory';
 
 import { parsePositiveInteger, parsePositiveTimeoutMs, parseQueriesInput } from './commandHelpers';

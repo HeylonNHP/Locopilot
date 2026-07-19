@@ -24,7 +24,7 @@
 
 import type { NextRequest } from 'next/server';
 
-import { listMCPServersWithStatus, type MCPEvent, subscribeMCPEvents } from '../../../../mcp';
+import { listMCPServersWithStatus, type MCPEvent, subscribeMCPEvents } from '@/mcp';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

@@ -9,9 +9,10 @@
  * from the resolved provider.
  */
 
-import type { Config, LlmProvider, ProviderConfig } from '../types/chatConfig';
+import type { Config, LlmProvider, ProviderConfig } from '@/types/chatConfig';
 
-import { DEFAULT_NUM_CTX } from '../constants';
+import { DEFAULT_NUM_CTX } from '@/constants';
+
 import { buildLlmRequestContext, type LlmRequestContext } from './llm';
 
 /**

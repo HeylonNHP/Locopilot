@@ -1,11 +1,11 @@
 import { readFile, stat } from 'node:fs/promises';
 
-import type { ToolSchema } from '../../tools/tools';
+import type { ToolSchema } from '@/tools/tools';
 
-import { READ_FILE_TOKEN_CRITICAL_PCT, READ_FILE_TOKEN_WARN_PCT } from '../../constants';
-import { countTextTokens } from '../../services/tokenizer';
-import { noopToolOutputSink, type ToolOutputSink } from '../toolOutput';
-import { resolveAgentPath, type WorkingDirectoryScope } from '../workingDirectory';
+import { READ_FILE_TOKEN_CRITICAL_PCT, READ_FILE_TOKEN_WARN_PCT } from '@/constants';
+import { countTextTokens } from '@/services/tokenizer';
+import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
+import { resolveAgentPath, type WorkingDirectoryScope } from '@/tools/workingDirectory';
 
 export const readFileToolSchema: ToolSchema = {
   name: 'read_file',

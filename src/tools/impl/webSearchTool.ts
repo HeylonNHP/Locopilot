@@ -1,18 +1,16 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
+import type { ToolOutputSink } from '@/tools/toolOutput';
 import type { ToolSchema } from '@/tools/tools';
+import type { ExtractedLink } from '@/tools/web/linkExtractor';
 
 import {
   DEFAULT_WEB_REQUEST_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES,
 } from '@/constants';
-
-import type { ToolOutputSink } from '../toolOutput';
-import type { ExtractedLink } from '../web/linkExtractor';
-
-import { cleanText, fetchAndExtract } from '../web/htmlExtractor';
-import { BrowserPool, DEFAULT_USER_AGENT } from '../web/playwrightRenderer';
+import { cleanText, fetchAndExtract } from '@/tools/web/htmlExtractor';
+import { BrowserPool, DEFAULT_USER_AGENT } from '@/tools/web/playwrightRenderer';
 
 export const webSearchToolSchema: ToolSchema = {
   name: 'web_search',

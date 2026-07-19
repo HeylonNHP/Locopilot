@@ -15,7 +15,8 @@
 import Database from 'better-sqlite3';
 import path from 'node:path';
 
-import { debugLog } from '../app/lib/debugLogger';
+import { debugLog } from '@/app/lib/debugLogger';
+
 import { type ChatMessage, type PersistedChatMessage, type SubagentLogMessage } from './llm';
 import { sanitizeChatMessage } from './textUtils';
 

@@ -16,8 +16,8 @@
 
 import { type CallToolResult, CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 
-import type { ToolDefinition } from '../services/adapters/llmAdapter';
-import type { ToolCallResult } from '../tools/toolRegistry';
+import type { ToolDefinition } from '@/services/adapters/llmAdapter';
+import type { ToolCallResult } from '@/tools/toolRegistry';
 
 import { getClientManager } from './clientManager';
 import { type MCPToolInfo } from './types';

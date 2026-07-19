@@ -7,7 +7,8 @@
  * `createSystemPrompt`, used by the web UI's chat API route.
  */
 
-import { getToolSystemPrompt } from '../tools/tools';
+import { getToolSystemPrompt } from '@/tools/tools';
+
 import {
   buildAlwaysApplyPrompt,
   buildAvailableSkillsSummary,
