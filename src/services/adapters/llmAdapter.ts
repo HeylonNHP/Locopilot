@@ -54,6 +54,12 @@ export interface ToolDefinition {
 }
 
 export interface ChatMessage {
+  /**
+   * Optional stable database id. Populated when a message is loaded from
+   * SQLite so callers can reference a specific persisted row (e.g. for
+   * deletion). Not sent to the LLM and stripped during serialization.
+   */
+  id?: number;
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   thinking?: string;
@@ -86,6 +92,8 @@ export interface ChatApiResponse {
 }
 
 export interface SubagentLogMessage {
+  /** Optional stable database id. See ChatMessage.id for details. */
+  id?: number;
   role: 'subagent_log';
   content: string;
   subagentId?: string;

@@ -10,8 +10,12 @@ import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/ch
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 
 export interface ChatMessage {
-  /** Stable client-only identity used as React list key. Never sent to the server. */
-  id?: string;
+  /**
+   * Stable identity used as React list key. For messages loaded from the
+   * database this is the numeric row id; for client-side messages it is a
+   * generated UUID. Never sent to the server.
+   */
+  id?: string | number;
   role: 'user' | 'assistant' | 'tool' | 'system' | 'subagent_log';
   content: string;
   thinking?: string;
@@ -50,9 +54,18 @@ function randomId(): string {
   }
 }
 
-/** Return a copy of msg with a stable `id` field if it doesn't already have one. */
+/**
+ * Return a copy of msg with a stable identity for React rendering.
+ *
+ * - If the message already has an id (e.g. a numeric DB row id loaded from
+ *   history.ts), preserve it so features like prompt deletion can reference
+ *   the persisted row.
+ * - Otherwise assign a client-only UUID so the React key is stable while the
+ *   message is being streamed or waiting for persistence.
+ */
 function withId(msg: ChatMessage): ChatMessage {
-  return msg.id === undefined ? { ...msg, id: randomId() } : msg;
+  if (msg.id !== undefined) return msg;
+  return { ...msg, id: randomId() };
 }
 
 export interface Session {

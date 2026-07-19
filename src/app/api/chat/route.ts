@@ -901,15 +901,21 @@ export async function POST(req: NextRequest): Promise<Response> {
               let writeError: string | null = null;
               try {
                 // Resolve a separate provider for the auto-compact LLM
-                // call when the client supplied a compactionProviderId.
-                // Falls back to the main request context when not set
-                // ("Same as main model" or a legacy client) so today's
-                // behavior is preserved.
-                const compactionResolved = resolveProviderRequestContext(
-                  config,
-                  compactionProviderId,
-                  effectiveCompactionModel
-                );
+                // call ONLY when the client explicitly supplied a
+                // compactionProviderId. Falls back to the main request
+                // context when not set ("Same as main model" or a legacy
+                // client). We must not fall through to model-name
+                // resolution here: if the active model is not stored as
+                // any provider's default `model`, resolveProvider falls
+                // back to providers[0] and auto-compact silently hits the
+                // wrong endpoint.
+                const explicitCompactionProviderId =
+                  typeof compactionProviderId === 'string' && compactionProviderId.trim().length > 0
+                    ? compactionProviderId.trim()
+                    : undefined;
+                const compactionResolved = explicitCompactionProviderId
+                  ? resolveProviderRequestContext(config, explicitCompactionProviderId, effectiveCompactionModel)
+                  : null;
                 const autoCompactCtx = compactionResolved?.ctx ?? llmRequestContext;
                 const autoCompactNumCtx = compactionResolved
                   ? getProviderNumCtx(compactionResolved.provider, config?.numCtx)

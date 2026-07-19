@@ -69,15 +69,30 @@ function HomeInner() {
     pendingApprovalId: state.pendingApprovalId,
   });
 
-  const { handleNewSession, handleSelectSession, handleDeleteSession, handleSearchSessions } =
-    useSessionActions({
-      dispatch,
-      sessionIdRef: refs.sessionIdRef,
-      loadSessions,
-      loadSessionMessages,
-      replayBufferedEvents,
-      model: state.model,
-    });
+  const {
+    handleNewSession,
+    handleSelectSession,
+    handleDeleteSession,
+    handleDeletePrompt,
+    handleSearchSessions,
+  } = useSessionActions({
+    dispatch,
+    sessionIdRef: refs.sessionIdRef,
+    loadSessions,
+    loadSessionMessages,
+    replayBufferedEvents,
+    model: state.model,
+  });
+
+  const handleDeletePromptCallback = useCallback(
+    (messageId: string | number) => {
+      if (state.currentSessionId === null || isCurrentSessionStreaming) return;
+      const numericMessageId = typeof messageId === 'number' ? messageId : Number(messageId);
+      if (Number.isNaN(numericMessageId)) return;
+      void handleDeletePrompt(state.currentSessionId, numericMessageId);
+    },
+    [handleDeletePrompt, state.currentSessionId, isCurrentSessionStreaming]
+  );
 
   const { handleSlashCommand } = useSlashCommands({
     refs,
@@ -145,6 +160,7 @@ function HomeInner() {
             onRetry={retry}
             onDismissError={() => dispatch({ type: 'SET_ERROR', error: null })}
             onScrollToLatest={scrollToLatest}
+            onDeletePrompt={handleDeletePromptCallback}
           />
 
           <div className="input-area">

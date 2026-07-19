@@ -3,6 +3,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { deleteSession, listSessions, loadSessionMessages } from '@/services/history';
+
+export const dynamic = 'force-dynamic';
 import { type ChatMessage } from '@/services/llm';
 import { countMessagesTokens } from '@/services/tokenizer';
 

@@ -20,9 +20,11 @@ const MarkdownMessage = dynamic(() => import('@/components/MarkdownMessage'), {
 
 interface Props {
   message: ChatMessage;
+  onDeletePrompt?: ((messageId: string | number) => void) | undefined;
+  canDelete?: boolean;
 }
 
-export default function ChatMessageBubble({ message }: Props) {
+export default function ChatMessageBubble({ message, onDeletePrompt, canDelete }: Props) {
   const [showThinking, setShowThinking] = useState(false);
   const hasThinking = Boolean(message.thinking?.trim());
   const hasContent = Boolean(message.content?.trim());
@@ -43,7 +45,17 @@ export default function ChatMessageBubble({ message }: Props) {
 
   switch (message.role) {
     case 'user': {
-      return <UserMessageBubble message={message} />;
+      return (
+        <UserMessageBubble
+          message={message}
+          onDelete={
+            canDelete && onDeletePrompt && message.id !== undefined
+              ? () => onDeletePrompt(message.id as string | number)
+              : undefined
+          }
+          disabled={!canDelete}
+        />
+      );
     }
     case 'tool': {
       return <ToolMessageBubble message={message} />;
