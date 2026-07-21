@@ -23,11 +23,53 @@ In practical terms, the app should no longer assume that every LLM backend behav
 The `ChatParams` / `StreamChatParams` interfaces define a provider-agnostic `maxOutputTokens` field. Adapters translate it as follows:
 
 - **Ollama adapter** (`ollamaAdapter.ts`): `maxOutputTokens` → `options.num_predict`
-- **OpenAI-compatible adapter** (`openaiCompatibleAdapter.ts`): `maxOutputTokens` → `max_completion_tokens`
+- **OpenAI-compatible adapter** (`openaiCompatibleAdapter.ts`): `maxOutputTokens` → `max_output_tokens` (Responses API field)
 
 Callers (e.g. web content compaction, history compaction/distillation, token measurement) should set `maxOutputTokens` instead of passing `options.num_predict`, `options.max_tokens`, or `options.max_completion_tokens`. The canonical field is always preferred; the legacy `options.*` keys remain available as a fallback for external/unconverted code.
 
 ## What Has Already Been Done
+
+### 12) Switched transport to the official `openai` npm SDK (Responses API)
+
+File:
+
+- `C:\git\Locopilot-dev\src\services\adapters\openaiCompatibleAdapter.ts`
+- `C:\git\Locopilot-dev\package.json`
+- `C:\git\Locopilot-dev\package-lock.json`
+
+**What changed:**
+
+The adapter no longer hand-builds `/v1/chat/completions` requests or manually parses SSE streams. Instead it constructs a per-request `OpenAI` client (from the `openai` npm package) and uses the **Responses API** (`client.responses.create()`).
+
+| Capability                      | Old implementation (chat completions)                          | New implementation (Responses API)                              |
+| ------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------- |
+| **Chat (non-streaming)**        | `POST /v1/chat/completions` → `OpenAIChatCompletionResponse`  | `client.responses.create()` → `Response`                        |
+| **Chat (streaming)**            | Manual SSE `data:` line parsing                                | `client.responses.create({ stream: true })` → `Stream<ResponseStreamEvent>` |
+| **Input format**                | `OpenAIMessage[]` (role/content/tool_calls)                   | `ResponseInputItem[]` (EasyInputMessage + FunctionCallOutput)    |
+| **Output format**               | `OpenAIChatCompletionResponse.choices[0].message`              | `Response.output` (ResponseOutputItem union)                    |
+| **Tool calls (streaming)**      | Accumulate `delta.tool_calls` by `index`                       | `response.function_call_arguments.delta` + `response.output_item.done` events |
+| **Reasoning text**              | `delta.reasoning_content`                                      | `response.reasoning_text.delta` events + `ResponseReasoningItem` |
+| **Token usage**                 | `usage.prompt_tokens` / `usage.completion_tokens`             | `Response.usage.input_tokens` / `output_tokens`                 |
+| **Error handling**              | `axios.isAxiosError()` + manual error body parsing             | `OpenAI.APIError` subclass detection                            |
+| **Auth**                        | `setApiKey(apiKey)` / `clearApiKey()` module-level axios       | Per-request `OpenAI` client with `apiKey` from `LlmRequestContext` |
+| **Model listing**               | `GET /v1/models` via axios (unchanged)                         | `GET /v1/models` via axios (unchanged)                          |
+
+**Key design decisions:**
+
+- A **fresh `OpenAI` client** is created per request (in `buildClient(ctx)`) so concurrent requests with different credentials never leak state. The `baseURL` is normalized to end with `/` (the SDK appends path segments).
+- When no `apiKey` is configured, a placeholder `'sk-placeholder'` is used because the SDK requires a non-empty string. This works with providers like Ollama and LM Studio that don't require authentication.
+- System messages are collected into the `instructions` field (a single string) rather than being placed in the `input` array, matching the Responses API convention.
+- Assistant messages and their tool calls are separate items in the `input` array: the message text as an `EasyInputMessage` with `role: 'assistant'`, followed by `ResponseFunctionToolCall` items.
+- Tool results are `ResponseInputItem.FunctionCallOutput` items with the matching `call_id`.
+- The orphaned-tool-message fallback (converting to `user` role) is preserved from the old adapter.
+- The `buildRequestClient` method now returns an axios client used only for model listing (`/v1/models`), which the SDK doesn't expose for custom endpoints.
+- The `setApiKey`/`clearApiKey` exports remain as deprecated no-op shims so legacy callers don't crash.
+
+**Why this matters:**
+
+- The adapter now delegates the OpenAI wire protocol to the official SDK instead of reimplementing it, reducing maintenance burden and automatically tracking spec changes.
+- The Responses API is the recommended endpoint for new OpenAI integrations and supports features (reasoning, structured outputs, built-in tools) that chat completions handles less cleanly.
+- The SDK's `Stream` type provides proper backpressure, abort signal integration, and error handling that the manual SSE parser lacked.
 
 ### 1) Added a provider field to config
 
