@@ -611,6 +611,13 @@ async function* streamResponseEvents(
         break;
       }
 
+      // Reasoning part completed — no delta to process, just a signal that
+      // the reasoning text block has finished.
+      case 'response.reasoning_text.done':
+      case 'response.reasoning_summary_text.done': {
+        break;
+      }
+
       default: {
         if (
           typeof (event as { type?: string }).type === 'string' &&
