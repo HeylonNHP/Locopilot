@@ -1035,7 +1035,10 @@ export async function POST(req: NextRequest): Promise<Response> {
           if (thinkEnabled !== undefined) {
             params.think = thinkEnabled;
           }
-          if (reasoningEffort !== undefined) {
+          // 'off' is the UI default and means "use the Thinking toggle";
+          // only forward explicit reasoning levels so the adapter can fall
+          // back to mapping thinkingEnabled -> reasoning effort.
+          if (reasoningEffort !== undefined && reasoningEffort !== 'off') {
             params.reasoningEffort = reasoningEffort;
           }
           if (visionSupported !== undefined) {
