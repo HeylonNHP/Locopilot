@@ -542,6 +542,27 @@ async function* streamResponseEvents(
         break;
       }
 
+      // Some providers emit completed summary parts instead of (or in addition
+      // to) deltas. Treat them the same as thinking text.
+      case 'response.reasoning_summary_part.added': {
+        const part = (event as { part?: { type: string; text?: string } }).part;
+        if (part?.type === 'summary_text' && part.text) {
+          accumulatedReasoning += part.text;
+          yieldedAnyChunk = true;
+          yield {
+            model: '',
+            created_at: new Date().toISOString(),
+            done: false,
+            message: {
+              role: 'assistant',
+              content: '',
+              thinking: part.text,
+            },
+          };
+        }
+        break;
+      }
+
       case 'response.function_call_arguments.delta': {
         const fcEvent = event as {
           delta: string;
@@ -582,6 +603,20 @@ async function* streamResponseEvents(
       case 'response.completed': {
         const completedEvent = event as { response: Response };
         finalResponse = completedEvent.response;
+        break;
+      }
+
+      default: {
+        if (
+          typeof (event as { type?: string }).type === 'string' &&
+          (event as { type?: string }).type!.includes('reasoning')
+        ) {
+          console.warn(
+            '[openaiCompatibleAdapter] unhandled reasoning event:',
+            (event as { type?: string }).type,
+            JSON.stringify(event).slice(0, 200)
+          );
+        }
         break;
       }
     }
@@ -731,11 +766,19 @@ function buildResponseParams(
       effort,
       ...(effort === 'none' ? {} : { summary: 'auto' as const }),
     };
-  } else if (params.think !== undefined && (!params.tools || params.tools.length === 0)) {
+  } else if (params.think !== undefined) {
+    // Fallback for the boolean Ollama-style Thinking toggle.
+    // Unlike the previous Chat Completions path, the Responses API supports
+    // reasoning alongside function tools, so we do not suppress it when tools
+    // are present. `false` explicitly disables reasoning with `effort: 'none'`.
     payload.reasoning = {
-      effort: params.think ? 'medium' : 'low',
-      summary: 'auto' as const,
+      effort: params.think ? 'medium' : 'none',
+      ...(params.think ? { summary: 'auto' as const } : {}),
     };
+  }
+
+  if (payload.reasoning) {
+    console.warn('[openaiCompatibleAdapter] reasoning payload:', JSON.stringify(payload.reasoning));
   }
 
   // Response format (JSON mode, structured output).

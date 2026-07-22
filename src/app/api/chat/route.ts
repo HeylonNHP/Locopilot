@@ -25,7 +25,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { DoneReason } from '@/app/lib/chatStore';
 import type { ToolDefinition } from '@/services/adapters/llmAdapter';
-import type { Config, ProviderConfig } from '@/types/chatConfig';
+import type { Config, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
 import {
   type ApprovalDecision,
@@ -233,12 +233,19 @@ export async function POST(req: NextRequest): Promise<Response> {
     typeof body.compactionProviderId === 'string' ? body.compactionProviderId : undefined;
   const think: boolean | undefined = body.think as boolean | undefined;
   const reasoningEffortRaw: unknown = body.reasoningEffort;
-  const reasoningEffort: 'off' | 'low' | 'medium' | 'high' | undefined =
-    reasoningEffortRaw === 'off' ||
-    reasoningEffortRaw === 'low' ||
-    reasoningEffortRaw === 'medium' ||
-    reasoningEffortRaw === 'high'
-      ? reasoningEffortRaw
+  const validReasoningEffort: string[] = [
+    'off',
+    'none',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+  ];
+  const reasoningEffort: ReasoningEffort | undefined =
+    typeof reasoningEffortRaw === 'string' &&
+    validReasoningEffort.includes(reasoningEffortRaw)
+      ? (reasoningEffortRaw as ReasoningEffort)
       : undefined;
   const chatTimeoutMs: number | undefined = body.chatTimeoutMs as number | undefined;
   const completionMode: string | undefined = body.completionMode as string | undefined;
