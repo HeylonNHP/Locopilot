@@ -503,6 +503,7 @@ async function* streamResponseEvents(
   let accumulatedReasoning = '';
   let finalResponse: Response | null = null;
   let yieldedAnyChunk = false;
+  let hasReasoningDeltas = false;
 
   for await (const event of stream) {
     switch (event.type) {
@@ -528,6 +529,7 @@ async function* streamResponseEvents(
       case 'response.reasoning_summary_text.delta': {
         const delta = (event as { delta: string }).delta;
         accumulatedReasoning += delta;
+        hasReasoningDeltas = true;
         yieldedAnyChunk = true;
         yield {
           model: '',
@@ -544,7 +546,10 @@ async function* streamResponseEvents(
 
       // Some providers emit completed summary parts instead of (or in addition
       // to) deltas. Treat them the same as thinking text.
+      // When deltas have already been received, skip the summary part to avoid
+      // double-accumulating the same reasoning text.
       case 'response.reasoning_summary_part.added': {
+        if (hasReasoningDeltas) break;
         const part = (event as { part?: { type: string; text?: string } }).part;
         if (part?.type === 'summary_text' && part.text) {
           accumulatedReasoning += part.text;
@@ -629,7 +634,11 @@ async function* streamResponseEvents(
     return;
   }
 
-  // Yield the final done chunk with accumulated content and usage.
+  // Yield the final done chunk with usage and metadata only.
+  // Content and thinking are NOT included — they were already streamed
+  // piece-by-piece via delta events, and the consumer appends every chunk's
+  // content/thinking to its own accumulators. Re-sending the full text here
+  // would double everything in the final output.
   if (finalResponse) {
     const toolCalls = finalizeToolCalls(toolCallAccumulator);
     const doneReason = finalResponse.status === 'completed'
@@ -649,8 +658,7 @@ async function* streamResponseEvents(
       ...(doneReason ? { done_reason: doneReason } : {}),
       message: {
         role: 'assistant',
-        content: accumulatedContent,
-        ...(accumulatedReasoning ? { thinking: accumulatedReasoning } : {}),
+        content: '',
         ...(toolCalls && toolCalls.length > 0
           ? { tool_calls: toolCalls as unknown as [ToolCall, ...ToolCall[]] }
           : {}),
