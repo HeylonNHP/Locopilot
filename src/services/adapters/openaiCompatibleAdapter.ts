@@ -734,7 +734,16 @@ function buildResponseParams(
 
   // Response format (JSON mode, structured output).
   if (params.format !== undefined) {
-    payload.text = { format: params.format } as unknown as ResponseTextConfig;
+    if (typeof params.format === 'string') {
+      // Map legacy string values to the proper object format.
+      payload.text = params.format === 'json' ? { format: { type: 'json_object' } } : { format: { type: 'text' } };
+    } else {
+      // Record<string, unknown> — assume it's a JSON schema config.
+      // Cast through unknown first to satisfy TypeScript's structural typing.
+      payload.text = {
+        format: params.format as unknown as NonNullable<ResponseTextConfig['format']>,
+      };
+    }
   }
 
   return payload;
