@@ -229,6 +229,7 @@ function toResponseInputItems(
       const item: EasyInputMessage = {
         role: 'user',
         content,
+        type: 'message',
       };
       input.push(item as ResponseInputItem);
       continue;
@@ -242,6 +243,7 @@ function toResponseInputItems(
       const assistantItem: EasyInputMessage = {
         role: 'assistant',
         content,
+        type: 'message',
       };
       input.push(assistantItem as ResponseInputItem);
 
@@ -283,6 +285,7 @@ function toResponseInputItems(
         const item: EasyInputMessage = {
           role: 'user',
           content: msg.content || '',
+          type: 'message',
         };
         input.push(item as ResponseInputItem);
         continue;
@@ -306,6 +309,7 @@ function toResponseInputItems(
         const item: EasyInputMessage = {
           role: 'user',
           content: msg.content || '',
+          type: 'message',
         };
         input.push(item as ResponseInputItem);
         continue;
