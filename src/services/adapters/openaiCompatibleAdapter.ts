@@ -255,7 +255,6 @@ function toResponseInputItems(
             name: tc.function.name,
             arguments: JSON.stringify(tc.function.arguments),
             type: 'function_call',
-            id: tc.id || `call_fallback_${i}`,
             status: 'completed',
           };
           input.push(toolCallItem);
