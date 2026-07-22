@@ -880,12 +880,13 @@ async function* sendOpenAICompatibleChatStream(
 
   let stream: Stream<ResponseStreamEvent>;
   try {
+    const requestOptions: Record<string, unknown> = {};
+    if (params.signal) requestOptions.signal = params.signal;
+    if (params.timeoutMs !== undefined) requestOptions.timeout = params.timeoutMs;
+
     stream = (await client.responses.create(
       { ...payload, stream: true } as Parameters<typeof client.responses.create>[0],
-      {
-        signal: params.signal,
-        timeout: params.timeoutMs,
-      } as Parameters<typeof client.responses.create>[1]
+      requestOptions as Parameters<typeof client.responses.create>[1]
     )) as unknown as Stream<ResponseStreamEvent>;
   } catch (err) {
     await writeDebugDump('400', ctx.baseUrl, params.model, payload, err);
