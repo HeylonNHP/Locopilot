@@ -321,7 +321,6 @@ function toResponseInputItems(
         type: 'function_call_output',
       };
       input.push(toolOutput);
-      continue;
     }
   }
 
@@ -523,7 +522,10 @@ async function* streamResponseEvents(
         break;
       }
 
-      case 'response.reasoning_text.delta': {
+      // The API emits either raw reasoning deltas or visible summary deltas
+      // depending on the provider. Accumulate both as thinking text.
+      case 'response.reasoning_text.delta':
+      case 'response.reasoning_summary_text.delta': {
         const delta = (event as { delta: string }).delta;
         accumulatedReasoning += delta;
         yieldedAnyChunk = true;
@@ -721,13 +723,18 @@ function buildResponseParams(
   }
 
   // Reasoning effort — maps to the `reasoning.effort` field.
+  // `summary: 'auto'` asks the Responses API to return visible reasoning text
+  // instead of encrypted reasoning tokens.
   if (params.reasoningEffort !== undefined) {
+    const effort = params.reasoningEffort === 'off' ? 'none' : params.reasoningEffort;
     payload.reasoning = {
-      effort: params.reasoningEffort === 'off' ? 'none' : params.reasoningEffort,
+      effort,
+      ...(effort === 'none' ? {} : { summary: 'auto' as const }),
     };
   } else if (params.think !== undefined && (!params.tools || params.tools.length === 0)) {
     payload.reasoning = {
       effort: params.think ? 'medium' : 'low',
+      summary: 'auto' as const,
     };
   }
 
