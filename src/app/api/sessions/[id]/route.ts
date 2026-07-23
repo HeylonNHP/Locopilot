@@ -33,7 +33,12 @@ export async function GET(
     const messagesForCounting = messages.filter((m): m is ChatMessage => m.role !== 'subagent_log');
     const estimatedTokens =
       messagesForCounting.length > 0 ? countMessagesTokens(messagesForCounting, session.model) : 0;
-    return NextResponse.json({ session, messages, estimatedTokens });
+    const lastTokenStats = {
+      promptEvalCount: session.last_prompt_eval_count,
+      evalCount: session.last_eval_count,
+      totalTokens: session.last_total_tokens,
+    };
+    return NextResponse.json({ session, messages, estimatedTokens, lastTokenStats });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: `Failed to load session: ${message}` }, { status: 500 });

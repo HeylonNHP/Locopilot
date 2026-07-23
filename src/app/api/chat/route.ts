@@ -131,10 +131,15 @@ function messagesEqual(a: PersistedChatMessage, b: PersistedChatMessage): boolea
     );
   }
   if (a.role === 'tool' || b.role === 'tool') {
-    return (
-      (a as { role: 'tool'; tool_call_id?: string }).tool_call_id ===
-      (b as { role: 'tool'; tool_call_id?: string }).tool_call_id
-    );
+    // Tool messages are identified by tool_call_id. Content is already
+    // compared above, but we repeat the check here so this branch is
+    // self-contained and defensive against display-only client artifacts
+    // that may share a position but have a different payload.
+    const aTool = a as { role: 'tool'; tool_call_id?: string; content: string };
+    const bTool = b as { role: 'tool'; tool_call_id?: string; content: string };
+    if (aTool.tool_call_id !== bTool.tool_call_id) return false;
+    if (aTool.content !== bTool.content) return false;
+    return true;
   }
   const aMsg = a as ChatMessage;
   const bMsg = b as ChatMessage;
@@ -228,7 +233,8 @@ export async function POST(req: NextRequest): Promise<Response> {
   const numCtx: number | undefined = body.numCtx as number | undefined;
   const sessionId: number | undefined = body.sessionId as number | undefined;
   const baseUrl: string | undefined = body.baseUrl as string | undefined;
-  const providerId: string | undefined = typeof body.providerId === 'string' ? body.providerId : undefined;
+  const providerId: string | undefined =
+    typeof body.providerId === 'string' ? body.providerId : undefined;
   const compactionProviderId: string | undefined =
     typeof body.compactionProviderId === 'string' ? body.compactionProviderId : undefined;
   const think: boolean | undefined = body.think as boolean | undefined;
@@ -243,8 +249,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     'xhigh',
   ];
   const reasoningEffort: ReasoningEffort | undefined =
-    typeof reasoningEffortRaw === 'string' &&
-    validReasoningEffort.includes(reasoningEffortRaw)
+    typeof reasoningEffortRaw === 'string' && validReasoningEffort.includes(reasoningEffortRaw)
       ? (reasoningEffortRaw as ReasoningEffort)
       : undefined;
   const chatTimeoutMs: number | undefined = body.chatTimeoutMs as number | undefined;
@@ -330,7 +335,6 @@ export async function POST(req: NextRequest): Promise<Response> {
   const thinkEnabled = typeof think === 'boolean' ? think : undefined;
 
   // ── SSE streaming setup ───────────────────────────────────────────
-
 
   const stream = new ReadableStream({
     async start(controller): Promise<void> {
@@ -607,7 +611,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         let requestContext: RequestContext;
         let disabledSubAgent: string[] = [];
 
-        const buildRequestContext = (config: Config | null, activeProv: ProviderConfig | null): RequestContext => {
+        const buildRequestContext = (
+          config: Config | null,
+          activeProv: ProviderConfig | null
+        ): RequestContext => {
           const disabledMain = config?.tools?.disabledMain ?? [];
           disabledSubAgent = config?.tools?.disabledSubAgent ?? [];
           const providerSettings = activeProv
@@ -737,14 +744,20 @@ export async function POST(req: NextRequest): Promise<Response> {
           // for this turn, falling back to the active provider's
           // numCtx, then the global config.numCtx, then DEFAULT_NUM_CTX.
           {
-            const providerRequested = activeProvider ? getProviderNumCtx(activeProvider, config?.numCtx) : undefined;
+            const providerRequested = activeProvider
+              ? getProviderNumCtx(activeProvider, config?.numCtx)
+              : undefined;
             const configRequested = config?.numCtx;
             const requested =
               typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
                 ? Math.floor(numCtx)
-                : providerRequested !== undefined && Number.isFinite(providerRequested) && providerRequested > 0
+                : providerRequested !== undefined &&
+                    Number.isFinite(providerRequested) &&
+                    providerRequested > 0
                   ? providerRequested
-                  : typeof configRequested === 'number' && Number.isFinite(configRequested) && configRequested > 0
+                  : typeof configRequested === 'number' &&
+                      Number.isFinite(configRequested) &&
+                      configRequested > 0
                     ? Math.floor(configRequested)
                     : requestedNumCtx;
             try {
@@ -921,7 +934,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                     ? compactionProviderId.trim()
                     : undefined;
                 const compactionResolved = explicitCompactionProviderId
-                  ? resolveProviderRequestContext(config, explicitCompactionProviderId, effectiveCompactionModel)
+                  ? resolveProviderRequestContext(
+                      config,
+                      explicitCompactionProviderId,
+                      effectiveCompactionModel
+                    )
                   : null;
                 const autoCompactCtx = compactionResolved?.ctx ?? llmRequestContext;
                 const autoCompactNumCtx = compactionResolved
@@ -951,6 +968,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                   preservedSystemMessage,
                   ...compactResult.newMessages
                 );
+                // Persist compacted history so the frontend sees the reduced state.
+                pendingReplace = [...currentMessages];
                 // LLM-only nudge – not sent to the client and not persisted.
                 currentMessages.push({
                   role: 'user',
@@ -958,8 +977,6 @@ export async function POST(req: NextRequest): Promise<Response> {
                     'The conversation history was automatically compacted due to context length. ' +
                     'Please continue working on the original task without asking for confirmation.',
                 });
-                // Persist compacted history so the frontend sees the reduced state.
-                pendingReplace = [...currentMessages];
                 const flushResult = await flushSessionState();
                 if (!flushResult.ok) {
                   persistedOk = false;
@@ -1904,7 +1921,11 @@ export async function POST(req: NextRequest): Promise<Response> {
         if (discoveredLimit !== null && discoveredLimit !== effectiveNumCtx) {
           effectiveNumCtx = discoveredLimit;
           modelContextLimit = discoveredLimit;
-          recordDiscoveredCap(activeProvider?.baseUrl ?? effectiveBaseUrl, model as string, discoveredLimit);
+          recordDiscoveredCap(
+            activeProvider?.baseUrl ?? effectiveBaseUrl,
+            model as string,
+            discoveredLimit
+          );
           try {
             sendEvent('status', {
               phase: 'context_limit_adjusted',

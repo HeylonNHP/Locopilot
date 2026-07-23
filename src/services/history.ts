@@ -211,7 +211,18 @@ export function updateSessionMessages(
 ): void {
   // Strip system messages before persisting — the system prompt is always
   // injected on-the-fly and should never be stored in the database.
-  const persistableMessages = messages.filter((m) => m.role !== 'system');
+  // Also drop display-only tool messages that have no real tool_call_id.
+  // Those rows are client-side artifacts created by the 'tool_call' and
+  // 'tool_progress' SSE handlers and are not part of the LLM protocol.
+  const persistableMessages = messages.filter((m) => {
+    if (m.role === 'system') return false;
+    if (
+      m.role === 'tool' &&
+      (m.tool_call_id === null || m.tool_call_id === undefined || m.tool_call_id === '')
+    )
+      return false;
+    return true;
+  });
 
   const run = db.transaction(() => {
     // Insert new messages into a temp staging table first, so the
@@ -447,15 +458,27 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     return sanitizeChatMessage(msg);
   });
 
+  // Drop display-only tool messages that were incorrectly persisted by
+  // earlier versions. Real tool results always carry a non-empty
+  // tool_call_id; empty/missing ids are client-side UI artifacts created by
+  // the 'tool_call' / 'tool_progress' / 'tool_result' SSE handlers.
+  const cleaned = loaded.filter((m) => {
+    if (m.role !== 'tool') return true;
+    return m.tool_call_id !== null && m.tool_call_id !== undefined && m.tool_call_id !== '';
+  });
+  const droppedCount = loaded.length - cleaned.length;
+
   debugLog.debug('load-summary', {
     sessionId,
     totalLoaded: loaded.length,
+    totalReturned: cleaned.length,
+    droppedDisplayOnlyToolCount: droppedCount,
     toolMessageCount: loadToolCount,
     toolMessagesWithEmptyToolCallId: loadToolEmptyCallIdCount,
     toolMessagesWithToolCallId: loadToolCount - loadToolEmptyCallIdCount,
   });
 
-  return loaded;
+  return cleaned;
 }
 
 /**

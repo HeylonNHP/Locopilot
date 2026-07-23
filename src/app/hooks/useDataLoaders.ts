@@ -87,7 +87,59 @@ export function useDataLoaders(refs: StableRefs) {
         // status bar uses the user's requested value as the
         // tokenLimit display, with the actual cap resolution
         // happening on the server.
-        if (data.estimatedTokens !== null && data.estimatedTokens !== undefined) {
+        // Prefer actual provider token stats persisted on the session;
+        // only fall back to the heuristic estimate when no real stats exist.
+        const explicitStats = data.lastTokenStats;
+        const hasExplicitStats =
+          explicitStats &&
+          explicitStats.totalTokens !== undefined &&
+          explicitStats.totalTokens !== null &&
+          explicitStats.promptEvalCount !== undefined &&
+          explicitStats.promptEvalCount !== null &&
+          explicitStats.evalCount !== undefined &&
+          explicitStats.evalCount !== null;
+
+        const sessionStats = data.session;
+        const hasSessionStats =
+          sessionStats &&
+          sessionStats.last_total_tokens !== undefined &&
+          sessionStats.last_total_tokens !== null &&
+          sessionStats.last_prompt_eval_count !== undefined &&
+          sessionStats.last_prompt_eval_count !== null &&
+          sessionStats.last_eval_count !== undefined &&
+          sessionStats.last_eval_count !== null;
+
+        if (hasExplicitStats) {
+          // Until the next chat turn's status event arrives, display
+          // the user's requested value as the tokenLimit. The
+          // chat route's `resolveEffectiveNumCtx` will re-resolve the
+          // real cap on the next request and emit it via SSE.
+          const tokenLimit = refs.requestedNumCtxRef.current;
+          dispatch({
+            type: 'SET_TOKEN_STATS',
+            stats: {
+              promptEvalCount: explicitStats.promptEvalCount,
+              evalCount: explicitStats.evalCount,
+              totalTokens: explicitStats.totalTokens,
+              tokenLimit,
+              isEstimated: false,
+            },
+            targetSessionId: sessionId,
+          });
+        } else if (hasSessionStats) {
+          const tokenLimit = refs.requestedNumCtxRef.current;
+          dispatch({
+            type: 'SET_TOKEN_STATS',
+            stats: {
+              promptEvalCount: sessionStats.last_prompt_eval_count,
+              evalCount: sessionStats.last_eval_count,
+              totalTokens: sessionStats.last_total_tokens,
+              tokenLimit,
+              isEstimated: false,
+            },
+            targetSessionId: sessionId,
+          });
+        } else if (data.estimatedTokens !== null && data.estimatedTokens !== undefined) {
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
@@ -99,28 +151,8 @@ export function useDataLoaders(refs: StableRefs) {
             },
             targetSessionId: sessionId,
           });
-        } else if (
-          data.session?.last_total_tokens &&
-          data.session?.last_prompt_eval_count !== undefined &&
-          data.session?.last_eval_count !== undefined
-        ) {
-          // Until the next chat turn's status event arrives, display
-          // the user's requested value as the tokenLimit. The
-          // chat route's `resolveEffectiveNumCtx` will re-resolve the
-          // real cap on the next request and emit it via SSE.
-          const tokenLimit = refs.requestedNumCtxRef.current;
-          dispatch({
-            type: 'SET_TOKEN_STATS',
-            stats: {
-              promptEvalCount: data.session.last_prompt_eval_count ?? 0,
-              evalCount: data.session.last_eval_count ?? 0,
-              totalTokens: data.session.last_total_tokens ?? 0,
-              tokenLimit,
-            },
-            targetSessionId: sessionId,
-          });
         } else {
-          dispatch({ type: 'CLEAR_TOKEN_STATS' });
+          dispatch({ type: 'CLEAR_TOKEN_STATS', targetSessionId: sessionId });
         }
       } catch {
         // Silently ignore
