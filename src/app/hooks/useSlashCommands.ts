@@ -291,7 +291,9 @@ export function useSlashCommands({
           if (args) {
             const matched = availableModels.find((m) => {
               const name = typeof m === 'string' ? m : m.name;
-              return name.toLowerCase() === args.toLowerCase();
+              const displayName = typeof m === 'string' ? undefined : m.displayName;
+              const term = args.toLowerCase();
+              return name.toLowerCase() === term || displayName?.toLowerCase() === term;
             });
             if (matched) {
               const modelName = typeof matched === 'string' ? matched : matched.name;
@@ -305,12 +307,16 @@ export function useSlashCommands({
               } catch {
                 // Ignore save errors
               }
-              addSystem(`Model set to ${modelName}`);
+              addSystem(`Model set to ${typeof matched === 'string' ? matched : (matched.displayName ?? matched.name)}`);
             } else {
               addSystem(`Model "${args}" not found. Use /model to see available models.`);
             }
           } else {
-            const modelNames = availableModels.map((m) => (typeof m === 'string' ? m : m.name));
+            const modelNames = availableModels.map((m) =>
+              typeof m === 'string'
+                ? m
+                : `${m.displayName ?? m.name}${m.displayName ? ` (${m.name})` : ''}`
+            );
             addSystem(
               `Available models:\n${
                 modelNames.length > 0
@@ -319,11 +325,10 @@ export function useSlashCommands({
               }`
             );
           }
-          return;
+           return;
         }
 
-        case 'compact': {
-          const currentMessages = refs.messagesRef.current;
+        case 'compact': {          const currentMessages = refs.messagesRef.current;
           if (isCurrentSessionStreaming) {
             addSystem('Stop the current response before running /compact.');
             return;

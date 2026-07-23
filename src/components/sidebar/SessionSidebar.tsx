@@ -148,7 +148,7 @@ export default function SessionSidebar({
         )}
       </div>
       <div onClick={onSettings} className="sidebar-footer" title="Click to open settings">
-        {state.model && <div>Model: {state.model}</div>}
+        {state.model && <div>Model: {state.models.find((m) => m.name === state.model)?.displayName ?? state.model}</div>}
         {!state.model && <div>No model selected</div>}
       </div>
     </div>

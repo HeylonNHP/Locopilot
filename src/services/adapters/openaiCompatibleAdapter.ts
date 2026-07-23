@@ -695,10 +695,18 @@ async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmM
     }>;
   }>(`${ctx.baseUrl.replace(/\/+$/, '')}/v1/models`);
   return (response.data.data ?? []).map((model) => {
-    const { id, object: _object, created: _created, owned_by, ...extra } = model;
+    const {
+      id,
+      object: _object,
+      created: _created,
+      owned_by,
+      name: displayName,
+      ...extra
+    } = model;
     return {
       name: id,
       model: id,
+      displayName: typeof displayName === 'string' ? displayName : id,
       details: {
         ...(owned_by ? { parent_model: owned_by } : {}),
       },

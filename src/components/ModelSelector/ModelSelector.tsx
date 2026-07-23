@@ -106,7 +106,13 @@ export default function ModelSelector({
   const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 420 });
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const filteredModels = models.filter((m) => m.name.toLowerCase().includes(search.toLowerCase()));
+  const filteredModels = models.filter((m) => {
+    const term = search.toLowerCase();
+    return (
+      m.name.toLowerCase().includes(term) ||
+      (m.displayName ?? '').toLowerCase().includes(term)
+    );
+  });
 
   // Position the dropdown above the anchor when opened, centred horizontally.
   // We measure in a layout effect to avoid a flash of wrong position, and
@@ -345,8 +351,8 @@ export default function ModelSelector({
                     onClick={() => handleSelect(m.name, m.providerId)}
                     title={
                       capabilityBadges.length > 0
-                        ? `${m.name} (${capabilityBadges.join(', ')})`
-                        : m.name
+                        ? `${m.displayName ?? m.name} (${capabilityBadges.join(', ')})`
+                        : (m.displayName ?? m.name)
                     }
                   >
                 <span className="model-selector-check">
@@ -363,7 +369,7 @@ export default function ModelSelector({
                   )}
                 </span>
                 <span className="model-selector-content">
-                  <span className="model-selector-name">{m.name}</span>
+                  <span className="model-selector-name">{m.displayName ?? m.name}</span>
                   {capabilityBadges.length > 0 && (
                     <span
                       className="model-selector-badges"

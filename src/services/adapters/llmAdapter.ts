@@ -178,6 +178,8 @@ export interface LlmModelInfo {
 
 export interface LlmModel {
   name: string;
+  /** Human-readable label to show in the UI (e.g. OpenRouter's `name`). */
+  displayName?: string;
   model?: string;
   modified_at?: string;
   size?: number;

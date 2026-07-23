@@ -168,8 +168,8 @@ export default function SettingsModal({ onClose }: Props) {
               >
                 <option value="">Select a model...</option>
                 {(state.models ?? []).map((m) => (
-                  <option key={m.name} value={m.name}>
-                    {m.name}
+                  <option key={m.name} value={m.name} title={m.name}>
+                    {m.displayName ?? m.name}
                   </option>
                 ))}
               </select>
@@ -184,8 +184,8 @@ export default function SettingsModal({ onClose }: Props) {
               >
                 <option value="">Same as main model</option>
                 {(state.models ?? []).map((m) => (
-                  <option key={m.name} value={m.name}>
-                    {m.name}
+                  <option key={m.name} value={m.name} title={m.name}>
+                    {m.displayName ?? m.name}
                   </option>
                 ))}
               </select>

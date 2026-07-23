@@ -78,6 +78,8 @@ export interface Session {
 
 export interface LLmModel {
   name: string;
+  /** Human-readable label to show in the UI (e.g. OpenRouter's friendly model name). */
+  displayName?: string;
   modified_at?: string;
   size?: number;
   capabilities?: string[];
