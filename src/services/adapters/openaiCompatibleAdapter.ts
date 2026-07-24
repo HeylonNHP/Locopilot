@@ -17,6 +17,7 @@ import type {
 import type { Stream } from 'openai/streaming';
 
 import { debugLog } from '@/app/lib/debugLogger';
+import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
 import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
 
 import type {
@@ -159,13 +160,19 @@ function stripDescriptions(obj: unknown): unknown {
  */
 function buildUserContent(
   message: ChatMessage
-): string | Array<{ type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail: 'auto' }> {
+):
+  | string
+  | Array<
+      | { type: 'input_text'; text: string }
+      | { type: 'input_image'; image_url: string; detail: 'auto' }
+    > {
   if (!message.images || message.images.length === 0) {
     return message.content;
   }
 
   const parts: Array<
-    { type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail: 'auto' }
+    | { type: 'input_text'; text: string }
+    | { type: 'input_image'; image_url: string; detail: 'auto' }
   > = [{ type: 'input_text', text: message.content }];
 
   for (const imageBase64 of message.images) {
@@ -189,9 +196,10 @@ function buildUserContent(
  * Tool calls from the assistant become ResponseFunctionToolCall items.
  * Tool results become FunctionCallOutput items.
  */
-function toResponseInputItems(
-  messages: ChatMessage[]
-): { instructions: string | null; input: ResponseInputItem[] } {
+function toResponseInputItems(messages: ChatMessage[]): {
+  instructions: string | null;
+  input: ResponseInputItem[];
+} {
   const instructions: string[] = [];
   const input: ResponseInputItem[] = [];
 
@@ -329,7 +337,10 @@ function toResponseInputItems(
     input,
   };
 
-  debugLog.messageArraySummary('toResponseInputItems: output items', input as unknown as ChatMessage[]);
+  debugLog.messageArraySummary(
+    'toResponseInputItems: output items',
+    input as unknown as ChatMessage[]
+  );
   return result;
 }
 
@@ -429,7 +440,9 @@ function toChatApiResponse(response: Response): ChatApiResponse {
 
   return {
     model: response.model,
-    created_at: new Date((response.created_at ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+    created_at: new Date(
+      (response.created_at ?? Math.floor(Date.now() / 1000)) * 1000
+    ).toISOString(),
     done: true,
     ...(doneReason ? { done_reason: doneReason } : {}),
     message: {
@@ -499,8 +512,8 @@ async function* streamResponseEvents(
   stream: Stream<ResponseStreamEvent>
 ): AsyncGenerator<ChatApiResponse> {
   const toolCallAccumulator = new Map<number, PartialToolCall>();
-  let accumulatedContent = '';
-  let accumulatedReasoning = '';
+  let _accumulatedContent = '';
+  let _accumulatedReasoning = '';
   let finalResponse: Response | null = null;
   let yieldedAnyChunk = false;
   let hasReasoningDeltas = false;
@@ -509,7 +522,7 @@ async function* streamResponseEvents(
     switch (event.type) {
       case 'response.output_text.delta': {
         const delta = (event as { delta: string }).delta;
-        accumulatedContent += delta;
+        _accumulatedContent += delta;
         yieldedAnyChunk = true;
         yield {
           model: '',
@@ -528,7 +541,7 @@ async function* streamResponseEvents(
       case 'response.reasoning_text.delta':
       case 'response.reasoning_summary_text.delta': {
         const delta = (event as { delta: string }).delta;
-        accumulatedReasoning += delta;
+        _accumulatedReasoning += delta;
         hasReasoningDeltas = true;
         yieldedAnyChunk = true;
         yield {
@@ -552,7 +565,7 @@ async function* streamResponseEvents(
         if (hasReasoningDeltas) break;
         const part = (event as { part?: { type: string; text?: string } }).part;
         if (part?.type === 'summary_text' && part.text) {
-          accumulatedReasoning += part.text;
+          _accumulatedReasoning += part.text;
           yieldedAnyChunk = true;
           yield {
             model: '',
@@ -648,13 +661,14 @@ async function* streamResponseEvents(
   // would double everything in the final output.
   if (finalResponse) {
     const toolCalls = finalizeToolCalls(toolCallAccumulator);
-    const doneReason = finalResponse.status === 'completed'
-      ? 'stop'
-      : finalResponse.status === 'incomplete'
-        ? finalResponse.incomplete_details?.reason || 'length'
-        : finalResponse.status === 'failed'
-          ? 'error'
-          : undefined;
+    const doneReason =
+      finalResponse.status === 'completed'
+        ? 'stop'
+        : finalResponse.status === 'incomplete'
+          ? finalResponse.incomplete_details?.reason || 'length'
+          : finalResponse.status === 'failed'
+            ? 'error'
+            : undefined;
 
     yield {
       model: finalResponse.model,
@@ -680,9 +694,90 @@ async function* streamResponseEvents(
   }
 }
 
+// ── Models cache ───────────────────────────────────────────────────────────
+// `fetchOpenAICompatibleModels` is called once per model by the /api/models
+// route (via fetchLlmModelInfo), plus once for the initial list fetch. Without
+// caching this produces N+1 identical /v1/models requests. The cache is keyed
+// by provider URL + API key and invalidated manually on config changes.
+
+const MODELS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface ModelsCacheEntry {
+  models: LlmModel[];
+  expiresAt: number;
+}
+
+const modelsCache = new Map<string, ModelsCacheEntry>();
+
+function modelsCacheKey(baseUrl: string, apiKey: string | undefined): string {
+  return `${baseUrl}\0${apiKey ?? ''}`;
+}
+
+function getCachedModels(
+  baseUrl: string,
+  apiKey: string | undefined,
+  now: number
+): LlmModel[] | undefined {
+  const entry = modelsCache.get(modelsCacheKey(baseUrl, apiKey));
+  if (!entry) return undefined;
+  if (entry.expiresAt <= now) return undefined;
+  return entry.models;
+}
+
+function setCachedModels(
+  baseUrl: string,
+  apiKey: string | undefined,
+  models: LlmModel[],
+  now: number
+): void {
+  modelsCache.set(modelsCacheKey(baseUrl, apiKey), {
+    models,
+    expiresAt: now + MODELS_CACHE_TTL_MS,
+  });
+}
+
+/** Drop every cached /v1/models entry. */
+export function clearOpenAICompatibleModelsCache(): void {
+  modelsCache.clear();
+}
+
+/**
+ * Invalidate the cached /v1/models response so the next call re-fetches.
+ *
+ * - If both `baseUrl` and `apiKey` are provided, only that combination is
+ *   removed.
+ * - If only `baseUrl` is provided, all entries for that URL are removed.
+ * - If neither is provided, the entire cache is cleared.
+ */
+export function invalidateOpenAICompatibleModelsCache(baseUrl?: string, apiKey?: string): void {
+  if (baseUrl) {
+    if (apiKey !== undefined) {
+      modelsCache.delete(modelsCacheKey(baseUrl, apiKey));
+      return;
+    }
+
+    const prefix = `${baseUrl}\0`;
+    for (const key of modelsCache.keys()) {
+      if (key.startsWith(prefix)) {
+        modelsCache.delete(key);
+      }
+    }
+    return;
+  }
+
+  modelsCache.clear();
+}
+
 // ── API methods ────────────────────────────────────────────────────────────
 
 async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmModel[]> {
+  const normalizedBaseUrl = ctx.baseUrl.replace(/\/+$/, '');
+  const now = Date.now();
+  const cached = getCachedModels(normalizedBaseUrl, ctx.apiKey, now);
+  if (cached) {
+    return cached;
+  }
+
   const client = buildAxiosClient(ctx);
   const response = await client.get<{
     object: string;
@@ -693,16 +788,9 @@ async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmM
       owned_by: string;
       [key: string]: unknown;
     }>;
-  }>(`${ctx.baseUrl.replace(/\/+$/, '')}/v1/models`);
-  return (response.data.data ?? []).map((model) => {
-    const {
-      id,
-      object: _object,
-      created: _created,
-      owned_by,
-      name: displayName,
-      ...extra
-    } = model;
+  }>(`${normalizedBaseUrl}/v1/models`, { timeout: DEFAULT_WEB_REQUEST_TIMEOUT_MS });
+  const models = (response.data.data ?? []).map((model) => {
+    const { id, object: _object, created: _created, owned_by, name: displayName, ...extra } = model;
     return {
       name: id,
       model: id,
@@ -713,6 +801,9 @@ async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmM
       ...extra,
     };
   });
+
+  setCachedModels(normalizedBaseUrl, ctx.apiKey, models, now);
+  return models;
 }
 
 async function fetchOpenAICompatibleModelInfo(
@@ -740,10 +831,7 @@ async function fetchOpenAICompatibleModelInfo(
 
 // ── Chat ───────────────────────────────────────────────────────────────────
 
-function buildResponseParams(
-  params: ChatParams,
-  stream: boolean
-): ResponseCreateParamsBase {
+function buildResponseParams(params: ChatParams, stream: boolean): ResponseCreateParamsBase {
   const effectiveMessages =
     params.visionSupported === false ? stripImagesFromMessages(params.messages) : params.messages;
 
@@ -808,7 +896,10 @@ function buildResponseParams(
   if (params.format !== undefined) {
     if (typeof params.format === 'string') {
       // Map legacy string values to the proper object format.
-      payload.text = params.format === 'json' ? { format: { type: 'json_object' } } : { format: { type: 'text' } };
+      payload.text =
+        params.format === 'json'
+          ? { format: { type: 'json_object' } }
+          : { format: { type: 'text' } };
     } else {
       // Record<string, unknown> — assume it's a JSON schema config.
       // Cast through unknown first to satisfy TypeScript's structural typing.

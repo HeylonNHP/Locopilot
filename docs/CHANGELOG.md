@@ -18,6 +18,10 @@ When adding a new entry:
 
 ---
 
+- 2026-07-24: Fixed slow `/api/models` by caching OpenAI-compatible model lists and adding request timeouts
+  - Files: `src/services/adapters/openaiCompatibleAdapter.ts`, `src/services/adapters/ollamaAdapter.ts`, `src/app/api/config/route.ts`
+  - Summary: The `/api/models` route was taking ~2.6 minutes because `fetchOpenAICompatibleModelInfo` re-fetched `/v1/models` once per model, producing N+1 identical HTTP calls. Added a 5-minute TTL module-level cache keyed by `(baseUrl, apiKey)` to `fetchOpenAICompatibleModels`, matching the existing `capResolver.ts`/`visionCache.ts` cache patterns. Added `invalidateOpenAICompatibleModelsCache(baseUrl?, apiKey?)` and wired it into `PUT /api/config` alongside `invalidateCapCache`/`invalidateVisionCache` so provider/baseUrl/API-key changes clear stale model lists. Also added the existing `DEFAULT_WEB_REQUEST_TIMEOUT_MS` (15 s) timeout to the OpenAI-compatible `/v1/models` fetch and to Ollama's `/api/tags` and `/api/show` calls, preventing indefinite hangs.
+
 ---
 
 - 2026-07-21: Migrated OpenAI-compatible adapter to the official `openai` npm SDK (Responses API)
