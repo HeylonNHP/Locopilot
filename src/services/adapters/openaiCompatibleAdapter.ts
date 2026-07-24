@@ -781,22 +781,16 @@ async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmM
   // Check cache first.
   const cached = getCachedModels(normalizedBaseUrl, ctx.apiKey, now);
   if (cached) {
-    console.warn(`[openaiAdapter] models cache hit for ${normalizedBaseUrl}`);
     return cached;
   }
 
   // Deduplicate concurrent in-flight requests.
   const inflight = modelsInflight.get(key);
   if (inflight) {
-    console.warn(
-      `[openaiAdapter] models request already in-flight for ${normalizedBaseUrl}, awaiting...`
-    );
     return inflight;
   }
 
-  console.warn(`[openaiAdapter] models cache miss for ${normalizedBaseUrl}, fetching...`);
   const client = buildAxiosClient(ctx);
-  const t0 = Date.now();
   const fetchPromise = (async () => {
     try {
       const response = await client.get<{
@@ -809,9 +803,6 @@ async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmM
           [key: string]: unknown;
         }>;
       }>(`${normalizedBaseUrl}/v1/models`, { timeout: MODEL_LIST_TIMEOUT_MS });
-      console.warn(
-        `[openaiAdapter] /v1/models responded in ${Date.now() - t0}ms for ${normalizedBaseUrl}`
-      );
       const models = (response.data.data ?? []).map((model) => {
         const {
           id,

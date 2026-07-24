@@ -56,11 +56,7 @@ export async function GET(): Promise<NextResponse> {
       });
 
       try {
-        const t0 = Date.now();
         const models = await fetchLlmModels(llmRequestContext);
-        const t1 = Date.now();
-        console.warn(`[models] fetchLlmModels returned ${models.length} models in ${t1 - t0}ms`);
-        const t2 = Date.now();
         const modelsWithCapabilities = await Promise.all(
           models.map(async (model) => {
             // Start with the adapter's own capabilities (Ollama's /api/show
@@ -117,9 +113,6 @@ export async function GET(): Promise<NextResponse> {
             };
           })
         );
-        console.warn(
-          `[models] per-model probes took ${Date.now() - t2}ms for ${models.length} models`
-        );
         allModels.push(...modelsWithCapabilities);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
@@ -133,15 +126,7 @@ export async function GET(): Promise<NextResponse> {
       return a.name.localeCompare(b.name);
     });
 
-    const tBeforeReturn = Date.now();
-    const body = { models: allModels, errors: errors.length > 0 ? errors : undefined };
-    const jsonStr = JSON.stringify(body);
-    console.warn(
-      `[models] handler done in ${Date.now() - tBeforeReturn}ms (serialize), ` +
-        `response body size: ${(jsonStr.length / 1024 / 1024).toFixed(1)} MB, ` +
-        `total models: ${allModels.length}`
-    );
-    return NextResponse.json(body);
+    return NextResponse.json({ models: allModels, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: `Failed to fetch models: ${message}` }, { status: 500 });
