@@ -56,7 +56,11 @@ export async function GET(): Promise<NextResponse> {
       });
 
       try {
+        const t0 = Date.now();
         const models = await fetchLlmModels(llmRequestContext);
+        const t1 = Date.now();
+        console.warn(`[models] fetchLlmModels returned ${models.length} models in ${t1 - t0}ms`);
+        const t2 = Date.now();
         const modelsWithCapabilities = await Promise.all(
           models.map(async (model) => {
             // Start with the adapter's own capabilities (Ollama's /api/show
@@ -79,7 +83,11 @@ export async function GET(): Promise<NextResponse> {
             // OpenAI-compatible endpoint whose provider had no
             // `capabilities` field but was found to reject image input).
             try {
-              const vision = await resolveVisionSupport(provider.baseUrl, model.name, provider.provider);
+              const vision = await resolveVisionSupport(
+                provider.baseUrl,
+                model.name,
+                provider.provider
+              );
               if (vision.state === 'unsupported') {
                 caps.delete('vision');
                 caps.delete('multimodal');
@@ -108,6 +116,9 @@ export async function GET(): Promise<NextResponse> {
               capabilities: [...caps],
             };
           })
+        );
+        console.warn(
+          `[models] per-model probes took ${Date.now() - t2}ms for ${models.length} models`
         );
         allModels.push(...modelsWithCapabilities);
       } catch (err) {

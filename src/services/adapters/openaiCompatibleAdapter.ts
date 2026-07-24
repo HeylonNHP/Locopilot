@@ -709,6 +709,9 @@ interface ModelsCacheEntry {
 
 const modelsCache = new Map<string, ModelsCacheEntry>();
 
+// In-flight deduplication: concurrent calls for the same key share one request.
+const modelsInflight = new Map<string, Promise<LlmModel[]>>();
+
 function modelsCacheKey(baseUrl: string, apiKey: string | undefined): string {
   return `${baseUrl}\0${apiKey ?? ''}`;
 }
@@ -772,38 +775,72 @@ export function invalidateOpenAICompatibleModelsCache(baseUrl?: string, apiKey?:
 
 async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmModel[]> {
   const normalizedBaseUrl = ctx.baseUrl.replace(/\/+$/, '');
+  const key = modelsCacheKey(normalizedBaseUrl, ctx.apiKey);
   const now = Date.now();
+
+  // Check cache first.
   const cached = getCachedModels(normalizedBaseUrl, ctx.apiKey, now);
   if (cached) {
+    console.warn(`[openaiAdapter] models cache hit for ${normalizedBaseUrl}`);
     return cached;
   }
 
-  const client = buildAxiosClient(ctx);
-  const response = await client.get<{
-    object: string;
-    data: Array<{
-      id: string;
-      object: string;
-      created: number;
-      owned_by: string;
-      [key: string]: unknown;
-    }>;
-  }>(`${normalizedBaseUrl}/v1/models`, { timeout: MODEL_LIST_TIMEOUT_MS });
-  const models = (response.data.data ?? []).map((model) => {
-    const { id, object: _object, created: _created, owned_by, name: displayName, ...extra } = model;
-    return {
-      name: id,
-      model: id,
-      displayName: typeof displayName === 'string' ? displayName : id,
-      details: {
-        ...(owned_by ? { parent_model: owned_by } : {}),
-      },
-      ...extra,
-    };
-  });
+  // Deduplicate concurrent in-flight requests.
+  const inflight = modelsInflight.get(key);
+  if (inflight) {
+    console.warn(
+      `[openaiAdapter] models request already in-flight for ${normalizedBaseUrl}, awaiting...`
+    );
+    return inflight;
+  }
 
-  setCachedModels(normalizedBaseUrl, ctx.apiKey, models, now);
-  return models;
+  console.warn(`[openaiAdapter] models cache miss for ${normalizedBaseUrl}, fetching...`);
+  const client = buildAxiosClient(ctx);
+  const t0 = Date.now();
+  const fetchPromise = (async () => {
+    try {
+      const response = await client.get<{
+        object: string;
+        data: Array<{
+          id: string;
+          object: string;
+          created: number;
+          owned_by: string;
+          [key: string]: unknown;
+        }>;
+      }>(`${normalizedBaseUrl}/v1/models`, { timeout: MODEL_LIST_TIMEOUT_MS });
+      console.warn(
+        `[openaiAdapter] /v1/models responded in ${Date.now() - t0}ms for ${normalizedBaseUrl}`
+      );
+      const models = (response.data.data ?? []).map((model) => {
+        const {
+          id,
+          object: _object,
+          created: _created,
+          owned_by,
+          name: displayName,
+          ...extra
+        } = model;
+        return {
+          name: id,
+          model: id,
+          displayName: typeof displayName === 'string' ? displayName : id,
+          details: {
+            ...(owned_by ? { parent_model: owned_by } : {}),
+          },
+          ...extra,
+        };
+      });
+
+      setCachedModels(normalizedBaseUrl, ctx.apiKey, models, Date.now());
+      return models;
+    } finally {
+      modelsInflight.delete(key);
+    }
+  })();
+
+  modelsInflight.set(key, fetchPromise);
+  return fetchPromise;
 }
 
 async function fetchOpenAICompatibleModelInfo(
