@@ -133,7 +133,15 @@ export async function GET(): Promise<NextResponse> {
       return a.name.localeCompare(b.name);
     });
 
-    return NextResponse.json({ models: allModels, errors: errors.length > 0 ? errors : undefined });
+    const tBeforeReturn = Date.now();
+    const body = { models: allModels, errors: errors.length > 0 ? errors : undefined };
+    const jsonStr = JSON.stringify(body);
+    console.warn(
+      `[models] handler done in ${Date.now() - tBeforeReturn}ms (serialize), ` +
+        `response body size: ${(jsonStr.length / 1024 / 1024).toFixed(1)} MB, ` +
+        `total models: ${allModels.length}`
+    );
+    return NextResponse.json(body);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: `Failed to fetch models: ${message}` }, { status: 500 });
