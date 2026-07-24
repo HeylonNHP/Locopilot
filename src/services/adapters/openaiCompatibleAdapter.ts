@@ -17,7 +17,7 @@ import type {
 import type { Stream } from 'openai/streaming';
 
 import { debugLog } from '@/app/lib/debugLogger';
-import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
+import { MODEL_LIST_TIMEOUT_MS } from '@/constants';
 import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
 
 import type {
@@ -788,7 +788,7 @@ async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmM
       owned_by: string;
       [key: string]: unknown;
     }>;
-  }>(`${normalizedBaseUrl}/v1/models`, { timeout: DEFAULT_WEB_REQUEST_TIMEOUT_MS });
+  }>(`${normalizedBaseUrl}/v1/models`, { timeout: MODEL_LIST_TIMEOUT_MS });
   const models = (response.data.data ?? []).map((model) => {
     const { id, object: _object, created: _created, owned_by, name: displayName, ...extra } = model;
     return {

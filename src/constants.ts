@@ -6,6 +6,14 @@ export const DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY = 3;
 export const DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT = 5000;
 export const DEFAULT_WEB_REQUEST_TIMEOUT_MS = 15_000;
 /**
+ * Timeout for model listing / info probes (`/v1/models`, `/api/tags`,
+ * `/api/show`). Some hosted OpenAI-compatible endpoints (e.g. OpenRouter
+ * and reverse-proxied gateways) routinely take 20–30 s to respond on the
+ * first call, well past the 15 s web-search budget. The response is
+ * cached for 5 minutes, so this delay only matters once per window.
+ */
+export const MODEL_LIST_TIMEOUT_MS = 60_000;
+/**
  * Maximum number of result pages to fetch in parallel for a single
  * `web_search` query. Higher values reduce wall-clock time but risk
  * rate-limiting by target sites.
