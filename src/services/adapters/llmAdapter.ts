@@ -18,6 +18,14 @@ export interface LlmRequestContext {
   provider?: LlmProvider;
   baseUrl: string;
   apiKey?: string;
+  /**
+   * Per-request correlation ID stamped by the chat route so adapter-level
+   * logs and dump files can be matched to the route's `logger.error` line
+   * and the SSE `error` event. Optional — adapters that surface logs
+   * (notably the OpenAI-compatible 400 dump) should include it whenever
+   * the source request has one.
+   */
+  requestId?: string;
 }
 
 /**

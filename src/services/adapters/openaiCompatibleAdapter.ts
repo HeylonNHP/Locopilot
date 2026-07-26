@@ -993,7 +993,7 @@ async function sendOpenAICompatibleChat(
     return toChatApiResponse(response as Response);
   } catch (err) {
     // Enrich error with debug dump on failure.
-    await writeDebugDump('400', ctx.baseUrl, params.model, payload, err);
+    await logAdapter400(ctx.baseUrl, params.model, payload, err);
     throw err;
   }
 }
@@ -1016,7 +1016,7 @@ async function* sendOpenAICompatibleChatStream(
       requestOptions as Parameters<typeof client.responses.create>[1]
     )) as unknown as Stream<ResponseStreamEvent>;
   } catch (err) {
-    await writeDebugDump('400', ctx.baseUrl, params.model, payload, err);
+    await logAdapter400(ctx.baseUrl, params.model, payload, err);
     throw err;
   }
 
@@ -1038,31 +1038,138 @@ async function getOpenAICompatibleApiErrorMessage(error: unknown): Promise<strin
 
 // ── Debug dump ────────────────────────────────────────────────────────────
 
+/**
+ * Best-effort extraction of the upstream provider's actual error payload
+ * from an `OpenAI.APIError`. The SDK's `error.message` is just the status
+ * line ("400 Provider returned error"); the specific reason — e.g.
+ * "Unsupported value: 'xhigh' for reasoning.effort" — lives in the parsed
+ * JSON body on `error.error`, with provider-specific fields on
+ * `error.code` / `error.type` / `error.param`.
+ *
+ * Returns `null` if the error is not an `OpenAI.APIError`, or if the SDK
+ * did not populate any of the structured fields.
+ */
+function extractApiErrorDetails(error: unknown): {
+  status: number | undefined;
+  upstreamError: unknown;
+  code: string | null | undefined;
+  type: string | undefined;
+  param: string | null | undefined;
+  requestID: string | null | undefined;
+  /** A flat record of HTTP response headers for debugging retries / routing. */
+  responseHeaders: Record<string, string>;
+} | null {
+  if (!(error instanceof OpenAI.APIError)) return null;
+
+  // Headers is a `Headers` instance (Web Fetch API). Flatten to a plain
+  // object so it survives JSON.stringify — `Headers` is not JSON-safe.
+  const responseHeaders: Record<string, string> = {};
+  try {
+    error.headers?.forEach((value: string, key: string) => {
+      responseHeaders[key] = value;
+    });
+  } catch {
+    // Some test mocks pass undefined headers. Ignore.
+  }
+
+  return {
+    status: typeof error.status === 'number' ? error.status : undefined,
+    upstreamError: error.error,
+    code: error.code ?? null,
+    type: error.type,
+    param: error.param ?? null,
+    requestID: error.requestID ?? null,
+    responseHeaders,
+  };
+}
+
+/**
+ * Single entry point for logging a 4xx/5xx from the OpenAI-compatible
+ * adapter. Mirrors the structured dump to:
+ *   1. `logs/locopilot-debug.log` (via `debugLog.debug`) — queryable with
+ *      `jq 'select(.label=="adapter_400")'`. Carries the requestId, status,
+ *      provider code/type/param, and a short preview of the upstream
+ *      message so 400s are findable without parsing the dump file.
+ *   2. `debug_<tag>_<stamp>.json` (via `writeDebugDump`) — full request
+ *      payload + response, preserving the existing per-incident artefact
+ *      that operators have been opening from the server logs.
+ */
+async function logAdapter400(
+  baseUrl: string,
+  model: string | undefined,
+  request: unknown,
+  error: unknown,
+  requestId?: string
+): Promise<void> {
+  const details = extractApiErrorDetails(error);
+  const statusLine =
+    error instanceof OpenAI.APIError ? error.message : error instanceof Error ? error.message : '';
+  // Pull the upstream `message` field out of the parsed JSON body if we
+  // have it — that's the actionable line ("Unsupported value: 'xhigh'...")
+  // as opposed to the SDK's "400 Provider returned error" status line.
+  const upstreamMessage =
+    details && typeof details.upstreamError === 'object' && details.upstreamError !== null
+      ? (details.upstreamError as { message?: unknown }).message
+      : undefined;
+  const upstreamMessagePreview =
+    typeof upstreamMessage === 'string'
+      ? upstreamMessage.length > 240
+        ? `${upstreamMessage.slice(0, 240)}…`
+        : upstreamMessage
+      : null;
+
+  debugLog.debug('adapter_400', {
+    layer: 'adapter',
+    provider: 'openai-compatible',
+    requestId,
+    baseUrl,
+    model,
+    status: details?.status,
+    providerCode: details?.code ?? null,
+    providerType: details?.type ?? null,
+    providerParam: details?.param ?? null,
+    upstreamRequestId: details?.requestID ?? null,
+    statusLine,
+    upstreamMessagePreview,
+  });
+
+  await writeDebugDump('400', baseUrl, model, request, error, requestId);
+}
+
 async function writeDebugDump(
   tag: string,
   baseUrl: string,
   model: string | undefined,
   request: unknown,
-  error: unknown
+  error: unknown,
+  requestId?: string
 ): Promise<void> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
   const stamp = new Date().toISOString().replaceAll(/[.:]/g, '-');
   const dumpPath = `debug_${tag}_${stamp}.json`;
 
+  // Default to the SDK's status-line message so existing consumers that
+  // only look at `response.message` still see something useful.
   let apiMessage = '';
-  let statusCode: number | undefined;
-  const rawBody: string | null = null;
-
   if (error instanceof OpenAI.APIError) {
-    statusCode = error.status;
     apiMessage = error.message || '';
   } else if (error instanceof Error) {
     apiMessage = error.message;
   }
 
+  const apiErrorDetails = extractApiErrorDetails(error);
+
   console.error(`=== OPENAI ADAPTER ${tag} ERROR ===`);
   console.error('URL:', `${normalizedBaseUrl}/responses`);
+  console.error('Model:', model ?? '(unknown)');
+  if (requestId) console.error('Request ID:', requestId);
   console.error('API message:', apiMessage || '(none)');
+  if (apiErrorDetails) {
+    if (apiErrorDetails.code) console.error('Provider code:', apiErrorDetails.code);
+    if (apiErrorDetails.type) console.error('Provider type:', apiErrorDetails.type);
+    if (apiErrorDetails.param) console.error('Provider param:', apiErrorDetails.param);
+    if (apiErrorDetails.requestID) console.error('Upstream request ID:', apiErrorDetails.requestID);
+  }
   try {
     await writeFile(
       dumpPath,
@@ -1070,11 +1177,20 @@ async function writeDebugDump(
         {
           url: `${normalizedBaseUrl}/responses`,
           model,
+          ...(requestId ? { requestId } : {}),
           request,
           response: {
-            status: statusCode,
+            status: apiErrorDetails?.status,
             message: apiMessage || null,
-            rawBody,
+            // The upstream provider's actual JSON error body — this is
+            // where the specific rejection reason lives, e.g. OpenRouter's
+            // {"error":{"message":"...","code":"...","metadata":{...}}}.
+            upstreamError: apiErrorDetails?.upstreamError ?? null,
+            providerCode: apiErrorDetails?.code ?? null,
+            providerType: apiErrorDetails?.type ?? null,
+            providerParam: apiErrorDetails?.param ?? null,
+            upstreamRequestId: apiErrorDetails?.requestID ?? null,
+            responseHeaders: apiErrorDetails?.responseHeaders ?? {},
           },
         },
         null,

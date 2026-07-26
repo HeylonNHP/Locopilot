@@ -44,6 +44,7 @@ export function buildLlmRequestContext(options: {
   provider?: LlmProvider;
   baseUrl: string;
   apiKey?: string;
+  requestId?: string;
 }): LlmRequestContext {
   const ctx: LlmRequestContext = {
     baseUrl: options.baseUrl,
@@ -53,6 +54,9 @@ export function buildLlmRequestContext(options: {
   }
   if (options.apiKey && options.apiKey.length > 0) {
     ctx.apiKey = options.apiKey;
+  }
+  if (options.requestId) {
+    ctx.requestId = options.requestId;
   }
   return ctx;
 }

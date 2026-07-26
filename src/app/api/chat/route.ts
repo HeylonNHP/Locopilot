@@ -553,6 +553,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       // error fires before config is loaded.
       let llmRequestContext: LlmRequestContext = buildLlmRequestContext({
         baseUrl: effectiveBaseUrl,
+        requestId,
       });
       let activeProvider: ProviderConfig | null = null;
 
@@ -716,12 +717,15 @@ export async function POST(req: NextRequest): Promise<Response> {
         let config: Config | null = null;
         try {
           config = await loadConfig();
-          const resolved = resolveProviderRequestContext(config, providerId, model);
+          const resolved = resolveProviderRequestContext(config, providerId, model, requestId);
           if (resolved) {
             activeProvider = resolved.provider;
             llmRequestContext = resolved.ctx;
           } else {
-            llmRequestContext = buildLlmRequestContext({ baseUrl: effectiveBaseUrl });
+            llmRequestContext = buildLlmRequestContext({
+              baseUrl: effectiveBaseUrl,
+              requestId,
+            });
           }
           if (config) {
             if (typeof config.yolo === 'boolean') {
@@ -794,6 +798,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // Config load is best-effort; defaults already apply.
           llmRequestContext = buildLlmRequestContext({
             baseUrl: effectiveBaseUrl,
+            requestId,
           });
           requestContext = buildRequestContext(null, null);
         }
@@ -937,7 +942,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                   ? resolveProviderRequestContext(
                       config,
                       explicitCompactionProviderId,
-                      effectiveCompactionModel
+                      effectiveCompactionModel,
+                      requestId
                     )
                   : null;
                 const autoCompactCtx = compactionResolved?.ctx ?? llmRequestContext;
@@ -1908,7 +1914,12 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
 
         const message = await getLlmApiErrorMessage(llmRequestContext, err);
-        logger.error('ollama', message, { error: err });
+        // Use the actual provider for the log tag — previously this was
+        // hard-coded to 'ollama' which silently misattributed every
+        // OpenAI-compatible 400 (and any non-Ollama error) to the Ollama
+        // adapter in logs.
+        const errorLogTag = llmRequestContext.provider ?? 'ollama';
+        logger.error(errorLogTag, message, { error: err, requestId });
 
         // Parse the model's actual context limit from 400 error responses.
         // OpenAI-compatible providers don't expose context window via
