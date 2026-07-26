@@ -874,7 +874,7 @@ async function sendOpenAICompatibleChat(
     return toChatApiResponse(response as Response);
   } catch (err) {
     // Enrich error with debug dump on failure.
-    await writeDebugDump('400', ctx.baseUrl, params.model, payload, err);
+    await writeDebugDump('400', ctx.baseUrl, 'POST', '/v1/responses', params.model, payload, err);
     throw err;
   }
 }
@@ -897,7 +897,7 @@ async function* sendOpenAICompatibleChatStream(
       requestOptions as Parameters<typeof client.responses.create>[1]
     )) as unknown as Stream<ResponseStreamEvent>;
   } catch (err) {
-    await writeDebugDump('400', ctx.baseUrl, params.model, payload, err);
+    await writeDebugDump('400', ctx.baseUrl, 'POST', '/v1/responses', params.model, payload, err);
     throw err;
   }
 
@@ -917,46 +917,80 @@ async function getOpenAICompatibleApiErrorMessage(error: unknown): Promise<strin
   return String(error);
 }
 
+function serializeOpenAIError(error: unknown): {
+  status: number | null;
+  message: string;
+  type: string | null;
+  param: string | null;
+  code: string | null;
+  requestId: string | null;
+  headers: Record<string, string> | null;
+  causeMessage: string | null;
+} {
+  if (!(error instanceof OpenAI.APIError)) {
+    return {
+      status: null,
+      message: error instanceof Error ? error.message : String(error),
+      type: null,
+      param: null,
+      code: null,
+      requestId: null,
+      headers: null,
+      causeMessage: error instanceof Error && error.cause instanceof Error ? error.cause.message : null,
+    };
+  }
+
+  const headers =
+    error.headers && typeof error.headers === 'object'
+      ? Object.fromEntries(
+          Object.entries(error.headers).map(([key, value]) => [key, Array.isArray(value) ? value.join(', ') : String(value)])
+        )
+      : null;
+
+  return {
+    status: error.status ?? null,
+    message: error.message || '',
+    type: typeof error.type === 'string' ? error.type : null,
+    param: typeof error.param === 'string' ? error.param : null,
+    code: typeof error.code === 'string' ? error.code : null,
+    requestId: typeof error.requestID === 'string' ? error.requestID : null,
+    headers,
+    causeMessage: error.cause instanceof Error ? error.cause.message : null,
+  };
+}
+
 // ── Debug dump ────────────────────────────────────────────────────────────
 
 async function writeDebugDump(
   tag: string,
   baseUrl: string,
+  method: 'POST',
+  requestPath: '/v1/responses',
   model: string | undefined,
   request: unknown,
   error: unknown
 ): Promise<void> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const requestTarget = `${method} ${normalizedBaseUrl}${requestPath}`;
   const stamp = new Date().toISOString().replaceAll(/[.:]/g, '-');
   const dumpPath = `debug_${tag}_${stamp}.json`;
 
-  let apiMessage = '';
-  let statusCode: number | undefined;
-  const rawBody: string | null = null;
-
-  if (error instanceof OpenAI.APIError) {
-    statusCode = error.status;
-    apiMessage = error.message || '';
-  } else if (error instanceof Error) {
-    apiMessage = error.message;
-  }
+  const sdkError = serializeOpenAIError(error);
 
   console.error(`=== OPENAI ADAPTER ${tag} ERROR ===`);
-  console.error('URL:', `${normalizedBaseUrl}/responses`);
-  console.error('API message:', apiMessage || '(none)');
+  console.error('BASE URL:', normalizedBaseUrl);
+  console.error('REQUEST:', requestTarget);
+  console.error('SDK ERROR:', JSON.stringify(sdkError));
   try {
     await writeFile(
       dumpPath,
       JSON.stringify(
         {
-          url: `${normalizedBaseUrl}/responses`,
+          requestTarget,
+          baseUrl: normalizedBaseUrl,
           model,
           request,
-          response: {
-            status: statusCode,
-            message: apiMessage || null,
-            rawBody,
-          },
+          error: sdkError,
         },
         null,
         2
