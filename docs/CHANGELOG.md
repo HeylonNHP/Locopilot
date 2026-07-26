@@ -18,6 +18,13 @@ When adding a new entry:
 
 ---
 
+- 2026-07-26: `run_subagents` now shares completed summaries between sibling sub-agents by default
+  - Files: `src/tools/impl/subAgentTool.ts`
+  - Summary: Added an optional `share_summaries` boolean to the `run_subagents` tool schema. It defaults to `true`; with the default, the completed final summary of each earlier sub-agent in the call is prepended to the next sub-agent's user message under a `## Prior sub-agent results` header, so sibling agents can build on each other's work. The current sub-agent's own prompt is preserved verbatim after a `---` separator and remains authoritative. Set `share_summaries: false` when each sub-agent's work must be truly independent. The sub-agent system prompt now explains how to interpret the injected header, and `getToolPrompt()` exposes the new field so the system-prompt generator reflects it. There is no token cap on injected summaries — full text is passed through; per-sub-agent auto-compaction at `AUTO_COMPACT_THRESHOLD_PCT` continues to manage context pressure downstream.
+  - Intent: Make multi-agent calls genuinely composable (research → implement → review) instead of forcing the parent to inline every prior summary into the next agent's prompt. The default change is the smallest API surface that delivers that — opt-out, not opt-in.
+
+---
+
 - 2026-07-24: Fixed slow `/api/models` by caching OpenAI-compatible model lists and adding request timeouts
   - Files: `src/services/adapters/openaiCompatibleAdapter.ts`, `src/services/adapters/ollamaAdapter.ts`, `src/app/api/config/route.ts`, `src/constants.ts`
   - Summary: The `/api/models` route was taking ~2.6 minutes because `fetchOpenAICompatibleModelInfo` re-fetched `/v1/models` once per model, producing N+1 identical HTTP calls. Added a 5-minute TTL module-level cache keyed by `(baseUrl, apiKey)` to `fetchOpenAICompatibleModels`, matching the existing `capResolver.ts`/`visionCache.ts` cache patterns. Added `invalidateOpenAICompatibleModelsCache(baseUrl?, apiKey?)` and wired it into `PUT /api/config` alongside `invalidateCapCache`/`invalidateVisionCache` so provider/baseUrl/API-key changes clear stale model lists. Also added a dedicated `MODEL_LIST_TIMEOUT_MS` (60 s) constant to `src/constants.ts` and applied it to the OpenAI-compatible `/v1/models` fetch and to Ollama's `/api/tags` and `/api/show` calls — the shared 15 s web-search timeout was too aggressive for slow OpenAI-compatible upstreams (the request would time out before the cache could be populated). The 60 s window is a one-time cost per 5-minute cache window.
