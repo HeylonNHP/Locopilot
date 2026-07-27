@@ -27,6 +27,27 @@ function stripAnsi(input: string): string {
   return input.replaceAll(ANSI_ESCAPE_PATTERN, '');
 }
 
+// Errors don't survive downstream re-serialization well: Error#name,
+// Error#message, and Error#stack are non-enumerable, so JSON.stringify and
+// other naive serializers collapse them to "{}", which util.inspect then
+// abbreviates to "[Error]". Replace Error values with a plain object
+// literal at the fields boundary so they remain visible after the line
+// is captured and re-emitted. Shallow copy only — nested objects are
+// left untouched, matching the depth: 1 inspect contract in formatFields.
+function normalizeErrorFields(
+  fields: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!fields) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(fields)) {
+    out[key] =
+      fields[key] instanceof Error
+        ? { name: fields[key].name, message: fields[key].message, stack: fields[key].stack }
+        : fields[key];
+  }
+  return out;
+}
+
 // Shared Date instance — avoids one `new Date()` allocation per log call.
 const sharedDate = new Date();
 
@@ -52,8 +73,12 @@ function timestamp(): string {
 }
 
 function formatFields(fields?: Record<string, unknown>): string {
-  if (!fields) return '';
-  const inspected = inspect(fields, { colors: true, breakLength: Infinity, depth: 0 });
+  const normalized = normalizeErrorFields(fields);
+  if (!normalized) return '';
+  // depth: 1 lets us see one level of nesting — enough to surface the
+  // {name, message, stack} keys on normalized Errors while still keeping
+  // arbitrary nested objects abbreviated as [Object] to bound output size.
+  const inspected = inspect(normalized, { colors: true, breakLength: Infinity, depth: 1 });
   if (!inspected || inspected === '{}') return '';
   const visible = stripAnsi(inspected);
   if (visible.length > FIELDS_MAX_LENGTH) {

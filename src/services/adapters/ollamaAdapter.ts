@@ -2,6 +2,7 @@ import axios, { type AxiosRequestConfig } from 'axios';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 
+import { MODEL_LIST_TIMEOUT_MS } from '@/constants';
 import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
 
 import type {
@@ -136,7 +137,9 @@ async function fetchOllamaRunningModelContextLength(
 }
 
 async function fetchOllamaModels(ctx: LlmRequestContext): Promise<LlmModel[]> {
-  const response = await axios.get<TagsResponse>(`${ctx.baseUrl}/api/tags`);
+  const response = await axios.get<TagsResponse>(`${ctx.baseUrl}/api/tags`, {
+    timeout: MODEL_LIST_TIMEOUT_MS,
+  });
   return response.data.models || [];
 }
 
@@ -144,7 +147,11 @@ async function fetchOllamaModelInfo(
   ctx: LlmRequestContext,
   modelName: string
 ): Promise<LlmModelInfo> {
-  const response = await axios.post<LlmModelInfo>(`${ctx.baseUrl}/api/show`, { name: modelName });
+  const response = await axios.post<LlmModelInfo>(
+    `${ctx.baseUrl}/api/show`,
+    { name: modelName },
+    { timeout: MODEL_LIST_TIMEOUT_MS }
+  );
   return response.data;
 }
 

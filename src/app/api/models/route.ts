@@ -79,7 +79,11 @@ export async function GET(): Promise<NextResponse> {
             // OpenAI-compatible endpoint whose provider had no
             // `capabilities` field but was found to reject image input).
             try {
-              const vision = await resolveVisionSupport(provider.baseUrl, model.name, provider.provider);
+              const vision = await resolveVisionSupport(
+                provider.baseUrl,
+                model.name,
+                provider.provider
+              );
               if (vision.state === 'unsupported') {
                 caps.delete('vision');
                 caps.delete('multimodal');

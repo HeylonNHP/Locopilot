@@ -44,8 +44,12 @@ export const createSkillToolSchema: ToolSchema = {
       },
       location: {
         type: 'string',
-        enum: ['project', 'user-profile'],
-        description: String.raw`Where to write the skill. 'project' (default) writes to .locopilot/skills/ under the current working directory. 'user-profile' writes to the user profile (~/.locopilot/skills/ on Linux, %USERPROFILE%\.locopilot\skills\ on Windows). Use 'user-profile' for skills that should follow the user across projects.`,
+        // OpenAI's Responses API rejects top-level enum/anyOf/oneOf/allOf/const/not
+        // in function-tool parameter schemas. The two allowed values are baked
+        // into the description instead. The handler at toolRegistry.ts
+        // (resolveCreateSkillBaseDir) still validates the runtime value
+        // server-side, so this is purely advisory for the LLM.
+        description: String.raw`Where to write the skill. Must be 'project' (default — writes to .locopilot/skills/ under the current working directory) or 'user-profile' (writes to ~/.locopilot/skills/ on Linux, %USERPROFILE%\.locopilot\skills\ on Windows). Use 'user-profile' for skills that should follow the user across projects.`,
       },
     },
     required: ['name', 'description', 'body'],

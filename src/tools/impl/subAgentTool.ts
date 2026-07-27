@@ -5,7 +5,7 @@ import { discoverSkills, getEnabledSkills, loadSkillState } from '@/services/ski
 export const subAgentToolSchema: ToolSchema = {
   name: 'run_subagents',
   description:
-    'YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window. Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost: they do the heavy work in isolation and return only the final answer — often saving thousands of tokens. USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for: • ANY task involving multiple tool calls (search → read → compare → decide) • Researching topics, comparing approaches, or auditing code • File edits and code changes (isolated from your thinking context) • Any information-dense work where intermediate results would clutter your reasoning • Breaking large requests into parallel research streams. Each sub-agent runs its own full tool-calling loop and returns only the final summary. Constraints: sequential; each sees only its own prompt (include ALL context inline); sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context.',
+    "YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window. Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost: they do the heavy work in isolation and return only the final answer — often saving thousands of tokens. USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for: • ANY task involving multiple tool calls (search → read → compare → decide) • Researching topics, comparing approaches, or auditing code • File edits and code changes (isolated from your thinking context) • Any information-dense work where intermediate results would clutter your reasoning • Breaking large requests into parallel research streams. Each sub-agent runs its own full tool-calling loop and returns only the final summary. Constraints: sequential; each sees only its own prompt (include ALL context inline); sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context. By default the completed summaries of earlier sub-agents in this call are appended to later sub-agents' prompts (so they can build on each other); set `share_summaries: false` only when each sub-agent's work must be truly independent.",
   parameters: {
     type: 'object',
     properties: {
@@ -29,6 +29,11 @@ export const subAgentToolSchema: ToolSchema = {
         },
         description:
           'One or more sub-agents to run sequentially. Each one needs a short id and a fully self-contained prompt.',
+      },
+      share_summaries: {
+        type: 'boolean',
+        description:
+          "Optional, default true. When true (the default), each subsequent sub-agent in this call receives the completed summaries of earlier sub-agents in its prompt, so they can build on each other. Set to false only when each sub-agent's work must be truly independent and cross-context contamination would mislead results.",
       },
     },
     required: ['agents'],
@@ -69,6 +74,7 @@ interface SubAgentSpec {
 
 interface SubAgentToolArgs extends ToolCallArguments {
   agents?: SubAgentSpec[];
+  share_summaries?: boolean;
 }
 
 interface CompletedSubAgent {
@@ -101,7 +107,9 @@ function buildSubAgentSystemPrompt(skillInfo?: string): string {
     'Work autonomously until the task is complete.\n' +
     'When you are done, return one final concise, self-contained summary for the parent agent.\n' +
     'Do not ask the parent agent for missing context; instead, explain briefly what is missing if the task is blocked.\n' +
-    'Do not mention internal chain-of-thought.\n';
+    'Do not mention internal chain-of-thought.\n' +
+    '\n' +
+    'When this sub-agent is part of a multi-agent `run_subagents` call (the default), prior sub-agents in the same call may have completed before you. Their final summaries are prepended to your user message under a `## Prior sub-agent results` header. Treat them as trusted context from sibling work — use what they concluded instead of re-deriving it, but your own task is whatever comes after the `---` separator.\n';
 
   if (skillInfo) {
     prompt +=
@@ -397,6 +405,14 @@ async function executeNestedToolCall(
   return command.execute(toolCall.function.arguments, nestedProgress, output, context, signal);
 }
 
+function formatPriorResultsBlock(priorResults: CompletedSubAgent[]): string {
+  const sections = priorResults.map((r) => {
+    const trimmed = r.content.trim().length > 0 ? r.content.trim() : '[no final response]';
+    return `### sub-agent "${r.id}"\n${trimmed}`;
+  });
+  return `## Prior sub-agent results\n\nThe following sub-agents in this \`run_subagents\` call completed before you. Their final summaries are included for context — use them, do not re-derive what they already concluded, and continue with your own task as instructed below.\n\n${sections.join('\n\n')}\n\n---\n\n`;
+}
+
 async function runSingleAgent(
   agent: Required<SubAgentSpec>,
   config: SubAgentConfig,
@@ -405,9 +421,9 @@ async function runSingleAgent(
   onProgress?: (message: string) => void,
   context?: RequestContext,
   signal?: AbortSignal,
-  skillSummary?: string
+  skillSummary?: string,
+  priorResults?: CompletedSubAgent[]
 ): Promise<string> {
-  const orcPrompt: ChatMessage = { role: 'user', content: agent.prompt };
   const labeledOutput = makeLabeledSink(output, agent.id);
   // Create a per-sub-agent working-directory scope so each agent's `cd`
   // commands and relative path resolutions are isolated from the parent
@@ -417,6 +433,16 @@ async function runSingleAgent(
     ...(context ?? ({} as RequestContext)),
     workingDirectoryScope: agentScope,
   };
+
+  // Compose the user-role message. If `share_summaries` is in effect and
+  // earlier sub-agents in this call have finished, their summaries are
+  // prepended under a `## Prior sub-agent results` header so the current
+  // agent can build on sibling work. The agent's own prompt remains
+  // authoritative and comes last.
+  const priorBlock =
+    priorResults && priorResults.length > 0 ? formatPriorResultsBlock(priorResults) : '';
+  const orcPromptContent = `${priorBlock}${agent.prompt}`;
+  const orcPrompt: ChatMessage = { role: 'user', content: orcPromptContent };
   const messages: ChatMessage[] = [
     { role: 'system', content: buildSubAgentSystemPrompt(skillSummary) },
     orcPrompt,
@@ -656,6 +682,13 @@ export class SubAgentTool implements IToolCommand {
       // Best-effort; leave skillSummary undefined
     }
 
+    // `share_summaries` defaults to true; opt out by passing
+    // `share_summaries: false` when each sub-agent's work must be
+    // truly independent. When in effect, the next agent's user message
+    // is prefixed with the completed summaries of earlier agents in
+    // this same `run_subagents` call.
+    const shareSummaries = subAgentArgs.share_summaries !== false;
+
     for (const agent of subAgentArgs.agents as Required<SubAgentSpec>[]) {
       if (isInterruptOrAbort(signal)) {
         break;
@@ -670,7 +703,8 @@ export class SubAgentTool implements IToolCommand {
           onProgress,
           context,
           signal,
-          skillSummary
+          skillSummary,
+          shareSummaries ? results : undefined
         );
         results.push({ id: agent.id, content });
       } catch (err) {
@@ -693,11 +727,12 @@ export function getToolPrompt(): string {
     | { properties?: Record<string, { description?: string }> }
     | undefined;
   const agentProps = agentItems?.properties ?? {};
-  const params = `agents: Array<{ id: string, prompt: string }>`;
+  const params = `agents: Array<{ id: string, prompt: string }>, share_summaries?: boolean`;
   return (
     `3. ${schema.name}(${params})\n` +
     `   ${schema.description}\n\n` +
     `   - agents[].id: ${agentProps.id?.description ?? ''}\n` +
-    `   - agents[].prompt: ${agentProps.prompt?.description ?? ''}\n`
+    `   - agents[].prompt: ${agentProps.prompt?.description ?? ''}\n` +
+    `   - share_summaries: optional boolean, default true. When true (the default), each later sub-agent in this call receives the completed summaries of earlier sub-agents. Set false only when each sub-agent's work must be truly independent.\n`
   );
 }

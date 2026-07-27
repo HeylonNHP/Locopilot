@@ -874,7 +874,7 @@ async function sendOpenAICompatibleChat(
     return toChatApiResponse(response as Response);
   } catch (err) {
     // Enrich error with debug dump on failure.
-    await writeDebugDump('400', ctx.baseUrl, 'POST', '/v1/responses', params.model, payload, err);
+    await writeDebugDump('400', ctx.baseUrl, params.model, payload, err);
     throw err;
   }
 }
@@ -897,7 +897,7 @@ async function* sendOpenAICompatibleChatStream(
       requestOptions as Parameters<typeof client.responses.create>[1]
     )) as unknown as Stream<ResponseStreamEvent>;
   } catch (err) {
-    await writeDebugDump('400', ctx.baseUrl, 'POST', '/v1/responses', params.model, payload, err);
+    await writeDebugDump('400', ctx.baseUrl, params.model, payload, err);
     throw err;
   }
 
@@ -943,7 +943,10 @@ function serializeOpenAIError(error: unknown): {
   const headers =
     error.headers && typeof error.headers === 'object'
       ? Object.fromEntries(
-          Object.entries(error.headers).map(([key, value]) => [key, Array.isArray(value) ? value.join(', ') : String(value)])
+          Object.entries(error.headers).map(([key, value]) => [
+            key,
+            Array.isArray(value) ? value.join(', ') : String(value),
+          ])
         )
       : null;
 
@@ -959,6 +962,82 @@ function serializeOpenAIError(error: unknown): {
   };
 }
 
+function extractApiErrorDetails(error: unknown): {
+  status: number | undefined;
+  upstreamError: unknown;
+  code: string | null | undefined;
+  type: string | undefined;
+  param: string | null | undefined;
+  requestID: string | null | undefined;
+  responseHeaders: Record<string, string>;
+} | null {
+  if (!(error instanceof OpenAI.APIError)) return null;
+
+  const responseHeaders: Record<string, string> = {};
+  try {
+    error.headers?.forEach((value: string, key: string) => {
+      responseHeaders[key] = value;
+    });
+  } catch {
+    // Some test mocks pass undefined headers. Ignore.
+  }
+
+  return {
+    status: typeof error.status === 'number' ? error.status : undefined,
+    upstreamError: error.error,
+    code: error.code ?? null,
+    type: error.type,
+    param: error.param ?? null,
+    requestID: error.requestID ?? null,
+    responseHeaders,
+  };
+}
+
+async function logAdapter400(
+  baseUrl: string,
+  model: string | undefined,
+  request: unknown,
+  error: unknown,
+  requestId?: string,
+  method: 'POST' = 'POST',
+  requestPath: '/v1/responses' = '/v1/responses'
+): Promise<void> {
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const requestTarget = `${method} ${normalizedBaseUrl}${requestPath}`;
+  const sdkError = serializeOpenAIError(error);
+  const apiErrorDetails = extractApiErrorDetails(error);
+  const statusLine =
+    error instanceof OpenAI.APIError ? error.message : error instanceof Error ? error.message : '';
+  const upstreamMessage =
+    apiErrorDetails && typeof apiErrorDetails.upstreamError === 'object' && apiErrorDetails.upstreamError !== null
+      ? (apiErrorDetails.upstreamError as { message?: unknown }).message
+      : undefined;
+  const upstreamMessagePreview =
+    typeof upstreamMessage === 'string'
+      ? upstreamMessage.length > 240
+        ? `${upstreamMessage.slice(0, 240)}…`
+        : upstreamMessage
+      : null;
+
+  debugLog.debug('adapter_400', {
+    layer: 'adapter',
+    provider: 'openai-compatible',
+    requestId,
+    baseUrl: normalizedBaseUrl,
+    model,
+    requestTarget,
+    status: apiErrorDetails?.status,
+    providerCode: apiErrorDetails?.code ?? null,
+    providerType: apiErrorDetails?.type ?? null,
+    providerParam: apiErrorDetails?.param ?? null,
+    upstreamRequestId: apiErrorDetails?.requestID ?? null,
+    statusLine,
+    upstreamMessagePreview,
+  });
+
+  await writeDebugDump('400', normalizedBaseUrl, method, requestPath, model, request, error, requestId, sdkError);
+}
+
 // ── Debug dump ────────────────────────────────────────────────────────────
 
 async function writeDebugDump(
@@ -968,19 +1047,32 @@ async function writeDebugDump(
   requestPath: '/v1/responses',
   model: string | undefined,
   request: unknown,
-  error: unknown
+  error: unknown,
+  requestId?: string,
+  sdkError?: ReturnType<typeof serializeOpenAIError>
 ): Promise<void> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
   const requestTarget = `${method} ${normalizedBaseUrl}${requestPath}`;
   const stamp = new Date().toISOString().replaceAll(/[.:]/g, '-');
   const dumpPath = `debug_${tag}_${stamp}.json`;
+  const serializedError = sdkError ?? serializeOpenAIError(error);
 
-  const sdkError = serializeOpenAIError(error);
+  let apiMessage = '';
+  let statusCode: number | undefined;
+  const rawBody: string | null = null;
+
+  if (error instanceof OpenAI.APIError) {
+    statusCode = error.status;
+    apiMessage = error.message || '';
+  } else if (error instanceof Error) {
+    apiMessage = error.message;
+  }
 
   console.error(`=== OPENAI ADAPTER ${tag} ERROR ===`);
   console.error('BASE URL:', normalizedBaseUrl);
   console.error('REQUEST:', requestTarget);
-  console.error('SDK ERROR:', JSON.stringify(sdkError));
+  console.error('SDK ERROR:', JSON.stringify(serializedError));
+  console.error('API message:', apiMessage || '(none)');
   try {
     await writeFile(
       dumpPath,
@@ -989,8 +1081,14 @@ async function writeDebugDump(
           requestTarget,
           baseUrl: normalizedBaseUrl,
           model,
+          ...(requestId ? { requestId } : {}),
           request,
-          error: sdkError,
+          error: serializedError,
+          response: {
+            status: statusCode,
+            message: apiMessage || null,
+            rawBody,
+          },
         },
         null,
         2

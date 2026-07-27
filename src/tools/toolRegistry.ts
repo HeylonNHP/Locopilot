@@ -15,6 +15,7 @@ import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
 import type { ToolDefinition } from '@/services/llm';
+import type { ReasoningEffort } from '@/types/chatConfig';
 
 import {
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
@@ -121,7 +122,7 @@ export interface SubAgentConfig {
    * on the Airia gateway) when function tools are present.
    * Inherited from the parent session's setting.
    */
-  reasoningEffort?: 'off' | 'low' | 'medium' | 'high';
+  reasoningEffort?: ReasoningEffort;
   tools: ToolDefinition[];
   /**
    * Sub-agent-local approval ledger for `mcp_call`. The chat route

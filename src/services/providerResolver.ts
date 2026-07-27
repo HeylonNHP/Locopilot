@@ -102,12 +102,20 @@ export function resolveProvider(
  * Build a per-request LLM context from a resolved provider. This is the
  * single place where a `ProviderConfig` is converted into the wire context
  * the adapters consume.
+ *
+ * `requestId` is the route's per-request correlation UUID. It is optional
+ * so callers that don't have one (e.g. background jobs) can still build a
+ * context, but every chat/api route should pass it through.
  */
-export function buildProviderRequestContext(provider: ProviderConfig): LlmRequestContext {
+export function buildProviderRequestContext(
+  provider: ProviderConfig,
+  requestId?: string
+): LlmRequestContext {
   return buildLlmRequestContext({
     provider: provider.provider,
     baseUrl: provider.baseUrl,
     ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
+    ...(requestId ? { requestId } : {}),
   });
 }
 
@@ -118,11 +126,12 @@ export function buildProviderRequestContext(provider: ProviderConfig): LlmReques
 export function resolveProviderRequestContext(
   config: Config | null,
   providerId?: string,
-  modelName?: string
+  modelName?: string,
+  requestId?: string
 ): { provider: ProviderConfig; ctx: LlmRequestContext } | null {
   const provider = resolveProvider(config, providerId, modelName);
   if (!provider) return null;
-  return { provider, ctx: buildProviderRequestContext(provider) };
+  return { provider, ctx: buildProviderRequestContext(provider, requestId) };
 }
 
 /**
