@@ -6,13 +6,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'FILE=$(cat | jq -r \".tool_input.file_path // .tool_input.path // empty\"); if [ -n \"$FILE\" ] && echo \"$FILE\" | grep -qE \"\\.(ts|tsx|js|jsx|mjs|cjs|json|css|scss|md|html|yml|yaml)$\"; then npx prettier --write \"$FILE\" 2>/dev/null; fi'",
+            "command": "node .claude/hooks/format_edited_file.mjs",
             "statusMessage": "Auto-formatting with Prettier...",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/present_lint_errors.py",
+            "command": "node .claude/hooks/present_lint_errors.mjs",
             "statusMessage": "Checking lint on edited file...",
             "timeout": 60
           }
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'if git diff --name-only 2>/dev/null | grep -q \"package.json\"; then echo \"⚠ package.json was modified — remember to run `npm install` if dependencies changed.\"; fi'",
+            "command": "node .claude/hooks/check_package_json_change.mjs",
             "statusMessage": "Checking dependency integrity...",
             "timeout": 5
           }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/check_project_lint.py",
+            "command": "node .claude/hooks/check_project_lint.mjs",
             "statusMessage": "Running full project lint and type-check...",
             "timeout": 300
           }
