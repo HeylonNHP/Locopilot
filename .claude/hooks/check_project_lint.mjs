@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import process from 'node:process';
 
 function runEslintFull(projectDir) {
   const result = spawnSync('npx', ['eslint', '.', '-f', 'json'], {
@@ -41,7 +42,7 @@ function runEslintFull(projectDir) {
     fixableErrors += fileFixable;
     fixableWarnings += fileFixableWarnings;
 
-    fileLines.push(`  \`${filePath}\` (${fileErrors} error${fileErrors !== 1 ? 's' : ''}, ${fileWarnings} warning${fileWarnings !== 1 ? 's' : ''}):`);
+    fileLines.push(`  \`${filePath}\` (${fileErrors} error${fileErrors === 1 ? '' : 's'}, ${fileWarnings} warning${fileWarnings === 1 ? '' : 's'}):`);
 
     for (const msg of messages) {
       const line = msg?.line ?? '?';
@@ -56,9 +57,9 @@ function runEslintFull(projectDir) {
 
   if (totalErrors === 0 && totalWarnings === 0) return null;
 
-  let summary = `ESLint: ${totalErrors} error${totalErrors !== 1 ? 's' : ''}, ${totalWarnings} warning${totalWarnings !== 1 ? 's' : ''}`;
+  let summary = `ESLint: ${totalErrors} error${totalErrors === 1 ? '' : 's'}, ${totalWarnings} warning${totalWarnings === 1 ? '' : 's'}`;
   if (fixableErrors > 0 || fixableWarnings > 0) {
-    summary += ` (${fixableErrors} fixable error${fixableErrors !== 1 ? 's' : ''}, ${fixableWarnings} fixable warning${fixableWarnings !== 1 ? 's' : ''})`;
+    summary += ` (${fixableErrors} fixable error${fixableErrors === 1 ? '' : 's'}, ${fixableWarnings} fixable warning${fixableWarnings === 1 ? '' : 's'})`;
   }
 
   return `${summary}\n${fileLines.join('\n')}`;
@@ -79,7 +80,7 @@ function runTypeCheck(projectDir) {
   const lines = output.split('\n');
   const truncated = lines.length > 30 ? `${lines.slice(0, 30).join('\n')}\n  ... and ${lines.length - 30} more line(s)` : output;
 
-  return `TypeScript (${errorCount} error${errorCount !== 1 ? 's' : ''}):\n${truncated}`;
+  return `TypeScript (${errorCount} error${errorCount === 1 ? '' : 's'}):\n${truncated}`;
 }
 
 const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
@@ -91,11 +92,11 @@ if (eslintOutput) sections.push(eslintOutput);
 const tscOutput = runTypeCheck(projectDir);
 if (tscOutput) sections.push(tscOutput);
 
-if (!sections.length) process.exit(0);
-
-process.stdout.write(JSON.stringify({
-  hookSpecificOutput: {
-    hookEventName: 'Stop',
-    additionalContext: `Full project lint and type-check results. Please review and fix the issues below:\n\n${sections.join('\n\n')}`,
-  },
-}));
+if (sections.length > 0) {
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'Stop',
+      additionalContext: `Full project lint and type-check results. Please review and fix the issues below:\n\n${sections.join('\n\n')}`,
+    },
+  }));
+}

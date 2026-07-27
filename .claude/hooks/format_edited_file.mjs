@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import process from 'node:process';
 
 const relevantExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.css', '.scss', '.md', '.html', '.yml', '.yaml']);
 

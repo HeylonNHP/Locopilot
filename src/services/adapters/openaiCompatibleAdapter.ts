@@ -499,8 +499,6 @@ async function* streamResponseEvents(
   stream: Stream<ResponseStreamEvent>
 ): AsyncGenerator<ChatApiResponse> {
   const toolCallAccumulator = new Map<number, PartialToolCall>();
-  let accumulatedContent = '';
-  let accumulatedReasoning = '';
   let finalResponse: Response | null = null;
   let yieldedAnyChunk = false;
   let hasReasoningDeltas = false;
@@ -509,7 +507,6 @@ async function* streamResponseEvents(
     switch (event.type) {
       case 'response.output_text.delta': {
         const delta = (event as { delta: string }).delta;
-        accumulatedContent += delta;
         yieldedAnyChunk = true;
         yield {
           model: '',
@@ -528,7 +525,6 @@ async function* streamResponseEvents(
       case 'response.reasoning_text.delta':
       case 'response.reasoning_summary_text.delta': {
         const delta = (event as { delta: string }).delta;
-        accumulatedReasoning += delta;
         hasReasoningDeltas = true;
         yieldedAnyChunk = true;
         yield {
@@ -552,7 +548,6 @@ async function* streamResponseEvents(
         if (hasReasoningDeltas) break;
         const part = (event as { part?: { type: string; text?: string } }).part;
         if (part?.type === 'summary_text' && part.text) {
-          accumulatedReasoning += part.text;
           yieldedAnyChunk = true;
           yield {
             model: '',

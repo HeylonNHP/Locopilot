@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import process from 'node:process';
 
 function readInput() {
   return process.stdin.isTTY ? '' : readFileSync(0, 'utf8');
@@ -57,9 +58,9 @@ function runEslintOnFile(projectDir, filePath) {
     return `  L${line}:${col}  ${severity}  ${rule}  ${messageText}${fixTag}`;
   });
 
-  let summary = `ESLint in \`${relPath}\`: ${errors.length} error${errors.length !== 1 ? 's' : ''}, ${warnings.length} warning${warnings.length !== 1 ? 's' : ''}`;
+  let summary = `ESLint in \`${relPath}\`: ${errors.length} error${errors.length === 1 ? '' : 's'}, ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`;
   if (fixableErrors > 0 || fixableWarnings > 0) {
-    summary += ` (${fixableErrors} fixable error${fixableErrors !== 1 ? 's' : ''}, ${fixableWarnings} fixable warning${fixableWarnings !== 1 ? 's' : ''})`;
+    summary += ` (${fixableErrors} fixable error${fixableErrors === 1 ? '' : 's'}, ${fixableWarnings} fixable warning${fixableWarnings === 1 ? '' : 's'})`;
   }
 
   return `${summary}\n${lines.join('\n')}`;
@@ -68,17 +69,14 @@ function runEslintOnFile(projectDir, filePath) {
 const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const filePath = findEditedFile(readInput());
 
-if (!filePath) process.exit(0);
-if (!filePath.endsWith('.ts') && !filePath.endsWith('.tsx') && !filePath.endsWith('.js') && !filePath.endsWith('.jsx') && !filePath.endsWith('.mjs') && !filePath.endsWith('.cjs')) {
-  process.exit(0);
+if (filePath && (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js') || filePath.endsWith('.jsx') || filePath.endsWith('.mjs') || filePath.endsWith('.cjs'))) {
+  const outputText = runEslintOnFile(projectDir, filePath);
+  if (outputText) {
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        additionalContext: `Lint results for the file you just edited. Please review and fix the issues:\n\n${outputText}`,
+      },
+    }));
+  }
 }
-
-const outputText = runEslintOnFile(projectDir, filePath);
-if (!outputText) process.exit(0);
-
-process.stdout.write(JSON.stringify({
-  hookSpecificOutput: {
-    hookEventName: 'PostToolUse',
-    additionalContext: `Lint results for the file you just edited. Please review and fix the issues:\n\n${outputText}`,
-  },
-}));
