@@ -157,6 +157,20 @@
     &::-moz-focus-inner {
       border: 0;
     }
+
+    &[title='Delete session'] {
+      transition:
+        color 0.2s ease,
+        opacity 0.2s ease,
+        background-color 0.2s ease;
+
+      &:hover,
+      &:focus-visible {
+        color: var(--danger);
+        background: rgba(var(--rgb-danger), 0.12);
+        opacity: 1;
+      }
+    }
   }
 }
 
