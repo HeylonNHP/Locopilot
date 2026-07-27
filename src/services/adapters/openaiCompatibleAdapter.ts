@@ -874,7 +874,7 @@ async function sendOpenAICompatibleChat(
     return toChatApiResponse(response as Response);
   } catch (err) {
     // Enrich error with debug dump on failure.
-    await writeDebugDump('400', ctx.baseUrl, params.model, payload, err);
+    await logAdapter400(ctx.baseUrl, params.model, payload, err);
     throw err;
   }
 }
@@ -897,7 +897,7 @@ async function* sendOpenAICompatibleChatStream(
       requestOptions as Parameters<typeof client.responses.create>[1]
     )) as unknown as Stream<ResponseStreamEvent>;
   } catch (err) {
-    await writeDebugDump('400', ctx.baseUrl, params.model, payload, err);
+    await logAdapter400(ctx.baseUrl, params.model, payload, err);
     throw err;
   }
 

@@ -5,7 +5,6 @@ import { type NextRequest, NextResponse } from 'next/server';
 import type { CompletionMode, Config, LlmProvider, ProviderConfig } from '@/types/chatConfig';
 
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
-import { invalidateOpenAICompatibleModelsCache } from '@/services/adapters/openaiCompatibleAdapter';
 import { invalidateCapCache, resolveEffectiveNumCtx } from '@/services/capResolver';
 import { loadConfig, saveConfig } from '@/services/configManager';
 import { buildLlmRequestContext } from '@/services/llm';
@@ -589,15 +588,9 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
         invalidateCapCache(next.baseUrl, next.model);
         invalidateVisionCache(next.baseUrl, next.model);
       }
-      if (next?.provider === 'openai-compatible' && next?.baseUrl) {
-        invalidateOpenAICompatibleModelsCache(next.baseUrl, next.apiKey);
-      }
       if (current?.baseUrl && current?.model) {
         invalidateCapCache(current.baseUrl, current.model);
         invalidateVisionCache(current.baseUrl, current.model);
-      }
-      if (current?.provider === 'openai-compatible' && current?.baseUrl) {
-        invalidateOpenAICompatibleModelsCache(current.baseUrl, current.apiKey);
       }
     }
 
@@ -613,16 +606,10 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     ) {
       invalidateCapCache(currentActive.baseUrl, currentActive.model);
       invalidateVisionCache(currentActive.baseUrl, currentActive.model);
-      if (currentActive.provider === 'openai-compatible') {
-        invalidateOpenAICompatibleModelsCache(currentActive.baseUrl, currentActive.apiKey);
-      }
     }
     if (nextActive?.baseUrl && nextActive?.model) {
       invalidateCapCache(nextActive.baseUrl, nextActive.model);
       invalidateVisionCache(nextActive.baseUrl, nextActive.model);
-      if (nextActive.provider === 'openai-compatible') {
-        invalidateOpenAICompatibleModelsCache(nextActive.baseUrl, nextActive.apiKey);
-      }
     }
 
     // Legacy top-level fields still participate in cache invalidation so
@@ -633,16 +620,10 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       if (updatedConfig.baseUrl && updatedConfig.model) {
         invalidateCapCache(updatedConfig.baseUrl, updatedConfig.model);
         invalidateVisionCache(updatedConfig.baseUrl, updatedConfig.model);
-        if (updatedConfig.provider === 'openai-compatible') {
-          invalidateOpenAICompatibleModelsCache(updatedConfig.baseUrl, updatedConfig.apiKey);
-        }
       }
       if (currentConfig?.baseUrl && currentConfig?.model) {
         invalidateCapCache(currentConfig.baseUrl, currentConfig.model);
         invalidateVisionCache(currentConfig.baseUrl, currentConfig.model);
-        if (currentConfig.provider === 'openai-compatible') {
-          invalidateOpenAICompatibleModelsCache(currentConfig.baseUrl, currentConfig.apiKey);
-        }
       }
     } else if (
       body.numCtx !== undefined &&
