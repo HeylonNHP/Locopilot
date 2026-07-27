@@ -62,7 +62,9 @@ async function resolvePort() {
       return candidate;
     }
   }
-  console.error(`Could not find a free port after ${MAX_ATTEMPTS} attempts (starting from ${PREFERRED})`);
+  console.error(
+    `Could not find a free port after ${MAX_ATTEMPTS} attempts (starting from ${PREFERRED})`
+  );
   process.exit(1);
 }
 
@@ -75,15 +77,13 @@ async function main() {
   console.log(`Starting server on port ${port}...`);
 
   // 3. Start Next.js
-  const next = spawn(
-    'node',
-    ['node_modules/next/dist/bin/next', 'dev', '-p', String(port)],
-    {
-      cwd: join(__dirname, '..'),
-      stdio: 'inherit',
-      shell: true,
-    }
-  );
+  // shell:false (the default) — we spawn `node` with a fixed module path and
+  // no interpolation, so no shell is needed. Using `shell: true` here would
+  // trip DEP0190 (args concatenated, not escaped) and adds unnecessary risk.
+  const next = spawn('node', ['node_modules/next/dist/bin/next', 'dev', '-p', String(port)], {
+    cwd: join(__dirname, '..'),
+    stdio: 'inherit',
+  });
 
   next.on('exit', (code) => process.exit(code));
 }
