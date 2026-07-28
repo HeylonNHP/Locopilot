@@ -21,6 +21,10 @@ import { getToolPrompt as getPatchFilePrompt, patchFileToolSchema } from './impl
 import { getToolPrompt as getReadFilePrompt, readFileToolSchema } from './impl/readFileTool';
 import { getToolPrompt as getReadPdfPrompt, readPdfToolSchema } from './impl/readPdfTool';
 import {
+  getToolPrompt as getRenderMermaidPrompt,
+  renderMermaidToolSchema,
+} from './impl/renderMermaidTool';
+import {
   checkProcessOutputToolSchema,
   getToolPrompt as getRunCommandPrompt,
   runCommandToolSchema,
@@ -164,6 +168,10 @@ export const TOOLS: OllamaTool[] = [
     type: 'function',
     function: searchMcpToolsToolSchema,
   },
+  {
+    type: 'function',
+    function: renderMermaidToolSchema,
+  },
 ];
 
 /**
@@ -177,7 +185,7 @@ export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean
       yoloMode
     )}${getWebSearchPrompt()}${getSubAgentPrompt()}${getFetchUrlPrompt()}${
       visionSupported === false ? '' : getFetchImagePrompt()
-    }${getReadFilePrompt()}${getPatchFilePrompt()}${getWriteFilePrompt()}${getLoadSkillPrompt()}${getCreateSkillPrompt()}${getReadPdfPrompt()}${getMCPCallPrompt()}${getSearchMcpToolsPrompt()}Tool-use policy:\n` +
+    }${getReadFilePrompt()}${getPatchFilePrompt()}${getWriteFilePrompt()}${getLoadSkillPrompt()}${getCreateSkillPrompt()}${getReadPdfPrompt()}${getMCPCallPrompt()}${getSearchMcpToolsPrompt()}${getRenderMermaidPrompt()}Tool-use policy:\n` +
     `- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n` +
     `- Use sub-agents aggressively for any information-heavy or multi-step work — they absorb intermediate results into isolated contexts, preserving your own context window for high-level reasoning. You do NOT need the user to request them.\n` +
     `- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n` +

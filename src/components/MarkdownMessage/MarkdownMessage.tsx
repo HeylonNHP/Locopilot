@@ -3,6 +3,8 @@ import DOMPurify from 'isomorphic-dompurify';
 import { marked } from 'marked';
 import { useEffect, useMemo, useRef } from 'react';
 
+import { renderMermaidInPre } from './mermaidRenderer';
+
 import './MarkdownMessage.scss';
 
 interface Props {
@@ -199,6 +201,27 @@ export default function MarkdownMessage({ source, className }: Props) {
     };
 
     requestAnimationFrame(attachButtons);
+
+    // ── Mermaid rendering pass ─────────────────────────────────
+    // We scan for `<pre><code class="language-mermaid">` blocks after
+    // the copy-code pass so the user sees the raw code briefly while
+    // the renderer warms up. The renderer is idempotent — re-running
+    // this on a re-render is harmless.
+    const renderMermaidDiagrams = () => {
+      if (!containerRef.current) return;
+      const mermaidBlocks = containerRef.current.querySelectorAll<HTMLElement>(
+        'pre > code.language-mermaid'
+      );
+      mermaidBlocks.forEach((codeEl) => {
+        const pre = codeEl.parentElement;
+        if (!(pre instanceof HTMLPreElement)) return;
+        // `void` discards the returned promise so we satisfy the
+        // `no-misused-promises` lint rule without an async wrapper.
+        void renderMermaidInPre(pre);
+      });
+    };
+
+    requestAnimationFrame(renderMermaidDiagrams);
   }, [source]);
 
   if (!html) {

@@ -148,12 +148,85 @@
     border-top: 1px solid var(--markdown-hr);
   }
 
-  // ── Thinking variant ────────────────────────────────────────
   &--thinking {
     color: var(--text-secondary);
 
     a {
       color: #0066cc;
+    }
+  }
+
+  // ── Mermaid diagrams ────────────────────────────────────────
+  // The renderer replaces the inner <code> text with an <svg>.
+  // We keep the outer <pre> for spacing and the copy-button hook
+  // (which is hidden below for rendered blocks).
+  pre.mermaid-rendered {
+    background: var(--glass-light);
+    border-color: var(--glass-border-soft);
+    overflow: auto;
+
+    // Suppress the copy-code button — there's no runnable code anymore.
+    .code-copy-btn {
+      display: none;
+    }
+
+    svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 0 auto;
+      color: var(--text-primary);
+    }
+  }
+
+  pre.mermaid-error {
+    background: var(--bg-error-soft);
+    border-color: var(--border-error-soft);
+
+    .mermaid-error-panel {
+      padding: 0.9rem 1rem;
+      color: var(--text-primary);
+      font-family: inherit;
+    }
+
+    .mermaid-error-message {
+      color: var(--color-text-error);
+      font-weight: 600;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    .mermaid-error-source {
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 12px;
+      padding: 8px;
+      border-radius: 6px;
+      background: var(--code-block-bg);
+      color: var(--code-block-text);
+      overflow: auto;
+      margin: 0 0 8px;
+    }
+
+    .mermaid-error-details {
+      font-size: 12px;
+      color: var(--text-secondary);
+
+      summary {
+        cursor: pointer;
+        user-select: none;
+      }
+
+      pre {
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        font-size: 11px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 6px 0 0;
+        padding: 8px;
+        border-radius: 6px;
+        background: var(--code-block-bg);
+        color: var(--code-block-text);
+      }
     }
   }
 }

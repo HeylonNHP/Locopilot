@@ -6,6 +6,8 @@ const nextConfig = {
     'isomorphic-dompurify',
     'jsdom',
     'pdf-parse',
+    'mermaid',
+    'dompurify',
   ],
   turbopack: {
     resolveAlias: {

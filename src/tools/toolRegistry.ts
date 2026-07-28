@@ -35,6 +35,7 @@ import { runMCPCall } from './impl/mcpTool';
 import { type PatchFilePatch, PatchFileTool, type PatchFileToolArgs } from './impl/patchFileTool';
 import { ReadFileTool, type ReadFileToolArgs } from './impl/readFileTool';
 import { ReadPdfTool, type ReadPdfToolArgs } from './impl/readPdfTool';
+import { RenderMermaidTool } from './impl/renderMermaidTool';
 import { checkProcessOutput, DEFAULT_TIMEOUT_MS, runCommand } from './impl/runCommandTool';
 import { runSearchMCPTools } from './impl/searchMcpToolsTool';
 import {
@@ -203,6 +204,7 @@ export interface ToolCallArguments {
   start_page?: number;
   end_page?: number;
   extract_images?: boolean;
+  diagram?: string;
   // MCP tool-call args (Phase 1). The LLM should call the namespaced
   // `mcp__<server>__<tool>` name directly, but we expose a single
   // `mcp_call` tool that splits the namespace for clarity.
@@ -806,6 +808,27 @@ export const toolRegistry = new Map<string, IToolCommand>([
     {
       async execute(args, _onProgress, _output, _context, _signal) {
         return runSearchMCPTools(args);
+      },
+    },
+  ],
+  [
+    // Pre-flight syntax validator for Mermaid diagrams. The model
+    // calls this before emitting a ```mermaid block so the user sees
+    // a working diagram instead of a "Unable to render" placeholder.
+    // The actual rendering is client-side (the React frontend loads
+    // `mermaid` via npm). No approval gate: it is a pure validation
+    // pass that reads no files, makes no network calls, and runs
+    // entirely in-process.
+    'render_mermaid',
+    {
+      async execute(args, onProgress, output = noopToolOutputSink, _context, signal) {
+        const tool = new RenderMermaidTool({
+          onProgress: (message: string) => {
+            output.writeLine(message);
+            onProgress?.(message);
+          },
+        });
+        return tool.run({ diagram: args.diagram }, signal);
       },
     },
   ],
