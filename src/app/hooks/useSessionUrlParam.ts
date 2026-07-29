@@ -53,8 +53,9 @@ export function useSessionUrlParam({ onLoadSessionMessages }: UseSessionUrlParam
     if (urlParam) {
       const id = Number.parseInt(urlParam, 10);
       if (id > 0 && id !== current) {
+        currentSessionIdRef.current = id;
         dispatch({ type: 'SET_CURRENT_SESSION', id });
-        onLoadSessionMessages(id);
+        void onLoadSessionMessages(id);
       }
     }
     // If urlParam is absent and we have a current session, we leave it alone —
