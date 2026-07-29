@@ -220,13 +220,40 @@ type FrozenBlock =
 function extractFrozenBlocks(frozen: string): FrozenBlock[] {
   const blocks: FrozenBlock[] = [];
 
-  // Split by lines so we can walk the source and slice at the
-  // boundaries of each ```mermaid ... ``` block. We rebuild the
-  // "prose" portion as markdown between consecutive Mermaid blocks.
+  // Walk the frozen source and slice at the boundaries of every
+  // *closed* fenced block. Mermaid blocks become their own React
+  // element (so their SVG is never overwritten by React's
+  // dangerouslySetInnerHTML rewrite). Everything else — including
+  // non-mermaid fenced code blocks like ```python``` — becomes a
+  // prose block that we render via `marked` + `dangerouslySetInnerHTML`.
+  //
+  // For each fence we encounter:
+  //   - Mermaid: emit the prose immediately before it, then emit
+  //     the Mermaid block as its own element.
+  //   - Anything else: emit the prose slice that *includes* the
+  //     full fenced block (opening fence + body + closing fence).
+  //     marked will render it as <pre><code class="language-...">
+  //     inside the prose block.
+  //
+  // This guarantees that every byte of `frozen` ends up in some
+  // emitted block — no content is silently dropped.
   const fence = /^[ \t]*(`{3,}|~{3,})[^\n]*$/gm;
   let lastEnd = 0;
   let match: RegExpExecArray | null;
   let mermaidIndex = 0;
+  let proseIndex = 0;
+
+  const emitProse = (slice: string) => {
+    if (!slice.trim()) return;
+    const html = renderMarkdownHtml(slice);
+    if (html) {
+      blocks.push({
+        kind: 'prose',
+        html,
+        key: `prose-${proseIndex++}-${slice.length}`,
+      });
+    }
+  };
 
   while ((match = fence.exec(frozen)) !== null) {
     const opener = match[1] ?? '';
@@ -234,7 +261,7 @@ function extractFrozenBlocks(frozen: string): FrozenBlock[] {
     const openerLen = opener.length;
     const openLineStart = match.index;
     const openLineEnd = match.index + match[0].length + 1; // past the newline
-    const language = match[0].slice(match[1]?.length ?? 0).trim().toLowerCase();
+    const language = match[0].slice(openerLen).trim().toLowerCase();
 
     const closeRe = new RegExp(
       `^[ \\t]*${openerChar === '`' ? '`' : '~'}{${openerLen},}[ \\t]*$`,
@@ -249,40 +276,35 @@ function extractFrozenBlocks(frozen: string): FrozenBlock[] {
     }
 
     const closeLineEnd = close.index + close[0].length + 1;
-    const isMermaid = language === 'mermaid' || openerChar === '`' && language === 'mermaid';
+    const isMermaid = language === 'mermaid';
 
     if (isMermaid) {
-      // Emit the prose that comes before this Mermaid block (if any).
-      const proseSlice = frozen.slice(lastEnd, openLineStart);
-      if (proseSlice.trim()) {
-        const html = renderMarkdownHtml(proseSlice);
-        if (html) {
-          blocks.push({ kind: 'prose', html, key: `prose-${lastEnd}` });
-        }
-      }
-      // Emit the Mermaid block.
+      // Emit any prose that comes before this Mermaid block,
+      // *including* any non-mermaid fenced blocks that lie in the
+      // gap (they'll be rendered correctly by marked).
+      emitProse(frozen.slice(lastEnd, openLineStart));
+      // Emit the Mermaid block as its own element.
       const mermaidSource = frozen.slice(openLineEnd, close.index).replace(/\n$/, '');
       blocks.push({
         kind: 'mermaid',
         source: mermaidSource,
         key: `mermaid-${mermaidIndex++}-${mermaidSource.length}`,
       });
+    } else {
+      // Non-mermaid fence. The slice [lastEnd, closeLineEnd]
+      // includes both the leading prose AND the full fenced block
+      // (opening fence, body, closing fence). Emit it as a single
+      // prose block so marked can render the fence as <pre><code>.
+      emitProse(frozen.slice(lastEnd, closeLineEnd));
     }
 
-    // Continue searching after the closing fence. For non-mermaid
-    // fenced blocks, the prose becomes part of the next prose slice.
+    // Skip past the closing fence.
     fence.lastIndex = closeLineEnd;
     lastEnd = closeLineEnd;
   }
 
-  // Trailing prose.
-  const tail = frozen.slice(lastEnd);
-  if (tail.trim()) {
-    const html = renderMarkdownHtml(tail);
-    if (html) {
-      blocks.push({ kind: 'prose', html, key: `prose-${lastEnd}` });
-    }
-  }
+  // Trailing prose (includes anything after the last fenced block).
+  emitProse(frozen.slice(lastEnd));
 
   return blocks;
 }
