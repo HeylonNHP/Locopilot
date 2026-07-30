@@ -1,9 +1,8 @@
+import fs, { readFile } from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import http from 'http';
-import { readFile } from 'fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const diagram = `graph TD
@@ -78,7 +77,7 @@ const html = `<!DOCTYPE html>
         log.push('render minimal: ' + e.message);
       }
       
-      document.getElementById('log').innerHTML = log.map(l => '\u003cdiv\u003e' + l + '\u003c/div\u003e').join('');
+      document.getElementById('log').innerHTML = log.map(l => '\u003Cdiv\u003E' + l + '\u003C/div\u003E').join('');
       return log;
     };
     
@@ -108,16 +107,20 @@ const html = `<!DOCTYPE html>
 async function startServer(port) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${port}`);
-    const filePath = path.join(__dirname, url.pathname === '/' ? 'dist/test-mermaid-config.html' : url.pathname);
+    const filePath = path.join(
+      __dirname,
+      url.pathname === '/' ? 'dist/test-mermaid-config.html' : url.pathname
+    );
     try {
       const data = await readFile(filePath);
       const ext = path.extname(filePath);
-      const ct = ext === '.mjs' ? 'application/javascript' : ext === '.html' ? 'text/html' : 'text/plain';
+      const ct =
+        ext === '.mjs' ? 'application/javascript' : ext === '.html' ? 'text/html' : 'text/plain';
       res.writeHead(200, { 'Content-Type': ct });
       res.end(data);
-    } catch (e) {
+    } catch (err) {
       res.writeHead(404);
-      res.end('Not found: ' + filePath + '\n' + e.message);
+      res.end(`Not found: ${filePath}\n${err.message}`);
     }
   });
   await new Promise((resolve) => server.listen(port, resolve));
@@ -132,11 +135,15 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   await page.goto(`http://localhost:${port}/`);
-  await page.waitForFunction(() => typeof window.runTest === 'function');
-  const logs = await page.evaluate(async (src) => window.runTest(src), diagram);
+  await page.waitForFunction(() => typeof globalThis.runTest === 'function');
+  const logs = await page.evaluate(async (src) => globalThis.runTest(src), diagram);
   console.log(logs.join('\n'));
   await browser.close();
   server.close();
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+try {
+  await main();
+} catch (err) {
+  console.error(err);
+}

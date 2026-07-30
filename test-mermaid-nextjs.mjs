@@ -24,9 +24,9 @@ await page.waitForTimeout(3000);
 // Directly invoke the renderer in the page to bypass React/useEffect issues.
 const directResult = await page.evaluate(async () => {
   const pre = document.querySelector('pre:has(code.language-mermaid)');
-  if (!pre) return { noPre: true, bodyText: document.body.innerText.slice(0, 500) };
+  if (!pre) return { noPre: true, bodyText: document.body.textContent.slice(0, 500) };
   try {
-    await window.__renderMermaidInPre?.(pre, { mermaidIdBase: 'direct' });
+    await globalThis.__renderMermaidInPre?.(pre, { mermaidIdBase: 'direct' });
     return {
       dataset: pre.dataset.mermaidRendered,
       hasSvg: !!pre.querySelector('svg'),
@@ -43,7 +43,7 @@ console.log('Direct render result:', JSON.stringify(directResult, null, 2));
 
 const result = await page.evaluate(() => {
   const pres = document.querySelectorAll('pre');
-  const preInfo = Array.from(pres).map((pre) => ({
+  const preInfo = [...pres].map((pre) => ({
     className: pre.className,
     dataset: pre.dataset.mermaidRendered,
     tagName: pre.tagName,
@@ -51,7 +51,7 @@ const result = await page.evaluate(() => {
   }));
   const pre = document.querySelector('pre.mermaid-rendered, pre.mermaid-error');
   if (!pre) {
-    return { notFound: true, preInfo, bodyText: document.body.innerText.slice(0, 1000) };
+    return { notFound: true, preInfo, bodyText: document.body.textContent.slice(0, 1000) };
   }
   const errorDetails = pre.querySelector('.mermaid-error-details pre');
   return {
@@ -70,7 +70,7 @@ await browser.close();
 
 if (directResult.threw || directResult.hasErrorPanel || directResult.dataset === 'error' || !directResult.hasSvg) {
   console.error('\n❌ Reproduction: Mermaid failed to render in Next.js app.');
-  process.exit(1);
+  throw new Error("test failed");
 } else {
   console.log('\n✅ Mermaid rendered successfully in Next.js app.');
 }

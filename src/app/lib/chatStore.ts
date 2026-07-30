@@ -134,6 +134,7 @@ interface ChatState {
   currentSessionId: number | null;
   model: string;
   models: LLmModel[];
+  modelsLoading: boolean;
   /**
    * Configured provider endpoints. When non-empty, the UI aggregates
    * models from every provider and the user picks which provider/model
@@ -284,6 +285,7 @@ export type ChatAction =
   | { type: 'ADD_SESSION'; session: Session }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
   | { type: 'SET_MODELS'; models: LLmModel[] }
+  | { type: 'SET_MODELS_LOADING'; modelsLoading: boolean }
   | { type: 'SET_PROVIDERS'; providers: ProviderConfig[] }
   | { type: 'SET_ACTIVE_PROVIDER'; providerId: string | null }
   | { type: 'SET_MODEL'; model: string }
@@ -833,6 +835,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'SET_MODELS': {
       return { ...state, models: action.models };
     }
+    case 'SET_MODELS_LOADING': {
+      return { ...state, modelsLoading: action.modelsLoading };
+    }
     case 'SET_PROVIDERS': {
       return { ...state, providers: action.providers };
     }
@@ -1167,6 +1172,7 @@ const initialState: ChatState = {
   currentSessionId: null,
   model: '',
   models: [],
+  modelsLoading: true,
   providers: [],
   activeProviderId: null,
   baseUrl: 'http://localhost:11434',

@@ -53,8 +53,8 @@ const pre = document.createElement('pre');
 const code = document.createElement('code');
 code.className = 'language-mermaid';
 code.textContent = source;
-pre.appendChild(code);
-document.getElementById('root').appendChild(pre);
+pre.append(code);
+document.querySelector('#root').append(pre);
 
 const { renderMermaidInPre } = await import(
   './src/components/MarkdownMessage/mermaidRenderer.ts'
@@ -72,9 +72,9 @@ try {
   if (pre.dataset.mermaidRendered === 'error' || pre.querySelector('.mermaid-error-panel')) {
     console.error('ERROR: Mermaid failed to render');
     console.error(pre.innerHTML);
-    process.exit(1);
+    throw new Error("test failed");
   }
 } catch (err) {
   console.error('renderMermaidInPre threw:', err);
-  process.exit(1);
+  throw new Error("test failed");
 }

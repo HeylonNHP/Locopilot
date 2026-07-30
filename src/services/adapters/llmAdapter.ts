@@ -216,7 +216,18 @@ export interface LlmAdapter {
    */
   buildRequestClient(ctx: LlmRequestContext): AxiosLike;
   fetchModels(ctx: LlmRequestContext): Promise<LlmModel[]>;
-  fetchModelInfo(ctx: LlmRequestContext, modelName: string): Promise<LlmModelInfo>;
+  /**
+   * Fetch metadata for a single model. Adapters that can resolve per-model
+   * info directly (e.g. Ollama's `/api/show`) ignore the optional
+   * `preFetchedModels` argument. Adapters whose upstream has no per-model
+   * endpoint (e.g. OpenAI-compatible) MAY use a pre-fetched list to skip
+   * a redundant network round-trip when the caller already has the list.
+   */
+  fetchModelInfo(
+    ctx: LlmRequestContext,
+    modelName: string,
+    preFetchedModels?: LlmModel[]
+  ): Promise<LlmModelInfo>;
   getModelContextLimit(modelInfo: LlmModelInfo): number | null;
   sendChat(
     ctx: LlmRequestContext,

@@ -166,6 +166,7 @@ export function useDataLoaders(refs: StableRefs) {
   // reconciler effect's job (see below), so it stays correct regardless of
   // whether /api/models or /api/config resolves first.
   const loadModels = async () => {
+    dispatch({ type: 'SET_MODELS_LOADING', modelsLoading: true });
     try {
       const res = await fetch('/api/models');
       if (res.ok) {
@@ -176,6 +177,8 @@ export function useDataLoaders(refs: StableRefs) {
       }
     } catch {
       // Silently ignore – models will be empty
+    } finally {
+      dispatch({ type: 'SET_MODELS_LOADING', modelsLoading: false });
     }
   };
 

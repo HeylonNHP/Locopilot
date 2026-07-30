@@ -145,8 +145,12 @@ async function fetchOllamaModels(ctx: LlmRequestContext): Promise<LlmModel[]> {
 
 async function fetchOllamaModelInfo(
   ctx: LlmRequestContext,
-  modelName: string
+  modelName: string,
+  _preFetchedModels?: LlmModel[]
 ): Promise<LlmModelInfo> {
+  // Ollama exposes a per-model /api/show endpoint, so we ignore the
+  // pre-fetched list and always hit the upstream directly. The optional
+  // argument exists only to satisfy the shared LlmAdapter interface.
   const response = await axios.post<LlmModelInfo>(
     `${ctx.baseUrl}/api/show`,
     { name: modelName },

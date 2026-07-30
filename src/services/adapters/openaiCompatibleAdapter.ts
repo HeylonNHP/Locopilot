@@ -159,13 +159,19 @@ function stripDescriptions(obj: unknown): unknown {
  */
 function buildUserContent(
   message: ChatMessage
-): string | Array<{ type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail: 'auto' }> {
+):
+  | string
+  | Array<
+      | { type: 'input_text'; text: string }
+      | { type: 'input_image'; image_url: string; detail: 'auto' }
+    > {
   if (!message.images || message.images.length === 0) {
     return message.content;
   }
 
   const parts: Array<
-    { type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail: 'auto' }
+    | { type: 'input_text'; text: string }
+    | { type: 'input_image'; image_url: string; detail: 'auto' }
   > = [{ type: 'input_text', text: message.content }];
 
   for (const imageBase64 of message.images) {
@@ -189,9 +195,10 @@ function buildUserContent(
  * Tool calls from the assistant become ResponseFunctionToolCall items.
  * Tool results become FunctionCallOutput items.
  */
-function toResponseInputItems(
-  messages: ChatMessage[]
-): { instructions: string | null; input: ResponseInputItem[] } {
+function toResponseInputItems(messages: ChatMessage[]): {
+  instructions: string | null;
+  input: ResponseInputItem[];
+} {
   const instructions: string[] = [];
   const input: ResponseInputItem[] = [];
 
@@ -329,7 +336,10 @@ function toResponseInputItems(
     input,
   };
 
-  debugLog.messageArraySummary('toResponseInputItems: output items', input as unknown as ChatMessage[]);
+  debugLog.messageArraySummary(
+    'toResponseInputItems: output items',
+    input as unknown as ChatMessage[]
+  );
   return result;
 }
 
@@ -429,7 +439,9 @@ function toChatApiResponse(response: Response): ChatApiResponse {
 
   return {
     model: response.model,
-    created_at: new Date((response.created_at ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+    created_at: new Date(
+      (response.created_at ?? Math.floor(Date.now() / 1000)) * 1000
+    ).toISOString(),
     done: true,
     ...(doneReason ? { done_reason: doneReason } : {}),
     message: {
@@ -643,13 +655,14 @@ async function* streamResponseEvents(
   // would double everything in the final output.
   if (finalResponse) {
     const toolCalls = finalizeToolCalls(toolCallAccumulator);
-    const doneReason = finalResponse.status === 'completed'
-      ? 'stop'
-      : finalResponse.status === 'incomplete'
-        ? finalResponse.incomplete_details?.reason || 'length'
-        : finalResponse.status === 'failed'
-          ? 'error'
-          : undefined;
+    const doneReason =
+      finalResponse.status === 'completed'
+        ? 'stop'
+        : finalResponse.status === 'incomplete'
+          ? finalResponse.incomplete_details?.reason || 'length'
+          : finalResponse.status === 'failed'
+            ? 'error'
+            : undefined;
 
     yield {
       model: finalResponse.model,
@@ -690,14 +703,7 @@ async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmM
     }>;
   }>(`${ctx.baseUrl.replace(/\/+$/, '')}/v1/models`);
   return (response.data.data ?? []).map((model) => {
-    const {
-      id,
-      object: _object,
-      created: _created,
-      owned_by,
-      name: displayName,
-      ...extra
-    } = model;
+    const { id, object: _object, created: _created, owned_by, name: displayName, ...extra } = model;
     return {
       name: id,
       model: id,
@@ -712,9 +718,19 @@ async function fetchOpenAICompatibleModels(ctx: LlmRequestContext): Promise<LlmM
 
 async function fetchOpenAICompatibleModelInfo(
   ctx: LlmRequestContext,
-  modelName: string
+  modelName: string,
+  preFetchedModels?: LlmModel[]
 ): Promise<LlmModelInfo> {
-  const models = await fetchOpenAICompatibleModels(ctx);
+  // The OpenAI-compatible /v1/models endpoint has no per-model info endpoint
+  // (unlike Ollama's /api/show), so the only way to surface per-model
+  // metadata is to look it up in the list response. When the caller already
+  // has the list — as the /api/models route does, which fetches the list
+  // once and then iterates every entry — re-fetching it once per model
+  // turns a single /api/models request into N upstream round-trips and
+  // pushes a 179-model provider from <1s to ~78s. Pass the list through
+  // and skip the redundant network call. Callers that don't already have
+  // the list fall back to the original behaviour.
+  const models = preFetchedModels ?? (await fetchOpenAICompatibleModels(ctx));
   const foundModel = models.find((model) => model.name === modelName);
   return {
     model_info: {
@@ -735,10 +751,7 @@ async function fetchOpenAICompatibleModelInfo(
 
 // ── Chat ───────────────────────────────────────────────────────────────────
 
-function buildResponseParams(
-  params: ChatParams,
-  stream: boolean
-): ResponseCreateParamsBase {
+function buildResponseParams(params: ChatParams, stream: boolean): ResponseCreateParamsBase {
   const effectiveMessages =
     params.visionSupported === false ? stripImagesFromMessages(params.messages) : params.messages;
 
@@ -803,7 +816,10 @@ function buildResponseParams(
   if (params.format !== undefined) {
     if (typeof params.format === 'string') {
       // Map legacy string values to the proper object format.
-      payload.text = params.format === 'json' ? { format: { type: 'json_object' } } : { format: { type: 'text' } };
+      payload.text =
+        params.format === 'json'
+          ? { format: { type: 'json_object' } }
+          : { format: { type: 'text' } };
     } else {
       // Record<string, unknown> — assume it's a JSON schema config.
       // Cast through unknown first to satisfy TypeScript's structural typing.
@@ -931,7 +947,8 @@ function serializeOpenAIError(error: unknown): {
       code: null,
       requestId: null,
       headers: null,
-      causeMessage: error instanceof Error && error.cause instanceof Error ? error.cause.message : null,
+      causeMessage:
+        error instanceof Error && error.cause instanceof Error ? error.cause.message : null,
     };
   }
 
@@ -1004,7 +1021,9 @@ async function logAdapter400(
   const statusLine =
     error instanceof OpenAI.APIError ? error.message : error instanceof Error ? error.message : '';
   const upstreamMessage =
-    apiErrorDetails && typeof apiErrorDetails.upstreamError === 'object' && apiErrorDetails.upstreamError !== null
+    apiErrorDetails &&
+    typeof apiErrorDetails.upstreamError === 'object' &&
+    apiErrorDetails.upstreamError !== null
       ? (apiErrorDetails.upstreamError as { message?: unknown }).message
       : undefined;
   const upstreamMessagePreview =
@@ -1030,7 +1049,17 @@ async function logAdapter400(
     upstreamMessagePreview,
   });
 
-  await writeDebugDump('400', normalizedBaseUrl, method, requestPath, model, request, error, requestId, sdkError);
+  await writeDebugDump(
+    '400',
+    normalizedBaseUrl,
+    method,
+    requestPath,
+    model,
+    request,
+    error,
+    requestId,
+    sdkError
+  );
 }
 
 // ── Debug dump ────────────────────────────────────────────────────────────

@@ -3,8 +3,8 @@
 import MarkdownMessage from '@/components/MarkdownMessage/MarkdownMessage';
 import { renderMermaidInPre } from '@/components/MarkdownMessage/mermaidRenderer';
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).__renderMermaidInPre = renderMermaidInPre;
+if (typeof globalThis.window !== 'undefined') {
+  (globalThis as unknown as Record<string, unknown>).__renderMermaidInPre = renderMermaidInPre;
 }
 
 const diagram = `graph TD
