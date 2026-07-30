@@ -1,7 +1,7 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const diagram = `graph TD
@@ -80,7 +80,7 @@ const html = `<!DOCTYPE html>
         log.push('render minimal: ' + e.message);
       }
       
-      document.getElementById('log').innerHTML = log.map(l => '\u003cdiv\u003e' + l + '\u003c/div\u003e').join('');
+      document.getElementById('log').innerHTML = log.map(l => '\u003Cdiv\u003E' + l + '\u003C/div\u003E').join('');
       return log;
     };
     
@@ -113,11 +113,11 @@ async function main() {
   await fs.writeFile(filePath, html);
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
-  await page.goto('file://' + filePath);
-  await page.waitForFunction(() => typeof window.runTest === 'function');
-  const logs = await page.evaluate(async (src) => window.runTest(src), diagram);
+  await page.goto(`file://${  filePath}`);
+  await page.waitForFunction(() => typeof globalThis.runTest === 'function');
+  const logs = await page.evaluate(async (src) => globalThis.runTest(src), diagram);
   console.log(logs.join('\n'));
   await browser.close();
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+try { await main(); } catch (err) { console.error(err); throw err; }

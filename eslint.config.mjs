@@ -145,6 +145,17 @@ export default tseslint.config(
     rules: { 'no-console': 'off' },
   },
 
+  // Root-level test scripts drive a browser via Playwright, so they call
+  // page DOM APIs (document, etc.) inside `page.evaluate(...)` callbacks —
+  // static analysis sees those as Node code referencing browser globals,
+  // hence the `no-undef` errors. Add DOM globals so the lint matches the
+  // runtime environment (Node shell + simulated browser context).
+  {
+    files: ['test-*.{js,mjs,cjs,ts,mts,cts}'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
+    rules: { 'no-console': 'off' },
+  },
+
   // Prettier compatibility — MUST be last to turn off conflicting rules
   eslintConfigPrettier
 );

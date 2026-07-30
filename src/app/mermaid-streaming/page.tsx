@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+
 import MarkdownMessage from '@/components/MarkdownMessage/MarkdownMessage';
 
 const full = `Here is a diagram:\n\n\`\`\`mermaid\ngraph TD\n  A[User] --> B[Locopilot]\n  B --> C[Render Mermaid]\n  C --> D[Validated Chart]\n\`\`\`\n\nDone.`;

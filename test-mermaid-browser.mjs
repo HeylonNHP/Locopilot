@@ -1,10 +1,10 @@
+import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
 /**
  * Playwright-based reproduction using the real Locopilot CSS tokens.
  * Bundles the renderer with esbuild and renders the test diagram in Chromium.
  */
 import { chromium } from 'playwright';
-import { build } from 'esbuild';
-import { readFileSync } from 'node:fs';
 
 await build({
   entryPoints: ['./src/components/MarkdownMessage/mermaidRenderer.ts'],
@@ -14,7 +14,7 @@ await build({
   target: 'es2022',
 });
 
-const bundle = readFileSync('/tmp/mermaidRenderer.bundle.js', 'utf-8');
+const bundle = readFileSync('/tmp/mermaidRenderer.bundle.js', 'utf8');
 
 // Use the real Locopilot CSS variables.
 const css = `
@@ -69,8 +69,8 @@ const browser = await chromium.launch();
 const page = await browser.newPage();
 
 await page.setContent(html, { waitUntil: 'networkidle' });
-await page.waitForFunction(() => window.__renderResult !== null, { timeout: 30000 });
-const result = await page.evaluate(() => window.__renderResult);
+await page.waitForFunction(() => globalThis.__renderResult !== null, { timeout: 30000 });
+const result = await page.evaluate(() => globalThis.__renderResult);
 
 console.log('Browser render result:', JSON.stringify(result, null, 2));
 
@@ -78,7 +78,7 @@ await browser.close();
 
 if (result.threw || result.hasErrorPanel || result.dataset === 'error' || !result.hasSvg) {
   console.error('\n❌ Reproduction: Mermaid failed to render client-side.');
-  process.exit(1);
+  throw new Error("test failed");
 } else {
   console.log('\n✅ Mermaid rendered successfully in real browser.');
 }

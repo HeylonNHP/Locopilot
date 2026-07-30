@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import type { Config } from '@/types/chatConfig';
 
+import { openaiCompatibleAdapter } from '@/services/adapters/openaiCompatibleAdapter';
 import {
   buildLlmRequestContext,
   fetchLlmModelInfo,
@@ -63,7 +64,20 @@ export async function GET(): Promise<NextResponse> {
             // populates this; OpenAI-compatible leaves it empty).
             const caps = new Set<string>();
             try {
-              const modelInfo = await fetchLlmModelInfo(llmRequestContext, model.name);
+              // OpenAI-compatible has no per-model info endpoint, so the
+              // adapter's `fetchModelInfo` re-fetches the entire /v1/models
+              // list to look up one entry. The route already has the list
+              // in hand — pass it through and skip the redundant round-trip.
+              // For Ollama, fall back to the standard adapter call (its
+              // /api/show endpoint is per-model and cheap).
+              const modelInfo =
+                provider.provider === 'openai-compatible'
+                  ? await openaiCompatibleAdapter.fetchModelInfo(
+                      llmRequestContext,
+                      model.name,
+                      models
+                    )
+                  : await fetchLlmModelInfo(llmRequestContext, model.name);
               if (Array.isArray(modelInfo.capabilities)) {
                 for (const cap of modelInfo.capabilities) {
                   caps.add(String(cap));

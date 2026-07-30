@@ -13,14 +13,14 @@ await build({
   target: 'es2022',
 });
 
-const bundle = readFileSync('/tmp/mermaidRenderer.bundle.js', 'utf-8');
+const bundle = readFileSync('/tmp/mermaidRenderer.bundle.js', 'utf8');
 
 const sources = [
-  { name: 'trailing newline', source: `graph TD\n  A[User] --\u003e B[Locopilot]\n` },
-  { name: 'leading newline', source: `\ngraph TD\n  A[User] --\u003e B[Locopilot]` },
-  { name: 'leading spaces', source: `   graph TD\n  A[User] --\u003e B[Locopilot]` },
-  { name: 'CRLF', source: `graph TD\r\n  A[User] --\u003e B[Locopilot]` },
-  { name: 'with fence', source: `\`\`\`mermaid\ngraph TD\n  A[User] --\u003e B[Locopilot]\n\`\`\`` },
+  { name: 'trailing newline', source: `graph TD\n  A[User] --\u003E B[Locopilot]\n` },
+  { name: 'leading newline', source: `\ngraph TD\n  A[User] --\u003E B[Locopilot]` },
+  { name: 'leading spaces', source: `   graph TD\n  A[User] --\u003E B[Locopilot]` },
+  { name: 'CRLF', source: `graph TD\r\n  A[User] --\u003E B[Locopilot]` },
+  { name: 'with fence', source: `\`\`\`mermaid\ngraph TD\n  A[User] --\u003E B[Locopilot]\n\`\`\`` },
   { name: 'html entity', source: `graph TD\n  A[User] --\u0026gt; B[Locopilot]` },
 ];
 
@@ -74,6 +74,6 @@ const htmlBase = `<!DOCTYPE html>
 const browser = await chromium.launch();
 const page = await browser.newPage();
 await page.setContent(htmlBase, { waitUntil: 'networkidle' });
-const results = await page.evaluate(async () => await window.__runCases());
+const results = await page.evaluate(async () => await globalThis.__runCases());
 console.log(JSON.stringify(results, null, 2));
 await browser.close();

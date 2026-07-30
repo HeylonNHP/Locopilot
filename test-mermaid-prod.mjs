@@ -8,7 +8,7 @@ async function main() {
   await page.goto(URL);
   await page.waitForTimeout(2000);
   const result = await page.evaluate(() => {
-    const pres = Array.from(document.querySelectorAll('pre'));
+    const pres = [...document.querySelectorAll('pre')];
     const code = document.querySelector('pre > code.language-mermaid');
     const rendered = document.querySelector('pre.mermaid-rendered');
     const error = document.querySelector('pre.mermaid-error');
@@ -19,11 +19,11 @@ async function main() {
       rendered: !!rendered,
       svg: !!rendered?.querySelector('svg'),
       error: error?.textContent?.slice(0, 500) || null,
-      bodyText: document.body.innerText.slice(0, 300),
+      bodyText: document.body.textContent.slice(0, 300),
     };
   });
   console.log(result);
   await browser.close();
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+try { await main(); } catch (err) { console.error(err); throw err; }

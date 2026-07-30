@@ -1,7 +1,7 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const diagram = `graph TD
@@ -39,11 +39,11 @@ async function build() {
   // Bundle renderer module for browser
   const src = await fs.readFile(path.join(__dirname, 'src/components/MarkdownMessage/mermaidRenderer.ts'), 'utf8');
   const out = src
-    .replace(/export /g, '')
-    .replace(/interface /g, 'var ')
-    .replace(/:\s*(RenderOptions|string|void|Promise<void>|HTMLElement|HTMLPreElement|boolean)\b/g, '')
-    .replace(/:\s*Promise<void>/g, '')
-    .replace(/<[^>]+>/g, '');
+    .replaceAll('export ', '')
+    .replaceAll('interface ', 'var ')
+    .replaceAll(/:\s*(RenderOptions|string|void|Promise<void>|HTMLElement|HTMLPreElement|boolean)\b/g, '')
+    .replaceAll(/:\s*Promise<void>/g, '')
+    .replaceAll(/<[^>]+>/g, '');
   await fs.writeFile(path.join(__dirname, 'dist/mermaidRenderer.mjs'), out);
 }
 
@@ -54,15 +54,15 @@ async function main() {
   const page = await browser.newPage();
   const filePath = path.join(__dirname, 'dist/test-mermaid-full.html');
   await fs.writeFile(filePath, pageHtml);
-  await page.goto('file://' + filePath);
+  await page.goto(`file://${  filePath}`);
   await page.evaluate(async (diagramText) => {
     const pre = document.createElement('pre');
     const code = document.createElement('code');
     code.className = 'language-mermaid';
     code.textContent = diagramText;
-    pre.appendChild(code);
-    document.getElementById('root').appendChild(pre);
-    await window.renderMermaidInPre(pre);
+    pre.append(code);
+    document.querySelector('#root').append(pre);
+    await globalThis.renderMermaidInPre(pre);
   }, diagram);
   await page.waitForTimeout(1000);
   const result = await page.evaluate(() => {
@@ -78,4 +78,4 @@ async function main() {
   await browser.close();
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+try { await main(); } catch (err) { console.error(err); throw err; }

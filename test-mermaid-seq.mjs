@@ -1,19 +1,32 @@
+import fs, { readFile } from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import http from 'http';
-import { readFile } from 'fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const sources = [
-  { name: 'sequence', source: `sequenceDiagram\n    A-\u003e\u003e+B : Hello\n    B--\u003e\u003e-A : Hi` },
-  { name: 'class', source: `classDiagram\n    User \u003c|-- Person\n    Person : +String name` },
-  { name: 'state', source: `stateDiagram-v2\n    [*] --\u003e Still\n    Still --\u003e [*]` },
-  { name: 'er', source: `erDiagram\n    CUSTOMER ||--o{ ORDER : places\n    CUSTOMER {\n        string name\n    }` },
-  { name: 'gantt', source: `gantt\n    title A Gantt Diagram\n    dateFormat YYYY-MM-DD\n    section Section\n    A task :a1, 2024-01-01, 30d` },
-  { name: 'pie', source: `pie title NETFLIX\n    \"Time spent looking\" : 90\n    \"Time watching\" : 10` },
+  {
+    name: 'sequence',
+    source: `sequenceDiagram\n    A-\u003E\u003E+B : Hello\n    B--\u003E\u003E-A : Hi`,
+  },
+  { name: 'class', source: `classDiagram\n    User \u003C|-- Person\n    Person : +String name` },
+  { name: 'state', source: `stateDiagram-v2\n    [*] --\u003E Still\n    Still --\u003E [*]` },
+  {
+    name: 'er',
+    source: `erDiagram\n    CUSTOMER ||--o{ ORDER : places\n    CUSTOMER {\n        string name\n    }`,
+  },
+  {
+    name: 'gantt',
+    source: `gantt\n    title A Gantt Diagram\n    dateFormat YYYY-MM-DD\n    section Section\n    A task :a1, 2024-01-01, 30d`,
+  },
+  {
+    name: 'pie',
+    source: `pie title NETFLIX
+    "Time spent looking" : 90
+    "Time watching" : 10`,
+  },
 ];
 
 const html = `<!DOCTYPE html>
@@ -53,14 +66,18 @@ const html = `<!DOCTYPE html>
 async function startServer(port) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${port}`);
-    const filePath = path.join(__dirname, url.pathname === '/' ? 'dist/test-mermaid-seq.html' : url.pathname);
+    const filePath = path.join(
+      __dirname,
+      url.pathname === '/' ? 'dist/test-mermaid-seq.html' : url.pathname
+    );
     try {
       const data = await readFile(filePath);
       const ext = path.extname(filePath);
-      const ct = ext === '.mjs' ? 'application/javascript' : ext === '.html' ? 'text/html' : 'text/plain';
+      const ct =
+        ext === '.mjs' ? 'application/javascript' : ext === '.html' ? 'text/html' : 'text/plain';
       res.writeHead(200, { 'Content-Type': ct });
       res.end(data);
-    } catch (e) {
+    } catch {
       res.writeHead(404);
       res.end('Not found');
     }
@@ -77,11 +94,13 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   await page.goto(`http://localhost:${port}/`);
-  await page.waitForFunction(() => typeof window.runTest === 'function');
-  const logs = await page.evaluate(() => window.runTest());
+  await page.waitForFunction(() => typeof globalThis.runTest === 'function');
+  const logs = await page.evaluate(() => globalThis.runTest());
   console.log(JSON.stringify(logs, null, 2));
   await browser.close();
   server.close();
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+try { await main(); } catch (err) {
+  console.error(err);
+}

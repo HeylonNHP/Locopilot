@@ -1,9 +1,8 @@
+import fs, { readFile } from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import http from 'http';
-import { readFile } from 'fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -45,14 +44,18 @@ const html = `<!DOCTYPE html>
 async function startServer(port) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${port}`);
-    const filePath = path.join(__dirname, url.pathname === '/' ? 'dist/test-mermaid-pollution.html' : url.pathname);
+    const filePath = path.join(
+      __dirname,
+      url.pathname === '/' ? 'dist/test-mermaid-pollution.html' : url.pathname
+    );
     try {
       const data = await readFile(filePath);
       const ext = path.extname(filePath);
-      const ct = ext === '.mjs' ? 'application/javascript' : ext === '.html' ? 'text/html' : 'text/plain';
+      const ct =
+        ext === '.mjs' ? 'application/javascript' : ext === '.html' ? 'text/html' : 'text/plain';
       res.writeHead(200, { 'Content-Type': ct });
       res.end(data);
-    } catch (e) {
+    } catch {
       res.writeHead(404);
       res.end('Not found');
     }
@@ -69,11 +72,13 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   await page.goto(`http://localhost:${port}/`);
-  await page.waitForFunction(() => typeof window.__run === 'function');
-  const result = await page.evaluate(() => window.__run());
+  await page.waitForFunction(() => typeof globalThis.__run === 'function');
+  const result = await page.evaluate(() => globalThis.__run());
   console.log(JSON.stringify(result, null, 2));
   await browser.close();
   server.close();
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+try { await main(); } catch (err) {
+  console.error(err);
+}

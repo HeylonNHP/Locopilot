@@ -1,17 +1,16 @@
+import fs, { readFile } from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import http from 'http';
-import { readFile } from 'fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const cases = [
-  { name: 'valid', source: `graph TD\n  A[User] --\u003e B[Locopilot]` },
+  { name: 'valid', source: `graph TD\n  A[User] --\u003E B[Locopilot]` },
   { name: 'html entity', source: `graph TD\n  A[User] --\u0026gt; B[Locopilot]` },
-  { name: 'with fence', source: `\`\`\`mermaid\ngraph TD\n  A --\u003e B\n\`\`\`` },
-  { name: 'bad keyword', source: `grap TD\n  A --\u003e B` },
+  { name: 'with fence', source: `\`\`\`mermaid\ngraph TD\n  A --\u003E B\n\`\`\`` },
+  { name: 'bad keyword', source: `grap TD\n  A --\u003E B` },
   { name: 'empty', source: '' },
 ];
 
@@ -47,14 +46,18 @@ const html = `<!DOCTYPE html>
 async function startServer(port) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${port}`);
-    const filePath = path.join(__dirname, url.pathname === '/' ? 'dist/test-mermaid-render-inv.html' : url.pathname);
+    const filePath = path.join(
+      __dirname,
+      url.pathname === '/' ? 'dist/test-mermaid-render-inv.html' : url.pathname
+    );
     try {
       const data = await readFile(filePath);
       const ext = path.extname(filePath);
-      const ct = ext === '.mjs' ? 'application/javascript' : ext === '.html' ? 'text/html' : 'text/plain';
+      const ct =
+        ext === '.mjs' ? 'application/javascript' : ext === '.html' ? 'text/html' : 'text/plain';
       res.writeHead(200, { 'Content-Type': ct });
       res.end(data);
-    } catch (e) {
+    } catch {
       res.writeHead(404);
       res.end('Not found');
     }
@@ -71,11 +74,13 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   await page.goto(`http://localhost:${port}/`);
-  await page.waitForFunction(() => typeof window.runTest === 'function');
-  const logs = await page.evaluate(() => window.runTest());
+  await page.waitForFunction(() => typeof globalThis.runTest === 'function');
+  const logs = await page.evaluate(() => globalThis.runTest());
   console.log(JSON.stringify(logs, null, 2));
   await browser.close();
   server.close();
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+try { await main(); } catch (err) {
+  console.error(err);
+}

@@ -170,7 +170,7 @@ function renderMarkdownHtml(source: string): string {
  * on its own line with the same length.
  */
 function findStreamingTailStart(source: string): number {
-  const fence = /^[ \t]*(`{3,}|~{3,})[^\n]*$/gm;
+  const fence = /^[\t ]*(`{3,}|~{3,})[^\n]*$/gm;
   let match: RegExpExecArray | null;
 
   while ((match = fence.exec(source)) !== null) {
@@ -237,7 +237,7 @@ function extractFrozenBlocks(frozen: string): FrozenBlock[] {
   //
   // This guarantees that every byte of `frozen` ends up in some
   // emitted block — no content is silently dropped.
-  const fence = /^[ \t]*(`{3,}|~{3,})[^\n]*$/gm;
+  const fence = /^[\t ]*(`{3,}|~{3,})[^\n]*$/gm;
   let lastEnd = 0;
   let match: RegExpExecArray | null;
   let mermaidIndex = 0;
