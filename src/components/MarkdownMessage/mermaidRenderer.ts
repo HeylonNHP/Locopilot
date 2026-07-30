@@ -67,7 +67,7 @@ async function ensureInitialised(theme: ResolvedTheme): Promise<Mermaid> {
     themeVariables: collectThemeVariables(),
     fontFamily: 'inherit',
     markdownAutoWrap: true,
-    htmlLabels: true,
+    htmlLabels: false,
     flowchart: {
       wrappingWidth: 140,
     },
