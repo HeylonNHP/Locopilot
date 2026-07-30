@@ -22,6 +22,7 @@ export default function StatusBar() {
     currentSessionId,
     streamingSessions,
     models,
+    modelsLoading,
   } = state;
   const [showSelector, setShowSelector] = useState(false);
   const [showCompactionSelector, setShowCompactionSelector] = useState(false);
@@ -38,16 +39,23 @@ export default function StatusBar() {
     setIsDark(dataset.theme === 'dark');
   }, []);
 
+  useEffect(() => {
+    if (modelsLoading) {
+      setShowSelector(false);
+      setShowCompactionSelector(false);
+    }
+  }, [modelsLoading]);
+
   const handleOpenSelector = useCallback(
     ({ clientX, clientY }: { clientX: number; clientY: number }) => {
-      if (models.length > 0 && model) {
+      if (!modelsLoading && models.length > 0 && model) {
         // Snapshot the click coordinates so the dropdown can anchor to the
         // exact point the user clicked, even if the anchor ref re-renders.
         lastClickRef.current = { x: clientX, y: clientY };
         setShowSelector(true);
       }
     },
-    [models.length, model]
+    [modelsLoading, models.length, model]
   );
 
   const handleCloseSelector = useCallback(() => {
@@ -156,34 +164,46 @@ export default function StatusBar() {
       </span>
       {tpsLabel && <span>{tpsLabel}</span>}
       <span>
-        {model && (
+        {modelsLoading ? (
           <span
-            ref={modelRef}
-            className="statusbar-model"
-            onClick={handleOpenSelector}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                // Keyboard activation: pass the anchor element's centre
-                // as the click point so the dropdown anchors sensibly.
-                if (modelRef.current) {
-                  const rect = modelRef.current.getBoundingClientRect();
-                  handleOpenSelector({
-                    clientX: rect.left + rect.width / 2,
-                    clientY: rect.top,
-                  });
-                } else {
-                  handleOpenSelector({ clientX: 0, clientY: 0 });
-                }
-              }
-            }}
+            className="statusbar-model-loading"
+            aria-live="polite"
+            aria-label="Loading models"
+            aria-busy="true"
           >
-            Model: {model}
+            <span className="statusbar-model-loading-dot" aria-hidden="true" />
+            <span>Loading models…</span>
           </span>
+        ) : (
+          model && (
+            <span
+              ref={modelRef}
+              className="statusbar-model"
+              onClick={handleOpenSelector}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  // Keyboard activation: pass the anchor element's centre
+                  // as the click point so the dropdown anchors sensibly.
+                  if (modelRef.current) {
+                    const rect = modelRef.current.getBoundingClientRect();
+                    handleOpenSelector({
+                      clientX: rect.left + rect.width / 2,
+                      clientY: rect.top,
+                    });
+                  } else {
+                    handleOpenSelector({ clientX: 0, clientY: 0 });
+                  }
+                }
+              }}
+            >
+              Model: {model}
+            </span>
+          )
         )}
-        {model && (
+        {model && !modelsLoading && (
           <span
             ref={compactionRef}
             className="statusbar-compaction"
