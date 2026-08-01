@@ -4,6 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Repo root is two levels up from this script (`scripts/mermaid/<name>.mjs`).
+// Anything that points at the source tree (rather than this script's own
+// scratch dist/ folder) is anchored here. Resolving once keeps the paths
+// robust to future re-locations.
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const diagram = `graph TD
   A[User] --> B[Locopilot]
   B --> C[Render Mermaid]
@@ -36,12 +41,21 @@ const pageHtml = `<!DOCTYPE html>
 </html>`;
 
 async function build() {
-  // Bundle renderer module for browser
-  const src = await fs.readFile(path.join(__dirname, 'src/components/MarkdownMessage/mermaidRenderer.ts'), 'utf8');
+  // Bundle renderer module for browser. Read the source from the repo
+  // root (not the script's own __dirname), since this script lives in
+  // scripts/mermaid/ but reads the canonical renderer source from
+  // src/components/MarkdownMessage/.
+  const src = await fs.readFile(
+    path.join(REPO_ROOT, 'src/components/MarkdownMessage/mermaidRenderer.ts'),
+    'utf8'
+  );
   const out = src
     .replaceAll('export ', '')
     .replaceAll('interface ', 'var ')
-    .replaceAll(/:\s*(RenderOptions|string|void|Promise<void>|HTMLElement|HTMLPreElement|boolean)\b/g, '')
+    .replaceAll(
+      /:\s*(RenderOptions|string|void|Promise<void>|HTMLElement|HTMLPreElement|boolean)\b/g,
+      ''
+    )
     .replaceAll(/:\s*Promise<void>/g, '')
     .replaceAll(/<[^>]+>/g, '');
   await fs.writeFile(path.join(__dirname, 'dist/mermaidRenderer.mjs'), out);
@@ -54,7 +68,7 @@ async function main() {
   const page = await browser.newPage();
   const filePath = path.join(__dirname, 'dist/test-mermaid-full.html');
   await fs.writeFile(filePath, pageHtml);
-  await page.goto(`file://${  filePath}`);
+  await page.goto(`file://${filePath}`);
   await page.evaluate(async (diagramText) => {
     const pre = document.createElement('pre');
     const code = document.createElement('code');
@@ -78,4 +92,9 @@ async function main() {
   await browser.close();
 }
 
-try { await main(); } catch (err) { console.error(err); throw err; }
+try {
+  await main();
+} catch (err) {
+  console.error(err);
+  throw err;
+}

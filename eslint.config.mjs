@@ -132,26 +132,19 @@ export default tseslint.config(
     },
   },
 
-  // Node scripts in scripts/ need browser globals disabled and Node
-  // globals enabled. The default ESLint environment is the browser,
-  // so process/console/etc. are flagged as no-undef without this.
-  // `no-console` is also relaxed here because the wrapper scripts
-  // need to print progress messages to the terminal. This block
-  // must come AFTER the "Additional sensible defaults" block so
-  // the `no-console: off` override actually wins.
+  // Node scripts in scripts/ (including the moved `scripts/mermaid/`
+  // test runners) need browser globals disabled and Node globals enabled.
+  // The default ESLint environment is the browser, so process/console/
+  // etc. are flagged as no-undef without this. Browser globals are also
+  // exposed because Playwright test runners call page DOM APIs
+  // (document, etc.) inside `page.evaluate(...)` callbacks — static
+  // analysis sees those as Node code referencing browser globals.
+  // `no-console` is relaxed because the wrapper scripts need to print
+  // progress messages to the terminal. This block must come AFTER the
+  // "Additional sensible defaults" block so the `no-console: off`
+  // override actually wins.
   {
     files: ['scripts/**/*.{js,mjs,cjs,ts,mts,cts}'],
-    languageOptions: { globals: { ...globals.node } },
-    rules: { 'no-console': 'off' },
-  },
-
-  // Root-level test scripts drive a browser via Playwright, so they call
-  // page DOM APIs (document, etc.) inside `page.evaluate(...)` callbacks —
-  // static analysis sees those as Node code referencing browser globals,
-  // hence the `no-undef` errors. Add DOM globals so the lint matches the
-  // runtime environment (Node shell + simulated browser context).
-  {
-    files: ['test-*.{js,mjs,cjs,ts,mts,cts}'],
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
     rules: { 'no-console': 'off' },
   },
