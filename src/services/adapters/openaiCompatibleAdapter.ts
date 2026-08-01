@@ -955,8 +955,25 @@ async function* sendOpenAICompatibleChatStream(
 async function getOpenAICompatibleApiErrorMessage(error: unknown): Promise<string> {
   if (error instanceof OpenAI.APIError) {
     const status = error.status;
-    const message = error.message || '';
-    return status ? `OpenAI-compatible API error (${status}): ${message}` : message;
+    const outerMessage = error.message || '';
+    const upstream = pickUpstreamError(error);
+    const header = status
+      ? `OpenAI-compatible API error (${status})`
+      : 'OpenAI-compatible API error';
+    // When the upstream message is meaningful and differs from the outer
+    // envelope, surface it — the outer is usually a generic
+    // "Provider returned error" wrap from gateways like OpenRouter.
+    if (
+      upstream.upstreamMessage &&
+      upstream.upstreamMessage.length > 0 &&
+      upstream.upstreamMessage !== outerMessage
+    ) {
+      const providerTag = upstream.upstreamProviderName
+        ? ` [${upstream.upstreamProviderName}]`
+        : '';
+      return `${header}: ${outerMessage}${providerTag} — ${upstream.upstreamMessage}`;
+    }
+    return status ? `${header}: ${outerMessage}` : outerMessage;
   }
 
   if (error instanceof Error) return error.message;
@@ -1040,6 +1057,121 @@ function extractApiErrorDetails(error: unknown): {
   };
 }
 
+/**
+ * Walk the parsed response body to find the most specific upstream error
+ * message. Some providers (notably OpenRouter) wrap the real upstream
+ * error in two layers:
+ *
+ *   1. The OpenAI-compatible envelope: `{error: {message, code, ...}}` —
+ *      surface-level, usually a generic "Provider returned error".
+ *   2. Inside `metadata.raw`, a stringified JSON of the upstream provider's
+ *      actual error (e.g. Azure's `{"error":{"message":"Invalid schema...",
+ *      "param":"tools[10].parameters","code":"invalid_function_parameters"}}`).
+ *
+ * The OpenAI SDK exposes the parsed envelope as `error.error` but throws
+ * away the metadata. Without this walker, the application only ever sees
+ * the generic outer message, which makes tool-schema / model-capability
+ * 400s look identical to network-level failures.
+ *
+ * The walker is depth-bounded and tolerant of unexpected shapes — it
+ * returns `null` if no usable inner message is found, so callers can
+ * fall back to the outer envelope.
+ */
+function extractUpstreamError(error: unknown): {
+  message: string | null;
+  param: string | null;
+  code: string | null;
+  providerName: string | null;
+  rawBody: string | null;
+} {
+  const result = {
+    message: null as string | null,
+    param: null as string | null,
+    code: null as string | null,
+    providerName: null as string | null,
+    rawBody: null as string | null,
+  };
+
+  if (!(error instanceof OpenAI.APIError)) return result;
+
+  const body = error.error;
+  if (body === undefined || body === null) return result;
+
+  // Stringify once — the OpenRouter `metadata.raw` field is itself a JSON
+  // string, so we need both the string and the parsed object for different
+  // downstream consumers.
+  try {
+    result.rawBody = JSON.stringify(body);
+  } catch {
+    // Circular refs in the parsed body shouldn't happen, but be defensive.
+  }
+
+  if (typeof body !== 'object') return result;
+  const envelope = body as Record<string, unknown>;
+
+  // OpenRouter envelope: {error: {message, code, metadata: {raw, provider_name, ...}}}
+  // Plain OpenAI shape: {error: {message, type, param, code}} — same outer
+  // `error` envelope, no metadata. Read both shapes' shared fields here.
+  const outerError = envelope.error;
+  if (outerError && typeof outerError === 'object') {
+    const oe = outerError as Record<string, unknown>;
+    if (typeof oe.message === 'string') result.message = oe.message;
+    if (typeof oe.code === 'string' || typeof oe.code === 'number') {
+      result.code = String(oe.code);
+    }
+    if (typeof oe.param === 'string') result.param = oe.param;
+    if (typeof oe.type === 'string' && !result.code) result.code = oe.type;
+
+    const metadata = oe.metadata;
+    if (metadata && typeof metadata === 'object') {
+      const m = metadata as Record<string, unknown>;
+      if (typeof m.provider_name === 'string') result.providerName = m.provider_name;
+      if (typeof m.raw === 'string') {
+        // The upstream provider's actual error, JSON-stringified by OpenRouter.
+        try {
+          const parsed = JSON.parse(m.raw) as Record<string, unknown>;
+          // Azure / OpenAI shape: {error: {message, param, code, type}}
+          // Some providers put fields at the top level instead.
+          const inner = (
+            parsed.error && typeof parsed.error === 'object'
+              ? (parsed.error as Record<string, unknown>)
+              : parsed
+          ) as Record<string, unknown>;
+          if (typeof inner.message === 'string' && inner.message.length > 0) {
+            result.message = inner.message;
+          }
+          if (typeof inner.param === 'string') result.param = inner.param;
+          if (typeof inner.code === 'string') result.code = inner.code;
+          if (typeof inner.type === 'string' && !result.code) result.code = inner.type;
+        } catch {
+          // m.raw wasn't JSON; keep the outer message.
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+interface UpstreamErrorFields {
+  upstreamMessage: string | null;
+  upstreamParam: string | null;
+  upstreamCode: string | null;
+  upstreamProviderName: string | null;
+  upstreamRawBody: string | null;
+}
+
+function pickUpstreamError(error: unknown): UpstreamErrorFields {
+  const u = extractUpstreamError(error);
+  return {
+    upstreamMessage: u.message,
+    upstreamParam: u.param,
+    upstreamCode: u.code,
+    upstreamProviderName: u.providerName,
+    upstreamRawBody: u.rawBody,
+  };
+}
+
 async function logAdapter400(
   baseUrl: string,
   model: string | undefined,
@@ -1053,19 +1185,14 @@ async function logAdapter400(
   const requestTarget = `${method} ${normalizedBaseUrl}${requestPath}`;
   const sdkError = serializeOpenAIError(error);
   const apiErrorDetails = extractApiErrorDetails(error);
+  const upstream = pickUpstreamError(error);
   const statusLine =
     error instanceof OpenAI.APIError ? error.message : error instanceof Error ? error.message : '';
-  const upstreamMessage =
-    apiErrorDetails &&
-    typeof apiErrorDetails.upstreamError === 'object' &&
-    apiErrorDetails.upstreamError !== null
-      ? (apiErrorDetails.upstreamError as { message?: unknown }).message
-      : undefined;
   const upstreamMessagePreview =
-    typeof upstreamMessage === 'string'
-      ? upstreamMessage.length > 240
-        ? `${upstreamMessage.slice(0, 240)}…`
-        : upstreamMessage
+    typeof upstream.upstreamMessage === 'string'
+      ? upstream.upstreamMessage.length > 240
+        ? `${upstream.upstreamMessage.slice(0, 240)}…`
+        : upstream.upstreamMessage
       : null;
 
   debugLog.debug('adapter_400', {
@@ -1080,9 +1207,25 @@ async function logAdapter400(
     providerType: apiErrorDetails?.type ?? null,
     providerParam: apiErrorDetails?.param ?? null,
     upstreamRequestId: apiErrorDetails?.requestID ?? null,
+    upstreamProviderName: upstream.upstreamProviderName,
+    upstreamCode: upstream.upstreamCode,
+    upstreamParam: upstream.upstreamParam,
     statusLine,
-    upstreamMessagePreview,
+    upstreamMessage: upstreamMessagePreview,
   });
+
+  console.error(`=== OPENAI ADAPTER 400 ERROR ===`);
+  console.error('BASE URL:', normalizedBaseUrl);
+  console.error('REQUEST:', requestTarget);
+  console.error('SDK ERROR:', JSON.stringify(sdkError));
+  console.error('API message:', statusLine || '(none)');
+  if (upstream.upstreamMessage && upstream.upstreamMessage !== statusLine) {
+    console.error('UPSTREAM message:', upstream.upstreamMessage);
+    if (upstream.upstreamParam) console.error('UPSTREAM param:', upstream.upstreamParam);
+    if (upstream.upstreamCode) console.error('UPSTREAM code:', upstream.upstreamCode);
+    if (upstream.upstreamProviderName)
+      console.error('UPSTREAM provider:', upstream.upstreamProviderName);
+  }
 
   await writeDebugDump(
     '400',
@@ -1093,7 +1236,8 @@ async function logAdapter400(
     request,
     error,
     requestId,
-    sdkError
+    sdkError,
+    upstream
   );
 }
 
@@ -1108,17 +1252,18 @@ async function writeDebugDump(
   request: unknown,
   error: unknown,
   requestId?: string,
-  sdkError?: ReturnType<typeof serializeOpenAIError>
+  sdkError?: ReturnType<typeof serializeOpenAIError>,
+  upstream?: UpstreamErrorFields
 ): Promise<void> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
   const requestTarget = `${method} ${normalizedBaseUrl}${requestPath}`;
   const stamp = new Date().toISOString().replaceAll(/[.:]/g, '-');
   const dumpPath = `debug_${tag}_${stamp}.json`;
   const serializedError = sdkError ?? serializeOpenAIError(error);
+  const upstreamFields = upstream ?? pickUpstreamError(error);
 
   let apiMessage = '';
   let statusCode: number | undefined;
-  const rawBody: string | null = null;
 
   if (error instanceof OpenAI.APIError) {
     statusCode = error.status;
@@ -1127,11 +1272,6 @@ async function writeDebugDump(
     apiMessage = error.message;
   }
 
-  console.error(`=== OPENAI ADAPTER ${tag} ERROR ===`);
-  console.error('BASE URL:', normalizedBaseUrl);
-  console.error('REQUEST:', requestTarget);
-  console.error('SDK ERROR:', JSON.stringify(serializedError));
-  console.error('API message:', apiMessage || '(none)');
   try {
     await writeFile(
       dumpPath,
@@ -1143,10 +1283,21 @@ async function writeDebugDump(
           ...(requestId ? { requestId } : {}),
           request,
           error: serializedError,
+          // The "upstream" block surfaces the *real* provider error, which
+          // some gateways (OpenRouter, Cloudflare AI Gateway, etc.) wrap
+          // behind a generic outer envelope. Without this block, every 400
+          // looks like "400 Provider returned error" with no clue which
+          // field, model, or tool schema the provider actually rejected.
+          upstream: {
+            message: upstreamFields.upstreamMessage,
+            param: upstreamFields.upstreamParam,
+            code: upstreamFields.upstreamCode,
+            providerName: upstreamFields.upstreamProviderName,
+            rawBody: upstreamFields.upstreamRawBody,
+          },
           response: {
             status: statusCode,
             message: apiMessage || null,
-            rawBody,
           },
         },
         null,
