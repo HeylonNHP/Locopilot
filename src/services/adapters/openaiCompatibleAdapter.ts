@@ -134,15 +134,50 @@ function detectImageMimeTypeFromBase64(base64: string): string {
  * Recursively strip `description` fields from a tool parameter schema object.
  * Some providers (e.g. Airia) reject description fields inside nested
  * items.properties, even though they are valid JSON Schema.
+ *
+ * The walker is context-aware: it tracks whether the current object is the
+ * value of a `properties` key (in which case its children are property
+ * *names*, not schema keywords) or just a property declaration (in which
+ * case its `description` child is an annotation that should be stripped).
+ *
+ * Without this distinction, a tool whose schema declares a property named
+ * `description` (e.g. `create_skill`, which has `required: ["name",
+ * "description", "body"]`) loses that property entry while the `required`
+ * array still references it, producing an invalid schema and a 400 from
+ * strict providers like OpenRouter/Azure.
+ *
+ * Property-name containers in JSON Schema are: `properties`,
+ * `patternProperties`, `dependentSchemas`, `definitions`,
+ * `$defs`, `oneOf`, `anyOf`, `allOf`, and the element type of `prefixItems`
+ * / `items` (when items is an array of schemas — uncommon, treated the
+ * same as the object form).
  */
+const PROPERTY_NAME_CONTAINERS = new Set([
+  'properties',
+  'patternProperties',
+  'dependentSchemas',
+  'definitions',
+  '$defs',
+]);
+
 function stripDescriptions(obj: unknown): unknown {
+  return stripDescriptionsImpl(obj, null);
+}
+
+function stripDescriptionsImpl(obj: unknown, parentKey: string | null): unknown {
   if (obj === null || obj === undefined) return obj;
-  if (Array.isArray(obj)) return obj.map(stripDescriptions);
+  if (Array.isArray(obj)) return obj.map((v) => stripDescriptionsImpl(v, null));
   if (typeof obj === 'object') {
+    const record = obj as Record<string, unknown>;
+    // When the parent container maps property *names* to schemas, every
+    // direct child of this object is itself a property declaration; in
+    // particular, a child literally named `description` is a user-defined
+    // property entry, not an annotation, and must be preserved.
+    const childrenArePropertyNames = parentKey !== null && PROPERTY_NAME_CONTAINERS.has(parentKey);
     const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-      if (key === 'description') continue;
-      result[key] = stripDescriptions(value);
+    for (const [key, value] of Object.entries(record)) {
+      if (key === 'description' && !childrenArePropertyNames) continue;
+      result[key] = stripDescriptionsImpl(value, key);
     }
     return result;
   }
