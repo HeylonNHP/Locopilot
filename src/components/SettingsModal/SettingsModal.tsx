@@ -38,6 +38,17 @@ export default function SettingsModal({ onClose }: Props) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  // The legacy `state.provider` field only tracks the original single-provider
+  // config and is never updated when the user picks a different provider via
+  // the multi-provider model selector. Resolve the active provider from
+  // `providers[]` + `activeProviderId` so the Reasoning Effort dropdown (and any
+  // future per-provider UI) gates on the actually-selected provider, not the
+  // stale top-level field.
+  const activeProvider =
+    state.providers?.find((p) => p.id === state.activeProviderId) ?? state.providers?.[0];
+  const isOpenAICompatible =
+    activeProvider?.provider === 'openai-compatible' || state.provider === 'openai-compatible';
+
   const handleSave = async () => {
     setSaveError(null);
     setIsSaving(true);
@@ -277,7 +288,7 @@ export default function SettingsModal({ onClose }: Props) {
               </div>
             </div>
 
-            {state.provider === 'openai-compatible' && (
+            {isOpenAICompatible && (
               <div className="settings-row">
                 <label className="settings-label" htmlFor="reasoning-effort-select">
                   Reasoning Effort
