@@ -1,4 +1,12 @@
+import axios from 'axios';
+import imageType from 'image-type';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+
 import type { ToolSchema } from '@/tools/tools';
+
+import { IMAGE_FETCH_TIMEOUT_MS } from '@/constants';
+import { DEFAULT_USER_AGENT } from '@/tools/web/playwrightRenderer';
 
 export const fetchImageToolSchema: ToolSchema = {
   name: 'fetch_image',
@@ -17,14 +25,7 @@ export const fetchImageToolSchema: ToolSchema = {
 };
 
 /** Default download timeout: 60 seconds — large images or slow connections need more time. */
-const DEFAULT_TIMEOUT_MS = 60_000;
-
-import axios from 'axios';
-import imageType from 'image-type';
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-
-import { DEFAULT_USER_AGENT } from '@/tools/web/playwrightRenderer';
+const DEFAULT_TIMEOUT_MS = IMAGE_FETCH_TIMEOUT_MS;
 
 /**
  * Detects the actual image format from the file's magic bytes using the `image-type` library.

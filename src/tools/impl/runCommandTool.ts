@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 
+import { RUN_COMMAND_TIMEOUT_MS } from '@/constants';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import { sanitize, type ToolSchema } from '@/tools/tools';
 import {
@@ -102,7 +103,7 @@ export function enterRequestScope(): void {
   requestProcessState.enterWith({ registry: new Map(), nextId: 1 });
 }
 
-export const DEFAULT_TIMEOUT_MS = 30_000;
+export const DEFAULT_TIMEOUT_MS = RUN_COMMAND_TIMEOUT_MS;
 
 export function defaultShell(): string {
   // Always use powershell on Windows regardless of which shell launched Node,

@@ -8,6 +8,12 @@ import type { ToolCallArguments } from '@/tools/tools';
 import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+import {
+  DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_PROVIDER,
+  DEFAULT_WEB_SEARCH_SETTINGS,
+} from '@/services/configDefaults';
 
 export interface ChatMessage {
   /**
@@ -1175,8 +1181,8 @@ const initialState: ChatState = {
   modelsLoading: true,
   providers: [],
   activeProviderId: null,
-  baseUrl: 'http://localhost:11434',
-  provider: 'ollama',
+  baseUrl: DEFAULT_OLLAMA_BASE_URL,
+  provider: DEFAULT_PROVIDER,
   requestedNumCtx: DEFAULT_NUM_CTX,
   effectiveNumCtx: null,
   error: null,
@@ -1190,13 +1196,9 @@ const initialState: ChatState = {
   compactionModel: '',
   compactionProviderId: null,
   chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-  webSearch: {
-    maxQueries: 3,
-    resultsPerQuery: 3,
-    perPageCharLimit: 5000,
-  },
+  webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS },
   completionMode: 'normal',
-  maxPromptLoopIterations: 4,
+  maxPromptLoopIterations: DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   tokenStats: null,
   currentTps: null,
   compactingPhases: [],

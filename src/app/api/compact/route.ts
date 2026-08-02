@@ -5,6 +5,7 @@ import type { SseEventPayloadMap } from '@/types/sse';
 import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
 import { resolveEffectiveNumCtx } from '@/services/capResolver';
 import { compactHistory } from '@/services/compact';
+import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
 import {
   buildLlmRequestContext,
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         baseUrl:
           typeof baseUrl === 'string' && baseUrl.trim().length > 0
             ? baseUrl.trim()
-            : 'http://localhost:11434',
+            : DEFAULT_OLLAMA_BASE_URL,
       });
       try {
         const config = await loadConfig();
@@ -107,7 +108,7 @@ export async function POST(request: NextRequest): Promise<Response> {
                 config?.baseUrl?.trim() ||
                 (typeof baseUrl === 'string' && baseUrl.trim().length > 0
                   ? baseUrl.trim()
-                  : 'http://localhost:11434'),
+                  : DEFAULT_OLLAMA_BASE_URL),
             });
         // Resolve the effective numCtx against the model's runtime cap.
         // The body numCtx is an explicit per-request override; otherwise the
@@ -158,7 +159,11 @@ export async function POST(request: NextRequest): Promise<Response> {
             ? compactionProviderId.trim()
             : undefined;
         const compactionResolved = explicitCompactionProviderId
-          ? resolveProviderRequestContext(config, explicitCompactionProviderId, effectiveCompactionModel)
+          ? resolveProviderRequestContext(
+              config,
+              explicitCompactionProviderId,
+              effectiveCompactionModel
+            )
           : null;
         const compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
 

@@ -1,12 +1,10 @@
 import { access, readFile, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 
 import type { Config } from '@/types/chatConfig';
 
 import { logger } from '@/app/lib/logger';
+import { CONFIG_PATH, CONFIG_TMP_PATH } from '@/services/paths';
 
-const CONFIG_PATH = path.join(process.cwd(), 'config.json');
-const CONFIG_TMP_PATH = `${CONFIG_PATH}.tmp`;
 let configWriteQueue: Promise<void> = Promise.resolve();
 
 export async function loadConfig(): Promise<Config | null> {

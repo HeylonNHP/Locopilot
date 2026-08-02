@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 import { enqueueSessionRename } from '@/app/lib/sessionWriteQueue';
 import { resolveEffectiveNumCtx } from '@/services/capResolver';
+import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
 import { listSessions, loadSessionMessages } from '@/services/history';
 import {
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     baseUrl:
       typeof baseUrl === 'string' && baseUrl.trim().length > 0
         ? baseUrl.trim()
-        : 'http://localhost:11434',
+        : DEFAULT_OLLAMA_BASE_URL,
   });
   try {
     const config = await loadConfig();
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             config?.baseUrl?.trim() ||
             (typeof baseUrl === 'string' && baseUrl.trim().length > 0
               ? baseUrl.trim()
-              : 'http://localhost:11434'),
+              : DEFAULT_OLLAMA_BASE_URL),
         });
 
     // Resolve the effective numCtx against the model's runtime cap. The
@@ -156,7 +157,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ? compactionProviderId.trim()
         : undefined;
     const compactionResolved = explicitCompactionProviderId
-      ? resolveProviderRequestContext(config, explicitCompactionProviderId, effectiveCompactionModel)
+      ? resolveProviderRequestContext(
+          config,
+          explicitCompactionProviderId,
+          effectiveCompactionModel
+        )
       : null;
     const compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
 

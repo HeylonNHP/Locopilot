@@ -19,6 +19,8 @@ import { type CallToolResult, CallToolResultSchema } from '@modelcontextprotocol
 import type { ToolDefinition } from '@/services/adapters/llmAdapter';
 import type { ToolCallResult } from '@/tools/toolRegistry';
 
+import { TOOL_NAMES, type ToolName } from '@/tools/toolNames';
+
 import { getClientManager } from './clientManager';
 import { type MCPToolInfo } from './types';
 
@@ -31,23 +33,15 @@ export const MCP_TOOL_NAMESPACE_SEPARATOR = '__';
  * would be indistinguishable from the `run_command` entry in the
  * merged tool list). See B4 in the bug report.
  *
- * Hand-maintained to mirror `tools/tools.ts` `TOOLS` array.
+ * Derived from `tools/toolNames.ts` `TOOL_NAMES` so a new tool added to the
+ * registry is automatically excluded from MCP server names without a second
+ * hand-maintained list.
  */
-export const MCP_FORBIDDEN_SERVER_NAMES: ReadonlySet<string> = new Set([
-  'run_command',
-  'check_process_output',
-  'web_search',
-  'fetch_url',
-  'fetch_image',
-  'read_file',
-  'patch_file',
-  'write_file',
-  'run_subagents',
-  'load_skill',
-  'create_skill',
-  'read_pdf',
-  'mcp_call',
-]);
+export const MCP_FORBIDDEN_SERVER_NAMES: ReadonlySet<string> = new Set<string>(
+  TOOL_NAMES.filter(
+    (n): n is ToolName => n !== 'mcp_call' && n !== 'search_mcp_tools' && n !== 'render_mermaid'
+  )
+);
 
 export function buildNamespacedName(serverName: string, toolName: string): string {
   return `${MCP_TOOL_NAMESPACE_PREFIX}${serverName}${MCP_TOOL_NAMESPACE_SEPARATOR}${toolName}`;

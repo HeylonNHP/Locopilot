@@ -9,6 +9,9 @@ import axios from 'axios';
 
 import type { SseEventPayloadMap } from '@/types/sse';
 
+import { SSE_KEEPALIVE_MS } from '@/constants';
+import { DEFAULT_RETRYABLE_STATUSES } from '@/services/configDefaults';
+
 /**
  * Create an SSE event emitter bound to a ReadableStream controller.
  * Returns sendEvent, startKeepalive, stopKeepalive, and the encoder.
@@ -36,7 +39,7 @@ export function createSseStream(controller: ReadableStreamDefaultController) {
       } catch {
         // Client disconnected – ignore.
       }
-    }, 5000);
+    }, SSE_KEEPALIVE_MS);
   }
 
   function stopKeepalive(): void {
@@ -49,9 +52,9 @@ export function createSseStream(controller: ReadableStreamDefaultController) {
   return { sendEvent, startKeepalive, stopKeepalive, encoder };
 }
 
-/** HTTP status codes that warrant a retry. */
-export function isRetryableStatus(value: number): value is 429 | 502 | 503 | 504 {
-  return value === 429 || value === 502 || value === 503 || value === 504;
+/** HTTP status codes that warrant a retry. Derived from `DEFAULT_RETRYABLE_STATUSES`. */
+export function isRetryableStatus(value: number): boolean {
+  return (DEFAULT_RETRYABLE_STATUSES as readonly number[]).includes(value);
 }
 
 /** Node.js network error codes that warrant a retry. */

@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { resolveEffectiveNumCtx } from '@/services/capResolver';
+import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
 import { listSessions } from '@/services/history';
 import {
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     const effectiveBaseUrl =
       typeof body.baseUrl === 'string' && body.baseUrl.trim().length > 0
         ? body.baseUrl.trim()
-        : config?.baseUrl?.trim() || 'http://localhost:11434';
+        : config?.baseUrl?.trim() || DEFAULT_OLLAMA_BASE_URL;
     // Resolve the effective numCtx against the model's runtime
     // cap for the dump's runtimeNumCtx field. The dump is
     // informational (no LLM call) so the cap is just a

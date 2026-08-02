@@ -43,7 +43,10 @@ import {
   DEFAULT_WEB_SEARCH_MAX_QUERIES,
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+  HTTP_BAD_REQUEST,
   MCP_TOOL_SEARCH_THRESHOLD,
+  SSE_CONTENT_TYPE,
+  TPS_STATUS_MIN_INTERVAL_MS,
 } from '@/constants';
 import {
   getMCPServerConfig,
@@ -54,6 +57,10 @@ import {
 import { recordDiscoveredCap, resolveEffectiveNumCtx } from '@/services/capResolver';
 import { createSystemPrompt } from '@/services/chatSession';
 import { compactHistory } from '@/services/compact';
+import {
+  DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
+  DEFAULT_OLLAMA_BASE_URL,
+} from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
 import { createSession, getSessionName, renameSession, sessionExists } from '@/services/history';
 import {
@@ -222,8 +229,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     return new Response(
       `event: error\ndata: ${JSON.stringify({ message: 'Invalid JSON body' })}\n\n`,
       {
-        status: 400,
-        headers: { 'Content-Type': 'text/event-stream' },
+        status: HTTP_BAD_REQUEST,
+        headers: { 'Content-Type': SSE_CONTENT_TYPE },
       }
     );
   }
@@ -263,8 +270,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     return new Response(
       `event: error\ndata: ${JSON.stringify({ message: 'Model name is required' })}\n\n`,
       {
-        status: 400,
-        headers: { 'Content-Type': 'text/event-stream' },
+        status: HTTP_BAD_REQUEST,
+        headers: { 'Content-Type': SSE_CONTENT_TYPE },
       }
     );
   }
@@ -273,8 +280,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     return new Response(
       `event: error\ndata: ${JSON.stringify({ message: 'Messages array is required and must contain valid message objects' })}\n\n`,
       {
-        status: 400,
-        headers: { 'Content-Type': 'text/event-stream' },
+        status: HTTP_BAD_REQUEST,
+        headers: { 'Content-Type': SSE_CONTENT_TYPE },
       }
     );
   }
@@ -282,7 +289,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const typedMessages: ClientChatMessage[] = messages;
 
   const effectiveBaseUrl =
-    typeof baseUrl === 'string' && baseUrl.trim() ? baseUrl.trim() : 'http://localhost:11434';
+    typeof baseUrl === 'string' && baseUrl.trim() ? baseUrl.trim() : DEFAULT_OLLAMA_BASE_URL;
 
   // The client's numCtx (from the request body) is treated as the user's
   // *requested* value. The actual effective value sent to the model is
@@ -314,7 +321,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   const effectiveMaxPromptLoopIterations =
     typeof maxPromptLoopIterations === 'number' && Number.isFinite(maxPromptLoopIterations)
       ? Math.max(0, Math.floor(maxPromptLoopIterations))
-      : 4;
+      : DEFAULT_MAX_PROMPT_LOOP_ITERATIONS;
 
   // Capture the last user-role message from the incoming request as the
   // "original user request" for the prompt-loop judge.
@@ -1139,7 +1146,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // Live token count for t/s display — emit at most once every 800 ms.
                 if (roughTokens > 0) {
                   const now = Date.now();
-                  if (now - lastTpsStatusMs > 800) {
+                  if (now - lastTpsStatusMs > TPS_STATUS_MIN_INTERVAL_MS) {
                     const elapsedSec = (now - streamStartMs) / 1000;
                     if (elapsedSec > 0) {
                       sendEvent('status', {
@@ -1983,7 +1990,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/event-stream',
+      'Content-Type': SSE_CONTENT_TYPE,
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     },

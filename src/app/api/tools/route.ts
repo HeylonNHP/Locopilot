@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
+import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { loadConfig, saveConfig } from '@/services/configManager';
 import { TOOLS } from '@/tools/tools';
 
@@ -39,7 +40,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
 
-  const config = (await loadConfig()) ?? { baseUrl: 'http://localhost:11434' };
+  const config = (await loadConfig()) ?? { baseUrl: DEFAULT_OLLAMA_BASE_URL };
   const toolsConfig = {
     disabledMain: [...(config.tools?.disabledMain ?? [])],
     disabledSubAgent: [...(config.tools?.disabledSubAgent ?? [])],

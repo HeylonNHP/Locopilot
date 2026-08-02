@@ -2,7 +2,6 @@
 // Returns aggregated list of available models from all configured providers.
 import { NextResponse } from 'next/server';
 import { access, readFile } from 'node:fs/promises';
-import path from 'node:path';
 
 import type { Config } from '@/types/chatConfig';
 
@@ -14,10 +13,9 @@ import {
   type LlmModel,
   type LlmRequestContext,
 } from '@/services/llm';
+import { CONFIG_PATH } from '@/services/paths';
 import { getNormalizedProviders } from '@/services/providerResolver';
 import { resolveVisionSupport } from '@/services/visionCache';
-
-const CONFIG_PATH = path.join(process.cwd(), 'config.json');
 
 async function loadConfig(): Promise<Config | null> {
   try {

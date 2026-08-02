@@ -12,6 +12,7 @@
 import type { Config, LlmProvider, ProviderConfig } from '@/types/chatConfig';
 
 import { DEFAULT_NUM_CTX } from '@/constants';
+import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_PROVIDER } from '@/services/configDefaults';
 
 import { buildLlmRequestContext, type LlmRequestContext } from './llm';
 
@@ -34,8 +35,8 @@ export function getNormalizedProviders(config: Config | null): ProviderConfig[] 
     return config.providers;
   }
 
-  const baseUrl = config?.baseUrl ?? 'http://localhost:11434';
-  const provider: LlmProvider = config?.provider ?? 'ollama';
+  const baseUrl = config?.baseUrl ?? DEFAULT_OLLAMA_BASE_URL;
+  const provider: LlmProvider = config?.provider ?? DEFAULT_PROVIDER;
   const name = config?.apiKey
     ? `${provider === 'ollama' ? 'Ollama' : 'OpenAI-compatible'} (${baseUrl.replace(/^https?:\/\//, '').split('/')[0]})`
     : provider === 'ollama'

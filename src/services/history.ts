@@ -13,9 +13,9 @@
  */
 
 import Database from 'better-sqlite3';
-import path from 'node:path';
 
 import { debugLog } from '@/app/lib/debugLogger';
+import { DB_PATH } from '@/services/paths';
 
 import { type ChatMessage, type PersistedChatMessage, type SubagentLogMessage } from './llm';
 import { sanitizeChatMessage } from './textUtils';
@@ -43,8 +43,6 @@ export interface SessionTokenStats {
 // ---------------------------------------------------------------------------
 // Database bootstrapping
 // ---------------------------------------------------------------------------
-
-const DB_PATH = path.join(process.cwd(), 'locopilot.db');
 
 const db = new Database(DB_PATH);
 

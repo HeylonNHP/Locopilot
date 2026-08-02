@@ -6,6 +6,19 @@ import type { CompletionMode, Config, LlmProvider, ProviderConfig } from '@/type
 
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import { invalidateCapCache, resolveEffectiveNumCtx } from '@/services/capResolver';
+import {
+  DEFAULT_ADAPTER_RETRY,
+  DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_RETRYABLE_STATUSES,
+  DEFAULT_WEB_SEARCH_SETTINGS,
+  MAX_RETRY_BASE_DELAY_MS,
+  MAX_RETRY_MAX_DELAY_MS,
+  PROVIDER_OLLAMA,
+  PROVIDER_OPENAI_COMPATIBLE,
+  RETRY_MAX_ATTEMPTS_LIMIT,
+  RETRY_MAX_ATTEMPTS_MIN,
+} from '@/services/configDefaults';
 import { loadConfig, saveConfig } from '@/services/configManager';
 import { buildLlmRequestContext } from '@/services/llm';
 import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
@@ -56,13 +69,7 @@ const KNOWN_RETRY_KEYS: Set<string> = new Set([
   'retryableStatuses',
 ]);
 
-const DEFAULT_RETRY_CONFIG: NonNullable<Config['retry']> = {
-  enabled: true,
-  maxAttempts: 3,
-  baseDelayMs: 1000,
-  maxDelayMs: 16000,
-  retryableStatuses: [408, 409, 429, 500, 502, 503, 504],
-};
+const DEFAULT_RETRY_CONFIG: NonNullable<Config['retry']> = DEFAULT_ADAPTER_RETRY;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -88,9 +95,9 @@ function validateProvider(value: unknown, index: number): ProviderConfig | strin
   }
   if (
     typeof value.provider !== 'string' ||
-    (value.provider !== 'ollama' && value.provider !== 'openai-compatible')
+    (value.provider !== PROVIDER_OLLAMA && value.provider !== PROVIDER_OPENAI_COMPATIBLE)
   ) {
-    return `providers[${index}].provider must be 'ollama' or 'openai-compatible'`;
+    return `providers[${index}].provider must be '${PROVIDER_OLLAMA}' or '${PROVIDER_OPENAI_COMPATIBLE}'`;
   }
   if (typeof value.baseUrl !== 'string' || value.baseUrl.trim().length === 0) {
     return `providers[${index}].baseUrl must be a non-empty string`;
@@ -248,11 +255,11 @@ function validateConfig(
     if (
       !isFiniteInteger(input.chatTimeoutMs) ||
       input.chatTimeoutMs <= 0 ||
-      input.chatTimeoutMs > 86_400_000
+      input.chatTimeoutMs > MAX_RETRY_BASE_DELAY_MS * 60 * 24
     ) {
       return {
         ok: false,
-        error: "Invalid config: 'chatTimeoutMs' must be a positive integer up to 86400000",
+        error: `Invalid config: 'chatTimeoutMs' must be a positive integer up to ${MAX_RETRY_BASE_DELAY_MS * 60 * 24}`,
       };
     }
     out.chatTimeoutMs = input.chatTimeoutMs;
@@ -345,9 +352,9 @@ function validateConfig(
       };
     }
     const webSearch: { maxQueries: number; resultsPerQuery: number; perPageCharLimit: number } = {
-      maxQueries: 3,
-      resultsPerQuery: 3,
-      perPageCharLimit: 5000,
+      maxQueries: DEFAULT_WEB_SEARCH_SETTINGS.maxQueries,
+      resultsPerQuery: DEFAULT_WEB_SEARCH_SETTINGS.resultsPerQuery,
+      perPageCharLimit: DEFAULT_WEB_SEARCH_SETTINGS.perPageCharLimit,
     };
     if ('maxQueries' in input.webSearch) {
       const v = input.webSearch.maxQueries;
@@ -479,44 +486,47 @@ function validateConfig(
     }
     if ('maxAttempts' in input.retry) {
       const v = input.retry.maxAttempts;
-      if (!isFiniteInteger(v) || v < 1 || v > 10) {
+      if (!isFiniteInteger(v) || v < RETRY_MAX_ATTEMPTS_MIN || v > RETRY_MAX_ATTEMPTS_LIMIT) {
         return {
           ok: false,
-          error: "Invalid config: 'retry.maxAttempts' must be an integer between 1 and 10",
+          error: `Invalid config: 'retry.maxAttempts' must be an integer between ${RETRY_MAX_ATTEMPTS_MIN} and ${RETRY_MAX_ATTEMPTS_LIMIT}`,
         };
       }
       retry.maxAttempts = v;
     }
     if ('baseDelayMs' in input.retry) {
       const v = input.retry.baseDelayMs;
-      if (!isFiniteInteger(v) || v < 0 || v > 60_000) {
+      if (!isFiniteInteger(v) || v < 0 || v > MAX_RETRY_BASE_DELAY_MS) {
         return {
           ok: false,
-          error: "Invalid config: 'retry.baseDelayMs' must be a non-negative integer up to 60000",
+          error: `Invalid config: 'retry.baseDelayMs' must be a non-negative integer up to ${MAX_RETRY_BASE_DELAY_MS}`,
         };
       }
       retry.baseDelayMs = v;
     }
     if ('maxDelayMs' in input.retry) {
       const v = input.retry.maxDelayMs;
-      if (!isFiniteInteger(v) || v < 0 || v > 600_000) {
+      if (!isFiniteInteger(v) || v < 0 || v > MAX_RETRY_MAX_DELAY_MS) {
         return {
           ok: false,
-          error: "Invalid config: 'retry.maxDelayMs' must be a non-negative integer up to 600000",
+          error: `Invalid config: 'retry.maxDelayMs' must be a non-negative integer up to ${MAX_RETRY_MAX_DELAY_MS}`,
         };
       }
       retry.maxDelayMs = v;
     }
     if ('retryableStatuses' in input.retry) {
       const v = input.retry.retryableStatuses;
-      if (!Array.isArray(v) || !v.every((s) => isFiniteInteger(s) && s >= 100 && s < 600)) {
+      if (
+        !Array.isArray(v) ||
+        !v.every((s) => isFiniteInteger(s) && s >= 100 && s < 600) ||
+        v.length === 0
+      ) {
         return {
           ok: false,
-          error:
-            "Invalid config: 'retry.retryableStatuses' must be an array of HTTP status integers (100-599)",
+          error: `Invalid config: 'retry.retryableStatuses' must be a non-empty array of HTTP status codes (100-599). Defaults: ${DEFAULT_RETRYABLE_STATUSES.join(', ')}`,
         };
       }
-      retry.retryableStatuses = v as number[];
+      retry.retryableStatuses = v;
     }
     out.retry = retry;
   }
@@ -576,7 +586,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     const body = validation.config;
     const currentConfig = await loadConfig();
     const base: Config = {
-      baseUrl: '',
+      baseUrl: DEFAULT_OLLAMA_BASE_URL,
       model: '',
       compactionModel: '',
       numCtx: DEFAULT_NUM_CTX,
@@ -584,22 +594,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       yolo: false,
       thinkingEnabled: true,
       promptTimestamps: true,
-      webSearch: {
-        maxQueries: 3,
-        resultsPerQuery: 3,
-        perPageCharLimit: 5000,
-      },
+      webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS },
       completionMode: 'normal',
-      maxPromptLoopIterations: 4,
+      maxPromptLoopIterations: DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
       retry: { ...DEFAULT_RETRY_CONFIG },
       ...currentConfig,
     };
 
     // Merge webSearch if provided
     const updatedWebSearch = {
-      maxQueries: 3,
-      resultsPerQuery: 3,
-      perPageCharLimit: 5000,
+      ...DEFAULT_WEB_SEARCH_SETTINGS,
       ...base.webSearch,
       ...body.webSearch,
     };

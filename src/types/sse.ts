@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@/app/lib/chatStore';
 import type { CompactStats } from '@/services/compact';
+import type { ChatPhase, DoneReason, SubagentChunkType } from '@/services/sseNames';
 import type { ToolCallArguments } from '@/tools/tools';
 
 /**
@@ -36,7 +37,7 @@ export interface SseEventPayloadMap {
   tool_result: { name: string; result: string; duration: number; toolCallId?: string };
   tool_progress: { name: string; message: string };
   subagent_output: { agentId: string; message: string };
-  subagent_chunk: { agentId: string; type: 'thinking' | 'content'; text: string };
+  subagent_chunk: { agentId: string; type: SubagentChunkType; text: string };
   approval_request: {
     requestId: string;
     toolName: string;
@@ -45,7 +46,7 @@ export interface SseEventPayloadMap {
     fromSubAgent?: boolean;
   };
   status: {
-    phase: string;
+    phase: ChatPhase;
     tokensUsed?: number;
     tokenLimit?: number;
     tps?: number | null;
@@ -70,7 +71,7 @@ export interface SseEventPayloadMap {
     thinking: string;
     sessionId: number;
     tokenStats: SseTokenStats;
-    doneReason: 'stop' | 'length' | 'load' | 'unload';
+    doneReason: DoneReason;
   };
   error: { message: string };
   write_error: { message: string };

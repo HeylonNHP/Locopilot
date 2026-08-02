@@ -19,6 +19,7 @@ import type { Stream } from 'openai/streaming';
 import type { AdapterRetryConfig } from '@/types/chatConfig';
 
 import { debugLog } from '@/app/lib/debugLogger';
+import { DEFAULT_ADAPTER_RETRY, RETRY_MAX_ATTEMPTS_LIMIT } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
 import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
 
@@ -1345,13 +1346,7 @@ async function writeDebugDump(
 // partial — so a transparent mid-stream retry would corrupt client state.
 
 /** Hard-coded fallback when no `retry` block is present in config. */
-const DEFAULT_RETRY: Required<AdapterRetryConfig> = {
-  enabled: true,
-  maxAttempts: 3,
-  baseDelayMs: 1000,
-  maxDelayMs: 16000,
-  retryableStatuses: [408, 409, 429, 500, 502, 503, 504],
-};
+const DEFAULT_RETRY: Required<AdapterRetryConfig> = DEFAULT_ADAPTER_RETRY;
 
 /** TTL cache for the persisted retry config — avoids a disk read on every chat call. */
 const RETRY_CACHE_TTL_MS = 60_000;
@@ -1368,7 +1363,9 @@ async function loadRetryConfig(): Promise<Required<AdapterRetryConfig>> {
     const merged: Required<AdapterRetryConfig> = {
       enabled: typeof r.enabled === 'boolean' ? r.enabled : DEFAULT_RETRY.enabled,
       maxAttempts:
-        typeof r.maxAttempts === 'number' && r.maxAttempts >= 1 && r.maxAttempts <= 10
+        typeof r.maxAttempts === 'number' &&
+        r.maxAttempts >= 1 &&
+        r.maxAttempts <= RETRY_MAX_ATTEMPTS_LIMIT
           ? r.maxAttempts
           : DEFAULT_RETRY.maxAttempts,
       baseDelayMs:
