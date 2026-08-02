@@ -22,6 +22,28 @@ export type LlmProvider = 'ollama' | 'openai-compatible';
 export type ReasoningEffort = 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
 /**
+ * Configuration for the openai-compatible adapter's transient-error
+ * retry layer (429, 408, 409, 5xx, network). Retry runs INSIDE the
+ * adapter so every caller — main chat, sub-agents, compaction,
+ * title generation, prompt-loop judge — benefits, not just the chat
+ * route. Pre-stream only: once any chunk has been yielded, mid-stream
+ * failures still propagate (the chat route's existing retry loop is
+ * the safety net for that case).
+ */
+export interface AdapterRetryConfig {
+  /** Master switch. Defaults to true. */
+  enabled?: boolean;
+  /** Total attempts (1 = no retry). Capped at 10 to prevent runaway. */
+  maxAttempts?: number;
+  /** Initial backoff in ms; doubles each retry up to `maxDelayMs`. */
+  baseDelayMs?: number;
+  /** Hard ceiling on a single sleep. Also clamps server-supplied Retry-After. */
+  maxDelayMs?: number;
+  /** HTTP statuses that should be retried. Defaults to the openai SDK's shouldRetry set plus 408. */
+  retryableStatuses?: number[];
+}
+
+/**
  * Configuration for a single LLM provider endpoint. The multi-provider
  * config stores an array of these; each carries its own authentication,
  * base URL, default model, and provider adapter.
@@ -127,6 +149,14 @@ export interface Config {
     disabledMain: string[];
     disabledSubAgent: string[];
   };
+  /**
+   * Retry behaviour for the openai-compatible adapter. See
+   * `AdapterRetryConfig` for field semantics. Defaults are applied
+   * server-side in the PUT merge; any field omitted here falls back
+   * to those defaults. Persisted to `config.json` so user overrides
+   * survive restarts.
+   */
+  retry?: AdapterRetryConfig;
   /**
    * Phase 3 (MCP Tool Search). When true, the chat route surfaces
    * MCP tools to the LLM as stubs (name + truncated description

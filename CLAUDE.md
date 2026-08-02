@@ -16,6 +16,38 @@ turn — long-form history lives in `docs/CHANGELOG.md`, not here.
 
 A CLI tool for chatting with Ollama. It handles configuration for host/port, model selection, and basic chat loops.
 
+## Transient-error retry layer (`src/services/adapters/openaiCompatibleAdapter.ts`)
+
+The openai-compatible adapter wraps the initial `client.responses.create`
+call in `withRetryAround`, with exponential backoff and `Retry-After`
+honoring (seconds form and HTTP-date form, plus `retry-after-ms`). Retry
+runs INSIDE the adapter — not at the route — so every consumer of the
+adapter (main chat, sub-agents, compaction distill/measure/summarize,
+title generation, prompt-loop judge/critic) recovers from 429s and
+other transient statuses automatically.
+
+Key facts:
+
+- Pre-stream only. Once any chunk has been yielded to the consumer, a
+  retry cannot be transparent to the client (the route's
+  `clear_assistant` only removes the last _committed_ assistant
+  message, not the in-flight partial). The chat route's existing retry
+  loop at `src/app/api/chat/route.ts:1093-1238` stays as the safety net
+  for mid-stream failures.
+- Defaults: `enabled=true`, `maxAttempts=3`, `baseDelayMs=1000`,
+  `maxDelayMs=16000`, retryable statuses `{408, 409, 429, 500, 502, 503, 504}`.
+  Configurable via the `retry: { ... }` block in `config.json` (same
+  shape as `webSearch`). The adapter reads this through `loadConfig()`
+  with a 60-second TTL cache; invalidate with
+  `clearRetryConfigCache()` after tests.
+- `isRetryableError` in `src/app/api/chat/sseStream.ts:74-99` was
+  extended to duck-type any object with a numeric `.status`, so the
+  chat route's fallback loop now correctly recognises `OpenAI.APIError`
+  (it previously only matched axios errors and missed SDK-thrown 429s).
+- The `logAdapter400` debug-dump helper now runs only after the final
+  retry attempt, not per attempt, so a 429 storm no longer fills the
+  repo root with `debug_400_*.json` files.
+
 ## Technical Stack
 
 - Node.js (ESM)

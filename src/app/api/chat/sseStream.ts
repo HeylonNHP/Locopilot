@@ -68,10 +68,26 @@ export function hasRetryableMessage(value: string): boolean {
 
 /**
  * Determine whether an error is transient and should be retried.
- * Handles axios HTTP errors, Node.js network error codes, and generic
- * fetch/network failure messages.
+ * Handles axios HTTP errors, Node.js network error codes, generic
+ * fetch/network failure messages, and OpenAI SDK errors (which carry
+ * `.status` directly without being axios errors).
  */
 export function isRetryableError(err: unknown): boolean {
+  // Duck-type the OpenAI SDK shape first: `OpenAI.APIError` exposes a
+  // numeric `status` but is NOT an axios error, so the `axios.isAxiosError`
+  // branch below would miss every status from the openai-compatible
+  // adapter. Any object with a numeric `status` is checked here so the
+  // classifier also covers fetch-style errors with an attached status.
+  if (
+    err &&
+    typeof err === 'object' &&
+    'status' in err &&
+    typeof (err as { status: unknown }).status === 'number' &&
+    isRetryableStatus((err as { status: number }).status)
+  ) {
+    return true;
+  }
+
   // axios-style HTTP errors
   if (axios.isAxiosError(err)) {
     const status = err.response?.status;

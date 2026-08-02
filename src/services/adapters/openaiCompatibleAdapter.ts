@@ -16,7 +16,10 @@ import type {
 } from 'openai/resources/responses/responses';
 import type { Stream } from 'openai/streaming';
 
+import type { AdapterRetryConfig } from '@/types/chatConfig';
+
 import { debugLog } from '@/app/lib/debugLogger';
+import { loadConfig } from '@/services/configManager';
 import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
 
 import type {
@@ -916,14 +919,16 @@ async function sendOpenAICompatibleChat(
   if (signal) requestOptions.signal = signal;
 
   try {
-    const response = await client.responses.create(
-      payload as Parameters<typeof client.responses.create>[0],
-      requestOptions as Parameters<typeof client.responses.create>[1]
+    const response = await withRetryAround('chat', signal, ctx.requestId, () =>
+      client.responses.create(
+        payload as Parameters<typeof client.responses.create>[0],
+        requestOptions as Parameters<typeof client.responses.create>[1]
+      )
     );
     return toChatApiResponse(response as Response);
   } catch (err) {
-    // Enrich error with debug dump on failure.
-    await logAdapter400(ctx.baseUrl, params.model, payload, err);
+    // Final-failure debug dump only — retry already logged each attempt.
+    await logAdapter400(ctx.baseUrl, params.model, payload, err, ctx.requestId);
     throw err;
   }
 }
@@ -941,12 +946,22 @@ async function* sendOpenAICompatibleChatStream(
     if (params.signal) requestOptions.signal = params.signal;
     if (params.timeoutMs !== undefined) requestOptions.timeout = params.timeoutMs;
 
-    stream = (await client.responses.create(
-      { ...payload, stream: true } as Parameters<typeof client.responses.create>[0],
-      requestOptions as Parameters<typeof client.responses.create>[1]
-    )) as unknown as Stream<ResponseStreamEvent>;
+    // Retry only the initial `create()` call. Once it succeeds and we
+    // start yielding chunks, any downstream error is the route's
+    // problem — re-issuing mid-stream would corrupt client state.
+    stream = (await withRetryAround(
+      'chat_stream',
+      params.signal,
+      ctx.requestId,
+      () =>
+        client.responses.create(
+          { ...payload, stream: true } as Parameters<typeof client.responses.create>[0],
+          requestOptions as Parameters<typeof client.responses.create>[1]
+        ) as unknown as Promise<Stream<ResponseStreamEvent>>
+    )) as Stream<ResponseStreamEvent>;
   } catch (err) {
-    await logAdapter400(ctx.baseUrl, params.model, payload, err);
+    // Final-failure debug dump only — retry already logged each attempt.
+    await logAdapter400(ctx.baseUrl, params.model, payload, err, ctx.requestId);
     throw err;
   }
 
@@ -1312,6 +1327,212 @@ async function writeDebugDump(
     // Ignore file write errors in debug logging.
   }
   console.error(`=== END ${tag} DEBUG ===`);
+}
+
+// ── Retry layer ─────────────────────────────────────────────────────────────
+//
+// The openai-compatible adapter wraps transient-error retries around the
+// initial `client.responses.create` call so EVERY consumer of the adapter
+// — main chat, sub-agents, compaction distill/measure/summarize, title
+// generation, prompt-loop judge/critic — benefits, not just the chat
+// route. The chat route's own retry loop stays as a fallback for cases
+// this layer can't handle (mid-stream failures after chunks have yielded
+// to the client).
+//
+// Retry happens ONLY on the initial request (before any chunk is yielded),
+// because once content has streamed to the client the route's `clear_assistant`
+// can only remove the last committed assistant message — not the in-flight
+// partial — so a transparent mid-stream retry would corrupt client state.
+
+/** Hard-coded fallback when no `retry` block is present in config. */
+const DEFAULT_RETRY: Required<AdapterRetryConfig> = {
+  enabled: true,
+  maxAttempts: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 16000,
+  retryableStatuses: [408, 409, 429, 500, 502, 503, 504],
+};
+
+/** TTL cache for the persisted retry config — avoids a disk read on every chat call. */
+const RETRY_CACHE_TTL_MS = 60_000;
+let cachedRetryConfig: { value: Required<AdapterRetryConfig>; expiresAt: number } | null = null;
+
+async function loadRetryConfig(): Promise<Required<AdapterRetryConfig>> {
+  const now = Date.now();
+  if (cachedRetryConfig && cachedRetryConfig.expiresAt > now) {
+    return cachedRetryConfig.value;
+  }
+  try {
+    const cfg = await loadConfig();
+    const r = cfg?.retry ?? {};
+    const merged: Required<AdapterRetryConfig> = {
+      enabled: typeof r.enabled === 'boolean' ? r.enabled : DEFAULT_RETRY.enabled,
+      maxAttempts:
+        typeof r.maxAttempts === 'number' && r.maxAttempts >= 1 && r.maxAttempts <= 10
+          ? r.maxAttempts
+          : DEFAULT_RETRY.maxAttempts,
+      baseDelayMs:
+        typeof r.baseDelayMs === 'number' && r.baseDelayMs >= 0
+          ? r.baseDelayMs
+          : DEFAULT_RETRY.baseDelayMs,
+      maxDelayMs:
+        typeof r.maxDelayMs === 'number' && r.maxDelayMs >= 0
+          ? r.maxDelayMs
+          : DEFAULT_RETRY.maxDelayMs,
+      retryableStatuses: Array.isArray(r.retryableStatuses)
+        ? r.retryableStatuses.filter(
+            (s): s is number => typeof s === 'number' && s >= 100 && s < 600
+          )
+        : DEFAULT_RETRY.retryableStatuses,
+    };
+    cachedRetryConfig = { value: merged, expiresAt: now + RETRY_CACHE_TTL_MS };
+    return merged;
+  } catch {
+    // Fall back to defaults if the config can't be loaded (e.g. mid-test).
+    return DEFAULT_RETRY;
+  }
+}
+
+/**
+ * Test/admin helper: drop the cached retry config so the next call
+ * re-reads from disk. Mirrors `clearCapCache` / `clearVisionCache`.
+ */
+export function clearRetryConfigCache(): void {
+  cachedRetryConfig = null;
+}
+
+/** Pure classifier: is this `OpenAI.APIError` (or duck-typed equivalent) transient? */
+function isAdapterRetryableError(err: unknown, retryableStatuses: readonly number[]): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const status = (err as { status?: unknown }).status;
+  if (typeof status !== 'number') return false;
+  return retryableStatuses.includes(status);
+}
+
+/**
+ * Read a server-supplied `Retry-After` hint in milliseconds, capped at
+ * `maxDelayMs`. Returns null if absent or unparseable. Supports the two
+ * forms gateways actually emit:
+ *   - integer seconds (`retry-after: 8`)
+ *   - HTTP-date (`retry-after: Wed, 21 Oct 2015 07:28:00 GMT`)
+ * Also reads `retry-after-ms` (Cloudflare-style, milliseconds).
+ */
+function getRetryAfterMs(err: unknown, maxDelayMs: number): number | null {
+  if (!err || typeof err !== 'object') return null;
+  const headers = (err as { headers?: { get?: (k: string) => string | null } }).headers;
+  if (!headers || typeof headers.get !== 'function') return null;
+
+  const msHeader = headers.get('retry-after-ms');
+  if (msHeader) {
+    const n = Number(msHeader);
+    if (Number.isFinite(n) && n >= 0) return Math.min(n, maxDelayMs);
+  }
+
+  const header = headers.get('retry-after');
+  if (!header) return null;
+
+  // Integer seconds form.
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(Math.round(seconds * 1000), maxDelayMs);
+  }
+
+  // HTTP-date form.
+  const dateMs = Date.parse(header);
+  if (Number.isFinite(dateMs)) {
+    return Math.min(Math.max(0, dateMs - Date.now()), maxDelayMs);
+  }
+  return null;
+}
+
+/**
+ * Sleep for `ms` milliseconds, resolving early if `signal` aborts.
+ * Mirrors the abort-aware pattern used by the chat route's own retry loop
+ * (see `src/app/api/chat/route.ts:1229-1236`).
+ */
+function abortableSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * Run `fn` with retry-on-transient-error semantics. Only wraps the initial
+ * request; once `fn` resolves successfully, the caller streams the result
+ * (and any subsequent stream errors are NOT retried here — see the file
+ * header for why).
+ *
+ * @param label      Short identifier for the debug-log trace (e.g. 'chat_stream').
+ * @param signal     Inbound AbortSignal. Aborts short-circuit the sleep.
+ * @param requestId  Optional request UUID for log correlation.
+ * @param fn         The actual `client.responses.create` invocation.
+ */
+async function withRetryAround<T>(
+  label: string,
+  signal: AbortSignal | undefined,
+  requestId: string | undefined,
+  fn: () => Promise<T>
+): Promise<T> {
+  const cfg = await loadRetryConfig();
+  if (!cfg.enabled) {
+    return fn();
+  }
+
+  const maxAttempts = cfg.maxAttempts;
+  const baseDelayMs = cfg.baseDelayMs;
+  const maxDelayMs = cfg.maxDelayMs;
+  const retryableStatuses = cfg.retryableStatuses;
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (!isAdapterRetryableError(err, retryableStatuses) || attempt >= maxAttempts) {
+        throw err;
+      }
+      const retryAfterMs = getRetryAfterMs(err, maxDelayMs);
+      const expDelay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
+      const delayMs = retryAfterMs ?? expDelay;
+      const status =
+        err && typeof err === 'object' && 'status' in err
+          ? (err as { status: unknown }).status
+          : null;
+
+      debugLog.debug('openai_adapter_retry', {
+        layer: 'adapter',
+        provider: 'openai-compatible',
+        requestId,
+        label,
+        attempt,
+        maxAttempts,
+        status,
+        delayMs,
+        retryAfterMs,
+        message: err instanceof Error ? err.message : String(err),
+      });
+
+      await abortableSleep(delayMs, signal);
+    }
+  }
+  // Unreachable: the loop either returns on success or throws on the last attempt.
+  throw lastError;
 }
 
 // ── Adapter export ──────────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ const KNOWN_TOP_KEYS: Set<string> = new Set([
   'mcpToolSearch',
   'completionMode',
   'maxPromptLoopIterations',
+  'retry',
 ]);
 
 const KNOWN_WEB_SEARCH_KEYS: Set<string> = new Set([
@@ -46,6 +47,22 @@ const KNOWN_WEB_SEARCH_KEYS: Set<string> = new Set([
 const KNOWN_SKILLS_KEYS: Set<string> = new Set(['enabled', 'disabled']);
 
 const KNOWN_TOOLS_KEYS: Set<string> = new Set(['disabledMain', 'disabledSubAgent']);
+
+const KNOWN_RETRY_KEYS: Set<string> = new Set([
+  'enabled',
+  'maxAttempts',
+  'baseDelayMs',
+  'maxDelayMs',
+  'retryableStatuses',
+]);
+
+const DEFAULT_RETRY_CONFIG: NonNullable<Config['retry']> = {
+  enabled: true,
+  maxAttempts: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 16000,
+  retryableStatuses: [408, 409, 429, 500, 502, 503, 504],
+};
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -442,6 +459,68 @@ function validateConfig(
     out.tools = tools;
   }
 
+  if ('retry' in input) {
+    if (!isPlainObject(input.retry)) {
+      return { ok: false, error: "Invalid config: 'retry' must be an object" };
+    }
+    const retryUnknown = Object.keys(input.retry).filter((k) => !KNOWN_RETRY_KEYS.has(k));
+    if (retryUnknown.length > 0) {
+      return {
+        ok: false,
+        error: `Unknown config keys (retry): ${retryUnknown.join(', ')}`,
+      };
+    }
+    const retry: NonNullable<Config['retry']> = { ...DEFAULT_RETRY_CONFIG };
+    if ('enabled' in input.retry) {
+      if (typeof input.retry.enabled !== 'boolean') {
+        return { ok: false, error: "Invalid config: 'retry.enabled' must be a boolean" };
+      }
+      retry.enabled = input.retry.enabled;
+    }
+    if ('maxAttempts' in input.retry) {
+      const v = input.retry.maxAttempts;
+      if (!isFiniteInteger(v) || v < 1 || v > 10) {
+        return {
+          ok: false,
+          error: "Invalid config: 'retry.maxAttempts' must be an integer between 1 and 10",
+        };
+      }
+      retry.maxAttempts = v;
+    }
+    if ('baseDelayMs' in input.retry) {
+      const v = input.retry.baseDelayMs;
+      if (!isFiniteInteger(v) || v < 0 || v > 60_000) {
+        return {
+          ok: false,
+          error: "Invalid config: 'retry.baseDelayMs' must be a non-negative integer up to 60000",
+        };
+      }
+      retry.baseDelayMs = v;
+    }
+    if ('maxDelayMs' in input.retry) {
+      const v = input.retry.maxDelayMs;
+      if (!isFiniteInteger(v) || v < 0 || v > 600_000) {
+        return {
+          ok: false,
+          error: "Invalid config: 'retry.maxDelayMs' must be a non-negative integer up to 600000",
+        };
+      }
+      retry.maxDelayMs = v;
+    }
+    if ('retryableStatuses' in input.retry) {
+      const v = input.retry.retryableStatuses;
+      if (!Array.isArray(v) || !v.every((s) => isFiniteInteger(s) && s >= 100 && s < 600)) {
+        return {
+          ok: false,
+          error:
+            "Invalid config: 'retry.retryableStatuses' must be an array of HTTP status integers (100-599)",
+        };
+      }
+      retry.retryableStatuses = v as number[];
+    }
+    out.retry = retry;
+  }
+
   return { ok: true, config: out };
 }
 
@@ -512,6 +591,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       },
       completionMode: 'normal',
       maxPromptLoopIterations: 4,
+      retry: { ...DEFAULT_RETRY_CONFIG },
       ...currentConfig,
     };
 
@@ -524,10 +604,17 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       ...body.webSearch,
     };
 
+    // Merge retry if provided (shallow `...body` would replace the whole
+    // object and drop defaulted fields, mirroring the webSearch pattern).
+    const updatedRetry = body.retry
+      ? { ...DEFAULT_RETRY_CONFIG, ...base.retry, ...body.retry }
+      : { ...DEFAULT_RETRY_CONFIG, ...base.retry };
+
     const updatedConfig: Config = {
       ...base,
       ...body,
       webSearch: updatedWebSearch,
+      retry: updatedRetry,
     };
 
     // Scrub empty API-key strings so they don't get persisted.
