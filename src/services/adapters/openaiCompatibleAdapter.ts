@@ -654,9 +654,12 @@ async function* streamResponseEvents(
       }
 
       // Reasoning part completed — no delta to process, just a signal that
-      // the reasoning text block has finished.
+      // the reasoning text block has finished. `reasoning_summary_part.done`
+      // carries the same `part.text` already delivered by its `.added`
+      // sibling, so it's also a no-op (mirrors the `.added` skip path above).
       case 'response.reasoning_text.done':
-      case 'response.reasoning_summary_text.done': {
+      case 'response.reasoning_summary_text.done':
+      case 'response.reasoning_summary_part.done': {
         break;
       }
 
