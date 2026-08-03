@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import type { ReasoningEffort } from '@/types/chatConfig';
 
@@ -22,6 +22,15 @@ export default function SettingsModal({ onClose }: Props) {
   const [reasoningEffort, setReasoningEffort] = useState(state.reasoningEffort);
   const [promptTimestamps, setPromptTimestamps] = useState(state.promptTimestamps ?? true);
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
+  // The provider that owns the selected main model / compaction model. These
+  // are tracked separately so the user can run the main chat on one provider
+  // and compaction on a different one. `compactionProviderId` is transient
+  // (in-memory + request body, not persisted to config.json), mirroring the
+  // ModelSelector contract.
+  const [mainProviderId, setMainProviderId] = useState<string | null>(state.activeProviderId);
+  const [compactionProviderId, setCompactionProviderId] = useState<string | null>(
+    state.compactionProviderId
+  );
   const totalSeconds = Math.floor((state.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000);
   const [chatTimeoutHours, setChatTimeoutHours] = useState(String(Math.floor(totalSeconds / 3600)));
   const [chatTimeoutMinutes, setChatTimeoutMinutes] = useState(
@@ -46,8 +55,99 @@ export default function SettingsModal({ onClose }: Props) {
   // stale top-level field.
   const activeProvider =
     state.providers?.find((p) => p.id === state.activeProviderId) ?? state.providers?.[0];
-  const isOpenAICompatible =
-    activeProvider?.provider === 'openai-compatible' || state.provider === 'openai-compatible';
+  // Gate the Reasoning Effort dropdown on the actually-selected provider only.
+  // The old `|| state.provider === 'openai-compatible'` clause leaked the stale
+  // legacy top-level `provider` field, showing the dropdown for the wrong
+  // (e.g. Ollama) provider in migrated multi-provider configs.
+  const isOpenAICompatible = activeProvider?.provider === 'openai-compatible';
+
+  // Group the (already provider-aggregated) model list by provider so each
+  // dropdown can carry `providerId::modelName` composite values. This lets the
+  // user pick a distinct provider for the main model vs. the compaction model,
+  // and fixes the duplicate React keys caused by the old flat `key={m.name}`
+  // list when two providers expose the same model name.
+  const groupedModels = useMemo(() => {
+    const map = new Map<string, Array<(typeof state.models)[number]>>();
+    for (const m of state.models ?? []) {
+      const key = m.providerName || m.providerId || 'Unknown';
+      const list = map.get(key);
+      if (list) {
+        list.push(m);
+      } else {
+        map.set(key, [m]);
+      }
+    }
+    return [...map.entries()];
+  }, [state.models]);
+
+  const renderModelOptions = () =>
+    groupedModels.map(([providerName, ms]) => (
+      <optgroup key={providerName} label={providerName}>
+        {ms.map((m) => (
+          <option
+            key={`${m.providerId}::${m.name}`}
+            value={`${m.providerId}::${m.name}`}
+            title={m.displayName ?? m.name}
+          >
+            {m.displayName ?? m.name}
+          </option>
+        ))}
+      </optgroup>
+    ));
+
+  const selectedMainValue = (() => {
+    if (!model) return '';
+    if (
+      mainProviderId &&
+      (state.models ?? []).some((m) => m.providerId === mainProviderId && m.name === model)
+    ) {
+      return `${mainProviderId}::${model}`;
+    }
+    // Fall back to the first provider that offers this model name so a stale
+    // or legacy selection still renders (and saves) against a real provider.
+    const match = (state.models ?? []).find((m) => m.name === model);
+    return match ? `${match.providerId}::${match.name}` : '';
+  })();
+
+  const selectedCompactionValue = (() => {
+    if (!compactionModel) return '';
+    if (
+      compactionProviderId &&
+      (state.models ?? []).some(
+        (m) => m.providerId === compactionProviderId && m.name === compactionModel
+      )
+    ) {
+      return `${compactionProviderId}::${compactionModel}`;
+    }
+    const match = (state.models ?? []).find((m) => m.name === compactionModel);
+    return match ? `${match.providerId}::${match.name}` : '';
+  })();
+
+  const handleMainModelChange = (value: string) => {
+    if (!value) {
+      setModel('');
+      setMainProviderId(null);
+      return;
+    }
+    const idx = value.indexOf('::');
+    const providerId = idx === -1 ? value : value.slice(0, idx);
+    const name = idx === -1 ? value : value.slice(idx + 2);
+    setModel(name);
+    setMainProviderId(providerId);
+  };
+
+  const handleCompactionModelChange = (value: string) => {
+    if (!value) {
+      setCompactionModel('');
+      setCompactionProviderId(null);
+      return;
+    }
+    const idx = value.indexOf('::');
+    const providerId = idx === -1 ? value : value.slice(0, idx);
+    const name = idx === -1 ? value : value.slice(idx + 2);
+    setCompactionModel(name);
+    setCompactionProviderId(providerId);
+  };
 
   const handleSave = async () => {
     setSaveError(null);
@@ -74,6 +174,11 @@ export default function SettingsModal({ onClose }: Props) {
     const clientConfig: Record<string, unknown> = {
       baseUrl,
       model,
+      // Persist the selected model's provider so the next request is sent to
+      // the right endpoint/credentials. Omitting it (the old behaviour) let a
+      // model that belongs to a non-active provider be saved against a stale
+      // activeProviderId, sending the turn to the wrong provider.
+      ...(mainProviderId ? { activeProviderId: mainProviderId } : {}),
       yolo,
       thinkingEnabled,
       reasoningEffort,
@@ -133,6 +238,9 @@ export default function SettingsModal({ onClose }: Props) {
           reasoningEffort,
           promptTimestamps,
           compactionModel,
+          // Transient: captured here so the compaction route can resolve the
+          // compaction provider even when it differs from the main model's.
+          compactionProviderId,
           chatTimeoutMs: parsedChatTimeoutMs,
           webSearch: {
             maxQueries: parsedWebMaxQueries,
@@ -142,6 +250,12 @@ export default function SettingsModal({ onClose }: Props) {
           ...(numCtxChanged ? { requestedNumCtx: parsedNumCtx } : {}),
         },
       });
+
+      // Sync the chosen main-model provider into the store (mirrors the
+      // ModelSelector main-model branch).
+      if (mainProviderId) {
+        dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: mainProviderId });
+      }
 
       onClose();
     } catch (err) {
@@ -173,32 +287,24 @@ export default function SettingsModal({ onClose }: Props) {
             <div className="settings-row">
               <label className="settings-label">Model</label>
               <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
+                value={selectedMainValue}
+                onChange={(e) => handleMainModelChange(e.target.value)}
                 className="settings-input"
               >
                 <option value="">Select a model...</option>
-                {(state.models ?? []).map((m) => (
-                  <option key={m.name} value={m.name} title={m.name}>
-                    {m.displayName ?? m.name}
-                  </option>
-                ))}
+                {renderModelOptions()}
               </select>
             </div>
 
             <div className="settings-row">
               <label className="settings-label">Compaction Model</label>
               <select
-                value={compactionModel}
-                onChange={(e) => setCompactionModel(e.target.value)}
+                value={selectedCompactionValue}
+                onChange={(e) => handleCompactionModelChange(e.target.value)}
                 className="settings-input"
               >
                 <option value="">Same as main model</option>
-                {(state.models ?? []).map((m) => (
-                  <option key={m.name} value={m.name} title={m.name}>
-                    {m.displayName ?? m.name}
-                  </option>
-                ))}
+                {renderModelOptions()}
               </select>
             </div>
           </div>
