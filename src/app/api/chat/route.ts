@@ -1663,6 +1663,18 @@ export async function POST(req: NextRequest): Promise<Response> {
           }
 
           // -- No tool calls – this is a plain assistant message ----
+          // A terminal chunk with `done_reason` "load"/"unload" is a server
+          // heartbeat (e.g. Ollama loading/unloading the model), not a real
+          // turn, and carries no content. It must be skipped BEFORE we push an
+          // (empty) assistant message: otherwise the empty-response recovery
+          // below mistakes it for a silent model and injects a phantom empty
+          // assistant turn plus a fake "Your last response was empty" user
+          // nudge into the persisted history.
+          if (lastDoneReason === 'load' || lastDoneReason === 'unload') {
+            logger.warn('chat', `Ignoring terminal chunk with done_reason=${lastDoneReason}`);
+            continue outer;
+          }
+
           currentMessages.push(assistantMessage);
           pendingAppends.push(assistantMessage);
 
@@ -1683,19 +1695,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
           // -- No tool calls – this is the final response -----------
           // Inspect the terminal chunk's `done_reason` to distinguish a
-          // natural end-of-sequence from a token-cap truncation or a
-          // server heartbeat. The reason field augments the existing
-          // content-based "no tool calls = final" check; it never
-          // replaces it (some local providers can return
-          // done_reason="stop" even when tool_calls is populated).
-          if (lastDoneReason === 'load' || lastDoneReason === 'unload') {
-            // Server heartbeat with `done: true` — not a real turn.
-            // Skip it and let the outer loop continue; the stream
-            // will end naturally on the next iteration.
-            logger.warn('chat', `Ignoring terminal chunk with done_reason=${lastDoneReason}`);
-            continue outer;
-          }
-
+          // natural end-of-sequence from a token-cap truncation.
           if (lastDoneReason === 'length') {
             // Response was cut off by num_predict. Surface this to
             // the client so the UI can display a truncation hint
