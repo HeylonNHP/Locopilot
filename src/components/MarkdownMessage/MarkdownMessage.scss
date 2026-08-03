@@ -229,4 +229,21 @@
       }
     }
   }
+
+  // Streaming placeholder for an open fenced block (```mermaid, ```js, etc.).
+  // `white-space: pre-wrap` keeps the literal newlines so an in-progress
+  // code/mermaid block does not collapse into one garbled line while it is
+  // still being streamed. Styled like a code block to match what will render
+  // once the closing fence arrives.
+  [data-markdown-streaming-tail] {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 12px;
+    padding: 8px;
+    border-radius: 6px;
+    margin: 0 0 8px;
+    background: var(--code-block-bg);
+    color: var(--code-block-text);
+  }
 }
