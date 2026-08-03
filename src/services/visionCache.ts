@@ -84,16 +84,27 @@ interface CacheEntry {
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — matches capResolver.ts
 const cache = new Map<string, CacheEntry>();
 
-function cacheKey(baseUrl: string, modelName: string): string {
-  // Use a NUL separator so a model name containing the separator
-  // character cannot collide with a baseUrl that happens to contain
-  // the same character. NUL is not a valid character in either
-  // Ollama base URLs or model names.
-  return `${baseUrl}\0${modelName}`;
+function cacheKey(
+  baseUrl: string,
+  provider: LlmProvider | undefined,
+  modelName: string
+): string {
+  // Use NUL separators so a model name or provider containing the separator
+  // cannot collide. Including the provider type prevents a shared-baseUrl
+  // collision: two providers pointed at the same host (e.g. an ollama and an
+  // openai-compatible provider both on localhost:11434) used to share a single
+  // (baseUrl, modelName) entry, so an 'unsupported' verdict recorded for one
+  // leaked to the other (which optimistically assumes 'supported').
+  return `${baseUrl}\0${provider ?? ''}\0${modelName}`;
 }
 
-function getCachedEntry(baseUrl: string, modelName: string, now: number): CacheEntry | undefined {
-  const entry = cache.get(cacheKey(baseUrl, modelName));
+function getCachedEntry(
+  baseUrl: string,
+  provider: LlmProvider | undefined,
+  modelName: string,
+  now: number
+): CacheEntry | undefined {
+  const entry = cache.get(cacheKey(baseUrl, provider, modelName));
   if (!entry) {
     return undefined; // miss
   }
@@ -105,11 +116,12 @@ function getCachedEntry(baseUrl: string, modelName: string, now: number): CacheE
 
 function setCachedEntry(
   baseUrl: string,
+  provider: LlmProvider | undefined,
   modelName: string,
   state: Exclude<VisionSupportState, 'unknown'>,
   now: number
 ): void {
-  cache.set(cacheKey(baseUrl, modelName), {
+  cache.set(cacheKey(baseUrl, provider, modelName), {
     state,
     expiresAt: now + CACHE_TTL_MS,
   });
@@ -134,13 +146,17 @@ export function clearVisionCache(): void {
  *   removed (e.g. when the user switches provider hosts).
  * - If neither is provided, the entire cache is cleared.
  */
-export function invalidateVisionCache(baseUrl?: string, modelName?: string): void {
+export function invalidateVisionCache(
+  baseUrl?: string,
+  modelName?: string,
+  provider?: LlmProvider
+): void {
   if (baseUrl === undefined && modelName === undefined) {
     cache.clear();
     return;
   }
   if (modelName === undefined) {
-    // Invalidate every entry for this baseUrl, regardless of model.
+    // Invalidate every entry for this baseUrl, regardless of model or provider.
     for (const key of cache.keys()) {
       if (key.startsWith(`${baseUrl}\0`)) {
         cache.delete(key);
@@ -148,7 +164,7 @@ export function invalidateVisionCache(baseUrl?: string, modelName?: string): voi
     }
     return;
   }
-  cache.delete(cacheKey(baseUrl as string, modelName));
+  cache.delete(cacheKey(baseUrl as string, provider, modelName));
 }
 
 /**
@@ -162,9 +178,10 @@ export function invalidateVisionCache(baseUrl?: string, modelName?: string): voi
 export function recordDiscoveredNonVision(
   baseUrl: string,
   modelName: string,
+  provider?: LlmProvider,
   now: number = Date.now()
 ): void {
-  setCachedEntry(baseUrl, modelName, 'unsupported', now);
+  setCachedEntry(baseUrl, provider, modelName, 'unsupported', now);
 }
 
 /**
@@ -182,7 +199,7 @@ export async function resolveVisionSupport(
   const now = Date.now();
 
   // 1. Cache hit.
-  const cached = getCachedEntry(baseUrl, modelName, now);
+  const cached = getCachedEntry(baseUrl, provider, modelName, now);
   if (cached) {
     return { state: cached.state, source: 'cache' };
   }
@@ -202,7 +219,7 @@ export async function resolveVisionSupport(
   if (probe && provider !== 'openai-compatible') {
     const result = await probe();
     const state: Exclude<VisionSupportState, 'unknown'> = result ? 'supported' : 'unsupported';
-    setCachedEntry(baseUrl, modelName, state, now);
+    setCachedEntry(baseUrl, provider, modelName, state, now);
     return { state, source: 'probe' };
   }
 
@@ -216,6 +233,6 @@ export async function resolveVisionSupport(
   //    the optimistic default.
   const defaultState: Exclude<VisionSupportState, 'unknown'> =
     provider === 'openai-compatible' ? 'supported' : 'unsupported';
-  setCachedEntry(baseUrl, modelName, defaultState, now);
+  setCachedEntry(baseUrl, provider, modelName, defaultState, now);
   return { state: defaultState, source: 'default' };
 }

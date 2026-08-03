@@ -677,11 +677,11 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       const next = nextProviders.find((p) => p.id === id);
       if (next?.baseUrl && next?.model) {
         invalidateCapCache(next.baseUrl, next.model);
-        invalidateVisionCache(next.baseUrl, next.model);
+        invalidateVisionCache(next.baseUrl, next.model, next.provider);
       }
       if (current?.baseUrl && current?.model) {
         invalidateCapCache(current.baseUrl, current.model);
-        invalidateVisionCache(current.baseUrl, current.model);
+        invalidateVisionCache(current.baseUrl, current.model, current.provider);
       }
     }
 
@@ -696,11 +696,11 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       (currentActive.id !== nextActive?.id || currentActive.model !== nextActive?.model)
     ) {
       invalidateCapCache(currentActive.baseUrl, currentActive.model);
-      invalidateVisionCache(currentActive.baseUrl, currentActive.model);
+      invalidateVisionCache(currentActive.baseUrl, currentActive.model, currentActive.provider);
     }
     if (nextActive?.baseUrl && nextActive?.model) {
       invalidateCapCache(nextActive.baseUrl, nextActive.model);
-      invalidateVisionCache(nextActive.baseUrl, nextActive.model);
+      invalidateVisionCache(nextActive.baseUrl, nextActive.model, nextActive.provider);
     }
 
     // Legacy top-level fields still participate in cache invalidation so
@@ -710,11 +710,11 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     if (baseUrlChanged || modelChanged) {
       if (updatedConfig.baseUrl && updatedConfig.model) {
         invalidateCapCache(updatedConfig.baseUrl, updatedConfig.model);
-        invalidateVisionCache(updatedConfig.baseUrl, updatedConfig.model);
+        invalidateVisionCache(updatedConfig.baseUrl, updatedConfig.model, updatedConfig.provider);
       }
       if (currentConfig?.baseUrl && currentConfig?.model) {
         invalidateCapCache(currentConfig.baseUrl, currentConfig.model);
-        invalidateVisionCache(currentConfig.baseUrl, currentConfig.model);
+        invalidateVisionCache(currentConfig.baseUrl, currentConfig.model, currentConfig.provider);
       }
     } else if (
       body.numCtx !== undefined &&

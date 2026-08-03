@@ -1964,7 +1964,11 @@ export async function POST(req: NextRequest): Promise<Response> {
         // `src/services/llmContextLimit.ts` for the matcher details.
         const visionNotSupported = parseVisionUnsupportedFromError(message);
         if (visionNotSupported) {
-          recordDiscoveredNonVision(activeProvider?.baseUrl ?? effectiveBaseUrl, model as string);
+          recordDiscoveredNonVision(
+            activeProvider?.baseUrl ?? effectiveBaseUrl,
+            model as string,
+            activeProvider?.provider
+          );
           try {
             sendEvent('status', { phase: 'vision_unsupported' });
           } catch {
