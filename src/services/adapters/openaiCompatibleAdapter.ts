@@ -695,39 +695,44 @@ async function* streamResponseEvents(
   // piece-by-piece via delta events, and the consumer appends every chunk's
   // content/thinking to its own accumulators. Re-sending the full text here
   // would double everything in the final output.
-  if (finalResponse) {
-    const toolCalls = finalizeToolCalls(toolCallAccumulator);
-    const doneReason =
-      finalResponse.status === 'completed'
-        ? 'stop'
-        : finalResponse.status === 'incomplete'
-          ? finalResponse.incomplete_details?.reason || 'length'
-          : finalResponse.status === 'failed'
-            ? 'error'
-            : undefined;
+  //
+  // The chunk is emitted even when `finalResponse` is null, i.e. the upstream
+  // stream ended without a `response.completed` event. Streamed tool calls are
+  // only surfaced on this terminal chunk (via finalizeToolCalls), so dropping
+  // it in that case would silently lose every tool call the model already
+  // produced, plus the terminal done signal the route needs to finalize.
+  const toolCalls = finalizeToolCalls(toolCallAccumulator);
+  const doneReason = finalResponse
+    ? finalResponse.status === 'completed'
+      ? 'stop'
+      : finalResponse.status === 'incomplete'
+        ? finalResponse.incomplete_details?.reason || 'length'
+        : finalResponse.status === 'failed'
+          ? 'error'
+          : undefined
+    : undefined;
 
-    yield {
-      model: finalResponse.model,
-      created_at: new Date(
-        (finalResponse.created_at ?? Math.floor(Date.now() / 1000)) * 1000
-      ).toISOString(),
-      done: true,
-      ...(doneReason ? { done_reason: doneReason } : {}),
-      message: {
-        role: 'assistant',
-        content: '',
-        ...(toolCalls && toolCalls.length > 0
-          ? { tool_calls: toolCalls as unknown as [ToolCall, ...ToolCall[]] }
-          : {}),
-      },
-      ...(finalResponse.usage
-        ? {
-            prompt_eval_count: finalResponse.usage.input_tokens,
-            eval_count: finalResponse.usage.output_tokens,
-          }
+  yield {
+    model: finalResponse?.model ?? '',
+    created_at: new Date(
+      (finalResponse?.created_at ?? Math.floor(Date.now() / 1000)) * 1000
+    ).toISOString(),
+    done: true,
+    ...(doneReason ? { done_reason: doneReason } : {}),
+    message: {
+      role: 'assistant',
+      content: '',
+      ...(toolCalls && toolCalls.length > 0
+        ? { tool_calls: toolCalls as unknown as [ToolCall, ...ToolCall[]] }
         : {}),
-    };
-  }
+    },
+    ...(finalResponse?.usage
+      ? {
+          prompt_eval_count: finalResponse.usage.input_tokens,
+          eval_count: finalResponse.usage.output_tokens,
+        }
+      : {}),
+  };
 }
 
 // ── API methods ────────────────────────────────────────────────────────────
