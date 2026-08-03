@@ -160,14 +160,41 @@ function appendWorkingDirectoryProbe(
   workdirMarker: string
 ): string {
   if (shell === 'cmd' || shell === 'cmd.exe') {
-    return `${command} & echo ${workdirMarker}%CD%`;
+    // cmd.exe: run the probe, then branch on the runtime errorlevel so the
+    // final exit code reflects whether the *command* failed (0 vs non-zero).
+    // `echo` does not modify errorlevel, so the `if errorlevel` check below
+    // still sees the command's status. The exact code is collapsed to 1 for
+    // any failure, which is sufficient because the caller only cares whether
+    // the exit code is 0.
+    return [
+      `${command}`,
+      `echo ${workdirMarker}%CD%`,
+      'if errorlevel 1 exit /b 1',
+      'exit /b 0',
+    ].join('\n');
   }
 
   if (shell === 'powershell') {
-    return `${command}; Write-Output ${workdirMarker}$PWD`;
+    // powershell: capture $LASTEXITCODE immediately after the command, then
+    // print the probe and exit with the command's real status. Fall back to 0
+    // when the command was not a native app (no exit code is meaningful then).
+    return [
+      `${command}`,
+      'Write-Output "' + `${workdirMarker}` + '$PWD"',
+      '$__lc_exit = $LASTEXITCODE',
+      'if ($null -eq $__lc_exit) { $__lc_exit = 0 }',
+      'exit $__lc_exit',
+    ].join('\n');
   }
 
-  return `${command}; printf '%s\n' "${workdirMarker}$PWD"`;
+  // POSIX shells (bash/sh/zsh/fish): run the command, capture its exit
+  // status, print the probe, then exit with the command's real status.
+  //
+  // The old `; printf ...` form made the probe the last statement, so the
+  // shell's exit status was always the probe's (0) — every command looked
+  // successful. Using a newline (rather than `;`) also avoids a bash syntax
+  // error when the command itself ends in `&`.
+  return `${command}\n__lc_exit=$?\nprintf '%s\n' "${workdirMarker}$PWD"\nexit $__lc_exit`;
 }
 
 function buildOutput(entry: ProcessEntry, finished: boolean, processId: number | null): string {
