@@ -209,7 +209,17 @@ export function splitHistoryForCompaction(
 
   // Try A: summarise only the pre-prompt history (cleanest split).
   if (countMessagesTokens(prePromptMessages, model) >= MIN_SUMMARISE_TOKENS) {
-    const preservedMessages = [anchorMessage, ...windowPreservedMessages];
+    // Preserve the assistant/tool turns that sit between the anchor user
+    // prompt and the sliding-window boundary too. They are the anchor
+    // prompt's actual response and must not be silently dropped — the old
+    // code excluded `postPromptPreWindowMessages` from BOTH
+    // `messagesToSummarise` and `preservedRecentMessages`, so compaction
+    // permanently lost that conversation content.
+    const preservedMessages = [
+      anchorMessage,
+      ...postPromptPreWindowMessages,
+      ...windowPreservedMessages,
+    ];
     return {
       messagesToSummarise: prePromptMessages,
       preservedRecentMessages: preservedMessages,
@@ -232,7 +242,13 @@ export function splitHistoryForCompaction(
 
   // Fallback: still not enough. Return the pre-prompt slice; the caller's
   // MIN_SUMMARISE_TOKENS guard will decide whether to abort or expand.
-  const preservedMessages = [anchorMessage, ...windowPreservedMessages];
+  // As in Try A, the post-prompt assistant/tool turns are preserved (not
+  // dropped) so the anchor prompt's response survives compaction intact.
+  const preservedMessages = [
+    anchorMessage,
+    ...postPromptPreWindowMessages,
+    ...windowPreservedMessages,
+  ];
   return {
     messagesToSummarise: prePromptMessages,
     preservedRecentMessages: preservedMessages,
