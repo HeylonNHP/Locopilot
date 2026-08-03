@@ -309,13 +309,6 @@ function extractFrozenBlocks(frozen: string): FrozenBlock[] {
   return blocks;
 }
 
-function escapeTailText(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
-}
-
 // ────────────────────────────────────────────────────────────────
 //  MermaidBlock — renders a single Mermaid diagram into a stable
 //  React-managed element. Its key is the Mermaid source string,
@@ -507,7 +500,7 @@ export default function MarkdownMessage({ source, className }: Props) {
         return <MarkdownProse key={block.key} html={block.html} />;
       })}
       {tail ? (
-        <div data-markdown-streaming-tail="true">{escapeTailText(tail)}</div>
+        <div data-markdown-streaming-tail="true">{tail}</div>
       ) : null}
     </div>
   );
