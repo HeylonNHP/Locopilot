@@ -128,7 +128,7 @@ const stmtLoadMessages = db.prepare<[number]>(
 // in WHERE) so a session with no user/assistant messages can still match
 // by its title.
 const stmtSearchSessions = db.prepare<[string, string]>(
-  `SELECT DISTINCT s.* FROM sessions s\n     LEFT JOIN messages m ON m.session_id = s.id AND m.role IN ('user', 'assistant')\n     WHERE LOWER(s.name) LIKE ? OR LOWER(m.content) LIKE ?\n     ORDER BY s.updated_at DESC`
+  `SELECT DISTINCT s.* FROM sessions s\n     LEFT JOIN messages m ON m.session_id = s.id AND m.role IN ('user', 'assistant')\n     WHERE LOWER(s.name) LIKE ? ESCAPE '\\' OR LOWER(m.content) LIKE ? ESCAPE '\\'\n     ORDER BY s.updated_at DESC`
 );
 
 const stmtGetSessionName = db.prepare<[number]>('SELECT name FROM sessions WHERE id = ?');
@@ -186,7 +186,16 @@ export function listSessions(): Session[] {
  * intentionally excluded from the message-content half of the match.
  */
 export function searchSessions(query: string): Session[] {
-  const escaped = query.toLowerCase().replaceAll(/[%_]/g, String.raw`\$&`);
+  // Escape the SQL LIKE wildcards (`%`, `_`) AND the escape character itself
+  // so a query containing a literal `%` or `_` matches literally. The old code
+  // produced `\%`/`\_` but the statement had no `ESCAPE '\'` clause, so SQLite
+  // treated the backslash as a literal character and the `%`/`_` as wildcards
+  // — sessions whose title/content contained `%` or `_` were unfindable.
+  const escaped = query
+    .toLowerCase()
+    .replaceAll('\\', String.raw`\\`)
+    .replaceAll('%', String.raw`\%`)
+    .replaceAll('_', String.raw`\_`);
   const q = `%${escaped}%`;
   return stmtSearchSessions.all(q, q) as Session[];
 }
