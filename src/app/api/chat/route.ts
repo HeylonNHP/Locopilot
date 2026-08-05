@@ -1641,6 +1641,17 @@ export async function POST(req: NextRequest): Promise<Response> {
               logCtx(activeSessionId)
             );
 
+            // Tool results are appended to `currentMessages` AFTER the
+            // authoritative anchor was set from the LLM response, so the
+            // anchor is now stale (it only reflects the request that
+            // produced these tool calls, not the messages we're about to
+            // send back). Invalidate it so the next loop iteration does
+            // a fresh `countMessagesTokens` recount — this is the
+            // auto-compact gate, and trusting the stale anchor would let
+            // a large tool result push us past the 92% threshold without
+            // triggering compaction.
+            lastAuthoritativeTokens = 0;
+
             // Signal we are switching back to the LLM with tool results.
             sendEvent('status', {
               phase: 'responding',
@@ -1690,6 +1701,14 @@ export async function POST(req: NextRequest): Promise<Response> {
             };
             currentMessages.push(recoveryMessage);
             pendingAppends.push(recoveryMessage);
+
+            // The recovery nudge is appended to `currentMessages` after the
+            // authoritative token anchor was set from the LLM response. Keep
+            // the token accounting uniform across all message mutations by
+            // invalidating the anchor so the next loop iteration performs a
+            // fresh recount instead of trusting a stale cached value.
+            lastAuthoritativeTokens = 0;
+
             continue;
           }
 
