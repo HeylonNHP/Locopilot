@@ -31,6 +31,17 @@ interface RenderOptions {
   mermaidIdBase?: string;
 }
 
+export interface MermaidRenderSuccess {
+  success: true;
+}
+
+export interface MermaidRenderFailure {
+  success: false;
+  error: string;
+}
+
+export type MermaidRenderResult = MermaidRenderSuccess | MermaidRenderFailure;
+
 // Module-level state — these are safe to share across renders because
 // each render gets its own unique id and the package is itself a singleton.
 let mermaidModule: Mermaid | null = null;
@@ -121,41 +132,128 @@ function resolveTheme(optionTheme: ResolvedTheme | undefined): ResolvedTheme {
   return 'light';
 }
 
+// ── Error helpers ────────────────────────────────────────────
+
+const ERROR_SVG_MARKERS = [
+  'syntax error in text',
+  'class="error"',
+  "class='error'",
+  'id="error"',
+  "id='error'",
+];
+
+function looksLikeErrorSvg(svg: string): boolean {
+  const lowerSvg = svg.toLowerCase();
+  return ERROR_SVG_MARKERS.some((marker) => lowerSvg.includes(marker));
+}
+
+/**
+ * Escape HTML-special characters so raw source can be safely injected into
+ * the DOM.
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+/**
+ * Prefix each source line with a right-aligned line number and a `│` separator.
+ * The source is HTML-escaped before numbering so the result is safe to insert
+ * as innerHTML. Line numbers and the separator are wrapped in spans so they
+ * can be styled with a muted colour.
+ */
+export function formatSourceWithLineNumbers(source: string): string {
+  const lines = source.split('\n');
+  const lastLine = lines.at(-1);
+  const hasTrailingEmpty = lines.length > 1 && lastLine === '';
+  const numberedLineCount = hasTrailingEmpty ? lines.length - 1 : lines.length;
+  const numberWidth = String(numberedLineCount).length;
+
+  return lines
+    .map((line, index) => {
+      // Preserve a trailing empty line caused by a final newline, but don't
+      // assign it a line number.
+      if (hasTrailingEmpty && index === lines.length - 1) {
+        return escapeHtml(line);
+      }
+      const number = String(index + 1).padStart(numberWidth, ' ');
+      const numberSpan = `<span class="mermaid-error-line-number">${number}</span>`;
+      const separatorSpan = `<span class="mermaid-error-line-separator">│</span>`;
+      return `${numberSpan}${separatorSpan} ${escapeHtml(line)}`;
+    })
+    .join('\n');
+}
+
 // ── Public API ───────────────────────────────────────────────
 
 /**
  * Replaces the contents of a `<pre>` element containing a Mermaid
  * code block with an interactive SVG. Safe to call multiple times
  * for the same element — subsequent calls are no-ops.
+ *
+ * Returns a structured result so callers can decide whether to render
+ * their own fallback UI for syntax/render errors.
  */
 export async function renderMermaidInPre(
   preElement: HTMLPreElement,
   options?: RenderOptions
-): Promise<void> {
+): Promise<MermaidRenderResult> {
   // Idempotency guard — markers also act as a render-state flag so we
   // can render an error panel without infinity-looping on re-scans.
-  if (preElement.dataset['mermaidRendered'] === 'true') return;
+  if (preElement.dataset['mermaidRendered'] === 'true') {
+    return { success: true };
+  }
 
   const codeEl = preElement.querySelector('code.language-mermaid');
-  if (!codeEl) return;
+  if (!codeEl) return { success: true };
 
-    const source = codeEl.textContent;
-    if (!source || !source.trim()) return;
+  const source = codeEl.textContent;
+  if (!source || !source.trim()) return { success: true };
 
   const theme = resolveTheme(options?.theme);
   const idBase = options?.mermaidIdBase ?? 'mermaid';
   const id = `${idBase}-${++idCounter}`;
 
-  if (!preElement.isConnected) return;
+  if (!preElement.isConnected) return { success: true };
 
   try {
     const mermaidEngine = await ensureInitialised(theme);
+
+    // Mermaid v11 returns `false` instead of throwing when suppressErrors is
+    // true. Detect bad syntax up front so we never draw the generic
+    // "Syntax error in text" placeholder SVG.
+    const parseResult = await mermaidEngine.parse(source, { suppressErrors: true });
+    if (parseResult === false) {
+      let detailMessage = 'Mermaid syntax error: the diagram source could not be parsed.';
+      try {
+        await mermaidEngine.parse(source);
+      } catch (parseErr) {
+        detailMessage = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      }
+      if (preElement.isConnected) {
+        installErrorPanel(preElement, source, detailMessage);
+      }
+      return {
+        success: false,
+        error: 'Mermaid syntax error: the diagram source could not be parsed.',
+      };
+    }
+
     const { svg, bindFunctions } = await mermaidEngine.render(id, source);
 
     // The component could have unmounted (or a new message could have
     // replaced this DOM) while we were awaiting the render. If so, drop
     // the result — the next render will receive fresh code.
-    if (!preElement.isConnected) return;
+    if (!preElement.isConnected) return { success: true };
+
+    if (looksLikeErrorSvg(svg)) {
+      installErrorPanel(preElement, source, 'Mermaid rendered an error SVG.');
+      return { success: false, error: 'Mermaid rendered an error SVG.' };
+    }
 
     preElement.dataset['mermaidRendered'] = 'true';
     preElement.classList.add('mermaid-rendered');
@@ -171,35 +269,76 @@ export async function renderMermaidInPre(
         // Some diagrams legitimately have no bindings; ignore.
       }
     }
+
+    return { success: true };
   } catch (err) {
-    if (!preElement.isConnected) return;
-    installErrorPanel(preElement, source, err);
+    if (!preElement.isConnected) return { success: true };
+    const message = err instanceof Error ? err.message : String(err);
+    installErrorPanel(preElement, source, message);
+    return { success: false, error: message };
   }
 }
 
 // ── Error panel ──────────────────────────────────────────────
 
-function installErrorPanel(preElement: HTMLPreElement, source: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+function installErrorPanel(preElement: HTMLPreElement, source: string, errMessage: string): void {
   preElement.dataset['mermaidRendered'] = 'error';
   preElement.classList.add('mermaid-error');
   preElement.innerHTML = `
     <div class="mermaid-error-panel">
-      <div class="mermaid-error-message">⚠ Mermaid render error</div>
-      <pre class="mermaid-error-source">${escapeHtml(source)}</pre>
-      <details class="mermaid-error-details">
-        <summary>Error details</summary>
-        <pre>${escapeHtml(message)}</pre>
-      </details>
+      <div class="mermaid-error-header">
+        <span class="mermaid-error-icon" aria-hidden="true">⚠</span>
+        <span class="mermaid-error-title">Unable to render diagram</span>
+        <button class="mermaid-error-copy-btn" type="button" aria-label="Copy diagram source">Copy</button>
+      </div>
+      <div class="mermaid-error-body">
+        <p class="mermaid-error-summary">The Mermaid source contains a syntax or rendering error.</p>
+        <div class="mermaid-error-source-wrapper">
+          <pre class="mermaid-error-source"><code>${formatSourceWithLineNumbers(source)}</code></pre>
+        </div>
+        <details class="mermaid-error-details">
+          <summary>Technical details</summary>
+          <pre>${escapeHtml(errMessage)}</pre>
+        </details>
+      </div>
     </div>
   `;
+
+  const panel = preElement.querySelector('.mermaid-error-panel');
+  if (panel) attachCopyButton(panel, source);
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
+function attachCopyButton(panel: Element, source: string): void {
+  const button = panel.querySelector('.mermaid-error-copy-btn');
+  if (!button || !(button instanceof HTMLButtonElement)) return;
+
+  button.addEventListener('click', () => {
+    const fallbackCopy = () => {
+      const textarea = document.createElement('textarea');
+      textarea.value = source;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.append(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+      } catch {
+        // silently fail
+      }
+      textarea.remove();
+    };
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(source).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+
+    button.textContent = 'Copied!';
+    button.classList.add('mermaid-error-copy-btn--copied');
+    setTimeout(() => {
+      button.textContent = 'Copy';
+      button.classList.remove('mermaid-error-copy-btn--copied');
+    }, 1500);
+  });
 }

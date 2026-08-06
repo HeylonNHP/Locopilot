@@ -75,13 +75,33 @@ export class RenderMermaidTool {
       // Validate inside a temporary JSDOM-backed window so DOMPurify,
       // which mermaid imports, resolves to a bound instance instead of
       // the Node.js factory function.
+      let rawError: string | undefined;
       await withServerMermaidEnvironment(async (mermaid) => {
-        // `mermaid.parse(text)` returns `{ diagramType: string }` on
-        // success and throws on invalid syntax. The thrown Error's
-        // `.message` is the human-readable parse error (typically
-        // "Parse error on line N: ... Expecting ..., got ...").
-        await mermaid.parse(diagram);
+        // Mermaid v11 returns `false` from `parse(..., { suppressErrors: true })`
+        // for invalid syntax instead of throwing. We use that form to avoid an
+        // exception on the happy-invalid path, then fall back to an unsuppressed
+        // parse to capture the human-readable error message for diagnostics.
+        const parseResult = await mermaid.parse(diagram, { suppressErrors: true });
+        if (parseResult === false) {
+          try {
+            await mermaid.parse(diagram);
+          } catch (parseErr) {
+            rawError = parseErr instanceof Error ? parseErr.message : String(parseErr);
+          }
+        }
       });
+
+      if (rawError !== undefined) {
+        this.progress('render_mermaid: syntax error.');
+        return {
+          content:
+            `✗ Invalid Mermaid syntax: ${rawError}\n\n` +
+            `Raw diagram:\n\`\`\`\n${diagram}\n\`\`\`\n\n` +
+            `Fix the syntax and try again. Common issues: missing semicolons for classDiagram, ` +
+            `unmatched brackets in flowcharts, unsupported diagram type, or invalid arrow syntax.`,
+        };
+      }
+
       this.progress('render_mermaid: syntax OK.');
       return {
         content:

@@ -1,9 +1,9 @@
 'use client';
 import DOMPurify from 'isomorphic-dompurify';
 import { marked } from 'marked';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { renderMermaidInPre } from './mermaidRenderer';
+import { formatSourceWithLineNumbers, renderMermaidInPre } from './mermaidRenderer';
 
 import './MarkdownMessage.scss';
 
@@ -329,18 +329,17 @@ function MermaidBlock({ source }: { source: string }) {
     // container itself, but with a child `<code class="language-mermaid">`
     // that contains the source text (this is what marked would have
     // produced). The renderer will replace the container's innerHTML
-    // with the rendered SVG.
+    // with the rendered SVG or, on error, an error panel.
     container.innerHTML = `<code class="language-mermaid">${escapeHtml(source)}</code>`;
+    setError(null);
 
     let cancelled = false;
     const rafId = requestAnimationFrame(async () => {
       if (cancelled) return;
       try {
-        await renderMermaidInPre(container);
-        if (!cancelled && container.classList.contains('mermaid-error')) {
-          // Read the error message out of the error panel for display.
-          const msg = container.querySelector('.mermaid-error-message')?.textContent;
-          setError(msg ?? 'Mermaid render error');
+        const result = await renderMermaidInPre(container);
+        if (!cancelled && !result.success) {
+          setError(result.error);
         }
       } catch (err) {
         if (!cancelled) {
@@ -355,12 +354,60 @@ function MermaidBlock({ source }: { source: string }) {
     };
   }, [source]);
 
+  const handleCopy = useCallback(async () => {
+    const fallbackCopy = () => {
+      const textarea = document.createElement('textarea');
+      textarea.value = source;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.append(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+      } catch {
+        // silently fail
+      }
+      textarea.remove();
+    };
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(source).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+  }, [source]);
+
   if (error) {
     return (
       <div className="mermaid-error-panel">
-        <div className="mermaid-error-message">⚠ Mermaid render error</div>
-        <pre className="mermaid-error-source">{source}</pre>
-        <div className="mermaid-error-details">{error}</div>
+        <div className="mermaid-error-header">
+          <span className="mermaid-error-icon" aria-hidden="true">
+            ⚠
+          </span>
+          <span className="mermaid-error-title">Unable to render diagram</span>
+          <button
+            className="mermaid-error-copy-btn"
+            type="button"
+            aria-label="Copy diagram source"
+            onClick={handleCopy}
+          >
+            Copy
+          </button>
+        </div>
+        <div className="mermaid-error-body">
+          <p className="mermaid-error-summary">
+            The Mermaid source contains a syntax or rendering error.
+          </p>
+          <div className="mermaid-error-source-wrapper">
+            <pre className="mermaid-error-source">
+              <code dangerouslySetInnerHTML={{ __html: formatSourceWithLineNumbers(source) }} />
+            </pre>
+          </div>
+          <details className="mermaid-error-details">
+            <summary>Technical details</summary>
+            <pre>{error}</pre>
+          </details>
+        </div>
       </div>
     );
   }
@@ -369,10 +416,7 @@ function MermaidBlock({ source }: { source: string }) {
 }
 
 function escapeHtml(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -466,11 +510,7 @@ function MarkdownProse({ html }: { html: string }) {
   }, [html]);
 
   return (
-    <div
-      ref={ref}
-      className="markdown-message-prose"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <div ref={ref} className="markdown-message-prose" dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
 
@@ -499,9 +539,7 @@ export default function MarkdownMessage({ source, className }: Props) {
         }
         return <MarkdownProse key={block.key} html={block.html} />;
       })}
-      {tail ? (
-        <div data-markdown-streaming-tail="true">{tail}</div>
-      ) : null}
+      {tail ? <div data-markdown-streaming-tail="true">{tail}</div> : null}
     </div>
   );
 }

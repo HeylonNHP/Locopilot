@@ -2,6 +2,121 @@
 //  Component: MarkdownMessage
 // ================================================================
 
+@mixin mermaid-error-panel-styles {
+  padding: 0.9rem 1rem;
+  border-radius: 12px;
+  background: var(--bg-error-soft);
+  border: 1px solid var(--border-error-soft);
+  color: var(--text-primary);
+  font-family: inherit;
+
+  .mermaid-error-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .mermaid-error-icon {
+    color: var(--color-text-error);
+    font-size: 1.1rem;
+  }
+
+  .mermaid-error-title {
+    font-weight: 600;
+    color: var(--color-text-error);
+    flex: 1;
+    font-size: 14px;
+  }
+
+  .mermaid-error-copy-btn {
+    position: static;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--glass-border-soft);
+    background: var(--code-copy-bg);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    opacity: 0.7;
+    transition:
+      opacity 0.2s ease,
+      background 0.2s ease,
+      color 0.2s ease;
+    line-height: 1.4;
+
+    &:hover {
+      background: var(--code-copy-hover-bg);
+      color: var(--text-primary);
+      opacity: 1;
+    }
+
+    &--copied {
+      background: var(--code-copy-active-bg);
+      color: var(--accent);
+      opacity: 1;
+    }
+  }
+
+  .mermaid-error-summary {
+    margin: 0 0 0.75rem;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .mermaid-error-source-wrapper {
+    overflow: auto;
+    border-radius: 6px;
+    background: var(--code-block-bg);
+    margin: 0 0 0.75rem;
+  }
+
+  .mermaid-error-source {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+
+    code {
+      display: block;
+      padding: 8px;
+      white-space: pre;
+      color: var(--code-block-text);
+    }
+
+    .mermaid-error-line-number,
+    .mermaid-error-line-separator {
+      color: var(--text-secondary);
+      user-select: none;
+    }
+  }
+
+  .mermaid-error-details {
+    font-size: 12px;
+    color: var(--text-secondary);
+
+    summary {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    pre {
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 6px 0 0;
+      padding: 8px;
+      border-radius: 6px;
+      background: var(--code-block-bg);
+      color: var(--code-block-text);
+    }
+  }
+}
+
 .markdown-message {
   color: var(--text-primary);
   line-height: 1.65;
@@ -182,52 +297,10 @@
   pre.mermaid-error {
     background: var(--bg-error-soft);
     border-color: var(--border-error-soft);
+  }
 
-    .mermaid-error-panel {
-      padding: 0.9rem 1rem;
-      color: var(--text-primary);
-      font-family: inherit;
-    }
-
-    .mermaid-error-message {
-      color: var(--color-text-error);
-      font-weight: 600;
-      margin-bottom: 8px;
-      font-size: 14px;
-    }
-
-    .mermaid-error-source {
-      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-      font-size: 12px;
-      padding: 8px;
-      border-radius: 6px;
-      background: var(--code-block-bg);
-      color: var(--code-block-text);
-      overflow: auto;
-      margin: 0 0 8px;
-    }
-
-    .mermaid-error-details {
-      font-size: 12px;
-      color: var(--text-secondary);
-
-      summary {
-        cursor: pointer;
-        user-select: none;
-      }
-
-      pre {
-        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-        font-size: 11px;
-        white-space: pre-wrap;
-        word-break: break-word;
-        margin: 6px 0 0;
-        padding: 8px;
-        border-radius: 6px;
-        background: var(--code-block-bg);
-        color: var(--code-block-text);
-      }
-    }
+  .mermaid-error-panel {
+    @include mermaid-error-panel-styles;
   }
 
   // Streaming placeholder for an open fenced block (```mermaid, ```js, etc.).
@@ -246,4 +319,10 @@
     background: var(--code-block-bg);
     color: var(--code-block-text);
   }
+}
+
+// Standalone error panel styles for panels rendered outside the main
+// markdown-message wrapper (e.g. React-managed Mermaid error fallback).
+.mermaid-error-panel {
+  @include mermaid-error-panel-styles;
 }
