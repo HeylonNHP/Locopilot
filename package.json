@@ -10,7 +10,7 @@
     "start": "NODE_ENV=production next build && node scripts/start.mjs",
     "postinstall": "node scripts/copy-wasm.mjs",
     "prebuild": "node scripts/copy-wasm.mjs",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npx tsx scripts/test-run-command.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

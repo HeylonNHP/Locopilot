@@ -85,6 +85,9 @@ export const DEFAULT_MAX_PROMPT_LOOP_ITERATIONS = 4;
 /** Default `run_command` timeout (the legacy `DEFAULT_TIMEOUT_MS` in runCommandTool). */
 export const RUN_COMMAND_TIMEOUT_MS = 30_000;
 
+/** Maximum captured UTF-8 bytes retained for each run_command output stream. */
+export const RUN_COMMAND_OUTPUT_MAX_BYTES = 256 * 1024;
+
 /** TTL after which the process registry forgets an entry. */
 export const PROCESS_REGISTRY_TTL_MS = 5 * 60 * 1_000;
 

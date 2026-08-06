@@ -2,9 +2,12 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 
-import { RUN_COMMAND_TIMEOUT_MS } from '@/constants';
+import type { ToolSchema } from '@/tools/toolSchema';
+
+import { PROCESS_REGISTRY_TTL_MS, RUN_COMMAND_OUTPUT_MAX_BYTES, RUN_COMMAND_TIMEOUT_MS } from '@/constants';
+import { BoundedOutput } from '@/tools/boundedOutput';
+import { sanitize } from '@/tools/textSanitizer';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
-import { sanitize, type ToolSchema } from '@/tools/tools';
 import {
   getAgentWorkingDirectory,
   resolveAgentPath,
@@ -18,7 +21,7 @@ const APPROVAL_SENTENCE = 'The user will be asked to approve the command before 
 
 export const runCommandToolSchema: ToolSchema = {
   name: 'run_command',
-  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns the full stdout/stderr when the command finishes within the timeout, or partial output plus a process_id when it is still running. Use check_process_output to poll a long-running command for progress.`,
+  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns captured stdout/stderr up to ${RUN_COMMAND_OUTPUT_MAX_BYTES} UTF-8 bytes per stream; oversized output is explicitly marked as truncated. Returns partial output plus a process_id when it is still running. Use check_process_output to poll a long-running command for progress. For complete output larger than the capture limit, redirect it to a file and use read_file in ranges.`,
   parameters: {
     type: 'object',
     properties: {
@@ -44,7 +47,7 @@ export const runCommandToolSchema: ToolSchema = {
 export const checkProcessOutputToolSchema: ToolSchema = {
   name: 'check_process_output',
   description:
-    'Returns the current accumulated stdout/stderr of a command that was previously started with run_command and is still running (or has since completed). Also reports whether the process has finished and its exit code.',
+    'Returns the current captured stdout/stderr of a command that was previously started with run_command and is still running (or has since completed). Very large streams are bounded and include an explicit truncation marker. Also reports whether the process has finished and its exit code.',
   parameters: {
     type: 'object',
     properties: {
@@ -70,8 +73,8 @@ interface ProcessEntry {
   process: ChildProcess;
   command: string;
   shell: string;
-  stdout: string;
-  stderr: string;
+  stdout: BoundedOutput;
+  stderr: BoundedOutput;
   startedAt: Date;
   done: boolean;
   exitCode: number | null;
@@ -199,13 +202,21 @@ function appendWorkingDirectoryProbe(
 
 function buildOutput(entry: ProcessEntry, finished: boolean, processId: number | null): string {
   const parts: string[] = [];
-  const sanitizedStdout = sanitize(entry.stdout);
-  const sanitizedStderr = sanitize(entry.stderr);
+  const stdout = entry.stdout.text();
+  const stderr = entry.stderr.text();
+  const sanitizedStdout = sanitize(stdout);
+  const sanitizedStderr = sanitize(stderr);
   const elapsedMs = Math.max(0, Date.now() - entry.startedAt.getTime());
   const elapsedSeconds = (elapsedMs / 1000).toFixed(2);
 
   if (sanitizedStdout) parts.push(`stdout:\n${sanitizedStdout}`);
+  if (entry.stdout.truncated) {
+    parts.push(`stdout: [output truncated after ${RUN_COMMAND_OUTPUT_MAX_BYTES} UTF-8 bytes]`);
+  }
   if (sanitizedStderr) parts.push(`stderr:\n${sanitizedStderr}`);
+  if (entry.stderr.truncated) {
+    parts.push(`stderr: [output truncated after ${RUN_COMMAND_OUTPUT_MAX_BYTES} UTF-8 bytes]`);
+  }
   if (parts.length === 0) parts.push('(no output)');
 
   if (finished) {
@@ -312,8 +323,8 @@ export async function runCommand(
     process: null as unknown as ChildProcess, // assigned immediately below
     command,
     shell: effectiveShell,
-    stdout: '',
-    stderr: '',
+    stdout: new BoundedOutput(),
+    stderr: new BoundedOutput(),
     startedAt: new Date(),
     done: false,
     exitCode: null,
@@ -342,10 +353,10 @@ export async function runCommand(
   }
 
   child.stdout?.on('data', (chunk: Buffer) => {
-    entry.stdout += chunk.toString();
+    entry.stdout.append(chunk);
   });
   child.stderr?.on('data', (chunk: Buffer) => {
-    entry.stderr += chunk.toString();
+    entry.stderr.append(chunk);
   });
   child.stdout?.on('data', () => {
     onProgress?.('run_command: receiving stdout...');
@@ -397,7 +408,7 @@ export async function runCommand(
       entry.ttlTimer = setTimeout(() => {
         killProcessTree(child);
         owningStore.registry.delete(processId);
-      }, 300_000);
+      }, PROCESS_REGISTRY_TTL_MS);
 
       // We don't unregister interrupt handler here because the process
       // is still running and the user might still want to interrupt it
@@ -407,8 +418,11 @@ export async function runCommand(
     }, timeoutMs);
 
     child.on('close', (code) => {
+      entry.stdout.finish();
+      entry.stderr.finish();
       const exitCode = code ?? 0;
-      const stdoutLines = entry.stdout.split(/\r?\n/);
+      // The probe is emitted last, so the bounded collector's tail retains it.
+      const stdoutLines = entry.stdout.text().split(/\r?\n/);
       let markerLineIndex = -1;
       let detectedWorkingDirectory: string | null = null;
 
@@ -427,7 +441,7 @@ export async function runCommand(
 
       if (detectedWorkingDirectory) {
         stdoutLines.splice(markerLineIndex, 1);
-        entry.stdout = stdoutLines.join('\n').trimEnd();
+        entry.stdout.replaceText(stdoutLines.join('\n').trimEnd());
         setAgentWorkingDirectory(scope, detectedWorkingDirectory);
       }
 
@@ -437,20 +451,20 @@ export async function runCommand(
     });
 
     child.on('error', (err) => {
-      entry.stderr += `\nSpawn error: ${err.message}`;
+      entry.stderr.append(Buffer.from(`\nSpawn error: ${err.message}`));
       onProgress?.('run_command: spawn error.');
       finalize(-1);
     });
 
     if (!child.stdin) {
-      entry.stderr += '\nSpawn error: shell stdin is not available.';
+      entry.stderr.append(Buffer.from('\nSpawn error: shell stdin is not available.'));
       onProgress?.('run_command: stdin unavailable.');
       finalize(-1);
       return;
     }
 
     child.stdin.on('error', (err) => {
-      entry.stderr += `\nstdin error: ${err.message}`;
+      entry.stderr.append(Buffer.from(`\nstdin error: ${err.message}`));
       onProgress?.('run_command: stdin error.');
       finalize(-1);
     });
@@ -461,7 +475,9 @@ export async function runCommand(
       child.stdin.write(`${commandToExecute}\n`);
       child.stdin.end();
     } catch (err: unknown) {
-      entry.stderr += `\nstdin write error: ${err instanceof Error ? err.message : String(err)}`;
+      entry.stderr.append(
+        Buffer.from(`\nstdin write error: ${err instanceof Error ? err.message : String(err)}`)
+      );
       onProgress?.('run_command: stdin write failure.');
       finalize(-1);
     }

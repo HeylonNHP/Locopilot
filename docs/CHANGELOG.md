@@ -16,10 +16,14 @@ When adding a new entry:
   optional `Intent:` and `Lesson:` bullets.
 - Don't include the diff itself — that's what `git log -p` is for.
 
+- 2026-08-07: Bounded `run_command` output capture to prevent string-length crashes
+  - Files: `src/constants.ts`, `src/tools/impl/runCommandTool.ts`, `docs/CHANGELOG.md`
+  - Summary: `run_command` now retains at most 256 KiB of UTF-8 output per stdout/stderr stream, continues draining noisy child processes after the limit, preserves complete Unicode characters, and marks truncated streams explicitly. Normal command output, polling/status fields, exit codes, stderr labeling, and process lifecycle remain unchanged. The process registry now uses the shared TTL constant.
+  - Intent: Prevent `RangeError: Invalid string length` and oversized tool results from crashing requests or overflowing persisted chat context while preserving command execution and diagnostics.
+
 ---
 
 - 2026-08-02: Added transient-error retry layer inside the openai-compatible adapter; classifier now recognises `OpenAI.APIError`
-  - Files: `src/services/adapters/openaiCompatibleAdapter.ts`, `src/app/api/chat/sseStream.ts`, `src/types/chatConfig.ts`, `src/app/api/config/route.ts`, `CLAUDE.md`
   - Summary: The openai-compatible adapter now wraps the initial `client.responses.create` call in `withRetryAround` with exponential backoff and `Retry-After` (header or HTTP-date) support. Retry covers 408/409/429/500/502/503/504 by default and is pre-stream only — once any chunk has yielded, downstream errors propagate (the chat route's existing retry loop remains the safety net for that case). Defaults: `enabled=true`, `maxAttempts=3`, `baseDelayMs=1000`, `maxDelayMs=16000`. All adapter consumers — main chat, sub-agents, compaction distill/measure/summarize, title generation, prompt-loop judge/critic — benefit automatically; previously only the chat route retried, and even there it only matched axios errors. The route's `isRetryableError` classifier in `src/app/api/chat/sseStream.ts` was duck-typed to recognise any object with a numeric `.status`, so `OpenAI.APIError` from the SDK is now classified correctly when the inner layer exhausts and the route falls back. A new `retry: { enabled?, maxAttempts?, baseDelayMs?, maxDelayMs?, retryableStatuses? }` config block follows the `webSearch` precedent (allowlist + per-field validation + shallow merge). The existing `logAdapter400` debug-dump helper now runs only after the final failure, not per retry attempt, so a 429 storm no longer fills the repo root with `debug_400_*.json` files.
   - Intent: Free-tier OpenRouter models (and similar gateways with per-minute rate caps) now transparently recover from 429s on the first attempt — the user no longer sees a hard failure for what is fundamentally a transient quota blip. Pushing retry into the adapter (rather than expanding it at the route layer) gives every LLM call the same resilience with one change, and a single source of truth for retry semantics.
 
