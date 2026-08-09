@@ -5,6 +5,8 @@
  * input sanitization, and post-response validation to reject junk titles.
  */
 
+import { type ReasoningEffort } from '@/types/chatConfig';
+
 import { type ChatMessage, type LlmRequestContext, sendLlmChat } from './llm';
 
 const TITLE_MAX_LEN = 80;
@@ -127,7 +129,7 @@ export async function generateSessionTitle(
   numCtx: number,
   onProgress?: (message: string) => void,
   think?: boolean,
-  reasoningEffort?: 'off' | 'low' | 'medium' | 'high'
+  reasoningEffort?: ReasoningEffort
 ): Promise<string> {
   if (messages.length <= 1) {
     throw new Error('Not enough conversation history to generate a session title.');

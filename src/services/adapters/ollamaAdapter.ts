@@ -2,6 +2,8 @@ import axios, { type AxiosRequestConfig } from 'axios';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 
+import type { ReasoningEffort } from '@/types/chatConfig';
+
 import { MODEL_LIST_TIMEOUT_MS } from '@/constants';
 import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
 
@@ -47,6 +49,51 @@ function stripImagesFromMessages(messages: ChatMessage[]): ChatMessage[] {
   });
 }
 
+/**
+ * Map the canonical reasoning effort to Ollama's `think` level field.
+ *
+ * Ollama's `/api/chat` accepts `think` as a boolean (on/off) OR a level
+ * string ('low' | 'medium' | 'high' | 'max'). The canonical set includes
+ * values Ollama does not understand, so we translate:
+ *   - 'off'/'none'  → false   (explicitly disable thinking)
+ *   - 'minimal'/'low' → 'low'
+ *   - 'medium'      → 'medium'
+ *   - 'high'        → 'high'
+ *   - 'xhigh'/'max' → 'max'
+ *
+ * Note: Ollama's *top-level* `think` field rejects 'max' ("invalid think
+ * value: max"), but `options.think` accepts it. Callers therefore put the
+ * level in `options.think` and drop the top-level field when a level is
+ * present (see `buildChatPayload`).
+ */
+export function ollamaThinkValue(
+  reasoningEffort: ReasoningEffort | undefined,
+  think: boolean | undefined
+): { level?: 'low' | 'medium' | 'high' | 'max'; toggle?: boolean } {
+  if (reasoningEffort !== undefined && reasoningEffort !== 'off') {
+    switch (reasoningEffort) {
+      case 'none': {
+        return { toggle: false };
+      }
+      case 'minimal':
+      case 'low': {
+        return { level: 'low' };
+      }
+      case 'medium': {
+        return { level: 'medium' };
+      }
+      case 'high': {
+        return { level: 'high' };
+      }
+      case 'xhigh':
+      case 'max': {
+        return { level: 'max' };
+      }
+    }
+  }
+  return think === undefined ? {} : { toggle: think };
+}
+
 function buildChatPayload(params: ChatParams, stream: boolean) {
   const messages =
     params.visionSupported === false ? stripImagesFromMessages(params.messages) : params.messages;
@@ -61,14 +108,24 @@ function buildChatPayload(params: ChatParams, stream: boolean) {
     options.num_predict = params.maxOutputTokens;
   }
 
+  // Resolve thinking control. A reasoning level takes precedence over the
+  // boolean toggle; the level is passed via `options.think` (which accepts
+  // 'max') rather than the top-level `think` field (which rejects it).
+  const { level, toggle } = ollamaThinkValue(params.reasoningEffort, params.think);
+  if (level !== undefined) {
+    options.think = level;
+  }
+
   const payload: Record<string, unknown> = {
     model: params.model,
     messages,
     tools: params.tools,
     stream,
-    think: params.think,
     options,
   };
+  if (level === undefined && toggle !== undefined) {
+    payload.think = toggle;
+  }
 
   if (params.format !== undefined) {
     payload.format = params.format;

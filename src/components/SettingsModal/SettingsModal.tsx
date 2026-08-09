@@ -60,6 +60,10 @@ export default function SettingsModal({ onClose }: Props) {
   // legacy top-level `provider` field, showing the dropdown for the wrong
   // (e.g. Ollama) provider in migrated multi-provider configs.
   const isOpenAICompatible = activeProvider?.provider === 'openai-compatible';
+  const isOllama = activeProvider?.provider === 'ollama';
+  // Both providers now support reasoning levels: OpenAI-compatible maps to
+  // `reasoning_effort`, Ollama maps to its `think` level field.
+  const supportsReasoningEffort = isOpenAICompatible || isOllama;
 
   // Group the (already provider-aggregated) model list by provider so each
   // dropdown can carry `providerId::modelName` composite values. This lets the
@@ -379,22 +383,24 @@ export default function SettingsModal({ onClose }: Props) {
               </div>
             </div>
 
-            <div className="settings-row">
-              <label className="settings-label">Thinking</label>
-              <div className="flex items-center gap-12">
-                <input
-                  id="thinking-toggle"
-                  type="checkbox"
-                  checked={thinkingEnabled}
-                  onChange={(e) => setThinkingEnabled(e.target.checked)}
-                />
-                <label htmlFor="thinking-toggle" className="font-14 text-primary">
-                  {thinkingEnabled ? 'Enabled' : 'Disabled'}
-                </label>
+            {isOllama && (
+              <div className="settings-row">
+                <label className="settings-label">Thinking</label>
+                <div className="flex items-center gap-12">
+                  <input
+                    id="thinking-toggle"
+                    type="checkbox"
+                    checked={thinkingEnabled}
+                    onChange={(e) => setThinkingEnabled(e.target.checked)}
+                  />
+                  <label htmlFor="thinking-toggle" className="font-14 text-primary">
+                    {thinkingEnabled ? 'Enabled' : 'Disabled'}
+                  </label>
+                </div>
               </div>
-            </div>
+            )}
 
-            {isOpenAICompatible && (
+            {supportsReasoningEffort && (
               <div className="settings-row">
                 <label className="settings-label" htmlFor="reasoning-effort-select">
                   Reasoning Effort
@@ -412,6 +418,7 @@ export default function SettingsModal({ onClose }: Props) {
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
                   <option value="xhigh">XHigh</option>
+                  <option value="max">Max</option>
                 </select>
               </div>
             )}

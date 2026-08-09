@@ -131,10 +131,12 @@ export interface ChatParams {
    *   - 'medium' → 'medium'
    *   - 'high'   → 'high'
    *   - 'xhigh'  → 'xhigh'
+   *   - 'max'    → 'max'
    *
    * When set, the OpenAI-compatible adapter emits the corresponding
    * value regardless of whether `tools` is present. Coexists with
-   * `think`; Ollama ignores it.
+   * `think`. The Ollama adapter also consumes it, mapping it to
+   * Ollama's `think` level field (see `ollamaThinkValue`).
    */
   reasoningEffort?: ReasoningEffort;
   /**

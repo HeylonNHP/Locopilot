@@ -11,15 +11,26 @@ export type LlmProvider = 'ollama' | 'openai-compatible';
  *   - 'medium'→ 'medium'
  *   - 'high'  → 'high'
  *   - 'xhigh' → 'xhigh'
+ *   - 'max'   → 'max'     (Ollama-only highest level; OpenAI-compatible
+ *                        providers cap at 'xhigh')
  *
  * Distinct from `thinkingEnabled` (a boolean) which maps to Ollama's
- * `think` field. The two coexist: `reasoningEffort` is for
- * OpenAI-compatible providers, `thinkingEnabled` is for Ollama.
+ * `think` field. The two coexist. For OpenAI-compatible providers the
+ * level maps to `reasoning_effort`; for Ollama it maps to Ollama's
+ * `think` level (low/medium/high/max).
  * Defaults to 'off' (which resolves to 'none') so models with reasoning
  * on by default (e.g. gpt-5.6-luna on the Airia gateway) are not silently
  * forced into reasoning when called with tools.
  */
-export type ReasoningEffort = 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ReasoningEffort =
+  | 'off'
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max';
 
 /**
  * Configuration for the openai-compatible adapter's transient-error
@@ -110,19 +121,21 @@ export interface Config {
   yolo?: boolean;
   thinkingEnabled?: boolean;
   /**
-   * Reasoning effort for OpenAI-compatible providers. Maps to the
-   * `reasoning_effort` field on the wire:
-   *   - 'off'   → 'none'   (forced off, even for models with reasoning on by default)
-   *   - 'none'  → 'none'
-   *   - 'minimal' → 'minimal'
-   *   - 'low'   → 'low'
-   *   - 'medium'→ 'medium'
-   *   - 'high'  → 'high'
-   *   - 'xhigh' → 'xhigh'
+   * Reasoning effort. For OpenAI-compatible providers this maps to the
+   * `reasoning_effort` wire field; for Ollama it maps to Ollama's `think`
+   * level (low/medium/high/max).
+   *   - 'off'    → 'none'   (explicit off; required for models with
+   *                        reasoning forced on by the provider)
+   *   - 'none'   → 'none'
+   *   - 'minimal'→ 'minimal'
+   *   - 'low'    → 'low'
+   *   - 'medium' → 'medium'
+   *   - 'high'   → 'high'
+   *   - 'xhigh'  → 'xhigh'  (OpenAI-compatible cap; Ollama treats as 'max')
+   *   - 'max'    → 'max'    (Ollama-only highest level)
    *
    * Distinct from `thinkingEnabled` (a boolean) which maps to Ollama's
-   * `think` field. The two coexist: `reasoningEffort` is for
-   * OpenAI-compatible providers, `thinkingEnabled` is for Ollama.
+   * `think` field. The two coexist.
    * Defaults to 'off' (which resolves to 'none') so models with reasoning
    * on by default (e.g. gpt-5.6-luna on the Airia gateway) are not silently
    * forced into reasoning when called with tools.

@@ -254,6 +254,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     'medium',
     'high',
     'xhigh',
+    'max',
   ];
   const reasoningEffort: ReasoningEffort | undefined =
     typeof reasoningEffortRaw === 'string' && validReasoningEffort.includes(reasoningEffortRaw)
