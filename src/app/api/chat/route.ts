@@ -631,11 +631,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                 provider: activeProv.provider,
                 ...(activeProv.apiKey ? { apiKey: activeProv.apiKey } : {}),
               }
-            : {
-                ...(config?.provider ? { provider: config.provider } : {}),
-                ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-              };
-          const configuredBaseUrl = activeProv?.baseUrl ?? config?.baseUrl ?? effectiveBaseUrl;
+            : {};
+          const configuredBaseUrl = activeProv?.baseUrl ?? effectiveBaseUrl;
           const compactionModel = resolveCompactionModel(
             config?.compactionModel ?? '',
             model as string
@@ -891,7 +888,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           const resolved = await getLlmModelVisionSupportAsync(
             activeProvider?.baseUrl ?? effectiveBaseUrl,
             model as string,
-            activeProvider?.provider ?? config?.provider ?? 'ollama',
+            activeProvider?.provider ?? 'ollama',
             modelInfo
           );
           visionSupported = resolved.visionSupported;

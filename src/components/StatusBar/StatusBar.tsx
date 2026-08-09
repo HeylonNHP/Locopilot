@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChat } from '@/app/lib/chatStore';
 import CompletionModeSelector from '@/components/CompletionModeSelector';
 import ModelSelector from '@/components/ModelSelector';
+import ReasoningEffortSelector from '@/components/ReasoningEffortSelector';
 
 import './StatusBar.scss';
 
@@ -23,6 +24,9 @@ export default function StatusBar() {
     streamingSessions,
     models,
     modelsLoading,
+    reasoningEffort,
+    providers,
+    activeProviderId,
   } = state;
   const [showSelector, setShowSelector] = useState(false);
   const [showCompactionSelector, setShowCompactionSelector] = useState(false);
@@ -30,8 +34,10 @@ export default function StatusBar() {
   const modelRef = useRef<HTMLSpanElement>(null);
   const compactionRef = useRef<HTMLSpanElement>(null);
   const modeRef = useRef<HTMLSpanElement>(null);
+  const reasoningRef = useRef<HTMLSpanElement>(null);
   const lastClickRef = useRef<{ x: number; y: number } | null>(null);
   const [showModeSelector, setShowModeSelector] = useState(false);
+  const [showReasoningSelector, setShowReasoningSelector] = useState(false);
 
   // Sync isDark with the current data-theme attribute (set by FOUC script or toggle)
   useEffect(() => {
@@ -86,6 +92,27 @@ export default function StatusBar() {
 
   const handleCloseModeSelector = useCallback(() => {
     setShowModeSelector(false);
+  }, []);
+
+  const handleOpenReasoningSelector = useCallback(
+    ({ clientX, clientY }: { clientX: number; clientY: number }) => {
+      // Both providers support reasoning levels (Ollama via its `think`
+      // level, OpenAI-compatible via `reasoning.effort`), so any resolved
+      // provider qualifies.
+      const activeProvider = providers?.find((p) => p.id === activeProviderId) ?? providers?.[0];
+      if (
+        activeProvider?.provider === 'ollama' ||
+        activeProvider?.provider === 'openai-compatible'
+      ) {
+        lastClickRef.current = { x: clientX, y: clientY };
+        setShowReasoningSelector(true);
+      }
+    },
+    [providers, activeProviderId]
+  );
+
+  const handleCloseReasoningSelector = useCallback(() => {
+    setShowReasoningSelector(false);
   }, []);
 
   const handleThemeToggle = useCallback(() => {
@@ -152,6 +179,8 @@ export default function StatusBar() {
   const maxLabel = iterations === 0 ? '∞' : String(iterations);
   const modeLabel =
     normalizedCompletionMode === 'prompt-loop' ? `Prompt loop (${maxLabel})` : 'Normal';
+
+  const reasoningLabel = reasoningEffort.charAt(0).toUpperCase() + reasoningEffort.slice(1);
 
   return (
     <div className="statusbar">
@@ -229,6 +258,31 @@ export default function StatusBar() {
           </span>
         )}
       </span>
+      <span>
+        <span
+          ref={reasoningRef}
+          className="statusbar-reasoning"
+          onClick={handleOpenReasoningSelector}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              if (reasoningRef.current) {
+                const rect = reasoningRef.current.getBoundingClientRect();
+                handleOpenReasoningSelector({
+                  clientX: rect.left + rect.width / 2,
+                  clientY: rect.top,
+                });
+              } else {
+                handleOpenReasoningSelector({ clientX: 0, clientY: 0 });
+              }
+            }
+          }}
+        >
+          Reasoning: {reasoningLabel}
+        </span>
+      </span>
       <span>{messages.length} messages</span>
       <span>
         <span
@@ -278,6 +332,13 @@ export default function StatusBar() {
         lastClickRef={lastClickRef}
         isOpen={showModeSelector}
         onClose={handleCloseModeSelector}
+      />
+
+      <ReasoningEffortSelector
+        anchorRef={reasoningRef}
+        lastClickRef={lastClickRef}
+        isOpen={showReasoningSelector}
+        onClose={handleCloseReasoningSelector}
       />
 
       <button

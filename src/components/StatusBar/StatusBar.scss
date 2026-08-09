@@ -86,6 +86,21 @@
     }
   }
 
+  &-reasoning {
+    cursor: pointer;
+    transition: color 0.2s ease;
+    user-select: none;
+    border-radius: 6px;
+    padding: 2px 6px;
+    margin: -2px -6px;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--accent);
+      background: rgba(var(--rgb-accent), 0.1);
+    }
+  }
+
   &-model-max {
     color: var(--text-secondary);
     font-weight: 400;

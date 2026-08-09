@@ -376,6 +376,7 @@ export function useSlashCommands({
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
                 compactionProviderId: refs.compactionProviderIdRef.current,
+                compactionReasoningEffort: refs.compactionReasoningEffortRef.current,
                 sessionId: compactSessionId,
               }),
               signal: abortController.signal,

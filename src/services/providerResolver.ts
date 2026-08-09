@@ -1,59 +1,26 @@
 /**
  * Multi-provider resolution utilities.
  *
- * The legacy single-provider config stored `provider`, `baseUrl`, `apiKey`,
- * and `model` at the top level. The multi-provider config stores an array
- * of `ProviderConfig` objects under `providers`. This module bridges the
- * two: it can synthesize a providers list from legacy fields, resolve a
- * provider by ID or by model name, and build a per-request LLM context
- * from the resolved provider.
+ * The config stores an array of `ProviderConfig` objects under
+ * `providers`. This module resolves a provider by ID or by model name
+ * and builds a per-request LLM context from the resolved provider.
+ * Legacy single-provider configs (top-level `provider`/`baseUrl`/
+ * `apiKey`) are rejected at startup — see scripts/validateConfig.mjs.
  */
 
-import type { Config, LlmProvider, ProviderConfig } from '@/types/chatConfig';
+import type { Config, ProviderConfig } from '@/types/chatConfig';
 
 import { DEFAULT_NUM_CTX } from '@/constants';
-import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_PROVIDER } from '@/services/configDefaults';
 
 import { buildLlmRequestContext, type LlmRequestContext } from './llm';
 
 /**
- * Stable id for the synthetic provider created from legacy top-level config
- * fields. Using a constant (rather than slugifying the display name) keeps
- * the id deterministic across name changes and avoids colliding with a
- * user-authored provider id that happens to slug-match the synthetic name.
- */
-const LEGACY_PROVIDER_ID = 'legacy';
-
-/**
- * Normalize any config into a non-empty providers array. If the config
- * already has `providers`, return it. Otherwise synthesize a single
- * provider from the legacy top-level `provider`/`baseUrl`/`apiKey`/`model`
- * fields. This keeps old `config.json` files working unchanged.
+ * Return the config's providers array. Returns an empty array when the
+ * config has no providers — legacy configs are rejected at startup, so
+ * there is nothing to synthesize here.
  */
 export function getNormalizedProviders(config: Config | null): ProviderConfig[] {
-  if (config?.providers && config.providers.length > 0) {
-    return config.providers;
-  }
-
-  const baseUrl = config?.baseUrl ?? DEFAULT_OLLAMA_BASE_URL;
-  const provider: LlmProvider = config?.provider ?? DEFAULT_PROVIDER;
-  const name = config?.apiKey
-    ? `${provider === 'ollama' ? 'Ollama' : 'OpenAI-compatible'} (${baseUrl.replace(/^https?:\/\//, '').split('/')[0]})`
-    : provider === 'ollama'
-      ? 'Ollama'
-      : 'OpenAI-compatible';
-
-  return [
-    {
-      id: LEGACY_PROVIDER_ID,
-      name,
-      provider,
-      baseUrl,
-      ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-      ...(config?.model ? { model: config.model } : {}),
-      ...(config?.numCtx ? { numCtx: config.numCtx } : {}),
-    },
-  ];
+  return config?.providers && config.providers.length > 0 ? config.providers : [];
 }
 
 /**

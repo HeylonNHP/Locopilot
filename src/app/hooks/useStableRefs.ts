@@ -39,6 +39,7 @@ export interface StableRefs {
   yoloRef: WritableRef<boolean>;
   thinkingEnabledRef: WritableRef<boolean>;
   reasoningEffortRef: WritableRef<ReasoningEffort>;
+  compactionReasoningEffortRef: WritableRef<ReasoningEffort>;
   compactionModelRef: WritableRef<string>;
   /**
    * Transient companion to `compactionModelRef`: the provider the
@@ -68,6 +69,7 @@ interface StableRefsInput {
   yolo: boolean;
   thinkingEnabled: boolean;
   reasoningEffort: ReasoningEffort;
+  compactionReasoningEffort: ReasoningEffort;
   compactionModel: string;
   compactionProviderId: string | null;
   chatTimeoutMs: number;
@@ -95,6 +97,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const yoloRef = useRef(state.yolo);
   const thinkingEnabledRef = useRef(state.thinkingEnabled);
   const reasoningEffortRef = useRef(state.reasoningEffort);
+  const compactionReasoningEffortRef = useRef(state.compactionReasoningEffort);
   const compactionModelRef = useRef(state.compactionModel);
   const compactionProviderIdRef = useRef(state.compactionProviderId);
   const chatTimeoutMsRef = useRef(state.chatTimeoutMs);
@@ -146,6 +149,9 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
     reasoningEffortRef.current = state.reasoningEffort;
   }, [state.reasoningEffort]);
   useEffect(() => {
+    compactionReasoningEffortRef.current = state.compactionReasoningEffort;
+  }, [state.compactionReasoningEffort]);
+  useEffect(() => {
     compactionModelRef.current = state.compactionModel;
   }, [state.compactionModel]);
   useEffect(() => {
@@ -183,6 +189,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       yoloRef,
       thinkingEnabledRef,
       reasoningEffortRef,
+      compactionReasoningEffortRef,
       compactionModelRef,
       compactionProviderIdRef,
       chatTimeoutMsRef,

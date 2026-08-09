@@ -15,7 +15,6 @@ interface Props {
 export default function SettingsModal({ onClose }: Props) {
   const { state, dispatch } = useChat();
   const [model, setModel] = useState(state.model);
-  const [baseUrl, setBaseUrl] = useState(state.baseUrl);
   const [numCtx, setNumCtx] = useState(String(state.requestedNumCtx));
   const [yolo, setYolo] = useState(state.yolo);
   const [thinkingEnabled, setThinkingEnabled] = useState(state.thinkingEnabled);
@@ -176,7 +175,6 @@ export default function SettingsModal({ onClose }: Props) {
     // another tab had just persisted.)
     const numCtxChanged = parsedNumCtx !== state.requestedNumCtx;
     const clientConfig: Record<string, unknown> = {
-      baseUrl,
       model,
       // Persist the selected model's provider so the next request is sent to
       // the right endpoint/credentials. Omitting it (the old behaviour) let a
@@ -235,7 +233,6 @@ export default function SettingsModal({ onClose }: Props) {
       dispatch({
         type: 'SET_CONFIG',
         config: {
-          baseUrl,
           model,
           yolo,
           thinkingEnabled,
@@ -311,16 +308,6 @@ export default function SettingsModal({ onClose }: Props) {
                 {renderModelOptions()}
               </select>
             </div>
-          </div>
-
-          <div className="settings-row">
-            <label className="settings-label">Ollama Base URL</label>
-            <input
-              type="text"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              className="settings-input"
-            />
           </div>
 
           <div className="settings-grid">

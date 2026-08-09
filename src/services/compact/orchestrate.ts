@@ -8,6 +8,7 @@
  */
 
 import type { ChatMessage, LlmRequestContext } from '@/services/llm';
+import type { ReasoningEffort } from '@/types/chatConfig';
 
 import { countMessagesTokens } from '@/services/tokenizer';
 
@@ -37,6 +38,8 @@ import { findLatestUserMessageIndex, splitHistoryForCompaction } from './split';
  * @param remainingRetries - How many aggressive retry passes remain.
  * @param onStats         - Optional callback for token stats.
  * @param signal          - Optional AbortSignal.
+ * @param reasoningEffort - Optional reasoning effort level forwarded to the
+ *                          provider adapters for every compaction LLM call.
  */
 export async function compactHistory(
   ctx: LlmRequestContext,
@@ -47,7 +50,8 @@ export async function compactHistory(
   aggressiveFactor: number = 1,
   remainingRetries: number = 2,
   onStats?: (stats: CompactStats) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  reasoningEffort?: ReasoningEffort
 ): Promise<CompactResult> {
   const oldTokenCount = await measureConversationTokens(
     ctx,
@@ -55,7 +59,8 @@ export async function compactHistory(
     model,
     numCtx,
     onProgress,
-    signal
+    signal,
+    reasoningEffort
   );
 
   // Filter out system messages — the system prompt is injected on-the-fly by
@@ -129,7 +134,8 @@ export async function compactHistory(
     numCtx,
     model,
     onProgress,
-    signal
+    signal,
+    reasoningEffort
   );
 
   // Also distill large tool outputs in the preserved window so they don't land
@@ -141,7 +147,8 @@ export async function compactHistory(
     numCtx,
     model,
     onProgress,
-    signal
+    signal,
+    reasoningEffort
   );
 
   // Generate the summary: single-shot when it fits, bounded map-reduce when the
@@ -153,7 +160,8 @@ export async function compactHistory(
     aggressiveFactor,
     preparedHistoryMessages,
     onProgress,
-    signal
+    signal,
+    reasoningEffort
   );
 
   // Rebuild the message history: a single assistant message holds the preamble
@@ -172,7 +180,8 @@ export async function compactHistory(
     model,
     numCtx,
     onProgress,
-    signal
+    signal,
+    reasoningEffort
   );
 
   if (newTokenCount >= oldTokenCount && oldTokenCount > 0) {
@@ -201,7 +210,8 @@ export async function compactHistory(
       retryFactor,
       remainingRetries - 1,
       onStats,
-      signal
+      signal,
+      reasoningEffort
     );
     // Report stats relative to the original pre-compaction history.
     return {

@@ -219,8 +219,6 @@ export function useDataLoaders(refs: StableRefs) {
         dispatch({
           type: 'SET_CONFIG',
           config: {
-            baseUrl: config.baseUrl ?? state.baseUrl,
-            provider: config.provider ?? state.provider,
             providers: config.providers ?? state.providers,
             activeProviderId: config.activeProviderId ?? state.activeProviderId,
             requestedNumCtx: config.numCtx ?? state.requestedNumCtx,
@@ -228,6 +226,8 @@ export function useDataLoaders(refs: StableRefs) {
             yolo: config.yolo ?? state.yolo,
             thinkingEnabled: config.thinkingEnabled ?? state.thinkingEnabled,
             reasoningEffort: config.reasoningEffort ?? state.reasoningEffort,
+            compactionReasoningEffort:
+              config.compactionReasoningEffort ?? state.compactionReasoningEffort,
             promptTimestamps: config.promptTimestamps ?? state.promptTimestamps,
             compactionModel: config.compactionModel ?? state.compactionModel,
             chatTimeoutMs: config.chatTimeoutMs ?? state.chatTimeoutMs,

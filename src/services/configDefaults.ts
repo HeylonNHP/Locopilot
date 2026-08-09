@@ -23,10 +23,10 @@ export { DEFAULT_MAX_PROMPT_LOOP_ITERATIONS } from '@/constants';
 /** Port Ollama's HTTP server listens on by default. */
 export const DEFAULT_OLLAMA_PORT = 11434;
 
-/** Default Ollama base URL used when no `config.baseUrl` is configured. */
+/** Default Ollama base URL used when no provider baseUrl is configured. */
 export const DEFAULT_OLLAMA_BASE_URL = `http://localhost:${DEFAULT_OLLAMA_PORT}`;
 
-/** Provider name used when no explicit `config.provider` is set. */
+/** Provider name used when no explicit provider is set. */
 export const DEFAULT_PROVIDER: LlmProvider = 'ollama';
 
 export { PROVIDER_OLLAMA, PROVIDER_OPENAI_COMPATIBLE } from '@/services/providerConstants';
@@ -112,11 +112,11 @@ export function defaultWebSearchSettings(): Required<WebSearchSettingsShape> & {
  * Empty-but-typed `Config` used as the sentinel when no `config.json` is
  * found. Routes that previously inlined `{ baseUrl: 'http://localhost:11434' }`
  * (or the empty-string variant for new installs) should use this so all
- * "no config yet" sites fall back to the same shape.
+ * "no config yet" sites fall back to the same shape. Callers that need a
+ * base URL default should use `DEFAULT_OLLAMA_BASE_URL` directly.
  */
 export function emptyConfig(): Config {
   return {
-    baseUrl: DEFAULT_OLLAMA_BASE_URL,
     model: '',
     compactionModel: '',
   };

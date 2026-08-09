@@ -6,6 +6,8 @@
  * back to the local tiktoken estimate if the API measurement fails.
  */
 
+import type { ReasoningEffort } from '@/types/chatConfig';
+
 import {
   type ChatMessage,
   getLlmTurnStats,
@@ -23,7 +25,8 @@ export async function measureConversationTokens(
   model: string,
   numCtx: number,
   onProgress?: (message: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  reasoningEffort?: ReasoningEffort
 ): Promise<number> {
   onProgress?.('Measuring conversation tokens...');
 
@@ -43,6 +46,7 @@ export async function measureConversationTokens(
         options: {
           temperature: 0,
         },
+        ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       },
       undefined,
       undefined,

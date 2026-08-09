@@ -91,21 +91,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       typeof providerId === 'string' ? providerId : undefined,
       model as string
     );
-    // No provider resolved (legacy config or a stale providerId with no
-    // model match). Prefer the persisted config baseUrl and fall back to
-    // the body value only when config has none. The fallback is
-    // UNauthenticated — never pair config.apiKey with the body baseUrl.
-    // A stale providerId on a multi-provider config could otherwise leak
-    // the user's API key to a caller-supplied host. Matches the chat
-    // route's precedence exactly.
+    // No provider resolved (e.g. a stale providerId with no model
+    // match). Fall back to the body baseUrl or the default Ollama URL.
+    // The fallback is UNauthenticated — never pair a provider's apiKey
+    // with the body baseUrl. A stale providerId on a multi-provider
+    // config could otherwise leak the user's API key to a caller-
+    // supplied host.
     llmRequestContext = resolved
       ? resolved.ctx
       : buildLlmRequestContext({
           baseUrl:
-            config?.baseUrl?.trim() ||
-            (typeof baseUrl === 'string' && baseUrl.trim().length > 0
+            typeof baseUrl === 'string' && baseUrl.trim().length > 0
               ? baseUrl.trim()
-              : DEFAULT_OLLAMA_BASE_URL),
+              : DEFAULT_OLLAMA_BASE_URL,
         });
 
     // Resolve the effective numCtx against the model's runtime cap. The

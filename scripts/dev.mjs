@@ -69,14 +69,20 @@ async function resolvePort() {
 }
 
 async function main() {
-  // 1. Copy WASM
+  // 1. Validate config.json (rejects legacy single-provider shape)
+  const { validateConfig } = await import(pathToFileURL(join(__dirname, 'validateConfig.mjs')));
+  if (!validateConfig(join(ROOT, 'config.json'))) {
+    process.exit(1);
+  }
+
+  // 2. Copy WASM
   await import(pathToFileURL(join(__dirname, 'copy-wasm.mjs')));
 
-  // 2. Resolve port
+  // 3. Resolve port
   const port = await resolvePort();
   console.log(`Starting server on port ${port}...`);
 
-  // 3. Start Next.js
+  // 4. Start Next.js
   // shell:false (the default) — we spawn `node` with a fixed module path and
   // no interpolation, so no shell is needed. Using `shell: true` here would
   // trip DEP0190 (args concatenated, not escaped) and adds unnecessary risk.

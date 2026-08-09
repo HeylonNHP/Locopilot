@@ -9,7 +9,6 @@ import { invalidateCapCache, resolveEffectiveNumCtx } from '@/services/capResolv
 import {
   DEFAULT_ADAPTER_RETRY,
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
-  DEFAULT_OLLAMA_BASE_URL,
   DEFAULT_RETRYABLE_STATUSES,
   DEFAULT_WEB_SEARCH_SETTINGS,
   MAX_RETRY_BASE_DELAY_MS,
@@ -25,9 +24,6 @@ import { getNormalizedProviders, resolveProvider } from '@/services/providerReso
 import { invalidateVisionCache } from '@/services/visionCache';
 
 const KNOWN_TOP_KEYS: Set<string> = new Set([
-  'provider',
-  'apiKey',
-  'baseUrl',
   'model',
   // Legacy alias accepted for backward compatibility with older
   // `config.json` files written before the `lastModel` → `model` rename.
@@ -39,6 +35,7 @@ const KNOWN_TOP_KEYS: Set<string> = new Set([
   'yolo',
   'thinkingEnabled',
   'reasoningEffort',
+  'compactionReasoningEffort',
   'promptTimestamps',
   'webSearch',
   'skills',
@@ -156,45 +153,6 @@ function validateConfig(
 
   const out: Partial<Config> = {};
 
-  if ('provider' in input) {
-    const v = input.provider;
-    if (typeof v !== 'string' || (v !== 'ollama' && v !== 'openai-compatible')) {
-      return {
-        ok: false,
-        error: "Invalid config: 'provider' must be 'ollama' or 'openai-compatible'",
-      };
-    }
-    out.provider = v as LlmProvider;
-  }
-
-  if ('apiKey' in input) {
-    if (typeof input.apiKey !== 'string') {
-      return { ok: false, error: "Invalid config: 'apiKey' must be a string" };
-    }
-    out.apiKey = input.apiKey;
-  }
-
-  if ('baseUrl' in input) {
-    if (typeof input.baseUrl !== 'string') {
-      return { ok: false, error: "Invalid config: 'baseUrl' must be a string" };
-    }
-    if (input.baseUrl !== '') {
-      let parsed: URL;
-      try {
-        parsed = new URL(input.baseUrl);
-      } catch {
-        return { ok: false, error: "Invalid config: 'baseUrl' is not a valid URL" };
-      }
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return {
-          ok: false,
-          error: "Invalid config: 'baseUrl' must use http: or https: scheme",
-        };
-      }
-    }
-    out.baseUrl = input.baseUrl;
-  }
-
   if ('providers' in input) {
     if (!Array.isArray(input.providers)) {
       return { ok: false, error: "Invalid config: 'providers' must be an array" };
@@ -299,6 +257,28 @@ function validateConfig(
       };
     }
     out.reasoningEffort = v as NonNullable<Config['reasoningEffort']>;
+  }
+
+  if ('compactionReasoningEffort' in input) {
+    const v = input.compactionReasoningEffort;
+    const allowed: ReadonlyArray<Config['compactionReasoningEffort']> = [
+      'off',
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ];
+    if (typeof v !== 'string' || !allowed.includes(v as Config['compactionReasoningEffort'])) {
+      return {
+        ok: false,
+        error:
+          "Invalid config: 'compactionReasoningEffort' must be one of: off, none, minimal, low, medium, high, xhigh, max",
+      };
+    }
+    out.compactionReasoningEffort = v as NonNullable<Config['compactionReasoningEffort']>;
   }
 
   if ('promptTimestamps' in input) {
@@ -587,7 +567,6 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     const body = validation.config;
     const currentConfig = await loadConfig();
     const base: Config = {
-      baseUrl: DEFAULT_OLLAMA_BASE_URL,
       model: '',
       compactionModel: '',
       numCtx: DEFAULT_NUM_CTX,
@@ -622,11 +601,6 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       retry: updatedRetry,
     };
 
-    // Scrub empty API-key strings so they don't get persisted.
-    if (updatedConfig.apiKey !== undefined && updatedConfig.apiKey.trim() === '') {
-      delete updatedConfig.apiKey;
-    }
-
     // Scrub empty per-provider API keys.
     if (updatedConfig.providers) {
       for (const provider of updatedConfig.providers) {
@@ -648,9 +622,9 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     }
 
     // Invalidate the cap-resolver and vision caches for any provider
-    // whose identity (baseUrl/model) or context size changed, plus the
-    // legacy top-level fields. Without this, stale entries from a
-    // previous model/runner state would persist for up to 5 minutes.
+    // whose identity (baseUrl/model) or context size changed. Without
+    // this, stale entries from a previous model/runner state would
+    // persist for up to 5 minutes.
     const currentProviders = getNormalizedProviders(currentConfig ?? null);
     const nextProviders = getNormalizedProviders(updatedConfig);
     const changedProviderIds = new Set<string>();
@@ -702,30 +676,6 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     if (nextActive?.baseUrl && nextActive?.model) {
       invalidateCapCache(nextActive.baseUrl, nextActive.model);
       invalidateVisionCache(nextActive.baseUrl, nextActive.model, nextActive.provider);
-    }
-
-    // Legacy top-level fields still participate in cache invalidation so
-    // single-provider configs (or configs during migration) behave correctly.
-    const baseUrlChanged = body.baseUrl !== undefined && body.baseUrl !== currentConfig?.baseUrl;
-    const modelChanged = body.model !== undefined && body.model !== currentConfig?.model;
-    if (baseUrlChanged || modelChanged) {
-      if (updatedConfig.baseUrl && updatedConfig.model) {
-        invalidateCapCache(updatedConfig.baseUrl, updatedConfig.model);
-        invalidateVisionCache(updatedConfig.baseUrl, updatedConfig.model, updatedConfig.provider);
-      }
-      if (currentConfig?.baseUrl && currentConfig?.model) {
-        invalidateCapCache(currentConfig.baseUrl, currentConfig.model);
-        invalidateVisionCache(currentConfig.baseUrl, currentConfig.model, currentConfig.provider);
-      }
-    } else if (
-      body.numCtx !== undefined &&
-      updatedConfig.numCtx !== currentConfig?.numCtx &&
-      updatedConfig.baseUrl &&
-      updatedConfig.model
-    ) {
-      // numCtx raised above the cached cap strongly suggests the
-      // user reconfigured the runner / Modelfile. Re-probe.
-      invalidateCapCache(updatedConfig.baseUrl, updatedConfig.model);
     }
 
     await saveConfig(updatedConfig);

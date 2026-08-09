@@ -29,7 +29,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_NUM_CTX } from '@/constants';
 import { resolveEffectiveNumCtx } from '@/services/capResolver';
 import { loadConfig } from '@/services/configManager';
-import { buildLlmRequestContext } from '@/services/llm';
+import { resolveProviderRequestContext } from '@/services/providerResolver';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,20 +52,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const config = await loadConfig();
-    if (!config?.baseUrl) {
+    const resolvedProvider = resolveProviderRequestContext(config, undefined, modelName);
+    if (!resolvedProvider) {
       return NextResponse.json(
         { error: 'LLM base URL not configured. Set up config first.' },
         { status: 400 }
       );
     }
 
-    const llmRequestContext = buildLlmRequestContext({
-      ...(config.provider ? { provider: config.provider } : {}),
-      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-      baseUrl: config.baseUrl,
-    });
-
-    const resolved = await resolveEffectiveNumCtx(llmRequestContext, modelName, requested);
+    const resolved = await resolveEffectiveNumCtx(resolvedProvider.ctx, modelName, requested);
 
     return NextResponse.json({
       model: modelName,

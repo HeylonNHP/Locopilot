@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const { dirname, join } = path;
 
@@ -62,23 +62,27 @@ async function resolvePort() {
       return candidate;
     }
   }
-  console.error(`Could not find a free port after ${MAX_ATTEMPTS} attempts (starting from ${PREFERRED})`);
+  console.error(
+    `Could not find a free port after ${MAX_ATTEMPTS} attempts (starting from ${PREFERRED})`
+  );
   process.exit(1);
 }
 
 async function main() {
+  // Validate config.json first (rejects legacy single-provider shape)
+  const { validateConfig } = await import(pathToFileURL(join(__dirname, 'validateConfig.mjs')));
+  if (!validateConfig(join(ROOT, 'config.json'))) {
+    process.exit(1);
+  }
+
   const port = await resolvePort();
   console.log(`Starting server on port ${port}...`);
 
-  const next = spawn(
-    'node',
-    ['node_modules/next/dist/bin/next', 'start', '-p', String(port)],
-    {
-      cwd: join(__dirname, '..'),
-      stdio: 'inherit',
-      shell: true,
-    }
-  );
+  const next = spawn('node', ['node_modules/next/dist/bin/next', 'start', '-p', String(port)], {
+    cwd: join(__dirname, '..'),
+    stdio: 'inherit',
+    shell: true,
+  });
 
   next.on('exit', (code) => process.exit(code));
 }

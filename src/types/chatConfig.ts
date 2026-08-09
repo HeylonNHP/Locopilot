@@ -75,17 +75,13 @@ export interface ProviderConfig {
 }
 
 export interface Config {
-  provider?: LlmProvider;
-  /** API key for OpenAI-compatible providers. Ignored by Ollama. */
-  apiKey?: string;
-  baseUrl: string;
   /**
-   * Multiple provider endpoints, each with their own authentication and
-   * default model. When this array is present and non-empty, the UI
-   * aggregates models from every provider and the user picks which
-   * provider/model to use per turn. The legacy top-level
-   * `provider`/`baseUrl`/`apiKey`/`model` fields still act as the
-   * default (and only) provider when `providers` is absent or empty.
+   * Provider endpoints, each with their own authentication and default
+   * model. The UI aggregates models from every provider and the user
+   * picks which provider/model to use per turn. The legacy top-level
+   * `provider`/`baseUrl`/`apiKey` fields are no longer supported;
+   * old configs must be migrated to this array format (rejected at
+   * startup otherwise — see scripts/validateConfig.mjs).
    */
   providers?: ProviderConfig[];
   /**
@@ -141,6 +137,12 @@ export interface Config {
    * forced into reasoning when called with tools.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Reasoning effort for the compaction model. Same canonical value space
+   * as `reasoningEffort`; threaded through the compaction pipeline to the
+   * provider adapters. Defaults to 'off' (no explicit level forwarded).
+   */
+  compactionReasoningEffort?: ReasoningEffort;
   /**
    * When true, the chat route prepends a `[Sent YYYY-MM-DD HH:MM]` header
    * to each user-role message in the LLM-bound conversation. The

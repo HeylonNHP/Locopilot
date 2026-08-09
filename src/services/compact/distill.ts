@@ -7,6 +7,8 @@
  * individually bounded so it can never exceed the model context window.
  */
 
+import type { ReasoningEffort } from '@/types/chatConfig';
+
 import { type ChatMessage, type LlmRequestContext, sendLlmChat } from '@/services/llm';
 
 import {
@@ -58,7 +60,8 @@ export async function distillToolMessages(
   numCtx: number,
   model: string,
   onProgress?: (message: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  reasoningEffort?: ReasoningEffort
 ): Promise<ChatMessage[]> {
   const distilledMessages: ChatMessage[] = [];
 
@@ -122,6 +125,7 @@ export async function distillToolMessages(
         options: {
           temperature: 0,
         },
+        ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       },
       (chunk) => {
         if (chunk.message?.content) {

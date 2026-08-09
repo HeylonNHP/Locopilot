@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
+import type { ReasoningEffort } from '@/types/chatConfig';
 import type { SseEventPayloadMap } from '@/types/sse';
 
 import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
@@ -49,6 +50,23 @@ export async function POST(request: NextRequest): Promise<Response> {
   const compactionProviderId = body.compactionProviderId;
   const sessionId = body.sessionId;
 
+  const compactionReasoningEffortRaw: unknown = body.compactionReasoningEffort;
+  const validReasoningEffort: string[] = [
+    'off',
+    'none',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+  ];
+  const compactionReasoningEffort: ReasoningEffort | undefined =
+    typeof compactionReasoningEffortRaw === 'string' &&
+    validReasoningEffort.includes(compactionReasoningEffortRaw)
+      ? (compactionReasoningEffortRaw as ReasoningEffort)
+      : undefined;
+
   if (typeof model !== 'string' || !model.trim()) {
     return NextResponse.json({ error: 'Model name is required.' }, { status: 400 });
   }
@@ -94,21 +112,19 @@ export async function POST(request: NextRequest): Promise<Response> {
           typeof providerId === 'string' ? providerId : undefined,
           model as string
         );
-        // No provider resolved (legacy config or a stale providerId with
-        // no model match). Prefer the persisted config baseUrl and fall
-        // back to the body value only when config has none. The fallback
-        // is UNauthenticated — never pair config.apiKey with the body
-        // baseUrl. A stale providerId on a multi-provider config could
-        // otherwise leak the user's API key to a caller-supplied host.
-        // Matches the chat route's precedence exactly.
+        // No provider resolved (e.g. a stale providerId with no model
+        // match). Fall back to the body baseUrl or the default Ollama
+        // URL. The fallback is UNauthenticated — never pair a provider's
+        // apiKey with the body baseUrl. A stale providerId on a
+        // multi-provider config could otherwise leak the user's API key
+        // to a caller-supplied host.
         llmRequestContext = resolved
           ? resolved.ctx
           : buildLlmRequestContext({
               baseUrl:
-                config?.baseUrl?.trim() ||
-                (typeof baseUrl === 'string' && baseUrl.trim().length > 0
+                typeof baseUrl === 'string' && baseUrl.trim().length > 0
                   ? baseUrl.trim()
-                  : DEFAULT_OLLAMA_BASE_URL),
+                  : DEFAULT_OLLAMA_BASE_URL,
             });
         // Resolve the effective numCtx against the model's runtime cap.
         // The body numCtx is an explicit per-request override; otherwise the
@@ -195,7 +211,13 @@ export async function POST(request: NextRequest): Promise<Response> {
           1,
           2,
           undefined,
-          request.signal
+          request.signal,
+          // 'off' is the UI default and means "no explicit level"; only
+          // forward an explicit reasoning level so the adapter applies its
+          // own default mapping. Mirrors the chat route's convention.
+          compactionReasoningEffort !== undefined && compactionReasoningEffort !== 'off'
+            ? compactionReasoningEffort
+            : undefined
         );
 
         const parsedSessionId =

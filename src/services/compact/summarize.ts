@@ -8,6 +8,8 @@
  * step of the map-reduce path, so all requests stay bounded.
  */
 
+import type { ReasoningEffort } from '@/types/chatConfig';
+
 import { type ChatMessage, type LlmRequestContext, sendLlmChatStream } from '@/services/llm';
 
 import type { SummaryBudget } from './types';
@@ -48,7 +50,8 @@ async function streamSummary(
   numCtx: number,
   numPredict: number | undefined,
   onProgress?: (message: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  reasoningEffort?: ReasoningEffort
 ): Promise<string> {
   let text = '';
   for await (const chunk of sendLlmChatStream(ctx, {
@@ -61,6 +64,7 @@ async function streamSummary(
       temperature: 0,
     },
     ...(signal ? { signal } : {}),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
   })) {
     const content = chunk.message?.content ?? '';
     if (content.length > 0) {
@@ -83,6 +87,7 @@ interface SummariseChunkParams {
   label?: string;
   onProgress?: (message: string) => void;
   signal?: AbortSignal;
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -100,6 +105,7 @@ export async function summariseChunk(params: SummariseChunkParams): Promise<stri
     label,
     onProgress,
     signal,
+    reasoningEffort,
   } = params;
 
   const historyText = historyMessages
@@ -135,7 +141,8 @@ export async function summariseChunk(params: SummariseChunkParams): Promise<stri
     historyText,
     budget,
     forwardProgress,
-    signal
+    signal,
+    reasoningEffort
   );
 }
 
@@ -153,7 +160,8 @@ export async function summariseMessages(
   sourceText: string,
   budget: SummaryBudget,
   onProgress?: (message: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  reasoningEffort?: ReasoningEffort
 ): Promise<string> {
   const summaryNumPredict = Math.min(
     numCtx,
@@ -170,7 +178,8 @@ export async function summariseMessages(
     numCtx,
     summaryNumPredict,
     onProgress,
-    signal
+    signal,
+    reasoningEffort
   );
 
   // If the model returned nothing (can happen with very small inputs and a
@@ -189,7 +198,16 @@ export async function summariseMessages(
         content: `Summarise this conversation:\n\n${sourceText}`,
       },
     ];
-    text = await streamSummary(ctx, model, retryMessages, numCtx, undefined, onProgress, signal);
+    text = await streamSummary(
+      ctx,
+      model,
+      retryMessages,
+      numCtx,
+      undefined,
+      onProgress,
+      signal,
+      reasoningEffort
+    );
   }
 
   if (!text) {

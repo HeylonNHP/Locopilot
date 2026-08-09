@@ -10,6 +10,7 @@ import {
   type ConversationDumpInput,
 } from '@/services/historyDump';
 import { buildLlmRequestContext, type ChatMessage } from '@/services/llm';
+import { resolveProviderRequestContext } from '@/services/providerResolver';
 import { getLastWebCompactionDebug } from '@/tools/impl/contentCompactor';
 
 export const dynamic = 'force-dynamic';
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     const effectiveBaseUrl =
       typeof body.baseUrl === 'string' && body.baseUrl.trim().length > 0
         ? body.baseUrl.trim()
-        : config?.baseUrl?.trim() || DEFAULT_OLLAMA_BASE_URL;
+        : DEFAULT_OLLAMA_BASE_URL;
     // Resolve the effective numCtx against the model's runtime
     // cap for the dump's runtimeNumCtx field. The dump is
     // informational (no LLM call) so the cap is just a
@@ -69,15 +70,14 @@ export async function POST(request: NextRequest): Promise<Response> {
     let effectiveNumCtx = requested;
     if (requested > 0) {
       try {
-        const resolved = await resolveEffectiveNumCtx(
-          buildLlmRequestContext({
-            ...(config?.provider ? { provider: config.provider } : {}),
-            ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
-            baseUrl: effectiveBaseUrl,
-          }),
-          model,
-          requested
-        );
+        // Prefer the resolved provider's context (credentials + baseUrl);
+        // fall back to an unauthenticated context against the effective
+        // base URL when no provider resolves.
+        const resolvedProvider = resolveProviderRequestContext(config, undefined, model);
+        const measurementContext = resolvedProvider
+          ? resolvedProvider.ctx
+          : buildLlmRequestContext({ baseUrl: effectiveBaseUrl });
+        const resolved = await resolveEffectiveNumCtx(measurementContext, model, requested);
         effectiveNumCtx = resolved.effective;
       } catch {
         // Resolver is best-effort.

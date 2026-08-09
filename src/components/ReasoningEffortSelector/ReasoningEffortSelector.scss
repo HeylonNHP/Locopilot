@@ -1,0 +1,69 @@
+@use '../../app/styles/mixins' as *;
+
+// ================================================================
+//  Component: ReasoningEffortSelector
+// ================================================================
+
+.reasoning-effort-selector {
+  width: 320px;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-popover);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 16px;
+  z-index: 1000;
+  overflow: hidden;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow:
+    0 16px 40px rgba(var(--rgb-shadow-navy), 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+
+  &-header {
+    padding: 12px 12px 8px;
+    border-bottom: 1px solid var(--glass-border-soft);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  &-rows {
+    padding: 8px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  &-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  &-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  &-select {
+    @include glass-input;
+    font-size: 12px;
+    padding: 4px 8px;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  &-hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+    opacity: 0.7;
+  }
+}

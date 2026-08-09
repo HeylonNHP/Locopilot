@@ -10,6 +10,8 @@
  * no stage ever needs the whole conversation to fit into one context window.
  */
 
+import type { ReasoningEffort } from '@/types/chatConfig';
+
 import { type ChatMessage, type LlmRequestContext } from '@/services/llm';
 import { countMessagesTokens } from '@/services/tokenizer';
 
@@ -32,7 +34,8 @@ export async function produceConversationSummary(
   aggressiveFactor: number,
   preparedHistoryMessages: ChatMessage[],
   onProgress?: (message: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  reasoningEffort?: ReasoningEffort
 ): Promise<string> {
   const sourceEstimate = countMessagesTokens(preparedHistoryMessages, model);
   const safeInputBudget = computeSafeInputBudget(numCtx);
@@ -48,6 +51,7 @@ export async function produceConversationSummary(
       preservedRecentTokens: 0,
       ...(onProgress ? { onProgress } : {}),
       ...(signal ? { signal } : {}),
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     });
   }
 
@@ -79,6 +83,7 @@ export async function produceConversationSummary(
       label,
       ...(onProgress ? { onProgress } : {}),
       ...(signal ? { signal } : {}),
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     });
     chunkSummaries.push(summary);
   }
@@ -91,7 +96,8 @@ export async function produceConversationSummary(
     aggressiveFactor,
     chunkSummaries,
     onProgress,
-    signal
+    signal,
+    reasoningEffort
   );
 }
 
@@ -107,7 +113,8 @@ export async function reduceSummaryGroups(
   aggressiveFactor: number,
   summaries: string[],
   onProgress?: (message: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  reasoningEffort?: ReasoningEffort
 ): Promise<string> {
   if (summaries.length === 1) {
     return summaries[0]!;
@@ -154,7 +161,8 @@ export async function reduceSummaryGroups(
       batchText,
       budget,
       onProgress,
-      signal
+      signal,
+      reasoningEffort
     );
     batchSummaries.push(combined);
   }
@@ -166,6 +174,7 @@ export async function reduceSummaryGroups(
     aggressiveFactor,
     batchSummaries,
     onProgress,
-    signal
+    signal,
+    reasoningEffort
   );
 }

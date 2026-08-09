@@ -203,6 +203,13 @@ interface ChatState {
    */
   reasoningEffort: ReasoningEffort;
   /**
+   * Reasoning effort for the COMPACTION model. Same canonical value space
+   * as `reasoningEffort` — the provider adapters translate it (Ollama maps
+   * `xhigh` → `max`, `off/none` → `false`). Defaults to 'off' (no explicit
+   * level; adapter defaults apply).
+   */
+  compactionReasoningEffort: ReasoningEffort;
+  /**
    * When true, the server-side chat route prepends a `[Sent …]` header to
    * each user-role message before sending it to the LLM. The
    * messages.created_at column is always populated regardless of this flag.
@@ -1192,6 +1199,7 @@ const initialState: ChatState = {
   yolo: false,
   thinkingEnabled: true,
   reasoningEffort: 'off',
+  compactionReasoningEffort: 'off',
   promptTimestamps: true,
   compactionModel: '',
   compactionProviderId: null,
