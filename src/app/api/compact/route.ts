@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import type { ReasoningEffort } from '@/types/chatConfig';
 import type { SseEventPayloadMap } from '@/types/sse';
 
 import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
@@ -18,6 +17,7 @@ import {
 } from '@/services/llm';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
+import { isReasoningEffort, type ReasoningEffort } from '@/types/chatConfig';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,21 +51,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   const sessionId = body.sessionId;
 
   const compactionReasoningEffortRaw: unknown = body.compactionReasoningEffort;
-  const validReasoningEffort: string[] = [
-    'off',
-    'none',
-    'minimal',
-    'low',
-    'medium',
-    'high',
-    'xhigh',
-    'max',
-  ];
-  const compactionReasoningEffort: ReasoningEffort | undefined =
-    typeof compactionReasoningEffortRaw === 'string' &&
-    validReasoningEffort.includes(compactionReasoningEffortRaw)
-      ? (compactionReasoningEffortRaw as ReasoningEffort)
-      : undefined;
+  const compactionReasoningEffort: ReasoningEffort | undefined = isReasoningEffort(
+    compactionReasoningEffortRaw
+  )
+    ? compactionReasoningEffortRaw
+    : undefined;
 
   if (typeof model !== 'string' || !model.trim()) {
     return NextResponse.json({ error: 'Model name is required.' }, { status: 400 });

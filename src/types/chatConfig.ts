@@ -2,15 +2,19 @@ export type CompletionMode = 'normal' | 'prompt-loop';
 export type LlmProvider = 'ollama' | 'openai-compatible';
 
 /**
- * Reasoning effort for OpenAI-compatible providers. Maps to the
- * `reasoning_effort` field on the wire:
+ * Canonical reasoning-effort levels, ordered from least to most effort.
+ * This is the single source of truth for the `ReasoningEffort` type and for
+ * every validation list / UI dropdown across the codebase. Add or remove a
+ * level here and the type, the API validators, and the UI all stay in sync.
+ *
+ * Wire mapping:
  *   - 'off'   → 'none'   (forced off, even for models with reasoning on by default)
  *   - 'none'  → 'none'
  *   - 'minimal' → 'minimal'
  *   - 'low'   → 'low'
  *   - 'medium'→ 'medium'
  *   - 'high'  → 'high'
- *   - 'xhigh' → 'xhigh'
+ *   - 'xhigh' → 'xhigh'   (OpenAI-compatible ceiling)
  *   - 'max'   → 'max'     (Ollama-only highest level; OpenAI-compatible
  *                        providers cap at 'xhigh')
  *
@@ -22,15 +26,35 @@ export type LlmProvider = 'ollama' | 'openai-compatible';
  * on by default (e.g. gpt-5.6-luna on the Airia gateway) are not silently
  * forced into reasoning when called with tools.
  */
-export type ReasoningEffort =
-  | 'off'
-  | 'none'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max';
+export const REASONING_EFFORTS = [
+  'off',
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+/** Human-readable labels for each reasoning-effort level (UI display). */
+export const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
+  off: 'Off',
+  none: 'None',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'XHigh',
+  max: 'Max',
+};
+
+/** Type guard: is `value` a valid reasoning-effort level? */
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value);
+}
 
 /**
  * Configuration for the openai-compatible adapter's transient-error

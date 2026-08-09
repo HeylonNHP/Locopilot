@@ -2,8 +2,6 @@
 // PUT /api/config - update config
 import { type NextRequest, NextResponse } from 'next/server';
 
-import type { CompletionMode, Config, LlmProvider, ProviderConfig } from '@/types/chatConfig';
-
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import { invalidateCapCache, resolveEffectiveNumCtx } from '@/services/capResolver';
 import {
@@ -22,6 +20,14 @@ import { loadConfig, saveConfig } from '@/services/configManager';
 import { buildLlmRequestContext } from '@/services/llm';
 import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
 import { invalidateVisionCache } from '@/services/visionCache';
+import {
+  type CompletionMode,
+  type Config,
+  isReasoningEffort,
+  type LlmProvider,
+  type ProviderConfig,
+  REASONING_EFFORTS,
+} from '@/types/chatConfig';
 
 const KNOWN_TOP_KEYS: Set<string> = new Set([
   'model',
@@ -239,46 +245,24 @@ function validateConfig(
 
   if ('reasoningEffort' in input) {
     const v = input.reasoningEffort;
-    const allowed: ReadonlyArray<Config['reasoningEffort']> = [
-      'off',
-      'none',
-      'minimal',
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'max',
-    ];
-    if (typeof v !== 'string' || !allowed.includes(v as Config['reasoningEffort'])) {
+    if (!isReasoningEffort(v)) {
       return {
         ok: false,
-        error:
-          "Invalid config: 'reasoningEffort' must be one of: off, none, minimal, low, medium, high, xhigh, max",
+        error: `Invalid config: 'reasoningEffort' must be one of: ${REASONING_EFFORTS.join(', ')}`,
       };
     }
-    out.reasoningEffort = v as NonNullable<Config['reasoningEffort']>;
+    out.reasoningEffort = v;
   }
 
   if ('compactionReasoningEffort' in input) {
     const v = input.compactionReasoningEffort;
-    const allowed: ReadonlyArray<Config['compactionReasoningEffort']> = [
-      'off',
-      'none',
-      'minimal',
-      'low',
-      'medium',
-      'high',
-      'xhigh',
-      'max',
-    ];
-    if (typeof v !== 'string' || !allowed.includes(v as Config['compactionReasoningEffort'])) {
+    if (!isReasoningEffort(v)) {
       return {
         ok: false,
-        error:
-          "Invalid config: 'compactionReasoningEffort' must be one of: off, none, minimal, low, medium, high, xhigh, max",
+        error: `Invalid config: 'compactionReasoningEffort' must be one of: ${REASONING_EFFORTS.join(', ')}`,
       };
     }
-    out.compactionReasoningEffort = v as NonNullable<Config['compactionReasoningEffort']>;
+    out.compactionReasoningEffort = v;
   }
 
   if ('promptTimestamps' in input) {

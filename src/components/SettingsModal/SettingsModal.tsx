@@ -1,10 +1,13 @@
 'use client';
 import { useMemo, useState } from 'react';
 
-import type { ReasoningEffort } from '@/types/chatConfig';
-
 import { useChat } from '@/app/lib/chatStore';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+import {
+  REASONING_EFFORT_LABELS,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
+} from '@/types/chatConfig';
 
 import './SettingsModal.scss';
 
@@ -398,14 +401,11 @@ export default function SettingsModal({ onClose }: Props) {
                   onChange={(e) => setReasoningEffort(e.target.value as ReasoningEffort)}
                   className="settings-input"
                 >
-                  <option value="off">Off (none)</option>
-                  <option value="none">None</option>
-                  <option value="minimal">Minimal</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="xhigh">XHigh</option>
-                  <option value="max">Max</option>
+                  {REASONING_EFFORTS.map((value) => (
+                    <option key={value} value={value}>
+                      {REASONING_EFFORT_LABELS[value]}
+                    </option>
+                  ))}
                 </select>
               </div>
             )}

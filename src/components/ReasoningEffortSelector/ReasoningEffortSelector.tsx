@@ -2,10 +2,14 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import type { ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
-
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { useChat } from '@/app/lib/chatStore';
+import {
+  type ProviderConfig,
+  REASONING_EFFORT_LABELS,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
+} from '@/types/chatConfig';
 
 import './ReasoningEffortSelector.scss';
 
@@ -16,16 +20,9 @@ interface ReasoningEffortSelectorProps {
   onClose: () => void;
 }
 
-const LEVELS: ReadonlyArray<{ value: ReasoningEffort; label: string }> = [
-  { value: 'off', label: 'Off' },
-  { value: 'none', label: 'None' },
-  { value: 'minimal', label: 'Minimal' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'XHigh' },
-  { value: 'max', label: 'Max' },
-];
+const LEVELS: ReadonlyArray<{ value: ReasoningEffort; label: string }> = REASONING_EFFORTS.map(
+  (value) => ({ value, label: REASONING_EFFORT_LABELS[value] })
+);
 
 /**
  * Returns the levels appropriate for a provider. Ollama's reasoning ceiling is
