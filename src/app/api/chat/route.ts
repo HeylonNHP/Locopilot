@@ -249,6 +249,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     typeof body.providerId === 'string' ? body.providerId : undefined;
   const compactionProviderId: string | undefined =
     typeof body.compactionProviderId === 'string' ? body.compactionProviderId : undefined;
+  const compactionModel: string | undefined =
+    typeof body.compactionModel === 'string' ? body.compactionModel : undefined;
   const think: boolean | undefined = body.think as boolean | undefined;
   const reasoningEffortRaw: unknown = body.reasoningEffort;
   const reasoningEffort: ReasoningEffort | undefined = isReasoningEffort(reasoningEffortRaw)
@@ -353,8 +355,13 @@ export async function POST(req: NextRequest): Promise<Response> {
 
       let finalContent = '';
       let finalThinking = '';
-      // Compaction model resolved from config (set below); starts as the chat model.
-      let effectiveCompactionModel: string = model as string;
+      // Body compactionModel is authoritative when present, including an empty
+      // string which explicitly means "same as the main model". Persisted config
+      // is consulted only when the body omits the field.
+      let effectiveCompactionModel: string = resolveCompactionModel(
+        compactionModel,
+        model as string
+      );
       // Last authoritative token count from Ollama; used by the auto-compact
       // check so it stays anchored to the latest exact provider count.
       let lastAuthoritativeTokens = 0;
@@ -558,6 +565,11 @@ export async function POST(req: NextRequest): Promise<Response> {
         requestId,
       });
       let activeProvider: ProviderConfig | null = null;
+      // Resolved after the main provider and effective main context size are
+      // known. A missing or stale explicit provider ID deliberately falls back
+      // to this main request context rather than another configured provider.
+      let compactionLlmRequestContext: LlmRequestContext = llmRequestContext;
+      let compactionNumCtx = effectiveNumCtx;
 
       try {
         if (!activeSessionId) {
@@ -627,10 +639,6 @@ export async function POST(req: NextRequest): Promise<Response> {
               }
             : {};
           const configuredBaseUrl = activeProv?.baseUrl ?? effectiveBaseUrl;
-          const compactionModel = resolveCompactionModel(
-            config?.compactionModel ?? '',
-            model as string
-          );
           return {
             yoloMode: config?.yolo ?? false,
             allowedTools: undefined,
@@ -648,14 +656,17 @@ export async function POST(req: NextRequest): Promise<Response> {
               perPageCharLimit:
                 config?.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
               baseUrl: configuredBaseUrl,
-              compactionModel,
+              compactionModel: effectiveCompactionModel,
+              compactionLlmRequestContext,
             },
             subAgent: {
               ...providerSettings,
               baseUrl: configuredBaseUrl,
               model: model as string,
               numCtx: effectiveNumCtx,
-              compactionModel,
+              compactionModel: effectiveCompactionModel,
+              compactionLlmRequestContext,
+              compactionNumCtx,
               ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
               tools: TOOLS.filter(
                 (tool) =>
@@ -735,7 +746,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             }
 
             effectiveCompactionModel = resolveCompactionModel(
-              config.compactionModel,
+              compactionModel ?? config.compactionModel,
               model as string
             );
           }
@@ -780,6 +791,26 @@ export async function POST(req: NextRequest): Promise<Response> {
             }
           }
 
+          // Resolve the compaction provider by ID only. Passing no model name
+          // is intentional: a stale explicit ID must not be recovered by model
+          // matching or by resolveProvider's unrelated default provider.
+          const explicitCompactionProviderId =
+            typeof compactionProviderId === 'string' && compactionProviderId.trim().length > 0
+              ? compactionProviderId.trim()
+              : undefined;
+          const compactionResolved = explicitCompactionProviderId
+            ? resolveProviderRequestContext(
+                config,
+                explicitCompactionProviderId,
+                undefined,
+                requestId
+              )
+            : null;
+          compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
+          compactionNumCtx = compactionResolved
+            ? getProviderNumCtx(compactionResolved.provider, config?.numCtx)
+            : effectiveNumCtx;
+
           // Compute allowedTools from always-apply skills (best-effort)
           let allowedTools: string[] | undefined;
           try {
@@ -794,11 +825,15 @@ export async function POST(req: NextRequest): Promise<Response> {
           requestContext = buildRequestContext(config, activeProvider);
           requestContext.allowedTools = allowedTools;
         } catch {
-          // Config load is best-effort; defaults already apply.
+          // Config load is best-effort; defaults already apply. The body
+          // compaction selection remains authoritative even on this fallback.
           llmRequestContext = buildLlmRequestContext({
             baseUrl: effectiveBaseUrl,
             requestId,
           });
+          effectiveCompactionModel = resolveCompactionModel(compactionModel, model as string);
+          compactionLlmRequestContext = llmRequestContext;
+          compactionNumCtx = effectiveNumCtx;
           requestContext = buildRequestContext(null, null);
         }
         // Build the merged tool list (static native TOOLS + dynamic MCP
@@ -924,36 +959,15 @@ export async function POST(req: NextRequest): Promise<Response> {
               let persistedOk = true;
               let writeError: string | null = null;
               try {
-                // Resolve a separate provider for the auto-compact LLM
-                // call ONLY when the client explicitly supplied a
-                // compactionProviderId. Falls back to the main request
-                // context when not set ("Same as main model" or a legacy
-                // client). We must not fall through to model-name
-                // resolution here: if the active model is not stored as
-                // any provider's default `model`, resolveProvider falls
-                // back to providers[0] and auto-compact silently hits the
-                // wrong endpoint.
-                const explicitCompactionProviderId =
-                  typeof compactionProviderId === 'string' && compactionProviderId.trim().length > 0
-                    ? compactionProviderId.trim()
-                    : undefined;
-                const compactionResolved = explicitCompactionProviderId
-                  ? resolveProviderRequestContext(
-                      config,
-                      explicitCompactionProviderId,
-                      effectiveCompactionModel,
-                      requestId
-                    )
-                  : null;
-                const autoCompactCtx = compactionResolved?.ctx ?? llmRequestContext;
-                const autoCompactNumCtx = compactionResolved
-                  ? getProviderNumCtx(compactionResolved.provider, config?.numCtx)
-                  : effectiveNumCtx;
+                // The compaction runtime was resolved once, after the main
+                // request context size was known. This keeps auto-compaction,
+                // sub-agent compaction, web content compaction, and title
+                // generation on the same selected model/provider semantics.
                 const compactResult = await compactHistory(
-                  autoCompactCtx,
+                  compactionLlmRequestContext,
                   effectiveCompactionModel,
                   currentMessages,
-                  autoCompactNumCtx,
+                  compactionNumCtx,
                   (message: string) => {
                     sendEvent('compact_progress', { message });
                   },
@@ -1858,10 +1872,10 @@ export async function POST(req: NextRequest): Promise<Response> {
             // Fire-and-forget background task to generate a proper LLM-based title.
             // The fallback title is already set above, so this is purely an upgrade.
             generateSessionTitle(
-              llmRequestContext,
+              compactionLlmRequestContext,
               effectiveCompactionModel,
               currentMessages,
-              effectiveNumCtx,
+              compactionNumCtx,
               undefined, // no onProgress (SSE stream is closing)
               undefined // no think override
             )

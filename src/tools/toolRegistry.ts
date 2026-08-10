@@ -14,7 +14,7 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
-import type { ToolDefinition } from '@/services/llm';
+import type { LlmRequestContext, ToolDefinition } from '@/services/llm';
 import type { ReasoningEffort } from '@/types/chatConfig';
 
 import {
@@ -115,6 +115,14 @@ export interface SubAgentConfig {
   model: string;
   numCtx: number;
   compactionModel: string;
+  /**
+   * Request context for compaction calls. Normal sub-agent LLM calls
+   * continue to use the provider/baseUrl above; this context is only for
+   * the auto-compaction request.
+   */
+  compactionLlmRequestContext?: LlmRequestContext;
+  /** Context window size for the compaction model/provider. */
+  compactionNumCtx?: number;
   /**
    * Reasoning effort for OpenAI-compatible providers. Maps to the
    * wire `reasoning_effort` field. When 'off', sub-agents send
@@ -251,19 +259,11 @@ function checkToolAllowed(toolName: string, context?: RequestContext): string | 
 // --- Web search settings resolution ---
 
 /**
- * Resolves a `WebSearchSettings` for the current request, threading
- * `provider` and `apiKey` from the parent sub-agent config so the
- * content compactor hits the same endpoint and authenticates the same
- * way as the main LLM call.
- *
- * The sub-agent config (always populated by the chat route) is the
- * source of truth for the user's actual `baseUrl`, `provider`, and
- * `apiKey`. Falling back to `context?.webSearch` preserves the legacy
- * path for callers that still supply a pre-built `WebSearchSettings`.
- *
- * Returns `null` when neither side is available — callers fall back to
- * `defaultWebSearchSettings()` to keep the tool callable from contexts
- * that do not populate the request context (e.g. unit tests).
+ * Resolves the per-request web-search settings. Chat requests include the
+ * resolved compaction context on these settings, while the provider/baseUrl/
+ * apiKey fields remain the legacy fallback for callers that do not provide
+ * one. Returns `null` when no request settings are available so callers can
+ * use `defaultWebSearchSettings()` (for example, direct unit-test calls).
  */
 function resolveWebSearchSettings(context?: RequestContext): WebSearchSettings | null {
   return context?.webSearch ?? null;

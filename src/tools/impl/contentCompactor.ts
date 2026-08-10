@@ -176,13 +176,12 @@ function estimateCompactionContext(
 export interface ContentCompactorOptions {
   settings: WebExtractionSettings;
   /**
-   * The per-request LLM context the compactor must use. Must include the
-   * `provider` and `apiKey` so the right adapter is selected — without
-   * `provider`, `selectLlmAdapter(undefined)` falls back to the Ollama
-   * adapter, which POSTs to `${baseUrl}/api/chat` and 404s on
-   * OpenAI-compatible endpoints. `baseUrl` is also taken from this
-   * context, not from `settings.baseUrl`, so the Authorization header
-   * matches the rest of the request.
+   * The resolved LLM context the compactor must use. It may target the
+   * selected compaction provider rather than the main chat provider. It must
+   * include the `provider` and `apiKey` so the right adapter is selected;
+   * without `provider`, `selectLlmAdapter(undefined)` falls back to Ollama.
+   * `baseUrl` is taken from this context, not `settings.baseUrl`, so the
+   * compaction request uses the selected provider's endpoint and credentials.
    */
   llmRequestContext: LlmRequestContext;
 }
@@ -410,10 +409,9 @@ export class ContentCompactor {
   /**
    * Creates a new ContentCompactor instance with the provided settings.
    *
-   * The caller must pass an `LlmRequestContext` that includes the
-   * `provider` and `apiKey` for the current request. The compactor
-   * reuses that context for its own LLM call so it hits the same
-   * endpoint (and authenticates the same way) as the main chat loop.
+   * The caller must pass the resolved `LlmRequestContext` for the
+   * compaction request. The compactor reuses that context so it hits the
+   * selected compaction provider's endpoint with its credentials.
    */
   static create(
     settings: WebExtractionSettings,

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
+import type { LlmRequestContext } from '@/services/llm';
 import type { ToolOutputSink } from '@/tools/toolOutput';
 import type { ToolSchema } from '@/tools/tools';
 import type { ExtractedLink } from '@/tools/web/linkExtractor';
@@ -106,10 +107,14 @@ export interface WebSearchSettings {
   baseUrl: string; // Required - always from config
   compactionModel: string;
   /**
-   * LLM provider (e.g. 'ollama', 'openai-compatible'). Threaded into
-   * the per-request LlmRequestContext so the content compactor picks
-   * the right adapter. Without this, the compactor defaults to the
-   * Ollama adapter and POSTs to `${baseUrl}/api/chat`, which 404s on
+   * Resolved context for content-compaction LLM calls. When present, this
+   * takes precedence over the legacy provider/baseUrl/apiKey fields below.
+   */
+  compactionLlmRequestContext?: LlmRequestContext;
+  /**
+   * Legacy provider fields used to build a compaction context when the
+   * resolved context above is absent. Without a provider, the compactor
+   * defaults to Ollama and POSTs to `${baseUrl}/api/chat`, which 404s on
    * OpenAI-compatible endpoints (Airia, LM Studio, vLLM, …).
    */
   provider?: 'ollama' | 'openai-compatible';

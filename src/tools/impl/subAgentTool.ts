@@ -191,16 +191,22 @@ async function autoCompactSubAgentIfNeeded(
   );
 
   try {
-    const subAgentContext: LlmRequestContext = buildLlmRequestContext({
-      ...(config.provider ? { provider: config.provider } : {}),
-      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-      baseUrl: config.baseUrl,
-    });
+    // Chat requests provide a resolved compaction context so a selected
+    // compaction provider/model is authoritative. Legacy callers do not, so
+    // retain the historical fallback to the sub-agent's normal provider.
+    const compactionContext =
+      config.compactionLlmRequestContext ??
+      buildLlmRequestContext({
+        ...(config.provider ? { provider: config.provider } : {}),
+        ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+        baseUrl: config.baseUrl,
+      });
+    const compactionNumCtx = config.compactionNumCtx ?? config.numCtx;
     const result = await compactHistory(
-      subAgentContext,
+      compactionContext,
       config.compactionModel,
       messages,
-      config.numCtx,
+      compactionNumCtx,
       undefined,
       1,
       2,

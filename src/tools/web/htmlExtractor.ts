@@ -19,7 +19,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import type { ToolOutputSink } from '@/tools/toolOutput';
 
 import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
-import { buildLlmRequestContext } from '@/services/llm';
+import { buildLlmRequestContext, type LlmRequestContext } from '@/services/llm';
 import { ContentCompactor } from '@/tools/impl/contentCompactor';
 
 import { type ExtractedLink, extractLinks } from './linkExtractor';
@@ -37,10 +37,15 @@ export interface WebExtractionSettings {
   baseUrl: string; // REQUIRED - always from config, never optional
   compactionModel: string;
   /**
-   * Provider identifier (`'ollama'` | `'openai-compatible'`). Required for
-   * the content compactor to pick the right adapter — without this, the
-   * compactor defaults to Ollama and POSTs to `${baseUrl}/api/chat`, which
-   * 404s on OpenAI-compatible endpoints (Airia, LM Studio, vLLM, …).
+   * Resolved context for content-compaction LLM calls. When present, this
+   * takes precedence over the legacy provider/baseUrl/apiKey fields below.
+   */
+  compactionLlmRequestContext?: LlmRequestContext;
+  /**
+   * Legacy provider fields used to build a compaction context when the
+   * resolved context above is absent. Without a provider, the compactor
+   * defaults to Ollama and POSTs to `${baseUrl}/api/chat`, which 404s on
+   * OpenAI-compatible endpoints (Airia, LM Studio, vLLM, …).
    */
   provider?: 'ollama' | 'openai-compatible';
   /**
@@ -263,18 +268,17 @@ export async function fetchAndExtract(
     return { title, text, finalUrl: extractionUrl, links };
   }
 
-  // Use content compactor if text exceeds the character limit.
-  // The compactor must use the same provider/apiKey as the main LLM call,
-  // otherwise it defaults to the Ollama adapter and POSTs to
-  // `${baseUrl}/api/chat` — which 404s on OpenAI-compatible endpoints.
-  // Build an LlmRequestContext from the settings so the compactor
-  // authenticates the same way as the parent chat loop and the right
-  // adapter (ollama vs openai-compatible) is selected.
-  const compactorContext = buildLlmRequestContext({
-    baseUrl: settings.baseUrl,
-    ...(settings.provider ? { provider: settings.provider } : {}),
-    ...(settings.apiKey ? { apiKey: settings.apiKey } : {}),
-  });
+  // Use content compaction if text exceeds the character limit. Chat
+  // requests provide the resolved compaction context so this call uses the
+  // selected compaction provider; direct/legacy callers fall back to a
+  // context built from the extraction settings.
+  const compactorContext =
+    settings.compactionLlmRequestContext ??
+    buildLlmRequestContext({
+      baseUrl: settings.baseUrl,
+      ...(settings.provider ? { provider: settings.provider } : {}),
+      ...(settings.apiKey ? { apiKey: settings.apiKey } : {}),
+    });
   const compactor = ContentCompactor.create(settings, compactorContext);
   const processedText = await compactor.compactIfNeeded(text);
 
