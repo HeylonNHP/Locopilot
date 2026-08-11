@@ -282,22 +282,34 @@ function toResponseInputItems(messages: ChatMessage[]): {
     }
 
     if (msg.role === 'assistant') {
-      // Assistant message text content.
+      // Assistant message text content. Skip the text message entirely if this
+      // turn is tool-call-only — emitting an empty assistant text message
+      // before a function_call item can confuse upstream gateways (some
+      // require every function_call to be paired with a real message and may
+      // reject empty assistants as malformed).
       const hasToolCalls = !!msg.tool_calls && msg.tool_calls.length > 0;
-      const content = hasToolCalls && !msg.content?.trim() ? '' : msg.content || '';
+      const textContent = hasToolCalls && !msg.content?.trim() ? '' : msg.content || '';
 
-      const assistantItem: EasyInputMessage = {
-        role: 'assistant',
-        content,
-        type: 'message',
-      };
-      input.push(assistantItem as ResponseInputItem);
+      if (textContent) {
+        const assistantItem: EasyInputMessage = {
+          role: 'assistant',
+          content: textContent,
+          type: 'message',
+        };
+        input.push(assistantItem as ResponseInputItem);
+      }
 
       // Tool calls from this assistant.
       if (msg.tool_calls) {
-        for (const tc of msg.tool_calls) {
+        for (const [tcIndex, tc] of msg.tool_calls.entries()) {
+          // Pair the fallback ID to the originating assistant's index and
+          // the position within the tool_calls array so the downstream
+          // function_call_output item (which uses the same fallback when
+          // tool_call_id is missing) gets the same synthetic ID. This is the
+          // root fix for the "No tool output found for function call
+          // call_fallback_N" error when tool_call_id is missing.
           const toolCallItem: ResponseFunctionToolCall = {
-            call_id: tc.id || `call_fallback_${i}`,
+            call_id: tc.id || `call_fallback_${i}_${tcIndex}`,
             name: tc.function.name,
             arguments: JSON.stringify(tc.function.arguments),
             type: 'function_call',
@@ -360,7 +372,27 @@ function toResponseInputItems(messages: ChatMessage[]): {
         continue;
       }
 
-      const callId = msg.tool_call_id || originatingToolCalls![0]?.id || `call_fallback_${i}`;
+      // Locate the originating tool call: prefer its real id; otherwise find
+      // the matching position in the originating assistant's tool_calls
+      // array so we can derive the same synthetic fallback ID it used.
+      // This is the root fix for the "No tool output found for function
+      // call call_fallback_N" error when tool_call_id is missing.
+      let callId: string;
+      if (msg.tool_call_id) {
+        callId = msg.tool_call_id;
+      } else {
+        const calls = originatingToolCalls!;
+        // Find which tool call this tool message corresponds to. It is the
+        // Nth tool message (1-indexed) after the originating assistant
+        // since tool calls were issued in order.
+        const assistantIdx = i - 1;
+        let precedingToolCount = 0;
+        for (let k = assistantIdx + 1; k < i; k++) {
+          if (messages[k]?.role === 'tool') precedingToolCount++;
+        }
+        const tcIndex = Math.min(precedingToolCount, calls.length - 1);
+        callId = calls[tcIndex]?.id || `call_fallback_${assistantIdx}_${tcIndex}`;
+      }
       const toolOutput: ResponseInputItem.FunctionCallOutput = {
         call_id: callId,
         output: msg.content || '',
