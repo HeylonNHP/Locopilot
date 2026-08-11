@@ -85,6 +85,74 @@ export interface ToolTraceEntry {
   [key: string]: unknown;
 }
 
+export type DiagnosticPhase =
+  | 'request_start'
+  | 'model_request_start'
+  | 'model_wait'
+  | 'model_first_chunk'
+  | 'model_complete'
+  | 'approval_wait_start'
+  | 'approval_decision'
+  | 'nested_tool_start'
+  | 'nested_tool_end'
+  | 'compaction_start'
+  | 'compaction_end'
+  | 'abort'
+  | 'error'
+  | 'cleanup';
+
+export interface DiagnosticTraceEntry {
+  layer: 'route' | 'subagent' | 'adapter';
+  phase: DiagnosticPhase;
+  requestId?: string | undefined;
+  sessionId?: number | undefined;
+  agentId?: string | undefined;
+  tool?: string | undefined;
+  toolCallId?: string | undefined;
+  provider?: string | undefined;
+  model?: string | undefined;
+  baseUrl?: string | undefined;
+  elapsedMs?: number | undefined;
+  sinceLastChunkMs?: number | undefined;
+  waitMs?: number | undefined;
+  attempt?: number | undefined;
+  chunkCount?: number | undefined;
+  messageCount?: number | undefined;
+  toolCallCount?: number | undefined;
+  thinkingChars?: number | undefined;
+  contentChars?: number | undefined;
+  result?: string | undefined;
+  error?: unknown;
+  [key: string]: unknown;
+}
+
+/** Return only a provider origin, never a path, query, or fragment. */
+export function redactDiagnosticEndpoint(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return '[invalid-endpoint]';
+  }
+}
+
+function errorMetadata(error: unknown): Record<string, unknown> {
+  if (!error || typeof error !== 'object') {
+    return { errorType: typeof error };
+  }
+
+  const candidate = error as {
+    name?: unknown;
+    code?: unknown;
+    status?: unknown;
+  };
+  return {
+    ...(typeof candidate.name === 'string' ? { errorName: candidate.name } : {}),
+    ...(typeof candidate.code === 'string' ? { errorCode: candidate.code } : {}),
+    ...(typeof candidate.status === 'number' ? { errorStatus: candidate.status } : {}),
+  };
+}
+
 function truncate(s: string | undefined, max = 80): string {
   if (!s) return '';
   return s.length > max ? `${s.slice(0, max)}…` : s;
@@ -125,6 +193,19 @@ export const debugLog = {
         messages: summary,
       },
       `[trace] ${label}: ${messages.length} messages`
+    );
+  },
+
+  /** Log a privacy-safe lifecycle breadcrumb for stalled requests. */
+  diagnostic(entry: DiagnosticTraceEntry) {
+    const { baseUrl, error, ...rest } = entry;
+    pinoLogger.debug(
+      {
+        ...rest,
+        ...(baseUrl ? { baseUrlOrigin: redactDiagnosticEndpoint(baseUrl) } : {}),
+        ...(error ? errorMetadata(error) : {}),
+      },
+      `[diagnostic] layer=${entry.layer} phase=${entry.phase}`
     );
   },
 

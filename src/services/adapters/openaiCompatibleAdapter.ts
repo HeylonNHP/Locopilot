@@ -547,14 +547,42 @@ function finalizeToolCalls(accumulator: Map<number, PartialToolCall>): ToolCall[
  * Iterate over a stream of ResponseStreamEvent and yield ChatApiResponse chunks.
  */
 async function* streamResponseEvents(
-  stream: Stream<ResponseStreamEvent>
+  stream: Stream<ResponseStreamEvent>,
+  diagnostic?: {
+    requestId?: string | undefined;
+    provider?: string | undefined;
+    model?: string | undefined;
+    baseUrl?: string | undefined;
+  }
 ): AsyncGenerator<ChatApiResponse> {
   const toolCallAccumulator = new Map<number, PartialToolCall>();
+  const streamStartedAt = Date.now();
+  let eventCount = 0;
+  let lastEventAt = streamStartedAt;
+  let sawFirstEvent = false;
+  debugLog.diagnostic({
+    layer: 'adapter',
+    phase: 'model_request_start',
+    ...diagnostic,
+    result: 'stream_opened',
+  });
   let finalResponse: Response | null = null;
   let yieldedAnyChunk = false;
   let hasReasoningDeltas = false;
 
   for await (const event of stream) {
+    const now = Date.now();
+    eventCount += 1;
+    if (!sawFirstEvent) {
+      sawFirstEvent = true;
+      debugLog.diagnostic({
+        layer: 'adapter',
+        phase: 'model_first_chunk',
+        ...diagnostic,
+        elapsedMs: now - streamStartedAt,
+      });
+    }
+    lastEventAt = now;
     switch (event.type) {
       case 'response.output_text.delta': {
         const delta = (event as { delta: string }).delta;
@@ -683,7 +711,16 @@ async function* streamResponseEvents(
     }
   }
 
-  // If we never yielded any content chunks but have a final response, yield it now.
+  debugLog.diagnostic({
+    layer: 'adapter',
+    phase: 'model_complete',
+    ...diagnostic,
+    elapsedMs: Date.now() - streamStartedAt,
+    sinceLastChunkMs: Date.now() - lastEventAt,
+    chunkCount: eventCount,
+    result: sawFirstEvent ? 'streamed' : 'no_events',
+  });
+
   if (!yieldedAnyChunk && finalResponse) {
     const mapped = toChatApiResponse(finalResponse);
     yield mapped;
@@ -971,7 +1008,15 @@ async function* sendOpenAICompatibleChatStream(
     throw err;
   }
 
-  yield* streamResponseEvents(stream);
+  yield* streamResponseEvents(
+    stream,
+    {
+      ...(ctx.requestId ? { requestId: ctx.requestId } : {}),
+      ...(ctx.provider ? { provider: ctx.provider } : {}),
+      model: params.model,
+      baseUrl: ctx.baseUrl,
+    }
+  );
 }
 
 // ── Error handling ─────────────────────────────────────────────────────────

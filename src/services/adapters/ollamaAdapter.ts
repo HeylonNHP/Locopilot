@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 
 import type { ReasoningEffort } from '@/types/chatConfig';
 
+import { debugLog } from '@/app/lib/debugLogger';
 import { MODEL_LIST_TIMEOUT_MS } from '@/constants';
 import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
 
@@ -288,18 +289,60 @@ async function* sendOllamaChatStream(
     crlfDelay: Infinity,
   });
 
+  const streamStartedAt = Date.now();
+  let lineCount = 0;
+  let lastLineAt = streamStartedAt;
+  let sawFirstLine = false;
+  debugLog.diagnostic({
+    layer: 'adapter',
+    phase: 'model_request_start',
+    requestId: ctx.requestId,
+    provider: ctx.provider,
+    model: params.model,
+    baseUrl: ctx.baseUrl,
+    result: 'stream_opened',
+  });
+
   try {
     for await (const line of lineReader) {
       const trimmed = line.trim();
       if (!trimmed) continue;
 
       try {
-        yield JSON.parse(trimmed) as ChatApiResponse;
+        const parsed = JSON.parse(trimmed) as ChatApiResponse;
+        const now = Date.now();
+        lineCount += 1;
+        lastLineAt = now;
+        if (!sawFirstLine) {
+          sawFirstLine = true;
+          debugLog.diagnostic({
+            layer: 'adapter',
+            phase: 'model_first_chunk',
+            requestId: ctx.requestId,
+            provider: ctx.provider,
+            model: params.model,
+            baseUrl: ctx.baseUrl,
+            elapsedMs: now - streamStartedAt,
+          });
+        }
+        yield parsed;
       } catch {
         continue;
       }
     }
   } finally {
+    debugLog.diagnostic({
+      layer: 'adapter',
+      phase: 'model_complete',
+      requestId: ctx.requestId,
+      provider: ctx.provider,
+      model: params.model,
+      baseUrl: ctx.baseUrl,
+      elapsedMs: Date.now() - streamStartedAt,
+      sinceLastChunkMs: Date.now() - lastLineAt,
+      chunkCount: lineCount,
+      result: sawFirstLine ? 'streamed' : 'no_lines',
+    });
     lineReader.close();
   }
 }

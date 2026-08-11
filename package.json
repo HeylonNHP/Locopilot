@@ -11,6 +11,7 @@
     "postinstall": "node scripts/copy-wasm.mjs",
     "prebuild": "node scripts/copy-wasm.mjs",
     "test": "npx tsx scripts/test-run-command.mjs",
+    "test:diagnostics": "npx tsx scripts/test-diagnostic-logging.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

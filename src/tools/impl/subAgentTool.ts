@@ -1,5 +1,6 @@
 import type { ToolSchema } from '@/tools/tools';
 
+import { debugLog } from '@/app/lib/debugLogger';
 import { discoverSkills, getEnabledSkills, loadSkillState } from '@/services/skillManager';
 
 export const subAgentToolSchema: ToolSchema = {
@@ -86,6 +87,7 @@ const SUB_AGENT_AUTO_COMPACT_NOTICE =
   'The conversation history was automatically compacted due to context length. ' +
   'The original orchestrator request has been preserved verbatim above. ' +
   'Please continue working on that request without asking for confirmation.';
+const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
 
 function buildSubAgentSystemPrompt(skillInfo?: string): string {
   const dateTimeStr = new Date().toLocaleString('en-US', {
@@ -186,10 +188,20 @@ async function autoCompactSubAgentIfNeeded(
   }
 
   const labeledOutput = makeLabeledSink(output, agentId);
+  const compactionRequestId = config.compactionLlmRequestContext?.requestId;
+  const compactStartedAt = Date.now();
+  debugLog.diagnostic({
+    layer: 'subagent',
+    phase: 'compaction_start',
+    requestId: compactionRequestId,
+    agentId,
+    model: config.compactionModel,
+    baseUrl: config.compactionLlmRequestContext?.baseUrl ?? config.baseUrl,
+    messageCount: messages.length,
+  });
   labeledOutput.writeLine(
     `⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...`
   );
-
   try {
     // Chat requests provide a resolved compaction context so a selected
     // compaction provider/model is authoritative. Legacy callers do not, so
@@ -236,8 +248,30 @@ async function autoCompactSubAgentIfNeeded(
       );
     }
 
+    debugLog.diagnostic({
+      layer: 'subagent',
+      phase: 'compaction_end',
+      requestId: compactionContext.requestId,
+      agentId,
+      provider: compactionContext.provider,
+      model: config.compactionModel,
+      baseUrl: compactionContext.baseUrl,
+      elapsedMs: Date.now() - compactStartedAt,
+      messageCount: messages.length,
+      result: 'completed',
+    });
     return true;
   } catch (err) {
+    debugLog.diagnostic({
+      layer: 'subagent',
+      phase: isInterruptOrAbort(signal) ? 'abort' : 'error',
+      requestId: compactionRequestId,
+      agentId,
+      model: config.compactionModel,
+      baseUrl: config.compactionLlmRequestContext?.baseUrl ?? config.baseUrl,
+      elapsedMs: Date.now() - compactStartedAt,
+      error: err,
+    });
     const message = err instanceof Error ? err.message : String(err);
     labeledOutput.writeLine(`⚠ Auto-compaction failed: ${message}`);
     return false;
@@ -306,6 +340,15 @@ async function executeNestedToolCall(
   subAgentMcpApprovals?: Set<string>
 ): Promise<ToolCallResult> {
   const toolName = toolCall.function.name;
+  const toolStartedAt = Date.now();
+  const diagnosticContext = {
+    requestId: context?.requestId,
+    sessionId: context?.sessionId,
+    agentId,
+    tool: toolName,
+    toolCallId: toolCall.id,
+  };
+  debugLog.diagnostic({ layer: 'subagent', phase: 'nested_tool_start', ...diagnosticContext });
   const nestedProgress = onProgress
     ? (message: string) => onProgress(`Sub-agent ${agentId}: ${message}`)
     : undefined;
@@ -354,10 +397,23 @@ async function executeNestedToolCall(
     output.writeLine(
       `\n[Sub-agent: ${agentId}] is requesting a ${risk === 'command' ? 'command' : 'MCP tool call'}: awaiting approval…`
     );
+    const approvalStartedAt = Date.now();
+    debugLog.diagnostic({
+      layer: 'subagent',
+      phase: 'approval_wait_start',
+      ...diagnosticContext,
+    });
     const decision = await requester({
       toolName,
       risk,
       args: displayArgs,
+    });
+    debugLog.diagnostic({
+      layer: 'subagent',
+      phase: 'approval_decision',
+      ...diagnosticContext,
+      waitMs: Date.now() - approvalStartedAt,
+      result: decision.approved ? 'approved' : 'denied',
     });
     if (!decision.approved) {
       const reason =
@@ -380,35 +436,38 @@ async function executeNestedToolCall(
     }
   }
 
-  if (toolName === 'run_command') {
-    output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a command:`);
-    return command.execute(toolCall.function.arguments, nestedProgress, output, context, signal);
+  let toolResult: ToolCallResult;
+  try {
+    if (toolName === 'run_command') {
+      output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a command:`);
+      toolResult = await command.execute(toolCall.function.arguments, nestedProgress, output, context, signal);
+    } else if (toolName === 'mcp_call' && subAgentMcpApprovals) {
+      const derivedContext: RequestContext = {
+        ...(context ?? ({} as RequestContext)),
+        mcpApprovals: [...subAgentMcpApprovals],
+      };
+      toolResult = await command.execute(toolCall.function.arguments, nestedProgress, output, derivedContext, signal);
+    } else {
+      toolResult = await command.execute(toolCall.function.arguments, nestedProgress, output, context, signal);
+    }
+  } catch (err) {
+    debugLog.diagnostic({
+      layer: 'subagent',
+      phase: isInterruptOrAbort(signal) ? 'abort' : 'error',
+      ...diagnosticContext,
+      elapsedMs: Date.now() - toolStartedAt,
+      error: err,
+    });
+    throw err;
   }
-
-  // Phase 3.4: derive a per-call context that exposes the
-  // sub-agent's local mcpApprovals ledger. `runMCPCall` reads
-  // `context.mcpApprovals` to build the dispatcher approval set, so
-  // pointing it at the sub-agent's ledger (rather than the parent's
-  // turn-scoped set) gives the sub-agent a stable, isolated
-  // approval scope for the duration of its loop. We only override
-  // `mcpApprovals` — every other field still points at the parent's
-  // request context, so tool implementations see the same YOLO
-  // mode, allowedTools, etc. they already do.
-  if (toolName === 'mcp_call' && subAgentMcpApprovals) {
-    const derivedContext: RequestContext = {
-      ...(context ?? ({} as RequestContext)),
-      mcpApprovals: [...subAgentMcpApprovals],
-    };
-    return command.execute(
-      toolCall.function.arguments,
-      nestedProgress,
-      output,
-      derivedContext,
-      signal
-    );
-  }
-
-  return command.execute(toolCall.function.arguments, nestedProgress, output, context, signal);
+  debugLog.diagnostic({
+    layer: 'subagent',
+    phase: 'nested_tool_end',
+    ...diagnosticContext,
+    elapsedMs: Date.now() - toolStartedAt,
+    result: 'completed',
+  });
+  return toolResult;
 }
 
 function formatPriorResultsBlock(priorResults: CompletedSubAgent[]): string {
@@ -464,6 +523,18 @@ async function runSingleAgent(
   // the sub-agent's loop without re-prompting. The set is local to
   // this sub-agent and never mutates the parent's per-turn ledger.
   const subAgentMcpApprovals = new Set<string>(config.mcpApprovals ?? context?.mcpApprovals ?? []);
+  const agentStartedAt = Date.now();
+  debugLog.diagnostic({
+    layer: 'subagent',
+    phase: 'request_start',
+    requestId: context?.requestId,
+    sessionId: context?.sessionId,
+    agentId: agent.id,
+    provider: config.provider,
+    model: config.model,
+    baseUrl: config.baseUrl,
+    messageCount: messages.length,
+  });
 
   let finalContent = '';
   const toolCallFingerprints = new Set<string>();
@@ -473,11 +544,12 @@ async function runSingleAgent(
     'You appear to be stuck in a loop. Try a fundamentally different approach. ' +
     'If the task is genuinely blocked, summarize what you have discovered so far and return that as your final answer.]';
 
-  while (!isInterruptOrAbort(signal)) {
-    await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orcPrompt, signal);
-    if (isInterruptOrAbort(signal)) {
-      break;
-    }
+  try {
+    while (!isInterruptOrAbort(signal)) {
+      await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orcPrompt, signal);
+      if (isInterruptOrAbort(signal)) {
+        break;
+      }
 
     onProgress?.(`Sub-agent ${agent.id}: thinking`);
 
@@ -491,48 +563,127 @@ async function runSingleAgent(
       ...(config.provider ? { provider: config.provider } : {}),
       ...(config.apiKey ? { apiKey: config.apiKey } : {}),
       baseUrl: config.baseUrl,
+      ...(context?.requestId ? { requestId: context.requestId } : {}),
     });
 
-    const response = await sendLlmChat(
-      subAgentContext,
-      {
+    const turnStartedAt = Date.now();
+    let chunkCount = 0;
+    let lastChunkAt = turnStartedAt;
+    debugLog.diagnostic({
+      layer: 'subagent',
+      phase: 'model_request_start',
+      requestId: context?.requestId,
+      sessionId: context?.sessionId,
+      agentId: agent.id,
+      provider: config.provider,
+      model: config.model,
+      baseUrl: config.baseUrl,
+      elapsedMs: turnStartedAt - agentStartedAt,
+      messageCount: messages.length,
+      toolCallCount: messages.reduce((total, message) => total + (message.tool_calls?.length ?? 0), 0),
+    });
+    const stallTimer = setInterval(() => {
+      const now = Date.now();
+      debugLog.diagnostic({
+        layer: 'subagent',
+        phase: 'model_wait',
+        requestId: context?.requestId,
+        sessionId: context?.sessionId,
+        agentId: agent.id,
+        provider: config.provider,
         model: config.model,
-        messages,
-        tools,
-        numCtx: config.numCtx,
-        ...(config.reasoningEffort === undefined
-          ? {}
-          : { reasoningEffort: config.reasoningEffort }),
-      },
-      (chunk) => {
-        // Route live thinking/content tokens to the output sink so web
-        // callers can stream them into the subagent bubble in real time.
-        // A newline is prepended the first time each type appears in this
-        // chunk sequence so thinking and content are visually separated.
-        if (chunk.message?.thinking) {
-          output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
-          subagentRoughTokens += Math.max(1, countTextTokens(chunk.message.thinking, config.model));
-        }
-        if (chunk.message?.content) {
-          output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
-          subagentRoughTokens += Math.max(1, countTextTokens(chunk.message.content, config.model));
-        }
+        baseUrl: config.baseUrl,
+        elapsedMs: now - turnStartedAt,
+        sinceLastChunkMs: now - lastChunkAt,
+        chunkCount,
+        messageCount: messages.length,
+      });
+    }, SUBAGENT_STALL_LOG_INTERVAL_MS);
 
-        const now = Date.now();
-        if (now - subagentLastTpsStatusMs > 800) {
-          const elapsedSec = (now - subagentStartMs) / 1000;
-          if (elapsedSec > 0) {
-            output.reportTps?.(+(subagentRoughTokens / elapsedSec).toFixed(2));
+    let response: Awaited<ReturnType<typeof sendLlmChat>>;
+    try {
+      response = await sendLlmChat(
+        subAgentContext,
+        {
+          model: config.model,
+          messages,
+          tools,
+          numCtx: config.numCtx,
+          ...(config.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: config.reasoningEffort }),
+        },
+        (chunk) => {
+          const now = Date.now();
+          chunkCount += 1;
+          lastChunkAt = now;
+          if (chunkCount === 1) {
+            debugLog.diagnostic({
+              layer: 'subagent',
+              phase: 'model_first_chunk',
+              requestId: context?.requestId,
+              sessionId: context?.sessionId,
+              agentId: agent.id,
+              provider: config.provider,
+              model: config.model,
+              baseUrl: config.baseUrl,
+              elapsedMs: now - turnStartedAt,
+            });
           }
-          subagentLastTpsStatusMs = now;
-        }
-      },
-      undefined,
-      signal
-    );
+          if (chunk.message?.thinking) {
+            output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
+            subagentRoughTokens += Math.max(1, countTextTokens(chunk.message.thinking, config.model));
+          }
+          if (chunk.message?.content) {
+            output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
+            subagentRoughTokens += Math.max(1, countTextTokens(chunk.message.content, config.model));
+          }
 
-    // Clear the live TPS indicator now that generation has finished.
-    output.reportTps?.(null);
+          if (now - subagentLastTpsStatusMs > 800) {
+            const elapsedSec = (now - subagentStartMs) / 1000;
+            if (elapsedSec > 0) {
+              output.reportTps?.(+(subagentRoughTokens / elapsedSec).toFixed(2));
+            }
+            subagentLastTpsStatusMs = now;
+          }
+        },
+        undefined,
+        signal
+      );
+    } catch (err) {
+      debugLog.diagnostic({
+        layer: 'subagent',
+        phase: isInterruptOrAbort(signal) ? 'abort' : 'error',
+        requestId: context?.requestId,
+        sessionId: context?.sessionId,
+        agentId: agent.id,
+        provider: config.provider,
+        model: config.model,
+        baseUrl: config.baseUrl,
+        elapsedMs: Date.now() - turnStartedAt,
+        sinceLastChunkMs: Date.now() - lastChunkAt,
+        chunkCount,
+        error: err,
+      });
+      throw err;
+    } finally {
+      clearInterval(stallTimer);
+    }
+
+    debugLog.diagnostic({
+      layer: 'subagent',
+      phase: 'model_complete',
+      requestId: context?.requestId,
+      sessionId: context?.sessionId,
+      agentId: agent.id,
+      provider: config.provider,
+      model: config.model,
+      baseUrl: config.baseUrl,
+      elapsedMs: Date.now() - turnStartedAt,
+      sinceLastChunkMs: Date.now() - lastChunkAt,
+      chunkCount,
+      result: chunkCount > 0 ? 'streamed' : 'no_chunks',
+    });
 
     // Emit a trailing newline so successive tool outputs and the next LLM
     // turn are visually separated from the streamed response text.
@@ -624,9 +775,30 @@ async function runSingleAgent(
       }
     }
     messages.push(assistantMessage, ...toolResults);
+    }
+    return finalContent;
+  } catch (err) {
+    debugLog.diagnostic({
+      layer: 'subagent',
+      phase: isInterruptOrAbort(signal) ? 'abort' : 'error',
+      requestId: context?.requestId,
+      sessionId: context?.sessionId,
+      agentId: agent.id,
+      elapsedMs: Date.now() - agentStartedAt,
+      error: err,
+    });
+    throw err;
+  } finally {
+    debugLog.diagnostic({
+      layer: 'subagent',
+      phase: 'cleanup',
+      requestId: context?.requestId,
+      sessionId: context?.sessionId,
+      agentId: agent.id,
+      elapsedMs: Date.now() - agentStartedAt,
+      result: isInterruptOrAbort(signal) ? 'interrupted' : finalContent ? 'completed' : 'empty',
+    });
   }
-
-  return finalContent;
 }
 
 export class SubAgentTool implements IToolCommand {
@@ -700,6 +872,19 @@ export class SubAgentTool implements IToolCommand {
         break;
       }
 
+      const dispatchStartedAt = Date.now();
+      debugLog.diagnostic({
+        layer: 'subagent',
+        phase: 'request_start',
+        requestId: context?.requestId,
+        sessionId: context?.sessionId,
+        agentId: agent.id,
+        provider: config.provider,
+        model: config.model,
+        baseUrl: config.baseUrl,
+        result: 'dispatch',
+      });
+
       try {
         const content = await runSingleAgent(
           agent,
@@ -713,10 +898,28 @@ export class SubAgentTool implements IToolCommand {
           shareSummaries ? results : undefined
         );
         results.push({ id: agent.id, content });
+        debugLog.diagnostic({
+          layer: 'subagent',
+          phase: 'cleanup',
+          requestId: context?.requestId,
+          sessionId: context?.sessionId,
+          agentId: agent.id,
+          elapsedMs: Date.now() - dispatchStartedAt,
+          result: 'completed',
+        });
       } catch (err) {
         results.push({
           id: agent.id,
           content: `[Sub-agent error: ${err instanceof Error ? err.message : String(err)}]`,
+        });
+        debugLog.diagnostic({
+          layer: 'subagent',
+          phase: isInterruptOrAbort(signal) ? 'abort' : 'error',
+          requestId: context?.requestId,
+          sessionId: context?.sessionId,
+          agentId: agent.id,
+          elapsedMs: Date.now() - dispatchStartedAt,
+          error: err,
         });
       }
     }

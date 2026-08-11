@@ -92,6 +92,10 @@ export interface RequestContext {
    * for O(1) membership checks.
    */
   mcpApprovals?: string[] | undefined;
+  /** Per-request correlation ID used by route, sub-agent, and adapter diagnostics. */
+  requestId?: string;
+  /** Owning chat session ID used for diagnostic correlation. */
+  sessionId?: number;
   /** Model name for the current request (top-level, used by tools like read_pdf even outside sub-agents) */
   model?: string;
   /** Context window size for the current request (top-level, used by tools like read_pdf even outside sub-agents) */

@@ -16,7 +16,13 @@ When adding a new entry:
   optional `Intent:` and `Lesson:` bullets.
 - Don't include the diff itself — that's what `git log -p` is for.
 
-- 2026-08-07: Bounded `run_command` output capture to prevent string-length crashes
+- 2026-08-10: Added structured diagnostics for silent chat and sub-agent stalls
+  - Files: `src/app/lib/debugLogger.ts`, `src/app/api/chat/route.ts`, `src/tools/impl/subAgentTool.ts`, `src/services/adapters/openaiCompatibleAdapter.ts`, `src/services/adapters/ollamaAdapter.ts`, `src/tools/toolRegistry.ts`, `scripts/test-diagnostic-logging.mjs`, `package.json`, `docs/CHANGELOG.md`
+  - Summary: Added privacy-safe lifecycle breadcrumbs with request/session/agent correlation, model and endpoint origin, elapsed timing, first-chunk and last-chunk gaps, tool/approval boundaries, stream completion, errors, aborts, and cleanup. Sub-agent model waits emit periodic diagnostic records without changing execution or timeout behavior. Prompts, tool arguments, credentials, and response text are not logged.
+  - Intent: Make the last active phase of an apparently frozen sub-agent or main request visible in `logs/locopilot-debug.log`, distinguishing provider silence from approval, nested-tool, compaction, abort, or route-cleanup waits.
+
+---
+
   - Files: `src/constants.ts`, `src/tools/impl/runCommandTool.ts`, `docs/CHANGELOG.md`
   - Summary: `run_command` now retains at most 256 KiB of UTF-8 output per stdout/stderr stream, continues draining noisy child processes after the limit, preserves complete Unicode characters, and marks truncated streams explicitly. Normal command output, polling/status fields, exit codes, stderr labeling, and process lifecycle remain unchanged. The process registry now uses the shared TTL constant.
   - Intent: Prevent `RangeError: Invalid string length` and oversized tool results from crashing requests or overflowing persisted chat context while preserving command execution and diagnostics.

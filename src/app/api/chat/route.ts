@@ -347,6 +347,15 @@ export async function POST(req: NextRequest): Promise<Response> {
       enterRequestScope();
 
       const { sendEvent, startKeepalive, stopKeepalive } = createSseStream(controller);
+      debugLog.diagnostic({
+        layer: 'route',
+        phase: 'request_start',
+        requestId,
+        sessionId: parsedSessionId,
+        model: model as string,
+        baseUrl: effectiveBaseUrl,
+        messageCount: typedMessages.length,
+      });
       startKeepalive();
 
       // Strip any system messages from the client and inject a fresh system prompt
@@ -1097,6 +1106,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           let streamStartMs = 0;
           let roughTokens = 0;
           let lastTpsStatusMs = 0;
+          let firstChunkLogged = false;
           // Captured on the chunk with `done: true`. Distinguishes a natural
           // end-of-sequence (`stop`) from a token-cap truncation (`length`)
           // and from server heartbeats (`load` / `unload`). The chat route
@@ -1116,15 +1126,44 @@ export async function POST(req: NextRequest): Promise<Response> {
             logCtx(activeSessionId)
           );
 
+          const requestStartedAt = Date.now();
+          debugLog.diagnostic({
+            layer: 'route',
+            phase: 'model_request_start',
+            ...logCtx(activeSessionId),
+            provider: llmRequestContext.provider,
+            model: model as string,
+            baseUrl: llmRequestContext.baseUrl,
+            messageCount: currentMessages.length,
+            toolCallCount: currentMessages.reduce(
+              (total, message) => total + (message.tool_calls?.length ?? 0),
+              0
+            ),
+          });
+
           while (true) {
             try {
               streamStartMs = Date.now();
               roughTokens = 0;
               lastTpsStatusMs = 0;
 
+              firstChunkLogged = false;
+
               const llmStream = sendLlmChatStream(llmRequestContext, params);
 
               for await (const chunk of llmStream) {
+                if (!firstChunkLogged) {
+                  firstChunkLogged = true;
+                  debugLog.diagnostic({
+                    layer: 'route',
+                    phase: 'model_first_chunk',
+                    ...logCtx(activeSessionId),
+                    provider: llmRequestContext.provider,
+                    model: model as string,
+                    baseUrl: llmRequestContext.baseUrl,
+                    elapsedMs: Date.now() - requestStartedAt,
+                  });
+                }
                 const msg = chunk.message;
 
                 // Stream thinking token chunks (e.g. for deep-thinking models).
@@ -1183,6 +1222,17 @@ export async function POST(req: NextRequest): Promise<Response> {
                 }
               }
 
+              debugLog.diagnostic({
+                layer: 'route',
+                phase: 'model_complete',
+                ...logCtx(activeSessionId),
+                provider: llmRequestContext.provider,
+                model: model as string,
+                baseUrl: llmRequestContext.baseUrl,
+                elapsedMs: Date.now() - requestStartedAt,
+                result: firstChunkLogged ? 'streamed' : 'no_chunks',
+              });
+
               // Wall-clock fallback in case Ollama durations are missing.
               const wallClockElapsedMs = Date.now() - streamStartMs;
               wallClockTps =
@@ -1199,6 +1249,17 @@ export async function POST(req: NextRequest): Promise<Response> {
 
               break; // success — exit retry loop
             } catch (err) {
+              debugLog.diagnostic({
+                layer: 'route',
+                phase: 'error',
+                ...logCtx(activeSessionId),
+                provider: llmRequestContext.provider,
+                model: model as string,
+                baseUrl: llmRequestContext.baseUrl,
+                attempt: retryAttempt + 1,
+                elapsedMs: Date.now() - requestStartedAt,
+                error: err,
+              });
               if (retryAttempt >= MAX_LLM_RETRIES - 1 || !isRetryableError(err)) {
                 logger.error(
                   'ollama',
@@ -1234,6 +1295,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               streamStartMs = 0;
               roughTokens = 0;
               lastTpsStatusMs = 0;
+              firstChunkLogged = false;
               lastDoneReason = undefined;
 
               // Exponential backoff with abort-signal awareness
@@ -1474,6 +1536,15 @@ export async function POST(req: NextRequest): Promise<Response> {
               // ────────────────────────────────────────────────────────────
 
               const startTime = Date.now();
+              if (toolName === 'run_subagents') {
+                debugLog.diagnostic({
+                  layer: 'route',
+                  phase: 'nested_tool_start',
+                  ...logCtx(activeSessionId),
+                  tool: toolName,
+                  toolCallId: tc.id,
+                });
+              }
 
               const runCommandProgress = (message: string) => {
                 sendEvent('tool_progress', { name: toolName, message: sanitize(message) });
@@ -1580,6 +1651,17 @@ export async function POST(req: NextRequest): Promise<Response> {
               }
 
               const duration = Date.now() - startTime;
+              if (toolName === 'run_subagents') {
+                debugLog.diagnostic({
+                  layer: 'route',
+                  phase: 'nested_tool_end',
+                  ...logCtx(activeSessionId),
+                  tool: toolName,
+                  toolCallId: tc.id,
+                  elapsedMs: duration,
+                  result: 'completed',
+                });
+              }
 
               sendEvent('tool_result', {
                 name: toolName,
@@ -2007,6 +2089,12 @@ export async function POST(req: NextRequest): Promise<Response> {
           // Controller may already be closed – ignore.
         }
       } finally {
+        debugLog.diagnostic({
+          layer: 'route',
+          phase: 'cleanup',
+          ...logCtx(activeSessionId),
+          result: req.signal.aborted ? 'aborted' : 'closed',
+        });
         stopKeepalive();
         try {
           controller.close();
