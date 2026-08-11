@@ -201,9 +201,12 @@ export function useDataLoaders(refs: StableRefs) {
       }
       return;
     }
-    if (!state.activeProviderId) {
+    const selectedModelMatchesProvider = state.models.some(
+      (m) => m.name === state.model && m.providerId === state.activeProviderId
+    );
+    if (!selectedModelMatchesProvider) {
       const match = state.models.find((m) => m.name === state.model && m.providerId);
-      if (match?.providerId) {
+      if (match?.providerId && match.providerId !== state.activeProviderId) {
         dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: match.providerId });
       }
     }

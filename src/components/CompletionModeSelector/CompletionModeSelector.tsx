@@ -91,8 +91,7 @@ export default function CompletionModeSelector({
   // Close on outside click and Escape
   useClickOutsideEscape(panelRef, { isOpen, onClose });
 
-  const { baseUrl, model, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch } =
-    state;
+  const { model, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch } = state;
 
   const persist = useCallback(
     (config: Record<string, unknown>) => {
@@ -105,7 +104,6 @@ export default function CompletionModeSelector({
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              baseUrl,
               model,
               yolo,
               thinkingEnabled,
@@ -120,7 +118,7 @@ export default function CompletionModeSelector({
         }
       }, 300);
     },
-    [dispatch, baseUrl, model, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch]
+    [dispatch, model, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch]
   );
 
   const handleSelectMode = useCallback(

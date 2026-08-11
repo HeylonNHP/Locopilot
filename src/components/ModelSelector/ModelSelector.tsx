@@ -91,7 +91,6 @@ export default function ModelSelector({
     models,
     model,
     activeProviderId,
-    baseUrl,
     yolo,
     thinkingEnabled,
     compactionModel,
@@ -109,8 +108,7 @@ export default function ModelSelector({
   const filteredModels = models.filter((m) => {
     const term = search.toLowerCase();
     return (
-      m.name.toLowerCase().includes(term) ||
-      (m.displayName ?? '').toLowerCase().includes(term)
+      m.name.toLowerCase().includes(term) || (m.displayName ?? '').toLowerCase().includes(term)
     );
   });
 
@@ -206,7 +204,6 @@ export default function ModelSelector({
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              baseUrl,
               model,
               yolo,
               thinkingEnabled,
@@ -235,7 +232,6 @@ export default function ModelSelector({
         // turn's `status` event. The client no longer pre-fetches the
         // cap; the server is authoritative.
         const config = {
-          baseUrl,
           activeProviderId: selectedProviderId,
           model: modelName,
           yolo,
@@ -261,7 +257,6 @@ export default function ModelSelector({
       activeModel,
       activeProviderId,
       mode,
-      baseUrl,
       model,
       yolo,
       thinkingEnabled,
@@ -355,34 +350,34 @@ export default function ModelSelector({
                         : (m.displayName ?? m.name)
                     }
                   >
-                <span className="model-selector-check">
-                  {isActive && (
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                      <path
-                        d="M3 8.5L6.5 12L13 5"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </span>
-                <span className="model-selector-content">
-                  <span className="model-selector-name">{m.displayName ?? m.name}</span>
-                  {capabilityBadges.length > 0 && (
-                    <span
-                      className="model-selector-badges"
-                      aria-label={`Capabilities: ${capabilityBadges.join(', ')}`}
-                    >
-                      {capabilityBadges.map((badge) => (
-                        <span key={badge} className="model-selector-badge">
-                          {badge}
-                        </span>
-                      ))}
+                    <span className="model-selector-check">
+                      {isActive && (
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                          <path
+                            d="M3 8.5L6.5 12L13 5"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
                     </span>
-                  )}
-                </span>
+                    <span className="model-selector-content">
+                      <span className="model-selector-name">{m.displayName ?? m.name}</span>
+                      {capabilityBadges.length > 0 && (
+                        <span
+                          className="model-selector-badges"
+                          aria-label={`Capabilities: ${capabilityBadges.join(', ')}`}
+                        >
+                          {capabilityBadges.map((badge) => (
+                            <span key={badge} className="model-selector-badge">
+                              {badge}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 );
               }),

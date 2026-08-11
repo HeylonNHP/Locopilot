@@ -12,6 +12,7 @@
     "prebuild": "node scripts/copy-wasm.mjs",
     "test": "npx tsx scripts/test-run-command.mjs",
     "test:diagnostics": "npx tsx scripts/test-diagnostic-logging.mjs",
+    "test:provider-persistence": "npx tsx scripts/test-provider-persistence.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

@@ -297,17 +297,27 @@ export function useSlashCommands({
             });
             if (matched) {
               const modelName = typeof matched === 'string' ? matched : matched.name;
+              const selectedProviderId =
+                typeof matched === 'string' ? undefined : matched.providerId;
               dispatch({ type: 'SET_MODEL', model: modelName });
+              if (selectedProviderId) {
+                dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: selectedProviderId });
+              }
               try {
                 await fetch('/api/config', {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ model: modelName }),
+                  body: JSON.stringify({
+                    model: modelName,
+                    ...(selectedProviderId ? { activeProviderId: selectedProviderId } : {}),
+                  }),
                 });
               } catch {
                 // Ignore save errors
               }
-              addSystem(`Model set to ${typeof matched === 'string' ? matched : (matched.displayName ?? matched.name)}`);
+              addSystem(
+                `Model set to ${typeof matched === 'string' ? matched : (matched.displayName ?? matched.name)}`
+              );
             } else {
               addSystem(`Model "${args}" not found. Use /model to see available models.`);
             }
@@ -325,10 +335,11 @@ export function useSlashCommands({
               }`
             );
           }
-           return;
+          return;
         }
 
-        case 'compact': {          const currentMessages = refs.messagesRef.current;
+        case 'compact': {
+          const currentMessages = refs.messagesRef.current;
           if (isCurrentSessionStreaming) {
             addSystem('Stop the current response before running /compact.');
             return;
