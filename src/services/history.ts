@@ -111,11 +111,19 @@ const stmtUpdateSessionTokenStats = db.prepare<[number, number, number, number]>
   "UPDATE sessions SET last_prompt_eval_count = ?, last_eval_count = ?, last_total_tokens = ?, updated_at = datetime('now') WHERE id = ?"
 );
 
+const stmtClearSessionTokenStats = db.prepare<[number]>(
+  "UPDATE sessions SET last_prompt_eval_count = NULL, last_eval_count = NULL, last_total_tokens = NULL, updated_at = datetime('now') WHERE id = ?"
+);
+
 const stmtListSessions = db.prepare<[]>('SELECT * FROM sessions ORDER BY updated_at DESC');
 
 const stmtDeleteSession = db.prepare<[number]>('DELETE FROM sessions WHERE id = ?');
 
 const stmtDeleteMessages = db.prepare<[number]>('DELETE FROM messages WHERE session_id = ?');
+
+const stmtDeleteMessageRange = db.prepare<[number, number, number | null, number | null]>(
+  'DELETE FROM messages WHERE session_id = ? AND id >= ? AND (? IS NULL OR id < ?)'
+);
 
 const stmtLoadMessages = db.prepare<[number]>(
   'SELECT id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at FROM messages WHERE session_id = ? ORDER BY id ASC'
@@ -493,10 +501,10 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
  * including) the next user prompt. If there is no next user prompt, all
  * trailing assistant, tool, subagent_log, and system messages are removed too.
  *
- * The implementation reuses `updateSessionMessages` so the write is atomic and
- * token stats / updated_at are handled consistently.
+ * The deletion preserves the row IDs of all retained messages so clients can
+ * continue to reference them for subsequent operations.
  *
- * @returns The kept messages after deletion, in their original order.
+ * @returns The current kept messages after deletion, in their original order.
  * @throws If the target message is not found, is not a user message, or the
  *         session does not exist.
  */
@@ -527,11 +535,13 @@ export function deleteMessagesFrom(sessionId: number, messageId: number): Persis
     }
   }
 
-  const keptMessages =
-    nextUserIndex === -1
-      ? messages.slice(0, targetIndex)
-      : [...messages.slice(0, targetIndex), ...messages.slice(nextUserIndex)];
+  const nextUserId = nextUserIndex === -1 ? null : (messages[nextUserIndex]!.id ?? null);
 
-  updateSessionMessages(sessionId, keptMessages);
-  return keptMessages;
+  const run = db.transaction(() => {
+    stmtDeleteMessageRange.run(sessionId, messageId, nextUserId, nextUserId);
+    stmtClearSessionTokenStats.run(sessionId);
+  });
+  run();
+
+  return loadSessionMessages(sessionId);
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { type Dispatch, useCallback, useRef } from 'react';
+import { type Dispatch, useCallback, useRef, useState } from 'react';
 
 import type { ChatMessage } from '@/app/lib/chatStore';
 
@@ -17,14 +17,19 @@ type SessionAction =
     }
   | { type: 'DISCARD_SESSION'; sessionId: number }
   | { type: 'CLEAR_MESSAGES' }
-  | { type: 'SET_MESSAGES'; messages: ChatMessage[]; targetSessionId?: number }
+  | {
+      type: 'SET_MESSAGES';
+      messages: ChatMessage[];
+      targetSessionId?: number;
+      allowEmptyWhileStreaming?: boolean;
+    }
   | { type: 'CLEAR_TOKEN_STATS'; targetSessionId?: number };
 
 interface UseSessionActionsOptions {
   dispatch: Dispatch<SessionAction>;
   sessionIdRef: WritableRef<number | null>;
   loadSessions: (query?: string) => Promise<void>;
-  loadSessionMessages: (id: number) => Promise<void>;
+  loadSessionMessages: (id: number, allowEmptyWhileStreaming?: boolean) => Promise<void>;
   replayBufferedEvents: (id: number) => void;
   model: string;
 }
@@ -34,6 +39,7 @@ interface UseSessionActionsResult {
   handleSelectSession: (sessionId: number) => Promise<void>;
   handleDeleteSession: (id: number) => Promise<void>;
   handleDeletePrompt: (sessionId: number, messageId: number) => Promise<void>;
+  isDeletingPrompt: boolean;
   handleSearchSessions: (query: string) => Promise<void>;
 }
 
@@ -54,6 +60,7 @@ export function useSessionActions({
   const sessionSwitchIdRef = useRef<number | null>(null);
   const currentSearchQueryRef = useRef('');
   const deletePromptRequestIdRef = useRef(0);
+  const [isDeletingPrompt, setIsDeletingPrompt] = useState(false);
 
   const handleSearchSessions = useCallback(
     async (query: string) => {
@@ -125,8 +132,10 @@ export function useSessionActions({
 
   const handleDeletePrompt = useCallback(
     async (targetSessionId: number, messageId: number) => {
+      if (isDeletingPrompt) return;
       const requestId = deletePromptRequestIdRef.current + 1;
       deletePromptRequestIdRef.current = requestId;
+      setIsDeletingPrompt(true);
 
       try {
         const res = await fetch(`/api/sessions/${targetSessionId}/messages/${messageId}`, {
@@ -139,23 +148,23 @@ export function useSessionActions({
           return;
         }
 
-        const data = (await res.json()) as { messages?: { id?: number; role: string }[] };
+        await res.json();
         if (deletePromptRequestIdRef.current !== requestId) return;
 
         // Only update the UI if we're still viewing the same session.
         if (sessionIdRef.current === targetSessionId) {
-          dispatch({
-            type: 'SET_MESSAGES',
-            messages: (data.messages ?? []) as ChatMessage[],
-            targetSessionId,
-          });
+          await loadSessionMessages(targetSessionId, true);
           dispatch({ type: 'CLEAR_TOKEN_STATS', targetSessionId });
         }
       } catch (err) {
         console.error('Failed to delete prompt:', err);
+      } finally {
+        if (deletePromptRequestIdRef.current === requestId) {
+          setIsDeletingPrompt(false);
+        }
       }
     },
-    [dispatch, sessionIdRef]
+    [dispatch, isDeletingPrompt, loadSessionMessages, sessionIdRef]
   );
 
   return {
@@ -163,6 +172,7 @@ export function useSessionActions({
     handleSelectSession,
     handleDeleteSession,
     handleDeletePrompt,
+    isDeletingPrompt,
     handleSearchSessions,
   };
 }

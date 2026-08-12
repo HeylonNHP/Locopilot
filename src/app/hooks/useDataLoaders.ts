@@ -45,7 +45,7 @@ export function useDataLoaders(refs: StableRefs) {
   // refs.sessionIdRef.current to sessionId so guard checks see the right
   // value during the in-flight request.
   const loadSessionMessages = useCallback(
-    async (sessionId: number) => {
+    async (sessionId: number, allowEmptyWhileStreaming = false) => {
       const requestId = sessionLoadRequestIdRef.current + 1;
       sessionLoadRequestIdRef.current = requestId;
 
@@ -78,8 +78,13 @@ export function useDataLoaders(refs: StableRefs) {
           dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
         }
 
-        if (data.messages?.length > 0) {
-          dispatch({ type: 'SET_MESSAGES', messages: data.messages, targetSessionId: sessionId });
+        if (Array.isArray(data.messages)) {
+          dispatch({
+            type: 'SET_MESSAGES',
+            messages: data.messages,
+            targetSessionId: sessionId,
+            ...(allowEmptyWhileStreaming ? { allowEmptyWhileStreaming: true } : {}),
+          });
         }
         // Cap discovery is server-driven; the chat route's first
         // status event on the next turn will populate

@@ -8,8 +8,31 @@ import {
   updateSessionMessages,
 } from '@/services/history';
 
-const sessionWriteQueues = new Map<number, Promise<void>>();
+const sessionWriteQueues = new Map<number, Promise<unknown>>();
 const sessionRenameQueues = new Map<number, Promise<void>>();
+
+async function enqueueSessionTask<T>(sessionId: number, task: () => Promise<T> | T): Promise<T> {
+  const prev = sessionWriteQueues.get(sessionId) ?? Promise.resolve();
+  const work = prev.then(task);
+  const queued = work.catch(() => {});
+  sessionWriteQueues.set(sessionId, queued);
+  return work.finally(() => {
+    if (sessionWriteQueues.get(sessionId) === queued) {
+      sessionWriteQueues.delete(sessionId);
+    }
+  });
+}
+
+/**
+ * Queue an arbitrary session operation alongside message writes.
+ * Operations run FIFO with chat, compaction, and other session mutations.
+ */
+export function enqueueSessionOperation<T>(
+  sessionId: number,
+  operation: () => Promise<T> | T
+): Promise<T> {
+  return enqueueSessionTask(sessionId, operation);
+}
 
 /**
  * Queue a session-messages write for the given session.  All writes to the
@@ -33,27 +56,13 @@ export async function enqueueSessionWrite(
   ) => PersistedChatMessage[] | Promise<PersistedChatMessage[]>,
   tokenStats?: SessionTokenStats | null
 ): Promise<void> {
-  const prev = sessionWriteQueues.get(sessionId) ?? Promise.resolve();
-
-  // Serialize: wait for the previous write, then read fresh DB state,
-  // let the caller produce the new list, and persist it.
-  const work = prev.then(async () => {
+  return enqueueSessionTask(sessionId, async () => {
     if (!sessionExists(sessionId)) {
       throw new Error(`Session ${sessionId} no longer exists; skipping write.`);
     }
     const currentMessages = loadSessionMessages(sessionId);
     const newMessages = await buildMessages(currentMessages);
     updateSessionMessages(sessionId, newMessages, tokenStats);
-  });
-
-  // Keep the queue alive on error so later writes are not blocked, but
-  // surface the failure to the caller by returning the rejecting promise.
-  const queued = work.catch(() => {});
-  sessionWriteQueues.set(sessionId, queued);
-  return work.finally(() => {
-    if (sessionWriteQueues.get(sessionId) === queued) {
-      sessionWriteQueues.delete(sessionId);
-    }
   });
 }
 

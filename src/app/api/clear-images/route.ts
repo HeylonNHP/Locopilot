@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
+import { enqueueSessionOperation } from '@/app/lib/sessionWriteQueue';
 import { loadSessionMessages, updateSessionMessages } from '@/services/history';
 
 export const dynamic = 'force-dynamic';
@@ -28,28 +29,35 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const messages = loadSessionMessages(parsedSessionId);
-    if (messages.length === 0) {
-      return NextResponse.json({ messages: [], removedImages: 0, removedMessages: 0 });
-    }
-
-    let removedImages = 0;
-    let removedMessages = 0;
-    const cleaned = messages.map((m) => {
-      if (m.role !== 'subagent_log' && m.images && m.images.length > 0) {
-        removedImages += m.images.length;
-        removedMessages += 1;
-        const { images: _images, ...rest } = m;
-        return rest;
+    const result = await enqueueSessionOperation(parsedSessionId, () => {
+      const messages = loadSessionMessages(parsedSessionId);
+      if (messages.length === 0) {
+        return { messages, removedImages: 0, removedMessages: 0 };
       }
-      return m;
+
+      let removedImages = 0;
+      let removedMessages = 0;
+      const cleaned = messages.map((m) => {
+        if (m.role !== 'subagent_log' && m.images && m.images.length > 0) {
+          removedImages += m.images.length;
+          removedMessages += 1;
+          const { images: _images, ...rest } = m;
+          return rest;
+        }
+        return m;
+      });
+
+      if (removedImages > 0) {
+        updateSessionMessages(parsedSessionId, cleaned);
+      }
+      return {
+        messages: removedImages > 0 ? loadSessionMessages(parsedSessionId) : messages,
+        removedImages,
+        removedMessages,
+      };
     });
 
-    if (removedImages > 0) {
-      updateSessionMessages(parsedSessionId, cleaned);
-    }
-
-    return NextResponse.json({ messages: cleaned, removedImages, removedMessages });
+    return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });

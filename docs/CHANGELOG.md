@@ -1,6 +1,10 @@
-# Changelog
+- 2026-08-12: Fixed prompt deletion identity and concurrency failures
+  - Files: `src/services/history.ts`, `src/app/lib/sessionWriteQueue.ts`, `src/app/api/sessions/[id]/messages/[messageId]/route.ts`, `src/app/api/clear-images/route.ts`, `src/app/api/chat/route.ts`, `src/app/hooks/useChatStream.ts`, `src/app/hooks/useDataLoaders.ts`, `src/app/hooks/useSessionActions.ts`, `src/app/lib/chatStore.ts`, `src/app/page.tsx`, `src/components/ChatMessageBubble/ChatMessageBubble.tsx`, `src/components/InputArea/InputArea.tsx`, `src/components/MessagesArea.tsx`, `src/services/textUtils.ts`
+  - Summary: Prompt deletion now uses authoritative numeric database IDs, preserves retained row IDs, serializes with other session mutations, clears stale token stats, prevents duplicate/send races, and reloads canonical messages after completed streams.
+  - Intent: Prevent delete clicks from becoming silent no-ops or being undone by stale persistence requests.
 
-Curated index of notable changes to Locopilot. Newest first. Each entry
+---
+
 captures intent, the files touched, and a short rationale — use git
 history for the full diff.
 

@@ -287,7 +287,12 @@ interface ChatState {
 }
 
 export type ChatAction =
-  | { type: 'SET_MESSAGES'; messages: ChatMessage[]; targetSessionId?: number }
+  | {
+      type: 'SET_MESSAGES';
+      messages: ChatMessage[];
+      targetSessionId?: number;
+      allowEmptyWhileStreaming?: boolean;
+    }
   | { type: 'ADD_MESSAGE'; message: ChatMessage; targetSessionId?: number }
   | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string; targetSessionId?: number }
   | { type: 'APPLY_ASSISTANT_DELTA'; content?: string; thinking?: string; targetSessionId?: number }
@@ -422,6 +427,7 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         return state;
       }
       if (
+        !action.allowEmptyWhileStreaming &&
         action.messages.length === 0 &&
         action.targetSessionId !== undefined &&
         state.streamingSessions.has(action.targetSessionId)

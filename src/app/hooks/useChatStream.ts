@@ -60,7 +60,8 @@ function toSseEventData(value: unknown): SseEventData {
 export function useChatStream(
   refs: StableRefs,
   abortControllersRef: WritableRef<Map<number, AbortController>>,
-  loadSessions: () => Promise<void>
+  loadSessions: () => Promise<void>,
+  loadSessionMessages: (id: number, allowEmptyWhileStreaming?: boolean) => Promise<void>
 ) {
   const { dispatch } = useChat();
 
@@ -986,6 +987,7 @@ export function useChatStream(
 
         if (ownerId !== undefined) {
           abortControllersRef.current.delete(ownerId);
+          await loadSessionMessages(ownerId, true);
           setStreamingSessions((prev) => {
             const next = new Set(prev);
             next.delete(ownerId);
@@ -1003,7 +1005,15 @@ export function useChatStream(
         dispatch({ type: 'SET_CURRENT_TPS', tps: null });
       }
     },
-    [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions]
+    [
+      dispatch,
+      handleEvent,
+      refs,
+      abortControllersRef,
+      loadSessions,
+      loadSessionMessages,
+      streamingSessions,
+    ]
   );
 
   return { sendChatMessage, retry, handleEvent, replayBufferedEvents };

@@ -2,6 +2,7 @@
 // all derived messages up to the next user prompt.
 import { type NextRequest, NextResponse } from 'next/server';
 
+import { enqueueSessionOperation } from '@/app/lib/sessionWriteQueue';
 import { deleteMessagesFrom, sessionExists } from '@/services/history';
 
 export const dynamic = 'force-dynamic';
@@ -15,12 +16,15 @@ export async function DELETE(
     const sessionId = Number(id);
     const targetMessageId = Number(messageId);
 
-    if (Number.isNaN(sessionId)) {
-      return NextResponse.json({ error: 'Invalid session ID. Must be a number.' }, { status: 400 });
-    }
-    if (Number.isNaN(targetMessageId)) {
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
       return NextResponse.json(
-        { error: 'Invalid message ID. Must be a number.' },
+        { error: 'Invalid session ID. Must be a positive integer.' },
+        { status: 400 }
+      );
+    }
+    if (!Number.isSafeInteger(targetMessageId) || targetMessageId <= 0) {
+      return NextResponse.json(
+        { error: 'Invalid message ID. Must be a positive integer.' },
         { status: 400 }
       );
     }
@@ -32,7 +36,9 @@ export async function DELETE(
       );
     }
 
-    const keptMessages = deleteMessagesFrom(sessionId, targetMessageId);
+    const keptMessages = await enqueueSessionOperation(sessionId, () =>
+      deleteMessagesFrom(sessionId, targetMessageId)
+    );
     return NextResponse.json({ success: true, messages: keptMessages });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

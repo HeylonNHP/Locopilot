@@ -58,7 +58,8 @@ function HomeInner() {
   const { sendChatMessage, retry, replayBufferedEvents } = useChatStream(
     refs,
     abortControllersRef,
-    loadSessions
+    loadSessions,
+    loadSessionMessages
   );
 
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
@@ -74,6 +75,7 @@ function HomeInner() {
     handleSelectSession,
     handleDeleteSession,
     handleDeletePrompt,
+    isDeletingPrompt,
     handleSearchSessions,
   } = useSessionActions({
     dispatch,
@@ -85,13 +87,11 @@ function HomeInner() {
   });
 
   const handleDeletePromptCallback = useCallback(
-    (messageId: string | number) => {
-      if (state.currentSessionId === null || isCurrentSessionStreaming) return;
-      const numericMessageId = typeof messageId === 'number' ? messageId : Number(messageId);
-      if (Number.isNaN(numericMessageId)) return;
-      void handleDeletePrompt(state.currentSessionId, numericMessageId);
+    (messageId: number) => {
+      if (state.currentSessionId === null || isCurrentSessionStreaming || isDeletingPrompt) return;
+      void handleDeletePrompt(state.currentSessionId, messageId);
     },
-    [handleDeletePrompt, state.currentSessionId, isCurrentSessionStreaming]
+    [handleDeletePrompt, isDeletingPrompt, state.currentSessionId, isCurrentSessionStreaming]
   );
 
   const { handleSlashCommand } = useSlashCommands({
@@ -161,6 +161,7 @@ function HomeInner() {
             onDismissError={() => dispatch({ type: 'SET_ERROR', error: null })}
             onScrollToLatest={scrollToLatest}
             onDeletePrompt={handleDeletePromptCallback}
+            isDeletingPrompt={isDeletingPrompt}
           />
 
           <div className="input-area">
@@ -168,6 +169,7 @@ function HomeInner() {
               isStreaming={isCurrentSessionStreaming}
               isCompacting={isCompacting}
               isGeneratingTitle={isGeneratingTitle}
+              isDeletingPrompt={isDeletingPrompt}
               compactingPhases={state.compactingPhases}
               onStop={handleStop}
               onSend={handleSend}

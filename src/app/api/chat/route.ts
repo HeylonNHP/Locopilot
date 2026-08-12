@@ -175,7 +175,17 @@ function mergeClientMessages(
   while (prefix < maxPrefix && messagesEqual(fresh[prefix]!, client[prefix]!)) {
     prefix++;
   }
-  return [...fresh, ...client.slice(prefix)];
+  return [
+    ...fresh,
+    ...client.slice(prefix).filter((message) => {
+      // Client-only messages have no durable identity yet and must be appended.
+      // A numeric ID that is absent from fresh was removed or replaced while
+      // this request was in flight; do not resurrect that stale row.
+      return (
+        typeof message.id !== 'number' || fresh.some((persisted) => persisted.id === message.id)
+      );
+    }),
+  ];
 }
 
 function sanitizeAssistantTextFragment(text: string): string {

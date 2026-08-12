@@ -20,7 +20,8 @@ interface MessagesAreaProps {
   onRetry: () => void;
   onDismissError: () => void;
   onScrollToLatest: (behavior: ScrollBehavior) => void;
-  onDeletePrompt?: ((messageId: string | number) => void) | undefined;
+  onDeletePrompt?: ((messageId: number) => void) | undefined;
+  isDeletingPrompt?: boolean | undefined;
 }
 
 /**
@@ -39,6 +40,7 @@ export function MessagesArea({
   onDismissError,
   onScrollToLatest,
   onDeletePrompt,
+  isDeletingPrompt,
 }: MessagesAreaProps) {
   return (
     <div className="messages-shell">
@@ -54,6 +56,7 @@ export function MessagesArea({
               key={msg.id ?? i}
               message={msg}
               onDeletePrompt={onDeletePrompt}
+              isDeletingPrompt={isDeletingPrompt}
               canDelete={!isCurrentSessionStreaming}
             />
           ))

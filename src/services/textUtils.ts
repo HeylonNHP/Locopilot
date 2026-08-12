@@ -67,6 +67,9 @@ export function sanitizeChatMessage(message: PersistedChatMessage): PersistedCha
     if (message.subagentId) {
       sanitized.subagentId = stripSpecialTokens(message.subagentId);
     }
+    if (typeof message.id === 'number') {
+      sanitized.id = message.id;
+    }
     return sanitized;
   }
 

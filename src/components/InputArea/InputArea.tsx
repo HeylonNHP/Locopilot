@@ -7,6 +7,7 @@ interface InputAreaProps {
   isStreaming: boolean;
   isCompacting: boolean;
   isGeneratingTitle: boolean;
+  isDeletingPrompt?: boolean;
   compactingPhases: string[];
   onStop: () => void;
   onSend: (message: string, attachments: Attachment[]) => void;
@@ -25,6 +26,7 @@ export function InputArea({
   compactingPhases,
   onStop,
   onSend,
+  isDeletingPrompt,
 }: InputAreaProps) {
   // visionState is read from the chat store so the ChatInput
   // composer can render the inline warning when the active model
@@ -54,6 +56,14 @@ export function InputArea({
     return (
       <div className="streaming-indicator">
         <span className="text-accent font-14">● {phase}</span>
+      </div>
+    );
+  }
+
+  if (isDeletingPrompt) {
+    return (
+      <div className="streaming-indicator">
+        <span className="text-accent font-14">● Deleting prompt...</span>
       </div>
     );
   }

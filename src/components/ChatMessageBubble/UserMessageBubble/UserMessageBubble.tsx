@@ -9,7 +9,7 @@ import './UserMessageBubble.scss';
 interface Props {
   message: ChatMessage;
   onDelete?: (() => void) | undefined;
-  disabled?: boolean;
+  disabled?: boolean | undefined;
 }
 
 export function UserMessageBubble({ message, onDelete, disabled }: Props) {
