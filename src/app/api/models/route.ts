@@ -10,12 +10,12 @@ import {
   buildLlmRequestContext,
   fetchLlmModelInfo,
   fetchLlmModels,
+  getLlmModelVisionSupportAsync,
   type LlmModel,
   type LlmRequestContext,
 } from '@/services/llm';
 import { CONFIG_PATH } from '@/services/paths';
 import { getNormalizedProviders } from '@/services/providerResolver';
-import { resolveVisionSupport } from '@/services/visionCache';
 
 async function loadConfig(): Promise<Config | null> {
   try {
@@ -61,14 +61,12 @@ export async function GET(): Promise<NextResponse> {
             // Start with the adapter's own capabilities (Ollama's /api/show
             // populates this; OpenAI-compatible leaves it empty).
             const caps = new Set<string>();
+            let modelInfo;
             try {
               // OpenAI-compatible has no per-model info endpoint, so the
-              // adapter's `fetchModelInfo` re-fetches the entire /v1/models
-              // list to look up one entry. The route already has the list
-              // in hand — pass it through and skip the redundant round-trip.
-              // For Ollama, fall back to the standard adapter call (its
-              // /api/show endpoint is per-model and cheap).
-              const modelInfo =
+              // adapter looks up the model in the list already fetched above.
+              // Ollama uses its authoritative /api/show capabilities probe.
+              modelInfo =
                 provider.provider === 'openai-compatible'
                   ? await openaiCompatibleAdapter.fetchModelInfo(
                       llmRequestContext,
@@ -82,19 +80,18 @@ export async function GET(): Promise<NextResponse> {
                 }
               }
             } catch {
-              // probe failure — fall through to the vision cache check below
+              // probe failure — fall through to the cache/default resolution
             }
-            // Merge in the vision-cache state. The vision cache is the
-            // single backend source of truth for image-input support and
-            // also folds in 400-driven discoveries, so it is authoritative
-            // over the adapter's own probe when the two disagree (e.g. an
-            // OpenAI-compatible endpoint whose provider had no
-            // `capabilities` field but was found to reject image input).
+
+            // Resolve vision through the same cache-aware facade used by chat.
+            // Passing successful Ollama model info is important: it lets a
+            // trusted /api/show probe refresh a prior weak default entry.
             try {
-              const vision = await resolveVisionSupport(
+              const vision = await getLlmModelVisionSupportAsync(
                 provider.baseUrl,
                 model.name,
-                provider.provider
+                provider.provider,
+                modelInfo
               );
               if (vision.state === 'unsupported') {
                 caps.delete('vision');

@@ -11,20 +11,19 @@
  * bubble, and the model receives text only.
  *
  * This module is the single backend source of truth for vision
- * support. The resolution order is:
+ * support. Fresh runtime discovery is authoritative for the TTL. For Ollama,
+ * a successful `/api/show` probe can refresh a weak default (or an older
+ * probe), which prevents a metadata-list request from poisoning later chat
+ * requests. The resolution policy is:
  *
- *   1. Cache hit (TTL-bounded).
- *   2. Probe — when the caller provides a probe function (the chat
- *      route injects one that runs the existing
- *      `info.capabilities` heuristic), use the probe's result.
- *   3. Default — OpenAI-compatible assumes `'supported'` (optimistic
- *      — there is no probe data, and the common case is that the
- *      endpoint does accept images). Ollama assumes `'unsupported'`
- *      when no probe is provided (preserves the pre-fix behaviour
- *      for Ollama, where `/api/show` exposes `capabilities` for
- *      vision models and the absence of that field is a real signal).
- *   4. Cache the result with a 5-minute TTL so subsequent calls in
- *      the same process hit the cache.
+ *   1. A fresh runtime-discovered rejection wins.
+ *   2. A trusted Ollama probe refreshes the cache and wins over defaults.
+ *   3. A fresh cache entry is used when no trusted probe is available.
+ *   4. Provider default — OpenAI-compatible assumes `'supported'`; Ollama
+ *      assumes `'unsupported'` when no capabilities probe is available.
+ *
+ * A failed probe never overwrites a valid cache entry. Every result is cached
+ * with a 5-minute TTL so subsequent calls in the same process share state.
  *
  * Reactive 400-driven discovery mirrors the capResolver pattern:
  * `recordDiscoveredNonVision` folds a runtime "this model rejected
@@ -36,10 +35,9 @@
  *
  * Multi-tab contract
  * -------------------
- * The cache is keyed on (baseUrl, modelName). Two tabs sharing a
- * model share the resolved support state, but a tab using a
- * different (baseUrl, modelName) pair sees its own independent
- * entry — matching the multi-tab contract of `capResolver.ts`.
+ * The cache is keyed on (baseUrl, provider, modelName). Two tabs sharing a
+ * provider/model share the resolved support state, but different providers
+ * pointed at the same host remain independent.
  */
 
 import type { LlmProvider } from '@/types/chatConfig';
@@ -62,21 +60,20 @@ export interface ResolvedVisionSupport {
    * Where the verdict came from. Useful for diagnostics and for the
    * `/api/models` projection (which uses `source === 'default'` to
    * know it should surface the optimistic "Vision" badge).
-   *  - `probe`: a caller-supplied probe function returned a value.
-   *  - `cache`: hit the TTL-bounded cache.
-   *  - `default`: no probe and no cache hit; used the provider's
-   *    optimistic default (`supported` for openai-compatible,
-   *    `unsupported` for ollama).
+   *  - `probe`: a trusted Ollama capabilities probe returned a value.
+   *  - `cache`: a fresh cached value was used.
+   *  - `default`: no trusted probe or cache was available; used the provider
+   *    default (`supported` for openai-compatible, `unsupported` for ollama).
    *
-   * The 400-driven `recordDiscoveredNonVision` flip is observable
-   * only via the cached `state: 'unsupported'` value, not via a
-   * distinct source — the next read returns `source: 'cache'`.
+   * Runtime-discovered rejections are reported as `cache` on subsequent reads;
+   * their internal provenance gives them precedence over later probes.
    */
   source: 'probe' | 'cache' | 'default';
 }
 
 interface CacheEntry {
   state: Exclude<VisionSupportState, 'unknown'>;
+  provenance: 'default' | 'probe' | 'discovered';
   /** Epoch ms after which the entry is stale and should be re-resolved. */
   expiresAt: number;
 }
@@ -84,11 +81,7 @@ interface CacheEntry {
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — matches capResolver.ts
 const cache = new Map<string, CacheEntry>();
 
-function cacheKey(
-  baseUrl: string,
-  provider: LlmProvider | undefined,
-  modelName: string
-): string {
+function cacheKey(baseUrl: string, provider: LlmProvider | undefined, modelName: string): string {
   // Use NUL separators so a model name or provider containing the separator
   // cannot collide. Including the provider type prevents a shared-baseUrl
   // collision: two providers pointed at the same host (e.g. an ollama and an
@@ -119,10 +112,12 @@ function setCachedEntry(
   provider: LlmProvider | undefined,
   modelName: string,
   state: Exclude<VisionSupportState, 'unknown'>,
+  provenance: CacheEntry['provenance'],
   now: number
 ): void {
   cache.set(cacheKey(baseUrl, provider, modelName), {
     state,
+    provenance,
     expiresAt: now + CACHE_TTL_MS,
   });
 }
@@ -164,7 +159,20 @@ export function invalidateVisionCache(
     }
     return;
   }
-  cache.delete(cacheKey(baseUrl as string, provider, modelName));
+  if (provider === undefined) {
+    // Preserve the public targeted-invalidation behavior for callers that do
+    // not yet know the provider: remove every provider-qualified entry for
+    // this baseUrl/model pair.
+    const prefix = `${baseUrl}\0`;
+    const suffix = `\0${modelName}`;
+    for (const key of cache.keys()) {
+      if (key.startsWith(prefix) && key.endsWith(suffix)) {
+        cache.delete(key);
+      }
+    }
+    return;
+  }
+  cache.delete(cacheKey(baseUrl!, provider, modelName));
 }
 
 /**
@@ -178,10 +186,10 @@ export function invalidateVisionCache(
 export function recordDiscoveredNonVision(
   baseUrl: string,
   modelName: string,
-  provider?: LlmProvider,
+  provider: LlmProvider = 'ollama',
   now: number = Date.now()
 ): void {
-  setCachedEntry(baseUrl, provider, modelName, 'unsupported', now);
+  setCachedEntry(baseUrl, provider, modelName, 'unsupported', 'discovered', now);
 }
 
 /**
@@ -197,42 +205,41 @@ export async function resolveVisionSupport(
   probe?: () => boolean | Promise<boolean>
 ): Promise<ResolvedVisionSupport> {
   const now = Date.now();
-
-  // 1. Cache hit.
   const cached = getCachedEntry(baseUrl, provider, modelName, now);
-  if (cached) {
+
+  // OpenAI-compatible capability metadata is not a trustworthy probe. A
+  // runtime rejection is still authoritative and must remain effective.
+  if (provider === 'openai-compatible') {
+    if (cached) return { state: cached.state, source: 'cache' };
+    const defaultState: Exclude<VisionSupportState, 'unknown'> = 'supported';
+    setCachedEntry(baseUrl, provider, modelName, defaultState, 'default', now);
+    return { state: defaultState, source: 'default' };
+  }
+
+  // A discovered rejection is direct runtime evidence and wins over a later
+  // capabilities probe until its TTL expires.
+  if (cached?.provenance === 'discovered') {
     return { state: cached.state, source: 'cache' };
   }
 
-  // 2. Probe (if provided AND the provider trusts it). The chat
-  //    route injects a probe that wraps the existing
-  //    `getLlmModelVisionSupport(info)` call. For `ollama`,
-  //    `/api/show` exposes a `capabilities` array and the absence
-  //    of `vision` is a real signal — we use it. For
-  //    `openai-compatible`, `/v1/models` has no standard
-  //    `capabilities` field, so the probe would always return
-  //    `false` and poison the cache. We skip the probe for that
-  //    provider and fall through to the optimistic default; the
-  //    400-driven `recordDiscoveredNonVision` path is the only
-  //    way to flip a previously-defaulted openai-compatible model
-  //    to `'unsupported'`.
-  if (probe && provider !== 'openai-compatible') {
-    const result = await probe();
-    const state: Exclude<VisionSupportState, 'unknown'> = result ? 'supported' : 'unsupported';
-    setCachedEntry(baseUrl, provider, modelName, state, now);
-    return { state, source: 'probe' };
+  if (probe) {
+    try {
+      const result = await probe();
+      const state: Exclude<VisionSupportState, 'unknown'> = result ? 'supported' : 'unsupported';
+      // A successful probe is stronger than a default or older probe. Refresh
+      // the expiry so active model-list refreshes keep authoritative metadata.
+      setCachedEntry(baseUrl, provider, modelName, state, 'probe', now);
+      return { state, source: 'probe' };
+    } catch {
+      // A failed probe must not replace a valid cached result. If there is no
+      // cache, fall through to the provider default below.
+      if (cached) return { state: cached.state, source: 'cache' };
+    }
   }
 
-  // 3. Provider-default. OpenAI-compatible is optimistic
-  //    (`'supported'`) because `/v1/models` has no standard
-  //    `capabilities` field, and the common case is the endpoint
-  //    does accept images. Ollama is pessimistic
-  //    (`'unsupported'`) because `/api/show` exposes capabilities
-  //    and the absence of `vision` there is a real signal — the
-  //    chat route should use the existing detection path, not
-  //    the optimistic default.
-  const defaultState: Exclude<VisionSupportState, 'unknown'> =
-    provider === 'openai-compatible' ? 'supported' : 'unsupported';
-  setCachedEntry(baseUrl, provider, modelName, defaultState, now);
+  if (cached) return { state: cached.state, source: 'cache' };
+
+  const defaultState: Exclude<VisionSupportState, 'unknown'> = 'unsupported';
+  setCachedEntry(baseUrl, provider, modelName, defaultState, 'default', now);
   return { state: defaultState, source: 'default' };
 }

@@ -932,7 +932,13 @@ export async function POST(req: NextRequest): Promise<Response> {
         // returned `false` and the adapter stripped the image).
         let visionSupported: boolean | undefined = undefined;
         try {
-          const modelInfo = await fetchLlmModelInfo(llmRequestContext, model as string);
+          let modelInfo;
+          try {
+            modelInfo = await fetchLlmModelInfo(llmRequestContext, model as string);
+          } catch {
+            // Model metadata is best-effort. The cache/default resolver below
+            // still provides a safe provider-specific fallback.
+          }
           const resolved = await getLlmModelVisionSupportAsync(
             activeProvider?.baseUrl ?? effectiveBaseUrl,
             model as string,
@@ -941,8 +947,8 @@ export async function POST(req: NextRequest): Promise<Response> {
           );
           visionSupported = resolved.visionSupported;
         } catch {
-          // Best-effort: if model info is unavailable, preserve current
-          // behaviour (images sent, fetch_image tool included).
+          // Best-effort: if both metadata and cache resolution fail, preserve
+          // the existing behavior and let the adapter receive any images.
         }
 
         // Refresh the system prompt now that yolo and vision support are known.
@@ -2084,7 +2090,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           recordDiscoveredNonVision(
             activeProvider?.baseUrl ?? effectiveBaseUrl,
             model as string,
-            activeProvider?.provider
+            activeProvider?.provider ?? 'ollama'
           );
           try {
             sendEvent('status', { phase: 'vision_unsupported' });

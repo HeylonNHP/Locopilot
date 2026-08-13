@@ -126,12 +126,62 @@ await (async () => {
   assertDeepEq(r, { state: 'supported', source: 'probe' }, 'async ollama probe(true) is awaited');
 })();
 
-console.log('resolveVisionSupport — second call hits the cache');
+console.log('resolveVisionSupport — Ollama probe refreshes weak default');
 await (async () => {
   clearVisionCache();
-  await resolveVisionSupport(URL, 'm5', 'openai-compatible');
-  const r = await resolveVisionSupport(URL, 'm5', 'openai-compatible');
-  assertDeepEq(r, { state: 'supported', source: 'cache' }, 'second call returns cached result');
+  const initial = await resolveVisionSupport(URL, 'warmup', 'ollama');
+  assertDeepEq(
+    initial,
+    { state: 'unsupported', source: 'default' },
+    'no-probe Ollama warmup uses the conservative default'
+  );
+  const probed = await resolveVisionSupport(URL, 'warmup', 'ollama', () => true);
+  assertDeepEq(
+    probed,
+    { state: 'supported', source: 'probe' },
+    'successful Ollama probe refreshes the weak default'
+  );
+  const cached = await resolveVisionSupport(URL, 'warmup', 'ollama');
+  assertDeepEq(
+    cached,
+    { state: 'supported', source: 'cache' },
+    'refreshed Ollama probe remains cached'
+  );
+})();
+
+console.log('resolveVisionSupport — discovered rejection beats later Ollama probe');
+await (async () => {
+  clearVisionCache();
+  recordDiscoveredNonVision(URL, 'discovered', 'ollama');
+  const r = await resolveVisionSupport(URL, 'discovered', 'ollama', () => true);
+  assertDeepEq(
+    r,
+    { state: 'unsupported', source: 'cache' },
+    'runtime-discovered unsupported remains authoritative over probe'
+  );
+})();
+
+console.log('resolveVisionSupport — probe failure preserves cache and falls back safely');
+await (async () => {
+  clearVisionCache();
+  await resolveVisionSupport(URL, 'probe-failure-cached', 'ollama', () => true);
+  const cached = await resolveVisionSupport(URL, 'probe-failure-cached', 'ollama', () => {
+    throw new Error('probe unavailable');
+  });
+  assertDeepEq(
+    cached,
+    { state: 'supported', source: 'cache' },
+    'failed probe preserves existing Ollama cache'
+  );
+  clearVisionCache();
+  const fallback = await resolveVisionSupport(URL, 'probe-failure-empty', 'ollama', () => {
+    throw new Error('probe unavailable');
+  });
+  assertDeepEq(
+    fallback,
+    { state: 'unsupported', source: 'default' },
+    'failed probe without cache falls back to Ollama default'
+  );
 })();
 
 console.log('resolveVisionSupport — different (baseUrl, model) keys are independent');
@@ -145,11 +195,18 @@ await (async () => {
   assertEq(r3.source, 'cache', 'first key is cached after the second lookup');
 })();
 
-console.log('resolveVisionSupport — chat route and /api/models agree on the openai-compatible default');
+console.log(
+  'resolveVisionSupport — chat route and /api/models agree on the openai-compatible default'
+);
 await (async () => {
   clearVisionCache();
   // Simulate the chat route (with a probe that historically poisoned the cache).
-  const chatRoute = await resolveVisionSupport(URL, 'shared-model', 'openai-compatible', () => false);
+  const chatRoute = await resolveVisionSupport(
+    URL,
+    'shared-model',
+    'openai-compatible',
+    () => false
+  );
   // Simulate the /api/models route (no probe).
   const modelsRoute = await resolveVisionSupport(URL, 'shared-model', 'openai-compatible');
   assertDeepEq(
@@ -172,7 +229,7 @@ console.log('recordDiscoveredNonVision — flips the cached state to unsupported
 await (async () => {
   clearVisionCache();
   await resolveVisionSupport(URL, 'm6', 'openai-compatible');
-  recordDiscoveredNonVision(URL, 'm6');
+  recordDiscoveredNonVision(URL, 'm6', 'openai-compatible');
   const r = await resolveVisionSupport(URL, 'm6', 'openai-compatible');
   assertDeepEq(
     r,
@@ -188,7 +245,7 @@ await (async () => {
   const r1 = await resolveVisionSupport(URL, 'flipped', 'openai-compatible', () => false);
   assertEq(r1.state, 'supported', 'initial state is supported (optimistic default)');
   // Simulate the chat route's 400 catch calling recordDiscoveredNonVision.
-  recordDiscoveredNonVision(URL, 'flipped');
+  recordDiscoveredNonVision(URL, 'flipped', 'openai-compatible');
   // Next chat turn reads the flipped state.
   const r2 = await resolveVisionSupport(URL, 'flipped', 'openai-compatible');
   assertDeepEq(
@@ -202,7 +259,7 @@ console.log('recordDiscoveredNonVision — also affects entries that started as 
 await (async () => {
   clearVisionCache();
   await resolveVisionSupport(URL, 'm7', 'ollama', () => true);
-  recordDiscoveredNonVision(URL, 'm7');
+  recordDiscoveredNonVision(URL, 'm7', 'ollama');
   const r = await resolveVisionSupport(URL, 'm7', 'ollama');
   assertDeepEq(
     r,

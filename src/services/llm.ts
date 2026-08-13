@@ -104,22 +104,13 @@ export function getLlmModelVisionSupport(info: LlmModelInfo): boolean {
 }
 
 /**
- * Async, cache-aware vision-support resolution. The chat route uses
- * this in place of the sync `getLlmModelVisionSupport(info)` so the
- * `openai-compatible` provider — whose `/v1/models` has no standard
- * `capabilities` field — stops silently stripping image attachments
- * for the common vision-capable case. See `src/services/visionCache.ts`
- * for the resolution order (cache → probe → provider default).
- *
- * The injected probe is a thin wrapper around the existing
- * `info.capabilities` heuristic. For `ollama` the probe is
- * consulted because `/api/show` exposes `capabilities` and the
- * absence of `vision` is a real signal. For `openai-compatible`
- * the resolver ignores the probe entirely and uses the optimistic
- * default, because `/v1/models` has no standard `capabilities`
- * field; the only way to learn that an openai-compatible model
- * rejects images is the 400-driven `recordDiscoveredNonVision`
- * path.
+ * Async, cache-aware vision-support resolution. The chat route and model-list
+ * route use this common facade so both paths share the same provider-aware
+ * cache semantics. `info` is optional because model metadata is best-effort.
+ * For Ollama, a real `/api/show` capabilities probe can refresh a weak
+ * default cache entry; a runtime-discovered rejection remains authoritative.
+ * For openai-compatible providers, generic `/v1/models` metadata is ignored
+ * and the optimistic default is retained.
  *
  * The `provider` argument comes from the active `Config.provider`
  * and selects the optimistic default (`'supported'` for
@@ -129,10 +120,13 @@ export async function getLlmModelVisionSupportAsync(
   baseUrl: string,
   modelName: string,
   provider: LlmProvider,
-  info: LlmModelInfo
+  info?: LlmModelInfo
 ): Promise<{ visionSupported: boolean; state: VisionSupportState }> {
-  const resolved = await resolveVisionSupport(baseUrl, modelName, provider, () =>
-    getLlmModelVisionSupport(info)
+  const resolved = await resolveVisionSupport(
+    baseUrl,
+    modelName,
+    provider,
+    info ? () => getLlmModelVisionSupport(info) : undefined
   );
   return {
     visionSupported: resolved.state === 'supported',

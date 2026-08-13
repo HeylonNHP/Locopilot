@@ -1,7 +1,13 @@
-- 2026-08-12: Fixed prompt deletion identity and concurrency failures
-  - Files: `src/services/history.ts`, `src/app/lib/sessionWriteQueue.ts`, `src/app/api/sessions/[id]/messages/[messageId]/route.ts`, `src/app/api/clear-images/route.ts`, `src/app/api/chat/route.ts`, `src/app/hooks/useChatStream.ts`, `src/app/hooks/useDataLoaders.ts`, `src/app/hooks/useSessionActions.ts`, `src/app/lib/chatStore.ts`, `src/app/page.tsx`, `src/components/ChatMessageBubble/ChatMessageBubble.tsx`, `src/components/InputArea/InputArea.tsx`, `src/components/MessagesArea.tsx`, `src/services/textUtils.ts`
-  - Summary: Prompt deletion now uses authoritative numeric database IDs, preserves retained row IDs, serializes with other session mutations, clears stale token stats, prevents duplicate/send races, and reloads canonical messages after completed streams.
-  - Intent: Prevent delete clicks from becoming silent no-ops or being undone by stale persistence requests.
+- 2026-08-13: Fixed Ollama vision capability cache poisoning
+  - Files: `src/services/visionCache.ts`, `src/services/llm.ts`, `src/app/api/models/route.ts`, `src/app/api/chat/route.ts`, `scripts/test-vision-cache.mjs`, `CLAUDE.md`, `docs/CHANGELOG.md`
+  - Summary: Vision-cache entries now retain provenance and provider-qualified keys. `/api/models` passes its already-fetched Ollama `/api/show` capabilities into the shared resolver, allowing a real probe to refresh a weak conservative default instead of caching Ollama models as non-vision-capable. Runtime 400-driven non-vision discovery remains authoritative for its TTL, probe failures preserve valid cache state, and OpenAI-compatible optimistic defaults remain unchanged.
+  - Intent: Prevent model-list refreshes from causing vision-capable Ollama models such as `kimi-k2.6:cloud` to have images stripped from later chat requests.
+
+---
+
+- Files: `src/services/history.ts`, `src/app/lib/sessionWriteQueue.ts`, `src/app/api/sessions/[id]/messages/[messageId]/route.ts`, `src/app/api/clear-images/route.ts`, `src/app/api/chat/route.ts`, `src/app/hooks/useChatStream.ts`, `src/app/hooks/useDataLoaders.ts`, `src/app/hooks/useSessionActions.ts`, `src/app/lib/chatStore.ts`, `src/app/page.tsx`, `src/components/ChatMessageBubble/ChatMessageBubble.tsx`, `src/components/InputArea/InputArea.tsx`, `src/components/MessagesArea.tsx`, `src/services/textUtils.ts`
+- Summary: Prompt deletion now uses authoritative numeric database IDs, preserves retained row IDs, serializes with other session mutations, clears stale token stats, prevents duplicate/send races, and reloads canonical messages after completed streams.
+- Intent: Prevent delete clicks from becoming silent no-ops or being undone by stale persistence requests.
 
 ---
 
