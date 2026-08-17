@@ -19,6 +19,7 @@ import {
 import { loadConfig, saveConfig } from '@/services/configManager';
 import { buildLlmRequestContext } from '@/services/llm';
 import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
+import { invalidateSamplingParamCache } from '@/services/samplingParamsCache';
 import { invalidateVisionCache } from '@/services/visionCache';
 import {
   type CompletionMode,
@@ -637,10 +638,12 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       if (next?.baseUrl && next?.model) {
         invalidateCapCache(next.baseUrl, next.model);
         invalidateVisionCache(next.baseUrl, next.model, next.provider);
+        invalidateSamplingParamCache(next.baseUrl, next.model, next.provider);
       }
       if (current?.baseUrl && current?.model) {
         invalidateCapCache(current.baseUrl, current.model);
         invalidateVisionCache(current.baseUrl, current.model, current.provider);
+        invalidateSamplingParamCache(current.baseUrl, current.model, current.provider);
       }
     }
 
@@ -656,10 +659,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     ) {
       invalidateCapCache(currentActive.baseUrl, currentActive.model);
       invalidateVisionCache(currentActive.baseUrl, currentActive.model, currentActive.provider);
+      invalidateSamplingParamCache(
+        currentActive.baseUrl,
+        currentActive.model,
+        currentActive.provider
+      );
     }
     if (nextActive?.baseUrl && nextActive?.model) {
       invalidateCapCache(nextActive.baseUrl, nextActive.model);
       invalidateVisionCache(nextActive.baseUrl, nextActive.model, nextActive.provider);
+      invalidateSamplingParamCache(nextActive.baseUrl, nextActive.model, nextActive.provider);
     }
 
     await saveConfig(updatedConfig);

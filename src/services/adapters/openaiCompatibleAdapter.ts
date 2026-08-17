@@ -22,6 +22,10 @@ import { debugLog } from '@/app/lib/debugLogger';
 import { DEFAULT_ADAPTER_RETRY, RETRY_MAX_ATTEMPTS_LIMIT } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
 import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
+import {
+  type SamplingParamName,
+  type SamplingParamSupportMap,
+} from '@/services/samplingParamsCache';
 
 import type {
   ChatApiResponse,
@@ -865,7 +869,98 @@ async function fetchOpenAICompatibleModelInfo(
   };
 }
 
+/**
+ * Fetch the upstream metadata's `supported_parameters` list for a
+ * single openai-compatible model. OpenRouter returns this on every
+ * entry of `/v1/models`; most other openai-compatible providers do
+ * not expose it (so this probe is a no-op fallback for them).
+ *
+ * The probe is best-effort: any network or parse error returns
+ * `undefined` so the caller can fall through to the cache/provider
+ * default. We deliberately do NOT throw — the chat route resolves
+ * the verdict through `resolveSamplingParamSupportMap`, which is
+ * defensive about failed probes (preserves any existing cached
+ * verdict; falls through to the provider default if no cache exists).
+ */
+async function fetchOpenAICompatibleSamplingParamSupport(
+  ctx: LlmRequestContext,
+  modelName: string
+): Promise<SamplingParamSupportMap | undefined> {
+  const client = buildAxiosClient(ctx);
+  try {
+    // OpenRouter returns `supported_parameters` as part of the model
+    // entry on `/v1/models`. Other openai-compatible providers ignore
+    // the field; missing entries are treated as "unknown" by the
+    // cache layer. We scan the list (rather than hitting a per-model
+    // endpoint) because OpenRouter has no per-model `/v1/models/{id}`
+    // endpoint and other providers typically don't either.
+    const response = await client.get<{
+      data?: Array<{
+        id?: string;
+        supported_parameters?: string[];
+        [key: string]: unknown;
+      }>;
+    }>(`${ctx.baseUrl.replace(/\/+$/, '')}/v1/models`);
+    const entry = (response.data.data ?? []).find((m) => m.id === modelName);
+    if (!entry || !Array.isArray(entry.supported_parameters)) {
+      return undefined;
+    }
+    const supported = new Set(entry.supported_parameters.map((p) => String(p).toLowerCase()));
+    const map: SamplingParamSupportMap = {};
+    for (const param of SUPPORTED_SAMPLING_PARAMS) {
+      if (supported.has(param)) {
+        map[param] = true;
+      }
+    }
+    return map;
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Chat ───────────────────────────────────────────────────────────────────
+
+/**
+ * The standard sampling-parameter names the openai-compatible adapter
+ * materializes onto outgoing request payloads. Treated as a registry —
+ * adding a new entry here is automatically consulted at request-build
+ * time, with no other changes required. Order does not affect
+ * behavior.
+ */
+const SUPPORTED_SAMPLING_PARAMS: readonly SamplingParamName[] = [
+  'temperature',
+  'top_p',
+  'frequency_penalty',
+  'presence_penalty',
+  'seed',
+  'stop',
+  'logit_bias',
+];
+
+/**
+ * Materialize `options.*` sampling fields onto the outgoing payload,
+ * skipping any field that the per-parameter cache marked unsupported
+ * for the active model. Undefined options and unknown verdicts flow
+ * through as the wire default.
+ */
+function applySupportedSamplingParams(
+  payload: ResponseCreateParamsBase,
+  options: ChatParams['options'],
+  supportMap: ChatParams['samplingParamSupport']
+): void {
+  if (!options) return;
+  for (const param of SUPPORTED_SAMPLING_PARAMS) {
+    const value = options[param];
+    if (value === undefined) continue;
+    const verdict = supportMap?.[param];
+    if (verdict && verdict.state === 'unsupported') continue;
+    // The cache layer types `samplingParamSupport` as a permissive
+    // Record<string, …> so we can extend the registry without a
+    // round-trip to every callsite; the per-field cast below mirrors
+    // the existing `params.options.temperature as number` pattern.
+    (payload as Record<string, unknown>)[param] = value;
+  }
+}
 
 function buildResponseParams(params: ChatParams, stream: boolean): ResponseCreateParamsBase {
   const effectiveMessages =
@@ -889,15 +984,15 @@ function buildResponseParams(params: ChatParams, stream: boolean): ResponseCreat
     payload.tools = tools;
   }
 
-  // Standard generation parameters.
-  if (params.options) {
-    if (params.options.temperature !== undefined) {
-      payload.temperature = params.options.temperature as number;
-    }
-    if (params.options.top_p !== undefined) {
-      payload.top_p = params.options.top_p as number;
-    }
-  }
+  // Standard generation parameters — only materialize sampling fields
+  // that the active model supports. The per-turn verdicts come from
+  // `resolveSamplingParamSupportMap` (see
+  // `src/services/samplingParamsCache.ts`) and are populated by the chat
+  // route on `params.samplingParamSupport`. When the verdict is
+  // unknown (e.g. a non-openai-compat adapter called this path
+  // directly), every field flows through — the optimistic default is
+  // `'supported'` for both providers.
+  applySupportedSamplingParams(payload, params.options, params.samplingParamSupport);
 
   // Canonical output-token limit.
   if (params.maxOutputTokens !== undefined) {
@@ -1040,15 +1135,12 @@ async function* sendOpenAICompatibleChatStream(
     throw err;
   }
 
-  yield* streamResponseEvents(
-    stream,
-    {
-      ...(ctx.requestId ? { requestId: ctx.requestId } : {}),
-      ...(ctx.provider ? { provider: ctx.provider } : {}),
-      model: params.model,
-      baseUrl: ctx.baseUrl,
-    }
-  );
+  yield* streamResponseEvents(stream, {
+    ...(ctx.requestId ? { requestId: ctx.requestId } : {}),
+    ...(ctx.provider ? { provider: ctx.provider } : {}),
+    model: params.model,
+    baseUrl: ctx.baseUrl,
+  });
 }
 
 // ── Error handling ─────────────────────────────────────────────────────────
@@ -1621,6 +1713,7 @@ export const openaiCompatibleAdapter: LlmAdapter = {
   buildRequestClient: buildAxiosClient,
   fetchModels: fetchOpenAICompatibleModels,
   fetchModelInfo: fetchOpenAICompatibleModelInfo,
+  fetchSamplingParamSupport: fetchOpenAICompatibleSamplingParamSupport,
   getModelContextLimit: getModelContextLimitFromInfo,
   sendChat: sendOpenAICompatibleChat,
   sendChatStream: sendOpenAICompatibleChatStream,

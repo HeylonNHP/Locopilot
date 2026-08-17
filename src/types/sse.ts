@@ -63,6 +63,13 @@ export interface SseEventPayloadMap {
      * resolved cap (probes failed and no 400 has been observed).
      */
     modelContextLimit?: number | null;
+    /**
+     * Set on `phase: 'sampling_param_unsupported'` so the client UI
+     * can identify which knob was rejected by the upstream (e.g.
+     * `"temperature"`). The chat route has already folded the
+     * verdict into the sampling-params cache for the next turn.
+     */
+    param?: string;
   };
   compact_progress: { message: string };
   compact: { messages: ChatMessage[]; stats: CompactStats };

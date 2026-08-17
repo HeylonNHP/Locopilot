@@ -211,3 +211,64 @@ export function parseVisionUnsupportedFromError(message: string): boolean {
   }
   return false;
 }
+
+/**
+ * Patterns that, when matched against a 400-style error message,
+ * indicate the upstream rejected the request because a specific
+ * sampling parameter is not supported by the active model. The
+ * matcher additionally extracts the param name from the message so
+ * the caller can be precise about which entry to mark unsupported.
+ *
+ * Conservative on purpose — a false positive would silently strip a
+ * sampling knob the model actually accepts, which is the same class
+ * of bug as the openai-compatible vision-strip the existing code is
+ * designed to prevent. Returning `null` is the safe default; the user
+ * sees a 400 in that case.
+ *
+ * Covers common phrasings from OpenAI, OpenRouter, vLLM, llama.cpp-
+ * server, and similar providers. The matched param name is the exact
+ * token the upstream named in the message (e.g. `"temperature"`); it
+ * is the caller's responsibility to map it onto a known
+ * {@link SamplingParamName} entry. New providers should add their
+ * pattern here in a 2-line diff.
+ */
+const UNSUPPORTED_PARAM_PATTERNS: RegExp[] = [
+  // "temperature is not supported", "'temperature' is not supported"
+  /\b["'`]?([_a-z]\w*)["'`]?\s+is\s+not\s+supported\b/i,
+  // "does not accept temperature", "does not support 'temperature'"
+  /\bdoes not (?:accept|support)\s+["'`]?([_a-z]\w*)["'`]?\b/i,
+  // "unsupported parameter: temperature", "unsupported parameter: 'temperature'"
+  /\bunsupported (?:parameter|value|field|argument)s?\s*[:=]\s*["'`]?([_a-z]\w*)["'`]?\b/i,
+  // "unknown parameter 'temperature'"
+  /\bunknown (?:parameter|field|argument)s?\s*[:=]?\s*["'`]?([_a-z]\w*)["'`]?/i,
+  // "value not supported for parameter `temperature`"
+  /\bvalue not supported for parameter\s+["'`]?([_a-z]\w*)["'`]?/i,
+  // "Unrecognized request argument supplied: temperature"
+  /\bunrecognized (?:request )?arguments? supplied\s*[:=]?\s*["'`]?([_a-z]\w*)["'`]?/i,
+];
+
+/**
+ * Returns the sampling-parameter name when the given error message
+ * indicates the upstream rejected the request because that parameter
+ * is not supported by the active model. The name is the exact token
+ * the upstream named; the caller maps it onto a known
+ * {@link SamplingParamName} entry before calling
+ * `recordDiscoveredUnsupportedParam`.
+ *
+ * Returns `null` when the message does not contain a parseable
+ * unsupported-parameter signal — same conservative default as
+ * {@link parseVisionUnsupportedFromError}.
+ */
+export function parseUnsupportedParamFromError(message: string): string | null {
+  if (typeof message !== 'string' || message.length === 0) {
+    return null;
+  }
+  for (const pattern of UNSUPPORTED_PARAM_PATTERNS) {
+    const match = message.match(pattern);
+    const candidate = match?.[1];
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      return candidate;
+    }
+  }
+  return null;
+}

@@ -67,14 +67,19 @@ import {
   type ChatMessage,
   fetchLlmModelInfo,
   getLlmApiErrorMessage,
+  getLlmModelSamplingParamSupportAsync,
   getLlmModelVisionSupportAsync,
   type LlmRequestContext,
   type PersistedChatMessage,
+  recordDiscoveredUnsupportedParam,
+  type SamplingParamName,
+  selectLlmAdapter,
   sendLlmChatStream,
   type StreamChatParams,
 } from '@/services/llm';
 import {
   parseContextLimitFromError,
+  parseUnsupportedParamFromError,
   parseVisionUnsupportedFromError,
 } from '@/services/llmContextLimit';
 import { resolveCompactionModel } from '@/services/modelManager';
@@ -116,6 +121,27 @@ export const dynamic = 'force-dynamic';
 const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 3;
 const CHANNEL_LABEL_ONLY_PATTERN = /^\s*(?:thought|analysis|final|commentary)\s*$/i;
 const VALID_DONE_REASONS = new Set(['stop', 'length', 'load', 'unload']);
+
+/**
+ * The standard sampling-param registry the openai-compatible adapter
+ * materializes onto outgoing requests. Re-exported here so the chat
+ * route's reactive 400-driven discovery block can map an upstream's
+ * param name onto a known entry without re-importing the registry
+ * from the cache module.
+ */
+const KNOWN_SAMPLING_PARAMS = new Set<string>([
+  'temperature',
+  'top_p',
+  'frequency_penalty',
+  'presence_penalty',
+  'seed',
+  'stop',
+  'logit_bias',
+]);
+
+function isKnownSamplingParam(name: string): boolean {
+  return KNOWN_SAMPLING_PARAMS.has(name);
+}
 
 /** Client message shape: the LLM-protocol ChatMessage plus the UI-only subagent_log role. */
 type ClientChatMessage =
@@ -951,6 +977,37 @@ export async function POST(req: NextRequest): Promise<Response> {
           // the existing behavior and let the adapter receive any images.
         }
 
+        // Resolve per-parameter sampling support for the active model so
+        // the openai-compatible adapter can omit fields the upstream
+        // rejects (e.g. `temperature` on `openai/gpt-5.6-luna`). Mirrors
+        // the vision pattern above: best-effort, cache-aware, default
+        // ('supported' for both providers) on failure. The verdicts are
+        // stashed on a per-request closure variable so the adapter's
+        // synchronous payload builder can read them.
+        let samplingParamSupport:
+          | Awaited<ReturnType<typeof getLlmModelSamplingParamSupportAsync>>
+          | undefined;
+        try {
+          const provider = activeProvider?.provider ?? 'ollama';
+          const adapter = selectLlmAdapter(provider);
+          const probe = adapter.fetchSamplingParamSupport
+            ? () =>
+                adapter.fetchSamplingParamSupport!(llmRequestContext, model as string).then(
+                  (m) => m ?? {}
+                )
+            : undefined;
+          samplingParamSupport = await getLlmModelSamplingParamSupportAsync(
+            activeProvider?.baseUrl ?? effectiveBaseUrl,
+            model as string,
+            provider,
+            probe
+          );
+        } catch {
+          // Best-effort: undefined means every param is treated as
+          // supported (the adapter's optimistic default).
+          samplingParamSupport = undefined;
+        }
+
         // Refresh the system prompt now that yolo and vision support are known.
         currentMessages[0] = {
           role: 'system',
@@ -1111,6 +1168,9 @@ export async function POST(req: NextRequest): Promise<Response> {
           }
           if (visionSupported !== undefined) {
             params.visionSupported = visionSupported;
+          }
+          if (samplingParamSupport !== undefined) {
+            params.samplingParamSupport = samplingParamSupport;
           }
 
           let content = '';
@@ -2094,6 +2154,32 @@ export async function POST(req: NextRequest): Promise<Response> {
           );
           try {
             sendEvent('status', { phase: 'vision_unsupported' });
+          } catch {
+            // Controller may already be closed – ignore.
+          }
+        }
+
+        // Parse the error message for an "unsupported sampling parameter"
+        // signal. When matched, record the verdict in the sampling-params
+        // cache so the next turn omits the field, and notify the client
+        // via the SSE `status` channel so the UI can surface an
+        // indicator. The matcher returns the upstream's param name
+        // verbatim; we map it onto the standard sampling-param registry
+        // before recording. See `parseUnsupportedParamFromError` in
+        // `src/services/llmContextLimit.ts` and
+        // `recordDiscoveredUnsupportedParam` in
+        // `src/services/samplingParamsCache.ts`.
+        const unsupportedParam = parseUnsupportedParamFromError(message);
+        if (unsupportedParam && isKnownSamplingParam(unsupportedParam)) {
+          const param = unsupportedParam as SamplingParamName;
+          recordDiscoveredUnsupportedParam(
+            activeProvider?.baseUrl ?? effectiveBaseUrl,
+            model as string,
+            param,
+            activeProvider?.provider ?? 'ollama'
+          );
+          try {
+            sendEvent('status', { phase: 'sampling_param_unsupported', param });
           } catch {
             // Controller may already be closed – ignore.
           }

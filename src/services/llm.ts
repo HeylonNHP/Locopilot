@@ -13,6 +13,11 @@ import type {
 
 import { ollamaAdapter } from './adapters/ollamaAdapter';
 import { openaiCompatibleAdapter } from './adapters/openaiCompatibleAdapter';
+import {
+  resolveSamplingParamSupportMap,
+  type SamplingParamName,
+  type SamplingParamSupportMap,
+} from './samplingParamsCache';
 import { resolveVisionSupport, type VisionSupportState } from './visionCache';
 
 export type { LlmRequestContext } from './adapters/llmAdapter';
@@ -134,6 +139,29 @@ export async function getLlmModelVisionSupportAsync(
   };
 }
 
+/**
+ * Async, cache-aware per-parameter sampling-support resolution. The chat
+ * route calls this once per turn and feeds the result into
+ * `applySupportedSamplingParams` (see
+ * `src/services/adapters/openaiCompatibleAdapter.ts`). The optional
+ * `probe` is supplied by the adapter to consult the upstream's
+ * `supported_parameters` list (OpenRouter exposes this; most other
+ * openai-compatible providers do not).
+ *
+ * Returns a map keyed by the standard sampling-param registry; the
+ * adapter materializes each field as long as the verdict is
+ * `'supported'` (or the entry is missing, which the cache treats as
+ * the optimistic default).
+ */
+export async function getLlmModelSamplingParamSupportAsync(
+  baseUrl: string,
+  modelName: string,
+  provider: LlmProvider,
+  probe?: () => SamplingParamSupportMap | Promise<SamplingParamSupportMap>
+): Promise<Record<SamplingParamName, { state: 'supported' | 'unsupported'; source: string }>> {
+  return resolveSamplingParamSupportMap(baseUrl, modelName, provider, probe);
+}
+
 export function sendLlmChat(
   ctx: LlmRequestContext,
   params: ChatParams,
@@ -191,7 +219,15 @@ export {
 // entry point (mirrors the `capResolver` + `llmContextLimit` pattern
 // that the chat route uses). The actual implementations live in
 // `visionCache.ts` and `llmContextLimit.ts`.
-export { parseVisionUnsupportedFromError } from './llmContextLimit';
+export { parseUnsupportedParamFromError, parseVisionUnsupportedFromError } from './llmContextLimit';
+export {
+  clearSamplingParamCache,
+  invalidateSamplingParamCache,
+  recordDiscoveredUnsupportedParam,
+  type SamplingParamName,
+  type SamplingParamSupportMap,
+  type SamplingParamSupportState,
+} from './samplingParamsCache';
 export {
   clearVisionCache,
   invalidateVisionCache,

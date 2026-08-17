@@ -145,6 +145,16 @@ export interface ChatParams {
    */
   visionSupported?: boolean;
   /**
+   * Per-parameter sampling support verdicts for the active model,
+   * pre-resolved by the chat route via `resolveSamplingParamSupportMap`
+   * (see `src/services/samplingParamsCache.ts`). The openai-compatible
+   * adapter consults this map before materializing each field in
+   * `options` (e.g. `temperature`, `top_p`) onto the outgoing payload.
+   * Undefined means every param is treated as supported — the adapter's
+   * optimistic default for both openai-compatible and Ollama providers.
+   */
+  samplingParamSupport?: Record<string, { state: 'supported' | 'unsupported'; source: string }>;
+  /**
    * Canonical maximum number of tokens the model may generate.
    * Each adapter maps this to its provider-specific field:
    *   - Ollama          → options.num_predict
@@ -252,4 +262,21 @@ export interface LlmAdapter {
     ctx: LlmRequestContext,
     modelName: string
   ): Promise<number | null>;
+  /**
+   * If implemented, returns a map of sampling-parameter name to whether
+   * the given model supports it. Implementations consult their upstream's
+   * metadata endpoint (e.g. OpenRouter's `/v1/models` endpoint, which
+   * returns a `supported_parameters` list per model). Adapters whose
+   * upstream does not surface per-parameter capability (e.g. Ollama)
+   * should NOT implement this method and let the cache layer fall back
+   * to the provider default of `'supported'` for every param.
+   *
+   * The chat route calls this once per turn and feeds the result into
+   * `resolveSamplingParamSupportMap` (see `src/services/samplingParamsCache.ts`)
+   * so the adapter's request builder can consult the cache synchronously.
+   */
+  fetchSamplingParamSupport?(
+    ctx: LlmRequestContext,
+    modelName: string
+  ): Promise<Partial<Record<string, boolean>> | undefined>;
 }
