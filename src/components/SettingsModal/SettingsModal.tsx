@@ -23,6 +23,7 @@ export default function SettingsModal({ onClose }: Props) {
   const [thinkingEnabled, setThinkingEnabled] = useState(state.thinkingEnabled);
   const [reasoningEffort, setReasoningEffort] = useState(state.reasoningEffort);
   const [promptTimestamps, setPromptTimestamps] = useState(state.promptTimestamps ?? true);
+  const [citeSources, setCiteSources] = useState(state.citeSources ?? true);
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
   // The provider that owns the selected main model / compaction model. These
   // are tracked separately so the user can run the main chat on one provider
@@ -188,6 +189,7 @@ export default function SettingsModal({ onClose }: Props) {
       thinkingEnabled,
       reasoningEffort,
       promptTimestamps,
+      citeSources,
       compactionModel,
       chatTimeoutMs: parsedChatTimeoutMs,
       webSearch: {
@@ -241,6 +243,7 @@ export default function SettingsModal({ onClose }: Props) {
           thinkingEnabled,
           reasoningEffort,
           promptTimestamps,
+          citeSources,
           compactionModel,
           // Transient: captured here so the compaction route can resolve the
           // compaction provider even when it differs from the main model's.
@@ -429,6 +432,29 @@ export default function SettingsModal({ onClose }: Props) {
                 Adds a [Sent YYYY-MM-DD HH:MM] header to each prompt the LLM sees. The wall-clock
                 time of every message is always recorded, so toggling this back on later reveals the
                 date for past messages.
+              </span>
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <label className="settings-label">Cite Web Sources</label>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-12">
+                <input
+                  id="cite-sources-toggle"
+                  type="checkbox"
+                  checked={citeSources}
+                  onChange={(e) => setCiteSources(e.target.checked)}
+                />
+                <label htmlFor="cite-sources-toggle" className="font-14 text-primary">
+                  {citeSources ? 'On' : 'Off'}
+                </label>
+              </div>
+              <span className="font-12 text-secondary">
+                After web research (web_search / fetch_url), the model must cite its sources as
+                numbered links with a Sources list at the end of its answer. The numbered source
+                list is always shown to the model; this toggle controls whether it is instructed
+                to cite them.
               </span>
             </div>
           </div>

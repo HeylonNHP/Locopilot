@@ -72,6 +72,13 @@ async function resolveCreateSkillBaseDir(location: unknown): Promise<string | nu
  */
 export interface RequestContext {
   yoloMode: boolean;
+  /**
+   * Whether the model should be instructed to cite web-research sources as
+   * numbered links with a trailing Sources list. Defaults to true. Read from
+   * `Config.citeSources`; threaded here so the web_search/fetch_url tool-result
+   * reminder and the sub-agent system prompt can gate on it.
+   */
+  citeSources?: boolean;
   webSearch: WebSearchSettings;
   subAgent: SubAgentConfig;
   /** Tool names allowed by active always-apply skills; undefined = no restriction */
@@ -271,6 +278,19 @@ function checkToolAllowed(toolName: string, context?: RequestContext): string | 
  */
 function resolveWebSearchSettings(context?: RequestContext): WebSearchSettings | null {
   return context?.webSearch ?? null;
+}
+
+/**
+ * Citation reminder appended to web_search / fetch_url tool results when the
+ * user's "Cite Web Sources" setting is on (default). The numbered SOURCES
+ * block itself is always present in the result text; this only adds the
+ * explicit instruction to cite those sources in the answer. When `citeSources`
+ * is undefined (no request context, e.g. unit tests) we default to NOT
+ * appending, so direct tool callers don't get a spurious reminder.
+ */
+function appendCitationReminder(content: string, citeSources?: boolean): string {
+  if (citeSources !== true) return content;
+  return `${content}\n\nREMINDER: You MUST cite the sources above in your answer using numbered links ([1], [2], ...) next to the relevant claims, and list them at the end under a "Sources:" heading with each source name and full URL. Only use the real URLs from the SOURCES block above; never invent URLs or use result_N placeholders.`;
 }
 
 /**
@@ -493,15 +513,14 @@ export const toolRegistry = new Map<string, IToolCommand>([
           return { content: '[Error: web_search requires either "prompt" or "queries"]' };
         }
 
-        return {
-          content: await runWebSearch(
-            webArgs,
-            resolveWebSearchSettings(context) ?? defaultWebSearchSettings(),
-            onProgress,
-            output,
-            signal
-          ),
-        };
+        const content = await runWebSearch(
+          webArgs,
+          resolveWebSearchSettings(context) ?? defaultWebSearchSettings(),
+          onProgress,
+          output,
+          signal
+        );
+        return { content: appendCitationReminder(content, context?.citeSources) };
       },
     },
   ],
@@ -514,21 +533,20 @@ export const toolRegistry = new Map<string, IToolCommand>([
         if (typeof args.url !== 'string' || args.url.trim().length === 0) {
           return { content: '[Error: missing required argument "url"]' };
         }
-        return {
-          content: await runFetchUrl(
-            {
-              url: args.url,
-              use_playwright: args.use_playwright === true,
-              full_content: args.full_content === true,
-            },
-            resolveWebSearchSettings(context) ?? defaultWebSearchSettings(),
-            onProgress,
-            output,
-            context?.model, // Use parent's Airia model, not the subagent's local model
-            context?.numCtx,
-            signal
-          ),
-        };
+        const content = await runFetchUrl(
+          {
+            url: args.url,
+            use_playwright: args.use_playwright === true,
+            full_content: args.full_content === true,
+          },
+          resolveWebSearchSettings(context) ?? defaultWebSearchSettings(),
+          onProgress,
+          output,
+          context?.model, // Use parent's Airia model, not the subagent's local model
+          context?.numCtx,
+          signal
+        );
+        return { content: appendCitationReminder(content, context?.citeSources) };
       },
     },
   ],

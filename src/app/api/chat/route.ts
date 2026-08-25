@@ -419,6 +419,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       // flag, so toggling it later retroactively changes LLM visibility
       // for every persisted message.
       let effectivePromptTimestamps = true;
+      // Whether the user wants the model to cite web-research sources as
+      // numbered links. Read from config below (default true). The numbered
+      // SOURCES block is always appended to tool results; this flag gates the
+      // system-prompt directive and the tool-result reminder.
+      let effectiveCiteSources = true;
       let emptyResponseRecoveryAttempts = 0;
       // Server-generated messages that have not yet been persisted.
       // flushSessionState appends these to the fresh DB message list.
@@ -474,7 +479,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
       const systemMessage: ChatMessage = {
         role: 'system',
-        content: createSystemPrompt(undefined, effectiveYolo),
+        content: createSystemPrompt(undefined, effectiveYolo, effectiveCiteSources),
       };
 
       // Snapshot the client's original non-system messages in their original order.
@@ -686,6 +691,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           const configuredBaseUrl = activeProv?.baseUrl ?? effectiveBaseUrl;
           return {
             yoloMode: config?.yolo ?? false,
+            citeSources: config?.citeSources ?? true,
             allowedTools: undefined,
             disabledMainTools: disabledMain,
             mcpApprovals: [...mcpApprovalsSet],
@@ -788,6 +794,9 @@ export async function POST(req: NextRequest): Promise<Response> {
             }
             if (typeof config.promptTimestamps === 'boolean') {
               effectivePromptTimestamps = config.promptTimestamps;
+            }
+            if (typeof config.citeSources === 'boolean') {
+              effectiveCiteSources = config.citeSources;
             }
 
             effectiveCompactionModel = resolveCompactionModel(
@@ -1011,7 +1020,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         // Refresh the system prompt now that yolo and vision support are known.
         currentMessages[0] = {
           role: 'system',
-          content: createSystemPrompt(visionSupported, effectiveYolo),
+          content: createSystemPrompt(visionSupported, effectiveYolo, effectiveCiteSources),
         };
 
         // ── Main tool-calling loop ──────────────────────────────────

@@ -117,6 +117,9 @@ export class FetchUrlTool {
         `title: ${result.title || '(untitled)'}`,
         `text:\n${result.text || '(no extractable text)'}${methodNote}`,
         `links:\n${linksStr}`,
+        `\nSOURCES (use these exact numbers and real URLs when citing; do not invent URLs):\n[1] ${
+          result.title || '(untitled)'
+        } — ${result.finalUrl}`,
       ]
         .filter((part) => part.length > 0)
         .join('\n');

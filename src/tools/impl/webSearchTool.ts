@@ -215,6 +215,12 @@ export class WebSearchTool {
       );
 
       const querySections: string[] = [];
+      // Collect every fetched source across all queries so we can emit a
+      // single deduplicated, numbered SOURCES block. Numbered citations in
+      // the answer reference these indices. Always emitted (the instruction
+      // to cite is gated separately via RequestContext.citeSources).
+      const allSources: { title: string; url: string }[] = [];
+      const seenSourceUrls = new Set<string>();
       for (const [queryIndex, query] of queries.entries()) {
         this.progress(
           `Web search: fetching DuckDuckGo results (${queryIndex + 1}/${queries.length}) for "${query}"...`
@@ -242,6 +248,11 @@ export class WebSearchTool {
         const resultLines: string[] = [`query: ${query}`, `results: ${pages.length}`];
 
         for (const [index, page] of pages.entries()) {
+          const sourceUrl = page.finalUrl || page.url;
+          if (sourceUrl && !seenSourceUrls.has(sourceUrl)) {
+            seenSourceUrls.add(sourceUrl);
+            allSources.push({ title: page.title || '(untitled)', url: sourceUrl });
+          }
           const urlLines = [`result_${index + 1}_source_url: ${page.url}`];
           if (page.finalUrl !== page.url) {
             urlLines.push(`result_${index + 1}_final_url: ${page.finalUrl}`);
@@ -271,6 +282,12 @@ export class WebSearchTool {
       }
 
       this.progress('Web search: completed.');
+      const sourcesBlock =
+        allSources.length > 0
+          ? `\nSOURCES (use these exact numbers and real URLs when citing; do not invent URLs):\n${allSources
+              .map((s, i) => `[${i + 1}] ${s.title} — ${s.url}`)
+              .join('\n')}`
+          : '';
       return [
         'web_search_results:',
         'REMINDER: When citing these results, use the REAL URLs (e.g. https://example.com) immediately after the relevant text. Do NOT use result_N placeholders or special tags.',
@@ -278,6 +295,7 @@ export class WebSearchTool {
         `results_per_query: ${effectiveResultsPerQuery}`,
         '',
         querySections.join('\n\n---\n\n'),
+        sourcesBlock,
       ].join('\n');
     } finally {
       // Idempotent — Chromium may never have launched (no pages needed it).

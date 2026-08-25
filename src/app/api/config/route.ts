@@ -44,6 +44,7 @@ const KNOWN_TOP_KEYS: Set<string> = new Set([
   'reasoningEffort',
   'compactionReasoningEffort',
   'promptTimestamps',
+  'citeSources',
   'webSearch',
   'skills',
   'tools',
@@ -271,6 +272,13 @@ function validateConfig(
       return { ok: false, error: "Invalid config: 'promptTimestamps' must be a boolean" };
     }
     out.promptTimestamps = input.promptTimestamps;
+  }
+
+  if ('citeSources' in input) {
+    if (typeof input.citeSources !== 'boolean') {
+      return { ok: false, error: "Invalid config: 'citeSources' must be a boolean" };
+    }
+    out.citeSources = input.citeSources;
   }
 
   if ('mcpToolSearch' in input) {
@@ -559,6 +567,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       yolo: false,
       thinkingEnabled: true,
       promptTimestamps: true,
+      citeSources: true,
       webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS },
       completionMode: 'normal',
       maxPromptLoopIterations: DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,

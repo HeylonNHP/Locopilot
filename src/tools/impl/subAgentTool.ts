@@ -89,7 +89,7 @@ const SUB_AGENT_AUTO_COMPACT_NOTICE =
   'Please continue working on that request without asking for confirmation.';
 const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
 
-function buildSubAgentSystemPrompt(skillInfo?: string): string {
+function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): string {
   const dateTimeStr = new Date().toLocaleString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -117,6 +117,17 @@ function buildSubAgentSystemPrompt(skillInfo?: string): string {
     prompt +=
       `\n## Inherited Skills\n` +
       `The following skills from the parent conversation are active:\n${skillInfo}\n`;
+  }
+
+  if (citeSources !== false) {
+    prompt +=
+      '\n' +
+      'CITATIONS — after web research:\n' +
+      'After using web_search or fetch_url, you MUST cite your sources. Place numbered links ([1], [2], ...) ' +
+      'after each claim taken from the web, and end with a "Sources:" section listing each source as ' +
+      '[n] Source Name — full URL. Use ONLY the real URLs from the tool results\' SOURCES block; never invent ' +
+      'URLs or use result_N placeholders. When you return a summary to the parent agent, include the full ' +
+      'source URLs you used so the parent can cite them.\n';
   }
 
   return prompt;
@@ -509,7 +520,7 @@ async function runSingleAgent(
   const orcPromptContent = `${priorBlock}${agent.prompt}`;
   const orcPrompt: ChatMessage = { role: 'user', content: orcPromptContent };
   const messages: ChatMessage[] = [
-    { role: 'system', content: buildSubAgentSystemPrompt(skillSummary) },
+    { role: 'system', content: buildSubAgentSystemPrompt(skillSummary, context?.citeSources) },
     orcPrompt,
   ];
 

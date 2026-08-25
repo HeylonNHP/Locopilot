@@ -237,6 +237,7 @@ export function useDataLoaders(refs: StableRefs) {
             compactionReasoningEffort:
               config.compactionReasoningEffort ?? state.compactionReasoningEffort,
             promptTimestamps: config.promptTimestamps ?? state.promptTimestamps,
+            citeSources: config.citeSources ?? state.citeSources,
             compactionModel: config.compactionModel ?? state.compactionModel,
             chatTimeoutMs: config.chatTimeoutMs ?? state.chatTimeoutMs,
             webSearch: config.webSearch ?? state.webSearch,

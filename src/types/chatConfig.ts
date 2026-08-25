@@ -175,6 +175,15 @@ export interface Config {
    * persisted message. Defaults to true.
    */
   promptTimestamps?: boolean;
+  /**
+   * When true (the default), the model is instructed to cite its web-research
+   * sources using numbered links and a trailing Sources list. Toggled by the
+   * "Cite sources after web research" checkbox in the Settings modal. The
+   * numbered SOURCES block is always appended to web_search/fetch_url tool
+   * results regardless of this flag; this flag only gates the *instruction*
+   * to cite (system-prompt directive + tool-result reminder).
+   */
+  citeSources?: boolean;
   webSearch?: {
     maxQueries: number;
     resultsPerQuery: number;

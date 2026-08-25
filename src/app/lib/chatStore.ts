@@ -216,6 +216,12 @@ interface ChatState {
    * Defaults to true.
    */
   promptTimestamps: boolean;
+  /**
+   * When true (default), instruct the model to cite web-research sources as
+   * numbered links with a trailing Sources list. Toggled in Settings. See
+   * `Config.citeSources` for the persisted counterpart.
+   */
+  citeSources: boolean;
   compactionModel: string;
   /**
    * Transient: which provider the compaction model belongs to. Captured
@@ -1207,6 +1213,7 @@ const initialState: ChatState = {
   reasoningEffort: 'off',
   compactionReasoningEffort: 'off',
   promptTimestamps: true,
+  citeSources: true,
   compactionModel: '',
   compactionProviderId: null,
   chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
