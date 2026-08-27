@@ -11,8 +11,9 @@ import type { LlmProvider, ReasoningEffort } from '@/types/chatConfig';
  * race on the singleton and pick up the wrong values.
  *
  * Adapters receive this object in `sendChat`/`sendChatStream`/`fetchModels`
- * and use it instead of any module state. The `apiKey` is only consulted by
- * the OpenAI-compatible adapter; the Ollama adapter ignores it.
+ * and use it instead of any module state. The `apiKey` is consulted by both
+ * the OpenAI-compatible adapter (always) and the Ollama adapter (only when
+ * present — it is used as a Bearer token in the Authorization header).
  */
 export interface LlmRequestContext {
   provider?: LlmProvider;

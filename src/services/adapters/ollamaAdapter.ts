@@ -1,4 +1,4 @@
-import axios, { type AxiosRequestConfig } from 'axios';
+import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 
@@ -166,6 +166,23 @@ function getOllamaTurnStats(response: ChatApiResponse): LlmTurnStats | null {
 }
 
 /**
+ * Build an axios client for Ollama requests. When an API key is
+ * present in the context, create a per-request instance with the
+ * Authorization header so concurrent requests with different keys
+ * cannot leak each other's credentials. When no key is configured,
+ * return the shared axios default — this keeps local Ollama
+ * instances (which need no auth) working unchanged.
+ */
+function buildOllamaClient(ctx: LlmRequestContext): AxiosInstance {
+  if (ctx.apiKey && ctx.apiKey.length > 0) {
+    return axios.create({
+      headers: { Authorization: `Bearer ${ctx.apiKey}` },
+    });
+  }
+  return axios;
+}
+
+/**
  * Fetch the runtime context length for a model that is currently loaded
  * in the Ollama runner. Returns null if the model is not loaded, the
  * endpoint is unreachable, or the response is missing the field.
@@ -180,8 +197,9 @@ async function fetchOllamaRunningModelContextLength(
   ctx: LlmRequestContext,
   modelName: string
 ): Promise<number | null> {
+  const client = buildOllamaClient(ctx);
   try {
-    const response = await axios.get<PsResponse>(`${ctx.baseUrl}/api/ps`);
+    const response = await client.get<PsResponse>(`${ctx.baseUrl}/api/ps`);
     const models = response.data.models || [];
     const model = models.find((m) => m.name === modelName || m.name.startsWith(`${modelName}:`));
     const contextLength = model?.context_length;
@@ -195,7 +213,8 @@ async function fetchOllamaRunningModelContextLength(
 }
 
 async function fetchOllamaModels(ctx: LlmRequestContext): Promise<LlmModel[]> {
-  const response = await axios.get<TagsResponse>(`${ctx.baseUrl}/api/tags`, {
+  const client = buildOllamaClient(ctx);
+  const response = await client.get<TagsResponse>(`${ctx.baseUrl}/api/tags`, {
     timeout: MODEL_LIST_TIMEOUT_MS,
   });
   return response.data.models || [];
@@ -209,7 +228,8 @@ async function fetchOllamaModelInfo(
   // Ollama exposes a per-model /api/show endpoint, so we ignore the
   // pre-fetched list and always hit the upstream directly. The optional
   // argument exists only to satisfy the shared LlmAdapter interface.
-  const response = await axios.post<LlmModelInfo>(
+  const client = buildOllamaClient(ctx);
+  const response = await client.post<LlmModelInfo>(
     `${ctx.baseUrl}/api/show`,
     { name: modelName },
     { timeout: MODEL_LIST_TIMEOUT_MS }
@@ -224,6 +244,7 @@ async function sendOllamaChat(
   timeoutMs?: number | undefined,
   signal?: AbortSignal
 ): Promise<ChatApiResponse> {
+  const client = buildOllamaClient(ctx);
   const config: AxiosRequestConfig = {};
   if (timeoutMs !== undefined) config.timeout = timeoutMs;
   if (signal) config.signal = signal;
@@ -255,7 +276,7 @@ async function sendOllamaChat(
     };
   }
 
-  const response = await axios.post<ChatApiResponse>(
+  const response = await client.post<ChatApiResponse>(
     `${ctx.baseUrl}/api/chat`,
     buildChatPayload(params, false),
     config
@@ -268,6 +289,7 @@ async function* sendOllamaChatStream(
   ctx: LlmRequestContext,
   params: StreamChatParams
 ): AsyncGenerator<ChatApiResponse> {
+  const client = buildOllamaClient(ctx);
   const requestConfig: AxiosRequestConfig = {
     responseType: 'stream',
   };
@@ -278,7 +300,7 @@ async function* sendOllamaChatStream(
     requestConfig.timeout = params.timeoutMs;
   }
 
-  const response = await axios.post<NodeJS.ReadableStream>(
+  const response = await client.post<NodeJS.ReadableStream>(
     `${ctx.baseUrl}/api/chat`,
     buildChatPayload(params, true),
     requestConfig
@@ -386,10 +408,11 @@ async function getOllamaApiErrorMessage(error: unknown): Promise<string> {
 
 export const ollamaAdapter: LlmAdapter = {
   id: 'ollama',
-  // Ollama does not need a per-request client; the shared `axios` default
-  // is fine. Returning it (rather than a new instance) avoids the
-  // per-request axios.create() overhead in the common case.
-  buildRequestClient: (_ctx: LlmRequestContext): AxiosLike => axios,
+  // When no API key is configured, the shared `axios` default is returned
+  // (no per-request overhead). When an API key is present, a fresh
+  // axios instance with the Authorization header is created so concurrent
+  // requests with different keys cannot leak each other's credentials.
+  buildRequestClient: (ctx: LlmRequestContext): AxiosLike => buildOllamaClient(ctx),
   fetchModels: fetchOllamaModels,
   fetchModelInfo: fetchOllamaModelInfo,
   getModelContextLimit: getModelContextLimitFromInfo,
