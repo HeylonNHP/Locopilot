@@ -263,7 +263,11 @@ export async function dispatchMCPToolCall(
   let handle = manager.get(serverName);
   if (!handle || handle.status === 'error' || handle.status === 'disconnected') {
     try {
-      handle = await manager.connect(serverName);
+      // A tool call is not the user clicking "Authenticate" — never
+      // let it auto-trigger the OAuth browser-redirect flow. If the
+      // server needs auth, this surfaces as `auth_required` below
+      // and the caller is told to authenticate via the MCP panel.
+      handle = await manager.connect(serverName, { interactive: false });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { content: `[MCP error: failed to connect to server "${serverName}": ${message}]` };

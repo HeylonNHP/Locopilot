@@ -126,7 +126,10 @@ export async function listMCPServersWithStatus(
     const target = config.mcpServers[options.connect];
     if (target) {
       try {
-        await manager.connect(target.name);
+        // Not user-initiated authentication — a GET listing request
+        // must never itself trigger the OAuth browser-redirect flow.
+        // See `openConnection` in `clientManager.ts`.
+        await manager.connect(target.name, { interactive: false });
       } catch (err) {
         // Surface the error in the per-server entry below; don't fail the listing.
         console.error(
@@ -234,7 +237,9 @@ export async function connectAllEnabled(timeoutMs = 5000): Promise<void> {
   const deadline = new Promise<void>((resolve) => {
     deadlineTimer = setTimeout(() => resolve(), timeoutMs);
   });
-  const connectPromise = Promise.allSettled(enabledServers.map((s) => manager.connect(s.name)));
+  const connectPromise = Promise.allSettled(
+    enabledServers.map((s) => manager.connect(s.name, { interactive: false }))
+  );
   await Promise.race([connectPromise, deadline]);
   if (deadlineTimer) clearTimeout(deadlineTimer);
 
@@ -343,9 +348,11 @@ export async function reauthenticateMCPServer(
   if (!config.mcpServers[serverName]) {
     return { ok: false, reason: `unknown MCP server "${serverName}"` };
   }
-  if (config.mcpServers[serverName]?.oauth === undefined) {
-    return { ok: false, reason: `MCP server "${serverName}" has no OAuth config` };
-  }
+  // No explicit "oauth" block is fine — `buildOAuthProvider` falls
+  // back to an empty config so DCR can still run. This is safe here
+  // specifically because this function is only reachable from the
+  // user explicitly clicking "Authenticate" (`POST /api/mcp/auth`);
+  // see `clientManager.openConnection`'s `interactive` gate.
   try {
     await manager.reauthenticate(serverName);
     return { ok: true };

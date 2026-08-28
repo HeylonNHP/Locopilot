@@ -64,9 +64,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
   if (config.mcpServers[serverName]?.oauth === undefined) {
-    return NextResponse.json(
-      { ok: false, error: `MCP server "${serverName}" has no OAuth config` },
-      { status: 400 }
+    // No explicit "oauth" block — `buildOAuthProvider` falls back
+    // to an empty one so DCR + auth still works for this explicit
+    // authenticate request. To use a pre-registered client instead,
+    // add "oauth": { "clientId": ... } to the server's config.
+    console.warn(
+      `[mcp-oauth:${serverName}] No explicit "oauth" block in mcp.json — ` +
+        `using an empty OAuth config for DCR on this authenticate attempt.`
     );
   }
 
