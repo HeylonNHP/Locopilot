@@ -735,6 +735,12 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       ...state,
       authorizationServerUrl: discovery.authorizationServerUrl,
     };
+    // Discovery state is kept in-memory only. `mutateState` updates the
+    // in-process `cachedState` (so repeated connects in one session skip
+    // re-discovery) but `saveOAuthState` strips `authorizationServerUrl`
+    // before writing to disk, so a stale discovery doc can't survive a
+    // restart and break the flow after a provider rotates its auth
+    // server / DCR endpoints (e.g. Atlassian's May 2026 migration).
     await this.mutateState(next);
   }
 

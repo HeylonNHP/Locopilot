@@ -205,8 +205,13 @@ export interface MCPSavedOAuthState {
   codeVerifier?: string | undefined;
   /**
    * Last known authorization server URL (from RFC 9728 / 8414
-   * discovery, or the static override). Persisted so subsequent
-   * auth attempts can skip the well-known round-trip.
+   * discovery, or the static override).
+   *
+   * NOTE: this field is kept **in-memory only** and is never written to
+   * disk. `saveOAuthState` strips it before persisting and
+   * `sanitiseState` never reads it back, so a stale cached discovery
+   * doc can't survive a restart and break the flow after a provider
+   * rotates its authorization server / DCR endpoints.
    */
   authorizationServerUrl?: string | undefined;
 }

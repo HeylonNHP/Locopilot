@@ -144,9 +144,13 @@ function sanitiseState(raw: Record<string, unknown>): MCPSavedOAuthState {
   if (typeof raw.codeVerifier === 'string' && raw.codeVerifier.length > 0) {
     state.codeVerifier = raw.codeVerifier;
   }
-  if (typeof raw.authorizationServerUrl === 'string' && raw.authorizationServerUrl.length > 0) {
-    state.authorizationServerUrl = raw.authorizationServerUrl;
-  }
+  // `authorizationServerUrl` (RFC 9728 / 8414 discovery state) is
+  // deliberately NOT read back from disk. Providers such as Atlassian
+  // rotate their authorization server / DCR endpoints, and a stale
+  // cached discovery doc breaks the OAuth flow. Discovery state is kept
+  // in-memory only (see `cachedState` in oauthProvider.ts) and is
+  // stripped on write in `saveOAuthState`, so a pre-existing value in
+  // an old token file is never resurrected here.
   return state;
 }
 
@@ -202,6 +206,13 @@ export async function saveOAuthState(serverName: string, state: MCPSavedOAuthSta
     // Deep-clone the incoming state to avoid aliasing mutations
     // (the caller might continue to mutate it).
     const cloned: MCPSavedOAuthState = structuredClone(state);
+    // Discovery state (`authorizationServerUrl`) is never persisted.
+    // It is kept in-memory only (see `cachedState` in oauthProvider.ts)
+    // so repeated connects in one process skip re-discovery, but it
+    // never lands on disk. This avoids a stale cached discovery doc
+    // breaking the flow after a provider rotates its auth server / DCR
+    // endpoints (e.g. Atlassian's May 2026 DCR provider migration).
+    delete cloned.authorizationServerUrl;
     const hasAny = Object.keys(cloned).length > 0;
     if (hasAny) {
       current.servers[serverName] = cloned;
