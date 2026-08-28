@@ -32,7 +32,7 @@ import { logger } from '@/app/lib/logger';
 import { expandEnvRefsInRecord } from './envExpansion';
 import { emitMCPEvent } from './events';
 import { buildOAuthProvider, consumeAuthorizationCode } from './oauthProvider';
-import { clearOAuthState } from './oauthTokenStore';
+import { clearOAuthState, loadOAuthState } from './oauthTokenStore';
 import {
   type MCPClientHandle,
   MCPConnectionError,
@@ -45,6 +45,57 @@ const CLIENT_NAME = 'locopilot';
 const CLIENT_VERSION = '0.0.1';
 
 const DEFAULT_TIMEOUT_SECONDS = 60;
+
+/**
+ * The SDK's `StreamableHTTPError` / `SseError` both carry the raw
+ * HTTP status on a `.code` field. When we deliberately don't attach
+ * an OAuth provider (see `openConnection`), a 401 from the server
+ * surfaces as one of these instead of `UnauthorizedError`, so we
+ * check `.code` too when deciding whether to show the "needs auth"
+ * status.
+ */
+function extractHttpStatusCode(err: unknown): number | undefined {
+  if (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    typeof (err as { code: unknown }).code === 'number'
+  ) {
+    return (err as { code: number }).code;
+  }
+  return undefined;
+}
+
+/**
+ * The SDK's OAuth error classes (`InvalidClientError`,
+ * `InvalidClientMetadataError`, `ServerError`, etc. — see
+ * `@modelcontextprotocol/sdk/server/auth/errors.js`) carry the RFC
+ * 6749 `error` code on an `errorCode` getter and an optional
+ * `error_uri` on `errorUri`, but their `.message` is set to
+ * `error_description`, which the IdP can legally omit. When that
+ * happens `err.message` alone is `''`, which is useless for
+ * diagnosing e.g. a failed Dynamic Client Registration. This pulls
+ * out whatever detail is actually available so the console log
+ * says WHY, not just THAT, something failed.
+ */
+function describeError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (typeof err !== 'object' || err === null) {
+    return message;
+  }
+  const details: string[] = [];
+  if ('errorCode' in err && typeof (err as { errorCode: unknown }).errorCode === 'string') {
+    details.push(`oauth error: ${(err as { errorCode: string }).errorCode}`);
+  }
+  if ('errorUri' in err && typeof (err as { errorUri: unknown }).errorUri === 'string') {
+    details.push(`error_uri: ${(err as { errorUri: string }).errorUri}`);
+  }
+  if (details.length === 0) {
+    return message;
+  }
+  const base = message.length > 0 ? message : '(no error_description from server)';
+  return `${base} [${details.join(', ')}]`;
+}
 
 /**
  * Build the appropriate SDK transport for a given server config.
@@ -189,8 +240,18 @@ class MCPClientManager {
    * Lazily connect to the named server. Idempotent: returns the
    * existing handle if already connected, or awaits the in-flight
    * connect if one is already running.
+   *
+   * `opts.interactive` (default `false`) must be `true` only for a
+   * connect the user explicitly asked for — the "Authenticate"
+   * button (`reauthenticate`) or the code-paste fallback
+   * (`finishAuthAndRetry`). Every other caller (eager warmup,
+   * on-demand tool-call connects, the `?connect=` listing param)
+   * leaves it `false`, which tells `openConnection` never to trigger
+   * the SDK's Dynamic Client Registration / browser-redirect flow —
+   * see the comment there.
    */
-  connect(serverName: string): Promise<MCPClientHandle> {
+  connect(serverName: string, opts: { interactive?: boolean } = {}): Promise<MCPClientHandle> {
+    const interactive = opts.interactive ?? false;
     // Already connected? Return the cached handle.
     const existing = this.handles.get(serverName);
     if (existing && existing.status === 'connected') {
@@ -218,7 +279,7 @@ class MCPClientManager {
       );
     }
 
-    const promise = this.openConnection(serverName, config);
+    const promise = this.openConnection(serverName, config, interactive);
     this.inFlight.set(serverName, promise);
     // Clean up the in-flight map once settled (success OR failure)
     // so future calls either reuse the cached handle or start a
@@ -240,15 +301,40 @@ class MCPClientManager {
    */
   private async openConnection(
     serverName: string,
-    config: MCPServerConfig
+    config: MCPServerConfig,
+    interactive: boolean
   ): Promise<MCPClientHandle> {
-    // Phase 3.5: build the OAuth provider BEFORE the transport
-    // so the transport can attach it via the `authProvider`
-    // option. The provider is async because it allocates a
-    // loopback port for the OAuth callback. Returns
-    // `undefined` for stdio servers or for HTTP/SSE servers
-    // without an `oauth` config block.
-    const provider = await buildOAuthProvider(config);
+    // Phase 3.5 / gate against unattended OAuth: a live OAuth
+    // provider is only attached when either (a) this connect was
+    // explicitly triggered by the user (`interactive: true` — the
+    // "Authenticate" button or the code-paste fallback), or (b) we
+    // already hold a saved access token for this server, in which
+    // case attaching the provider just lets the transport send it
+    // as a Bearer header — no interactive flow is involved.
+    //
+    // Without this gate, a background/eager connect (every chat
+    // request warms every enabled server) would attach a live
+    // provider to ANY non-stdio server that doesn't have a token
+    // yet, and the SDK auto-triggers Dynamic Client Registration
+    // and the browser-redirect flow the moment it sees a 401 —
+    // completely unattended, for servers the user never asked to
+    // authenticate. Skipping the provider means the 401 instead
+    // surfaces as a plain HTTP error, which the catch block below
+    // maps to the same `auth_required` status — the UI's
+    // "Authenticate" button is the only thing that can turn
+    // `interactive` on.
+    let hasCachedToken = false;
+    if (config.transport.type !== 'stdio' && !interactive) {
+      const cachedState = await loadOAuthState(serverName);
+      hasCachedToken = cachedState.tokens?.access_token !== undefined;
+    }
+    const shouldAttachOAuthProvider =
+      config.transport.type !== 'stdio' && (interactive || hasCachedToken);
+    // The provider is async because it allocates a loopback port
+    // for the OAuth callback.
+    const provider = shouldAttachOAuthProvider
+      ? await buildOAuthProvider(config, { interactive })
+      : undefined;
     // Phase 2: build the SDK transport from the config. The transport
     // is built BEFORE the client so a malformed URL or invalid header
     // fails fast (synchronously) — no need to start a subprocess.
@@ -323,14 +409,15 @@ class MCPClientManager {
     // an EventTarget / `addEventListener` API, so we attach directly.
     // eslint-disable-next-line unicorn/prefer-add-event-listener
     client.onerror = (err) => {
+      const description = describeError(err);
       const handle = this.handles.get(serverName);
       if (handle) {
         handle.status = 'error';
-        handle.lastError = err.message;
+        handle.lastError = description;
       }
       // Route server-side stderr-ish errors to the locopilot stderr
       // so they show up in the dev-server log without crashing anything.
-      console.error(`[mcp:${serverName}] client error: ${err.message}`);
+      console.error(`[mcp:${serverName}] client error: ${description}`);
       emitMCPEvent({ kind: 'state', serverName });
     };
 
@@ -353,6 +440,19 @@ class MCPClientManager {
     const settled = new Promise<void>((resolve, reject) => {
       resolvePlaceholder = () => resolve();
       rejectPlaceholder = (err) => reject(err);
+    });
+    // Nothing currently awaits `placeholder.settled` — it's exposed
+    // for a future consumer (see the field doc above), not read
+    // anywhere today. Without this, every failed connect rejects an
+    // orphaned promise with zero listeners: a genuine, deterministic
+    // unhandled rejection on every single `auth_required`/`error`
+    // outcome, completely independent of the OAuth/DCR error path
+    // it superficially resembles in the logs. A `.catch()` here
+    // doesn't stop a real future consumer from also attaching its
+    // own handler later — multiple listeners on one promise are
+    // fine — it just guarantees this one is never unhandled.
+    settled.catch(() => {
+      /* intentionally ignored — see comment above */
     });
     const placeholder: ConnectingHandle = {
       name: serverName,
@@ -386,10 +486,17 @@ class MCPClientManager {
     // (getter is `string | undefined` but the interface declares
     // `sessionId?: string`). All three concrete classes do
     // structurally implement the interface at runtime.
-    try {
-      await client.connect(transport as unknown as Transport, { signal: abortController.signal });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    // Phase 3.5 fix: a 401 can surface from `client.connect()`
+    // itself (an OAuth-provider-backed handshake) OR from
+    // `client.listTools()` (a separate JSON-RPC call issued AFTER
+    // `connect()` already resolved — this is what actually happens
+    // when no OAuth provider is attached, since `initialize` isn't
+    // guarded but `tools/list` is). Both are funnelled through this
+    // single handler so neither is an unguarded escape hatch that
+    // surfaces as a raw unhandled rejection instead of the
+    // `auth_required` / `error` status the UI understands.
+    const handleConnectionFailure = async (err: unknown) => {
+      const message = describeError(err);
       // Phase 3.5: a 401 from the MCP server surfaces as
       // an `UnauthorizedError` thrown by the SDK's OAuth
       // middleware. We translate that into an `auth_required`
@@ -405,7 +512,8 @@ class MCPClientManager {
       // DO NOT close the transport here — `finishAuthAndRetry`
       // will need it to perform the token exchange. Closing
       // it would make the retry path unreachable.
-      const isAuthRequired = err instanceof UnauthorizedError;
+      const isAuthRequired =
+        err instanceof UnauthorizedError || extractHttpStatusCode(err) === 401;
       const failed: MCPClientHandle = {
         name: serverName,
         config,
@@ -471,48 +579,61 @@ class MCPClientManager {
         );
       }
       throw new MCPConnectionError(message, serverName);
-    }
-
-    if (abortController.signal.aborted) {
-      // disconnect() won the race — close everything and bail.
-      try {
-        await client.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        await transport.close();
-      } catch {
-        /* ignore */
-      }
-      throw new MCPConnectionError(
-        `MCP server "${serverName}" connection was aborted before completion`,
-        serverName
-      );
-    }
-
-    const listResult = await client.listTools(undefined, { signal: abortController.signal });
-    const tools: MCPToolInfo[] = listResult.tools.map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: {
-        type: 'object' as const,
-        ...(t.inputSchema && typeof t.inputSchema === 'object' ? t.inputSchema : {}),
-      },
-    }));
-
-    const handle: MCPClientHandle = {
-      name: serverName,
-      config,
-      client,
-      status: 'connected',
-      tools,
-      lastConnectedAt: Date.now(),
     };
-    this.handles.set(serverName, handle);
-    placeholder.setHandle(handle);
-    emitMCPEvent({ kind: 'state', serverName });
-    return handle;
+
+    try {
+      await client.connect(transport as unknown as Transport, { signal: abortController.signal });
+
+      if (abortController.signal.aborted) {
+        // disconnect() won the race — close everything and bail.
+        try {
+          await client.close();
+        } catch {
+          /* ignore */
+        }
+        try {
+          await transport.close();
+        } catch {
+          /* ignore */
+        }
+        throw new MCPConnectionError(
+          `MCP server "${serverName}" connection was aborted before completion`,
+          serverName
+        );
+      }
+
+      const listResult = await client.listTools(undefined, { signal: abortController.signal });
+      const tools: MCPToolInfo[] = listResult.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: {
+          type: 'object' as const,
+          ...(t.inputSchema && typeof t.inputSchema === 'object' ? t.inputSchema : {}),
+        },
+      }));
+
+      const handle: MCPClientHandle = {
+        name: serverName,
+        config,
+        client,
+        status: 'connected',
+        tools,
+        lastConnectedAt: Date.now(),
+      };
+      this.handles.set(serverName, handle);
+      placeholder.setHandle(handle);
+      emitMCPEvent({ kind: 'state', serverName });
+      return handle;
+    } catch (err) {
+      if (err instanceof MCPConnectionError) {
+        // Already a fully classified, final error (the abort-path
+        // throw above, which already closed the client/transport
+        // itself) — rethrow as-is rather than re-running the 401
+        // classification or closing the transport a second time.
+        throw err;
+      }
+      return handleConnectionFailure(err);
+    }
   }
 
   /**
@@ -652,7 +773,16 @@ class MCPClientManager {
       throw new MCPConnectionError(`unknown MCP server "${serverName}"`, serverName);
     }
     if (config.oauth === undefined) {
-      throw new MCPConnectionError(`MCP server "${serverName}" has no OAuth config`, serverName);
+      // No explicit "oauth" block — `buildOAuthProvider` falls
+      // back to an empty one so DCR + auth still works. This call
+      // is always `interactive: true` (see `connect()` below), so
+      // it's safe to let it drive DCR here.
+      console.warn(
+        `[mcp-oauth:${serverName}] No explicit "oauth" block in mcp.json — ` +
+          `using an empty OAuth config for DCR on this authenticate attempt. ` +
+          `To use a pre-registered client instead, add "oauth": { "clientId": ... } ` +
+          `to the server's config.`
+      );
     }
     // Check for a code already captured by the loopback
     // listener (from a prior `redirectToAuthorization`
@@ -678,9 +808,12 @@ class MCPClientManager {
     // connect from a parallel caller.
     await this.disconnect(serverName);
     // The next `connect()` will throw on the SDK's 401; we
-    // catch and branch on the actual cause.
+    // catch and branch on the actual cause. `interactive: true`
+    // is what actually allows the SDK to print the auth URL,
+    // launch the browser, and start the loopback listener — see
+    // `openConnection` and `LocopilotOAuthProvider.redirectToAuthorization`.
     try {
-      await this.connect(serverName);
+      await this.connect(serverName, { interactive: true });
     } catch (err) {
       const isAuthRequired =
         err instanceof MCPConnectionError &&
@@ -698,7 +831,7 @@ class MCPClientManager {
       // handle's `lastError` with the actual cause and
       // re-emit a `state` event so the UI shows the
       // truthful error.
-      const message = err instanceof Error ? err.message : String(err);
+      const message = describeError(err);
       const handle = this.handles.get(serverName);
       if (handle !== undefined) {
         handle.lastError = `OAuth flow did not complete. Check the dev-server log for the auth URL and complete the flow in your browser. If the URL doesn't appear, run /mcp auth ${serverName} again. (Underlying error: ${message})`;
@@ -775,7 +908,7 @@ class MCPClientManager {
     try {
       await finishAuth.call(transport, code);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = describeError(err);
       return { ok: false, connected: false, reason: `finishAuth failed: ${message}` };
     }
     // `finishAuth` did the token exchange; the saved tokens
@@ -785,10 +918,10 @@ class MCPClientManager {
     // saved tokens and complete the handshake.
     await this.disconnect(serverName);
     try {
-      await this.connect(serverName);
+      await this.connect(serverName, { interactive: true });
       return { ok: true, connected: true };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = describeError(err);
       return { ok: false, connected: false, reason: `reconnect after auth failed: ${message}` };
     }
   }
