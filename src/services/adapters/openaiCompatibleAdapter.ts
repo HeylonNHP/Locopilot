@@ -230,6 +230,58 @@ function buildUserContent(
 }
 
 /**
+ * Synthetic fallback identifier used when the upstream model does not
+ * supply a real `id` on a tool_call or a real `tool_call_id` on its
+ * matching tool result. The two endpoints of a tool-call round trip
+ * MUST agree on this string — Responses-API gateways (e.g. Airia)
+ * reject a request with "No tool output found for function call
+ * call_fallback_N" when the function_call item's `call_id` does not
+ * match any function_call_output item.
+ *
+ * The ID encodes the originating assistant's index in the conversation
+ * and the position within that assistant's `tool_calls` array, so the
+ * same synthetic ID is derivable from either side of the pairing.
+ *
+ * Exported for unit tests in scripts/test-tool-call-fallback-ids.mjs.
+ */
+export function toolCallFallbackId(assistantIdx: number, tcIndex: number): string {
+  return `call_fallback_${assistantIdx}_${tcIndex}`;
+}
+
+/**
+ * Walk backward from `toolIdx` to find the assistant message that issued
+ * the tool calls whose results follow it. Skips over consecutive `tool`
+ * messages — parallel tool calls land in a contiguous block of tool-role
+ * messages, and only the *first* one is immediately adjacent to its
+ * assistant. Stops at the first non-tool, non-assistant role (e.g. user)
+ * which signals a true orphan with no assistant.
+ *
+ * Returns the assistant's index AND its tool_calls array so callers
+ * don't have to walk the message array twice and can't disagree about
+ * what "the originating assistant" means.
+ */
+function findOriginatingAssistant(
+  messages: ChatMessage[],
+  toolIdx: number
+): { idx: number; toolCalls: NonNullable<ChatMessage['tool_calls']> } | undefined {
+  let j = toolIdx - 1;
+  while (j >= 0) {
+    const candidate = messages[j];
+    if (!candidate) return undefined;
+    if (candidate.role === 'assistant') {
+      const toolCalls = candidate.tool_calls;
+      if (toolCalls && toolCalls.length > 0) {
+        return { idx: j, toolCalls };
+      }
+      return undefined;
+    }
+    if (candidate.role !== 'tool') return undefined;
+    j -= 1;
+  }
+  return undefined;
+}
+
+/**
  * Convert the app's internal ChatMessage array into the Responses API
  * input items format.
  *
@@ -237,8 +289,10 @@ function buildUserContent(
  * separately). User/assistant messages become EasyInputMessage items.
  * Tool calls from the assistant become ResponseFunctionToolCall items.
  * Tool results become FunctionCallOutput items.
+ *
+ * Exported for unit tests in scripts/test-tool-call-fallback-ids.mjs.
  */
-function toResponseInputItems(messages: ChatMessage[]): {
+export function toResponseInputItems(messages: ChatMessage[]): {
   instructions: string | null;
   input: ResponseInputItem[];
 } {
@@ -246,25 +300,6 @@ function toResponseInputItems(messages: ChatMessage[]): {
   const input: ResponseInputItem[] = [];
 
   debugLog.messageArraySummary('toResponseInputItems: input', messages);
-
-  // Walk backward to find the originating assistant for tool messages.
-  const findOriginatingAssistantToolCalls = (
-    idx: number
-  ): ChatMessage['tool_calls'] | undefined => {
-    let j = idx - 1;
-    while (j >= 0) {
-      const candidate = messages[j];
-      if (!candidate) return undefined;
-      if (candidate.role === 'assistant') {
-        return candidate.tool_calls && candidate.tool_calls.length > 0
-          ? candidate.tool_calls
-          : undefined;
-      }
-      if (candidate.role !== 'tool') return undefined;
-      j -= 1;
-    }
-    return undefined;
-  };
 
   for (const [i, msg] of messages.entries()) {
     if (!msg) continue;
@@ -303,17 +338,15 @@ function toResponseInputItems(messages: ChatMessage[]): {
         input.push(assistantItem as ResponseInputItem);
       }
 
-      // Tool calls from this assistant.
+      // Tool calls from this assistant. The synthetic fallback ID is
+      // keyed on the assistant's index in the conversation AND its
+      // position within this assistant's tool_calls array, so the
+      // matching tool result (which derives the same ID via
+      // `findOriginatingAssistant`) lands on the same string.
       if (msg.tool_calls) {
         for (const [tcIndex, tc] of msg.tool_calls.entries()) {
-          // Pair the fallback ID to the originating assistant's index and
-          // the position within the tool_calls array so the downstream
-          // function_call_output item (which uses the same fallback when
-          // tool_call_id is missing) gets the same synthetic ID. This is the
-          // root fix for the "No tool output found for function call
-          // call_fallback_N" error when tool_call_id is missing.
           const toolCallItem: ResponseFunctionToolCall = {
-            call_id: tc.id || `call_fallback_${i}_${tcIndex}`,
+            call_id: tc.id || toolCallFallbackId(i, tcIndex),
             name: tc.function.name,
             arguments: JSON.stringify(tc.function.arguments),
             type: 'function_call',
@@ -326,12 +359,12 @@ function toResponseInputItems(messages: ChatMessage[]): {
     }
 
     if (msg.role === 'tool') {
-      // Find the originating assistant to get the tool_call_id.
-      const originatingToolCalls = findOriginatingAssistantToolCalls(i);
-      const hasOriginatingAssistant = !!originatingToolCalls;
+      const origin = findOriginatingAssistant(messages, i);
 
-      if (!hasOriginatingAssistant) {
-        // Orphaned tool message — convert to user message.
+      if (!origin) {
+        // Orphaned tool message — no assistant above us issued tool
+        // calls. Convert to a user message so the gateway still sees
+        // the content rather than a dangling reference.
         debugLog.toolMessage({
           layer: 'adapter',
           action: 'convert',
@@ -352,50 +385,36 @@ function toResponseInputItems(messages: ChatMessage[]): {
         continue;
       }
 
-      // When the originating assistant issued multiple tool_calls and this
-      // tool message is missing tool_call_id, we cannot safely guess which
-      // tool_call it responds to. Treat it as an orphan.
-      if (!msg.tool_call_id && originatingToolCalls!.length > 1) {
-        debugLog.toolMessage({
-          layer: 'adapter',
-          action: 'convert',
-          messageIndex: i,
-          role: 'tool',
-          hasToolCallId: false,
-          tool_call_id: null,
-          precedingAssistantToolCalls: originatingToolCalls!.length,
-          contentPreview: msg.content || '',
-          reason: 'multi-tool-missing-id',
-        });
-        const item: EasyInputMessage = {
-          role: 'user',
-          content: msg.content || '',
-          type: 'message',
-        };
-        input.push(item as ResponseInputItem);
-        continue;
-      }
-
-      // Locate the originating tool call: prefer its real id; otherwise find
-      // the matching position in the originating assistant's tool_calls
-      // array so we can derive the same synthetic fallback ID it used.
-      // This is the root fix for the "No tool output found for function
-      // call call_fallback_N" error when tool_call_id is missing.
+      // Resolve the call_id for this tool result.
+      // - If the upstream gave us a real `tool_call_id`, trust it (it
+      //   matches the upstream `tc.id` on the originating assistant's
+      //   tool_calls[i]).
+      // - If the upstream's tool_call_id is missing or empty AND the
+      //   originating assistant's matching `tc.id` is also empty, both
+      //   sides will fall back to `toolCallFallbackId(...)`. The
+      //   pairing key is the *position* of this tool message within
+      //   the contiguous tool-message block following the assistant.
+      // - If only the upstream's `tc.id` is real but the result is
+      //   missing the tool_call_id, prefer the upstream tc.id from the
+      //   matching position — the wire name still has to match.
       let callId: string;
       if (msg.tool_call_id) {
         callId = msg.tool_call_id;
       } else {
-        const calls = originatingToolCalls!;
-        // Find which tool call this tool message corresponds to. It is the
-        // Nth tool message (1-indexed) after the originating assistant
-        // since tool calls were issued in order.
-        const assistantIdx = i - 1;
+        const { idx: assistantIdx, toolCalls } = origin;
+        // Position within the originating assistant's tool_calls
+        // array, derived by counting how many `tool` messages come
+        // strictly between the assistant and this one. The walk
+        // intentionally starts at `assistantIdx + 1` (NOT `i - 1`) so
+        // it correctly counts the earlier tool messages in a
+        // parallel-call block, not just the single message immediately
+        // before us.
         let precedingToolCount = 0;
         for (let k = assistantIdx + 1; k < i; k++) {
           if (messages[k]?.role === 'tool') precedingToolCount++;
         }
-        const tcIndex = Math.min(precedingToolCount, calls.length - 1);
-        callId = calls[tcIndex]?.id || `call_fallback_${assistantIdx}_${tcIndex}`;
+        const tcIndex = Math.min(precedingToolCount, toolCalls.length - 1);
+        callId = toolCalls[tcIndex]?.id || toolCallFallbackId(assistantIdx, tcIndex);
       }
       const toolOutput: ResponseInputItem.FunctionCallOutput = {
         call_id: callId,
