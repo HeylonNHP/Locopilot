@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance } from 'axios';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import OpenAI from 'openai';
 import type {
   EasyInputMessage,
@@ -1470,7 +1471,13 @@ async function writeDebugDump(
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
   const requestTarget = `${method} ${normalizedBaseUrl}${requestPath}`;
   const stamp = new Date().toISOString().replaceAll(/[.:]/g, '-');
-  const dumpPath = `debug_${tag}_${stamp}.json`;
+  const fileName = `debug_${tag}_${stamp}.json`;
+  // Colocate crash dumps under <cwd>/logs/debug-dumps/ — the same "runtime
+  // diagnostics" root the Pino logger uses (see app/lib/debugLogger.ts).
+  // Keeps the repo root clean and ensures dumps land under the existing
+  // `logs` gitignore rule rather than scattering at the working tree root.
+  const dumpDir = path.join(process.cwd(), 'logs', 'debug-dumps');
+  const dumpPath = path.join(dumpDir, fileName);
   const serializedError = sdkError ?? serializeOpenAIError(error);
   const upstreamFields = upstream ?? pickUpstreamError(error);
 
@@ -1485,6 +1492,7 @@ async function writeDebugDump(
   }
 
   try {
+    await mkdir(dumpDir, { recursive: true });
     await writeFile(
       dumpPath,
       JSON.stringify(
