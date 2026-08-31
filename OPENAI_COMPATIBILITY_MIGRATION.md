@@ -322,6 +322,13 @@ Files likely involved:
 - `C:\git\Locopilot-dev\src\components\SettingsModal\SettingsModal.tsx`
 - `C:\git\Locopilot-dev\src\app\api\config\route.ts`
 
+> **Ollama API key parity (done):** the Ollama adapter now also honours
+> `ctx.apiKey`, sending it as an `Authorization: Bearer <key>` header
+> when configured (`buildOllamaClient` in `ollamaAdapter.ts`, mirroring
+> `buildAxiosClient`). Both provider types share the same
+> `ProviderConfig.apiKey` field, validation, and empty-string scrub in
+> `/api/config`.
+
 ## Notes on Design Direction
 
 A good long-term shape is:

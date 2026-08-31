@@ -1,3 +1,10 @@
+- 2026-08-30: Added API key support to the Ollama adapter
+  - Files: `src/services/adapters/ollamaAdapter.ts`, `src/services/adapters/llmAdapter.ts`, `src/types/chatConfig.ts`, `scripts/test-ollama-api-key.mjs`, `README.md`, `docs/CHANGELOG.md`
+  - Summary: When an Ollama provider has an `apiKey` configured in `config.json`, the adapter now sends it as a Bearer token in the Authorization header on every request (`fetchModels`, `fetchModelInfo`, `sendChat`, `sendChatStream`, `fetchRunningModelContextLength`). `buildOllamaClient(ctx)` mirrors the OpenAI-compatible adapter's `buildAxiosClient`: shared default `axios` when no key is set (no per-request overhead), a fresh axios instance when one is, so concurrent requests with different keys cannot leak credentials. Whitespace-only keys are scrubbed upstream by `/api/config` (same as OpenAI-compatible providers). Local Ollama instances are unaffected; nothing in the UI changes — keys are config-file only.
+  - Intent: Support authenticated/remote Ollama endpoints (reverse proxies with bearer auth, hosted Ollama-compatible services) without changing behaviour for the default local setup.
+
+---
+
 - 2026-08-31: Resolved all npm audit findings (14: 10 high, 4 moderate)
   - Files: `package.json`, `package-lock.json`
   - Summary: `npm audit fix` bumped `next` (16.2.9→16.3.3), `mermaid`, `dompurify`, `sharp`, `undici`, `hono`, `ip-address`, `js-yaml`, `nanoid`, `brace-expansion`, and `@hono/node-server` within their existing `package.json` ranges. The `overrides` pins for `postcss` (8.5.10) and `fast-uri` (3.1.2) — added in prior security fixes (see `ba994fe`, `68b2e4e`) — had themselves gone stale against newer advisories and were blocking `npm audit fix` from reaching them; bumped to `postcss@8.5.26` and `fast-uri@3.1.6`. `npm audit` now reports 0 vulnerabilities. Verified with `tsc --noEmit`, `npm run build`, and `npm test`.

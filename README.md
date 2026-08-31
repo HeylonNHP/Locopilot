@@ -46,3 +46,28 @@ $env:YOLO="true"; npm start
 
 - Node.js v16+
 - Ollama installed locally or reachable from the configured host/port
+
+### Authentication (optional)
+
+Local Ollama needs no authentication. For a remote or proxied Ollama
+endpoint that requires a Bearer token, set `apiKey` on that provider in
+`config.json`:
+
+```json
+{
+  "providers": [
+    {
+      "id": "my-remote-ollama",
+      "name": "Remote Ollama",
+      "provider": "ollama",
+      "baseUrl": "https://ollama.example.com",
+      "apiKey": "your-secret-token",
+      "model": "llama3.2"
+    }
+  ]
+}
+```
+
+The key is sent as an `Authorization: Bearer <key>` header on every
+request to that provider. Providers without an `apiKey` field behave
+exactly as before.
