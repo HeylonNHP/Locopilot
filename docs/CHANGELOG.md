@@ -1,3 +1,11 @@
+- 2026-08-31: Resolved all npm audit findings (14: 10 high, 4 moderate)
+  - Files: `package.json`, `package-lock.json`
+  - Summary: `npm audit fix` bumped `next` (16.2.9→16.3.3), `mermaid`, `dompurify`, `sharp`, `undici`, `hono`, `ip-address`, `js-yaml`, `nanoid`, `brace-expansion`, and `@hono/node-server` within their existing `package.json` ranges. The `overrides` pins for `postcss` (8.5.10) and `fast-uri` (3.1.2) — added in prior security fixes (see `ba994fe`, `68b2e4e`) — had themselves gone stale against newer advisories and were blocking `npm audit fix` from reaching them; bumped to `postcss@8.5.26` and `fast-uri@3.1.6`. `npm audit` now reports 0 vulnerabilities. Verified with `tsc --noEmit`, `npm run build`, and `npm test`.
+  - Intent: Clear outstanding high/moderate severity advisories (SSRF, path traversal, ReDoS/DoS, prototype pollution) without a forced major bump; none of the affected packages are exercised directly enough by first-party code to warrant a `--force` resolution.
+  - Lesson: A version-pinning `overrides` entry fixes a vulnerability only at the moment it's added — it also freezes that package out of future `npm audit fix` runs. Revisit override pins whenever running an audit, not just when first adding them.
+
+---
+
 - 2026-08-13: Fixed Ollama vision capability cache poisoning
   - Files: `src/services/visionCache.ts`, `src/services/llm.ts`, `src/app/api/models/route.ts`, `src/app/api/chat/route.ts`, `scripts/test-vision-cache.mjs`, `CLAUDE.md`, `docs/CHANGELOG.md`
   - Summary: Vision-cache entries now retain provenance and provider-qualified keys. `/api/models` passes its already-fetched Ollama `/api/show` capabilities into the shared resolver, allowing a real probe to refresh a weak conservative default instead of caching Ollama models as non-vision-capable. Runtime 400-driven non-vision discovery remains authoritative for its TTL, probe failures preserve valid cache state, and OpenAI-compatible optimistic defaults remain unchanged.
