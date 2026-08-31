@@ -90,7 +90,12 @@ export interface ProviderConfig {
   name: string;
   provider: LlmProvider;
   baseUrl: string;
-  /** API key for OpenAI-compatible providers. Ignored by Ollama. */
+  /**
+   * API key for OpenAI-compatible providers, sent as a Bearer token in
+   * the Authorization header. For Ollama providers, sent as a Bearer
+   * token when configured (for authenticated/remote Ollama endpoints);
+   * unused by local Ollama instances.
+   */
   apiKey?: string;
   /** Default model for this provider. */
   model?: string;
