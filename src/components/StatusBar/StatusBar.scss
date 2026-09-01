@@ -56,6 +56,11 @@
     flex-shrink: 0;
   }
 
+  &-model-switching {
+    color: var(--status-warning);
+    font-weight: 600;
+  }
+
   &-compaction {
     cursor: pointer;
     transition: color 0.2s ease;

@@ -27,6 +27,7 @@ export default function StatusBar() {
     reasoningEffort,
     providers,
     activeProviderId,
+    modelSwitchPending,
   } = state;
   const [showSelector, setShowSelector] = useState(false);
   const [showCompactionSelector, setShowCompactionSelector] = useState(false);
@@ -229,6 +230,12 @@ export default function StatusBar() {
               }}
             >
               Model: {model}
+              {modelSwitchPending && (
+                <span className="statusbar-model-switching" title="Applies at the next tool step">
+                  {' '}
+                  (switching…)
+                </span>
+              )}
             </span>
           )
         )}

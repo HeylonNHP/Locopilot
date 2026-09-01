@@ -135,6 +135,16 @@ export interface SubAgentConfig {
   /** Context window size for the compaction model/provider. */
   compactionNumCtx?: number;
   /**
+   * Applies any model switch the user has requested mid-turn, mutating this
+   * config in place. Called at the top of each sub-agent iteration so a
+   * long-running `run_subagents` batch — which parks the main tool-call
+   * loop for its whole duration — still swaps models at its next LLM call
+   * instead of waiting for the batch to finish. A no-op when nothing is
+   * pending. Same closure-back-into-route-scope shape as
+   * {@link approvalRequester}.
+   */
+  refreshModels?: () => Promise<void>;
+  /**
    * Reasoning effort for OpenAI-compatible providers. Maps to the
    * wire `reasoning_effort` field. When 'off', sub-agents send
    * `reasoning_effort: 'none'` which is required for models that

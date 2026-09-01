@@ -99,6 +99,7 @@ export type DiagnosticPhase =
   | 'compaction_end'
   | 'abort'
   | 'error'
+  | 'model_switched'
   | 'cleanup';
 
 export interface DiagnosticTraceEntry {

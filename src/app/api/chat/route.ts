@@ -33,6 +33,11 @@ import {
 } from '@/app/lib/approvalRegistry';
 import { debugLog } from '@/app/lib/debugLogger';
 import { logger } from '@/app/lib/logger';
+import {
+  consumeModelSwitch,
+  registerActiveTurn,
+  unregisterActiveTurn,
+} from '@/app/lib/modelSwitchRegistry';
 import { enqueueSessionRename, enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
 import {
   AUTO_COMPACT_THRESHOLD_PCT,
@@ -277,7 +282,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   const messages: ClientChatMessage[] = body.messages as ClientChatMessage[];
-  const model: string = body.model as string;
+  // Mutable for the whole turn: /api/chat/switch-model can hot-swap the
+  // model between tool-call loop iterations. See applyPendingModelSwitch.
+  let model: string = body.model as string;
   const numCtx: number | undefined = body.numCtx as number | undefined;
   const sessionId: number | undefined = body.sessionId as number | undefined;
   const baseUrl: string | undefined = body.baseUrl as string | undefined;
@@ -626,6 +633,9 @@ export async function POST(req: NextRequest): Promise<Response> {
           activeSessionId = createSession(DEFAULT_SESSION_NAME, model as string);
           sendEvent('session_created', { sessionId: activeSessionId });
         }
+        // Accept mid-turn model switches for this session from now until the
+        // finally block below deregisters the turn.
+        registerActiveTurn(activeSessionId, requestId);
 
         // Persist the client's messages (including subagent_log entries) as
         // the base state for this request.  Merging avoids clobbering any
@@ -726,9 +736,17 @@ export async function POST(req: NextRequest): Promise<Response> {
               ),
               mcpApprovals: [...mcpApprovalsSet],
               approvalRequester: requestSubAgentApproval,
+              refreshModels: refreshSubAgentModels,
             },
           };
         };
+
+        // Lets a sub-agent apply a pending model switch itself. A
+        // `run_subagents` batch parks the main tool-call loop for its whole
+        // duration, so without this the swap would not land until the batch
+        // finished. `applyPendingModelSwitch` is declared further down; this
+        // only dereferences it at call time, from inside the tool loop.
+        const refreshSubAgentModels = (): Promise<void> => applyPendingModelSwitch();
 
         // Phase 2 (sub-agent approval UX): build a closure that lets a
         // sub-agent bubble an approval request up to the main route's
@@ -776,6 +794,143 @@ export async function POST(req: NextRequest): Promise<Response> {
         // throws. The inner try/catch owns the user-config
         // derivation; the outer build path is independent.
         let config: Config | null = null;
+
+        // Model-dependent resolution, factored out of the initial setup so
+        // a mid-turn model switch can re-run exactly the same logic against
+        // the new model instead of carrying stale verdicts forward.
+
+        /**
+         * Resolve the effective numCtx against the current model's runtime
+         * cap. This is the single backend source of truth for the clamp;
+         * the client never applies it. The body numCtx (requestedNumCtx)
+         * wins over the persisted config value for this turn, falling back
+         * to the active provider's numCtx, then the global config.numCtx,
+         * then DEFAULT_NUM_CTX.
+         */
+        const resolveNumCtxForModel = async (): Promise<void> => {
+          const providerRequested = activeProvider
+            ? getProviderNumCtx(activeProvider, config?.numCtx)
+            : undefined;
+          const configRequested = config?.numCtx;
+          const requested =
+            typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
+              ? Math.floor(numCtx)
+              : providerRequested !== undefined &&
+                  Number.isFinite(providerRequested) &&
+                  providerRequested > 0
+                ? providerRequested
+                : typeof configRequested === 'number' &&
+                    Number.isFinite(configRequested) &&
+                    configRequested > 0
+                  ? Math.floor(configRequested)
+                  : requestedNumCtx;
+          try {
+            const resolved = await resolveEffectiveNumCtx(llmRequestContext, model, requested);
+            effectiveNumCtx = resolved.effective;
+            modelContextLimit = resolved.modelCap;
+          } catch {
+            // Resolver is best-effort: if both probes fail, fall through
+            // with the requested value. The reactive 400 catch below will
+            // catch any over-budget request and update the cap.
+            effectiveNumCtx = requested;
+          }
+        };
+
+        /**
+         * Determine vision support for the current model so we can strip
+         * image attachments when the model does not support them. The
+         * async resolver consults a per-(baseUrl, modelName) cache and
+         * falls back to provider-specific optimistic defaults — see
+         * `src/services/visionCache.ts` for the full resolution order.
+         * This is what fixes the silent image-stripping bug for
+         * openai-compatible providers (`/v1/models` has no standard
+         * `capabilities` field, so the legacy sync heuristic always
+         * returned `false` and the adapter stripped the image).
+         */
+        const resolveVisionForModel = async (): Promise<boolean | undefined> => {
+          try {
+            let modelInfo;
+            try {
+              modelInfo = await fetchLlmModelInfo(llmRequestContext, model);
+            } catch {
+              // Model metadata is best-effort. The cache/default resolver
+              // below still provides a safe provider-specific fallback.
+            }
+            const resolved = await getLlmModelVisionSupportAsync(
+              activeProvider?.baseUrl ?? effectiveBaseUrl,
+              model,
+              activeProvider?.provider ?? 'ollama',
+              modelInfo
+            );
+            return resolved.visionSupported;
+          } catch {
+            // Best-effort: if both metadata and cache resolution fail,
+            // preserve the existing behavior and let the adapter receive
+            // any images.
+            return undefined;
+          }
+        };
+
+        /**
+         * Resolve per-parameter sampling support for the current model so
+         * the openai-compatible adapter can omit fields the upstream
+         * rejects (e.g. `temperature` on `openai/gpt-5.6-luna`). Mirrors
+         * the vision resolution above: best-effort, cache-aware, default
+         * ('supported' for both providers) on failure.
+         */
+        const resolveSamplingSupportForModel = async (): Promise<
+          Awaited<ReturnType<typeof getLlmModelSamplingParamSupportAsync>> | undefined
+        > => {
+          try {
+            const provider = activeProvider?.provider ?? 'ollama';
+            const adapter = selectLlmAdapter(provider);
+            const probe = adapter.fetchSamplingParamSupport
+              ? () =>
+                  adapter.fetchSamplingParamSupport!(llmRequestContext, model).then((m) => m ?? {})
+              : undefined;
+            return await getLlmModelSamplingParamSupportAsync(
+              activeProvider?.baseUrl ?? effectiveBaseUrl,
+              model,
+              provider,
+              probe
+            );
+          } catch {
+            // Best-effort: undefined means every param is treated as
+            // supported (the adapter's optimistic default).
+            return undefined;
+          }
+        };
+
+        /**
+         * Resolve the compaction runtime for the current model. Called
+         * again after a switch so auto-compaction, sub-agent compaction,
+         * web-content compaction, and title generation all stay on the
+         * same selected model/provider semantics.
+         *
+         * Resolves the compaction provider by ID only. Passing no model
+         * name is intentional: a stale explicit ID must not be recovered
+         * by model matching or by resolveProvider's unrelated default
+         * provider.
+         */
+        const resolveCompactionRuntime = (
+          requestedCompactionModel: string | undefined,
+          requestedCompactionProviderId: string | undefined
+        ): void => {
+          effectiveCompactionModel = resolveCompactionModel(requestedCompactionModel, model);
+          const explicitId =
+            typeof requestedCompactionProviderId === 'string' &&
+            requestedCompactionProviderId.trim().length > 0
+              ? requestedCompactionProviderId.trim()
+              : undefined;
+          const resolved = explicitId
+            ? resolveProviderRequestContext(config, explicitId, undefined, requestId)
+            : null;
+          compactionLlmRequestContext = resolved?.ctx ?? llmRequestContext;
+          compactionNumCtx = resolved
+            ? getProviderNumCtx(resolved.provider, config?.numCtx)
+            : effectiveNumCtx;
+        };
+
         try {
           config = await loadConfig();
           const resolved = resolveProviderRequestContext(config, providerId, model, requestId);
@@ -798,72 +953,13 @@ export async function POST(req: NextRequest): Promise<Response> {
             if (typeof config.citeSources === 'boolean') {
               effectiveCiteSources = config.citeSources;
             }
-
-            effectiveCompactionModel = resolveCompactionModel(
-              compactionModel ?? config.compactionModel,
-              model as string
-            );
           }
 
-          // Resolve the effective numCtx against the model's runtime
-          // cap. This is the single backend source of truth for the
-          // clamp; the client never applies it. The body numCtx
-          // (requestedNumCtx) wins over the persisted config value
-          // for this turn, falling back to the active provider's
-          // numCtx, then the global config.numCtx, then DEFAULT_NUM_CTX.
-          {
-            const providerRequested = activeProvider
-              ? getProviderNumCtx(activeProvider, config?.numCtx)
-              : undefined;
-            const configRequested = config?.numCtx;
-            const requested =
-              typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-                ? Math.floor(numCtx)
-                : providerRequested !== undefined &&
-                    Number.isFinite(providerRequested) &&
-                    providerRequested > 0
-                  ? providerRequested
-                  : typeof configRequested === 'number' &&
-                      Number.isFinite(configRequested) &&
-                      configRequested > 0
-                    ? Math.floor(configRequested)
-                    : requestedNumCtx;
-            try {
-              const resolved = await resolveEffectiveNumCtx(
-                llmRequestContext,
-                model as string,
-                requested
-              );
-              effectiveNumCtx = resolved.effective;
-              modelContextLimit = resolved.modelCap;
-            } catch {
-              // Resolver is best-effort: if both probes fail,
-              // fall through with the requested value. The
-              // reactive 400 catch below will catch any
-              // over-budget request and update the cap.
-              effectiveNumCtx = requested;
-            }
-          }
-
-          // Resolve the compaction provider by ID only. Passing no model name
-          // is intentional: a stale explicit ID must not be recovered by model
-          // matching or by resolveProvider's unrelated default provider.
-          const explicitCompactionProviderId =
-            typeof compactionProviderId === 'string' && compactionProviderId.trim().length > 0
-              ? compactionProviderId.trim()
-              : undefined;
-          const compactionResolved = explicitCompactionProviderId
-            ? resolveProviderRequestContext(
-                config,
-                explicitCompactionProviderId,
-                undefined,
-                requestId
-              )
-            : null;
-          compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
-          compactionNumCtx = compactionResolved
-            ? getProviderNumCtx(compactionResolved.provider, config?.numCtx)
-            : effectiveNumCtx;
+          await resolveNumCtxForModel();
+          resolveCompactionRuntime(
+            compactionModel ?? config?.compactionModel,
+            compactionProviderId
+          );
 
           // Compute allowedTools from always-apply skills (best-effort)
           let allowedTools: string[] | undefined;
@@ -885,9 +981,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             baseUrl: effectiveBaseUrl,
             requestId,
           });
-          effectiveCompactionModel = resolveCompactionModel(compactionModel, model as string);
-          compactionLlmRequestContext = llmRequestContext;
-          compactionNumCtx = effectiveNumCtx;
+          resolveCompactionRuntime(compactionModel, undefined);
           requestContext = buildRequestContext(null, null);
         }
         // Build the merged tool list (static native TOOLS + dynamic MCP
@@ -956,75 +1050,140 @@ export async function POST(req: NextRequest): Promise<Response> {
           );
         }
 
-        // Determine vision support for the selected model so we can strip
-        // image attachments when the model does not support them. The
-        // async resolver consults a per-(baseUrl, modelName) cache and
-        // falls back to provider-specific optimistic defaults — see
-        // `src/services/visionCache.ts` for the full resolution order.
-        // This is what fixes the silent image-stripping bug for
-        // openai-compatible providers (`/v1/models` has no standard
-        // `capabilities` field, so the legacy sync heuristic always
-        // returned `false` and the adapter stripped the image).
-        let visionSupported: boolean | undefined = undefined;
-        try {
-          let modelInfo;
-          try {
-            modelInfo = await fetchLlmModelInfo(llmRequestContext, model as string);
-          } catch {
-            // Model metadata is best-effort. The cache/default resolver below
-            // still provides a safe provider-specific fallback.
-          }
-          const resolved = await getLlmModelVisionSupportAsync(
-            activeProvider?.baseUrl ?? effectiveBaseUrl,
-            model as string,
-            activeProvider?.provider ?? 'ollama',
-            modelInfo
-          );
-          visionSupported = resolved.visionSupported;
-        } catch {
-          // Best-effort: if both metadata and cache resolution fail, preserve
-          // the existing behavior and let the adapter receive any images.
-        }
-
-        // Resolve per-parameter sampling support for the active model so
-        // the openai-compatible adapter can omit fields the upstream
-        // rejects (e.g. `temperature` on `openai/gpt-5.6-luna`). Mirrors
-        // the vision pattern above: best-effort, cache-aware, default
-        // ('supported' for both providers) on failure. The verdicts are
-        // stashed on a per-request closure variable so the adapter's
-        // synchronous payload builder can read them.
+        // The verdicts are stashed on per-request closure variables so the
+        // adapter's synchronous payload builder can read them, and so a
+        // mid-turn model switch can replace them wholesale.
+        let visionSupported: boolean | undefined = await resolveVisionForModel();
         let samplingParamSupport:
           | Awaited<ReturnType<typeof getLlmModelSamplingParamSupportAsync>>
-          | undefined;
-        try {
-          const provider = activeProvider?.provider ?? 'ollama';
-          const adapter = selectLlmAdapter(provider);
-          const probe = adapter.fetchSamplingParamSupport
-            ? () =>
-                adapter.fetchSamplingParamSupport!(llmRequestContext, model as string).then(
-                  (m) => m ?? {}
-                )
-            : undefined;
-          samplingParamSupport = await getLlmModelSamplingParamSupportAsync(
-            activeProvider?.baseUrl ?? effectiveBaseUrl,
-            model as string,
-            provider,
-            probe
-          );
-        } catch {
-          // Best-effort: undefined means every param is treated as
-          // supported (the adapter's optimistic default).
-          samplingParamSupport = undefined;
-        }
+          | undefined = await resolveSamplingSupportForModel();
 
         // Refresh the system prompt now that yolo and vision support are known.
-        currentMessages[0] = {
-          role: 'system',
-          content: createSystemPrompt(visionSupported, effectiveYolo, effectiveCiteSources),
+        const refreshSystemPrompt = (): void => {
+          currentMessages[0] = {
+            role: 'system',
+            content: createSystemPrompt(visionSupported, effectiveYolo, effectiveCiteSources),
+          };
+        };
+        refreshSystemPrompt();
+
+        /**
+         * Apply a model switch requested via `/api/chat/switch-model` while
+         * this turn was already streaming.
+         *
+         * Called at the top of each tool-call loop iteration, so the swap
+         * lands at a natural boundary rather than interrupting an in-flight
+         * LLM call. Everything the new model implies is re-derived here —
+         * context cap, vision support, sampling-parameter support, and the
+         * compaction runtime — so the rest of the turn never runs on
+         * verdicts resolved for the previous model.
+         *
+         * Sub-agents pick the change up for free: `requestContext.subAgent`
+         * is mutated in place, and `subAgentTool` reads `config.model` off
+         * that same object on every one of its internal iterations. A
+         * `run_subagents` batch that is already mid-flight therefore
+         * switches on its next LLM call.
+         */
+        const applyPendingModelSwitch = async (): Promise<void> => {
+          if (activeSessionId === undefined) return;
+          const pending = consumeModelSwitch(activeSessionId);
+          if (!pending) return;
+
+          if (pending.model !== undefined && pending.model !== model) {
+            model = pending.model;
+            const resolved = resolveProviderRequestContext(
+              config,
+              pending.providerId ?? providerId,
+              model,
+              requestId
+            );
+            if (resolved) {
+              activeProvider = resolved.provider;
+              llmRequestContext = resolved.ctx;
+            } else {
+              activeProvider = null;
+              llmRequestContext = buildLlmRequestContext({
+                baseUrl: effectiveBaseUrl,
+                requestId,
+              });
+            }
+            await resolveNumCtxForModel();
+            visionSupported = await resolveVisionForModel();
+            samplingParamSupport = await resolveSamplingSupportForModel();
+            refreshSystemPrompt();
+          }
+
+          // Always re-resolve the compaction runtime: an explicit switch
+          // changes it directly, and a main-model switch changes it too for
+          // anyone on "same as main".
+          const nextCompactionModel =
+            pending.compactionModel ?? compactionModel ?? config?.compactionModel;
+          resolveCompactionRuntime(
+            nextCompactionModel,
+            pending.compactionProviderId ?? compactionProviderId
+          );
+
+          // Mutating in place (rather than rebuilding the context) is what
+          // lets an already-running run_subagents batch see the new model.
+          // Provider fields are deleted when the new model has no
+          // configured provider, so a stale apiKey can't survive the swap.
+          const applyProviderSettings = (target: {
+            provider?: 'ollama' | 'openai-compatible';
+            apiKey?: string;
+          }): void => {
+            if (!activeProvider) {
+              delete target.provider;
+              delete target.apiKey;
+              return;
+            }
+            target.provider = activeProvider.provider;
+            if (activeProvider.apiKey) {
+              target.apiKey = activeProvider.apiKey;
+            } else {
+              delete target.apiKey;
+            }
+          };
+          const configuredBaseUrl = activeProvider?.baseUrl ?? effectiveBaseUrl;
+
+          requestContext.model = model;
+          requestContext.numCtx = effectiveNumCtx;
+          applyProviderSettings(requestContext.webSearch);
+          requestContext.webSearch.baseUrl = configuredBaseUrl;
+          requestContext.webSearch.compactionModel = effectiveCompactionModel;
+          requestContext.webSearch.compactionLlmRequestContext = compactionLlmRequestContext;
+          if (requestContext.subAgent) {
+            applyProviderSettings(requestContext.subAgent);
+            requestContext.subAgent.baseUrl = configuredBaseUrl;
+            requestContext.subAgent.model = model;
+            requestContext.subAgent.numCtx = effectiveNumCtx;
+            requestContext.subAgent.compactionModel = effectiveCompactionModel;
+            requestContext.subAgent.compactionLlmRequestContext = compactionLlmRequestContext;
+            requestContext.subAgent.compactionNumCtx = compactionNumCtx;
+          }
+
+          sendEvent('status', {
+            phase: 'model_switched',
+            model,
+            compactionModel: effectiveCompactionModel,
+            tokenLimit: effectiveNumCtx,
+            modelContextLimit,
+          });
+          debugLog.diagnostic({
+            layer: 'route',
+            phase: 'model_switched',
+            ...logCtx(activeSessionId),
+            model,
+            compactionModel: effectiveCompactionModel,
+          });
         };
 
         // ── Main tool-calling loop ──────────────────────────────────
         outer: while (true) {
+          // Pick up any model switch the user requested while this turn was
+          // streaming. Done before auto-compaction so compaction also runs
+          // on the newly selected models and context size.
+          await applyPendingModelSwitch();
+
           // Auto-compact when approaching the context limit, mirroring the
           // server-side autoCompactIfNeeded() logic in services/chatSession.ts.
           if (effectiveNumCtx > 0) {
@@ -2206,6 +2365,9 @@ export async function POST(req: NextRequest): Promise<Response> {
           ...logCtx(activeSessionId),
           result: req.signal.aborted ? 'aborted' : 'closed',
         });
+        if (activeSessionId !== undefined) {
+          unregisterActiveTurn(activeSessionId, requestId);
+        }
         stopKeepalive();
         try {
           controller.close();

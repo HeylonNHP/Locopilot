@@ -263,6 +263,15 @@ interface ChatState {
    *   their attached image will be dropped.
    */
   visionState: VisionSupportState;
+  /**
+   * True between requesting a mid-turn model switch via
+   * `/api/chat/switch-model` and the server confirming it with a
+   * `model_switched` status event. `model` / `compactionModel` already hold
+   * the newly picked values (they govern the next turn regardless), so this
+   * flag exists purely so the UI can say the running turn has not taken the
+   * new model on board yet, instead of implying the swap was instant.
+   */
+  modelSwitchPending: boolean;
   tokenStats: {
     promptEvalCount: number;
     evalCount: number;
@@ -1169,6 +1178,9 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         streamingSessions: nextSet,
+        // A switch that never got applied dies with the turn — the newly
+        // picked model is already what the next turn will send.
+        ...(nextSet.size === 0 ? { modelSwitchPending: false } : {}),
         ...(isVisibleSession ? { compactingPhases: [] } : {}),
       };
     }
@@ -1241,6 +1253,7 @@ const initialState: ChatState = {
   // first chat turn reports the resolved state. See the field's
   // JSDoc above for the full state machine.
   visionState: 'unknown',
+  modelSwitchPending: false,
 };
 
 export function selectUserMessages(state: ChatState): ChatMessage[] {
