@@ -186,6 +186,16 @@ Feature summary:
   - The cap cache is per-`(baseUrl, modelName)` with a 5-minute TTL. Invalidate it on model change or `requestedNumCtx` change via `invalidateCapCache(baseUrl?, modelName?)`.
   - The 400-driven discovery path in the chat route no longer writes to `sessions.num_ctx` — that column was a permanent poison pill. `updateSessionNumCtx` is deprecated; the in-memory cache and the SSE `status` event are sufficient.
 
+- **Mid-turn model switching** (`src/app/lib/modelSwitchRegistry.ts`, `src/app/api/chat/switch-model/route.ts`, `src/app/api/chat/route.ts`, `src/tools/impl/subAgentTool.ts`):
+  - SSE is server→client only, so a streaming turn has no inbound channel. `POST /api/chat/switch-model` is the side channel — same pattern as `/api/approve`. It writes a pending `{ model?, providerId?, compactionModel?, compactionProviderId? }` into a per-session in-memory registry; a session with no streaming turn gets a 404, which the client treats as "the config update already covers the next turn".
+  - **Boundary semantics, not interruption.** The switch is consumed at the top of the main `outer:` tool-call loop and at the top of each sub-agent iteration. An in-flight LLM call is never aborted, so the latency of a switch is bounded by the longest single tool call in progress.
+  - **The sub-agent hook is load-bearing.** A `run_subagents` batch parks the main loop for its whole duration, so a top-of-loop check alone would delay the swap until the batch returned. `SubAgentConfig.refreshModels` (wired to `applyPendingModelSwitch` in `buildRequestContext`, called at the top of `runSingleAgent`'s `while`) is what makes the swap land mid-batch. It mirrors the existing `approvalRequester` closure — a callback on the config object that reaches back into route scope. When editing either loop, keep both consumption points.
+  - **In-place mutation is deliberate.** `requestContext.subAgent` is mutated, never rebuilt: `subAgentTool` captures that object once by reference and reads `config.model` fresh each iteration, so mutation is what propagates. Rebuilding the context would strand already-running sub-agents on the old model. Provider fields are `delete`d when the new model has no configured provider, so a stale `apiKey` can't survive a swap.
+  - `model` in the chat route is a `let`, and the model-dependent setup — `resolveNumCtxForModel`, `resolveVisionForModel`, `resolveSamplingSupportForModel`, `resolveCompactionRuntime` — is factored into closures reused by both initial setup and the switch, so a swapped model never runs on the previous model's verdicts.
+  - Main and compaction models switch independently. Because `resolveCompactionModel('', model)` returns the main model, a "Same as main" user's compaction model follows a main-model switch for free.
+  - The server confirms with a `status` event of phase `model_switched` carrying the resolved `model` and `compactionModel`. The client sets `modelSwitchPending` on request and clears it on that event — the status bar shows "(switching…)" rather than flipping optimistically on click.
+  - The `/model` slash command needs no equivalent: `InputArea` unmounts `ChatInput` while streaming, so slash commands are unreachable mid-turn by construction.
+
 - **Vision-capability cache** (`src/services/visionCache.ts`, `src/services/llmContextLimit.ts`):
   - Per-`(baseUrl, provider, modelName)` cache of vision (image-input) support, mirroring `capResolver.ts`: NUL-separated key, 5-minute TTL, `Map`-backed, and `invalidateVisionCache(...)` for model/baseUrl/provider changes.
   - **Resolution precedence**: OpenAI-compatible assumes `'supported'` when no runtime discovery exists; Ollama assumes `'unsupported'` only as a weak fallback. A successful Ollama `/api/show` capabilities probe refreshes a weak default or older probe, while a runtime-discovered rejection from a matching 400 remains authoritative for the TTL. Probe failures preserve a valid cache entry and otherwise fall back to the provider default.
@@ -220,3 +230,13 @@ Feature summary:
   - Updated tool description and system prompt to explicitly encourage using 2-3 queries for complex tasks.
   - Improved automated query derivation in `webSearchTool.ts` to split prompts on "and", "or", commas, and semicolons.
   - This ensures more effective search coverage even with "lazy" model inputs.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

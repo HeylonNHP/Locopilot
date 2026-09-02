@@ -323,6 +323,14 @@ export function useChatStream(
           if (data.phase === 'vision_unsupported') {
             dispatch({ type: 'SET_VISION_STATE', state: 'unsupported' });
           }
+          // The running turn has taken a requested model switch on board.
+          // The server re-resolved vision support for the new model, so the
+          // previous model's verdict no longer applies — reset it to
+          // 'unknown' and let the next 400-driven discovery speak.
+          if (data.phase === 'model_switched') {
+            dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
+            dispatch({ type: 'SET_VISION_STATE', state: 'unknown' });
+          }
           break;
         }
 

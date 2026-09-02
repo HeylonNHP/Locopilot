@@ -70,6 +70,15 @@ export interface SseEventPayloadMap {
      * verdict into the sampling-params cache for the next turn.
      */
     param?: string;
+    /**
+     * Set on `phase: 'model_switched'`. Confirms which models the turn is
+     * actually using now that a `/api/chat/switch-model` request has been
+     * applied, so the client can flip its "switching…" indicator only once
+     * the swap has really taken effect. `compactionModel` is the resolved
+     * value, so it equals `model` when the user is on "same as main".
+     */
+    model?: string;
+    compactionModel?: string;
   };
   compact_progress: { message: string };
   compact: { messages: ChatMessage[]; stats: CompactStats };

@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
+import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
   REASONING_EFFORT_LABELS,
@@ -262,6 +263,28 @@ export default function SettingsModal({ onClose }: Props) {
       // ModelSelector main-model branch).
       if (mainProviderId) {
         dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: mainProviderId });
+      }
+
+      // Carry a model change into a turn that is already streaming, so the
+      // running turn (and its sub-agents) switch at their next tool step
+      // rather than only the next turn. Mirrors the ModelSelector path.
+      const streamingSessionId =
+        state.currentSessionId !== null && state.streamingSessions.has(state.currentSessionId)
+          ? state.currentSessionId
+          : null;
+      const modelChanged = model !== state.model;
+      const compactionChanged = compactionModel !== state.compactionModel;
+      if (streamingSessionId !== null && (modelChanged || compactionChanged)) {
+        dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: true } });
+        const accepted = await requestMidTurnModelSwitch(streamingSessionId, {
+          ...(modelChanged ? { model } : {}),
+          ...(modelChanged && mainProviderId ? { providerId: mainProviderId } : {}),
+          ...(compactionChanged ? { compactionModel } : {}),
+          ...(compactionChanged && compactionProviderId ? { compactionProviderId } : {}),
+        });
+        if (!accepted) {
+          dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
+        }
       }
 
       onClose();

@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { useChat } from '@/app/lib/chatStore';
+import { type MidTurnModelSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 
 import './ModelSelector.scss';
 
@@ -97,9 +98,28 @@ export default function ModelSelector({
     compactionProviderId,
     chatTimeoutMs,
     webSearch,
+    currentSessionId,
+    streamingSessions,
   } = state;
 
   const activeModel = mode === 'compaction' ? compactionModel : model;
+
+  // The session whose turn can still take a model switch on board, or null
+  // when nothing is streaming and the config update alone is enough.
+  const streamingSessionId =
+    currentSessionId !== null && streamingSessions.has(currentSessionId) ? currentSessionId : null;
+
+  const switchMidTurn = useCallback(
+    async (payload: MidTurnModelSwitch) => {
+      if (streamingSessionId === null) return;
+      dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: true } });
+      const accepted = await requestMidTurnModelSwitch(streamingSessionId, payload);
+      if (!accepted) {
+        dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
+      }
+    },
+    [dispatch, streamingSessionId]
+  );
 
   const [search, setSearch] = useState('');
   const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 420 });
@@ -216,6 +236,11 @@ export default function ModelSelector({
           // Silently ignore
         }
 
+        await switchMidTurn({
+          compactionModel: modelName,
+          ...(providerId ? { compactionProviderId: providerId } : {}),
+        });
+
         onClose();
         return;
       }
@@ -249,6 +274,11 @@ export default function ModelSelector({
         // Silently ignore
       }
 
+      await switchMidTurn({
+        model: modelName,
+        ...(selectedProviderId ? { providerId: selectedProviderId } : {}),
+      });
+
       onClose();
     },
     [
@@ -263,6 +293,7 @@ export default function ModelSelector({
       compactionModel,
       chatTimeoutMs,
       webSearch,
+      switchMidTurn,
     ]
   );
 

@@ -597,6 +597,9 @@ async function runSingleAgent(
 
   try {
     while (!isInterruptOrAbort(signal)) {
+      // Pick up a mid-turn model switch before compaction so both this
+      // iteration's LLM call and its compaction use the new models.
+      await config.refreshModels?.();
       const compacted = await autoCompactSubAgentIfNeeded(
         messages,
         config,
