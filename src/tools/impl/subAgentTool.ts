@@ -42,7 +42,13 @@ export const subAgentToolSchema: ToolSchema = {
 };
 
 import { AUTO_COMPACT_THRESHOLD_PCT } from '@/constants';
-import { compactHistory, SYNTHETIC_NUDGE_MARKER } from '@/services/compact';
+import {
+  compactHistory,
+  COMPACTION_ADAPTIVE_DIRECTIVE,
+  COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD,
+  SYNTHETIC_NUDGE_END,
+  SYNTHETIC_NUDGE_MARKER,
+} from '@/services/compact';
 import {
   buildLlmRequestContext,
   type ChatMessage,
@@ -87,7 +93,6 @@ const SUB_AGENT_AUTO_COMPACT_NOTICE_BASE =
   'The conversation history was automatically compacted due to context length. ' +
   'The original orchestrator request has been preserved verbatim above. ' +
   'Please continue working on that request without asking for confirmation.';
-const SUB_AGENT_NUDGE_SUFFIX = ' [End system notice]';
 const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
 
 function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): string {
@@ -254,15 +259,15 @@ async function autoCompactSubAgentIfNeeded(
     // cumulative compaction count so the model can adapt when it repeatedly
     // hits the context limit.
     const adaptiveSuffix =
-      compactionsSinceTaskStart >= 2
-        ? ' You are repeatedly hitting the context limit — be economical with tool output, avoid re-reading large files or repeating work, and consider whether your current approach is viable or should be changed.'
+      compactionsSinceTaskStart >= COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD
+        ? COMPACTION_ADAPTIVE_DIRECTIVE
         : '';
     messages.push({
       role: 'user',
       content:
         `${SYNTHETIC_NUDGE_MARKER}${SUB_AGENT_AUTO_COMPACT_NOTICE_BASE} ` +
         `The history has been compacted ${compactionsSinceTaskStart} time${compactionsSinceTaskStart === 1 ? '' : 's'} ` +
-        `since this sub-agent started.${adaptiveSuffix}${SUB_AGENT_NUDGE_SUFFIX}`,
+        `since this sub-agent started.${adaptiveSuffix}${SYNTHETIC_NUDGE_END}`,
     });
 
     if (result.stats.newTokenCount > config.numCtx) {

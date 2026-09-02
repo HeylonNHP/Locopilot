@@ -22,6 +22,18 @@ export const SUMMARY_PREAMBLE =
 // on a second compaction within the same turn. Every synthetic nudge starts
 // its content with this marker so the anchor can recognise and skip it.
 export const SYNTHETIC_NUDGE_MARKER = '[System notice: ';
+export const SYNTHETIC_NUDGE_END = ' [End system notice]';
+
+// Post-compaction nudge adaptive directive. Once compaction has fired this
+// many times in the same turn (main chat loop or sub-agent), the nudge stops
+// saying "please continue" and starts telling the model to economise — it is
+// demonstrably thrashing against the context window. Shared so the main
+// route and sub-agents switch behaviour at the same threshold.
+export const COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD = 2;
+export const COMPACTION_ADAPTIVE_DIRECTIVE =
+  ' You are repeatedly hitting the context limit — be economical with tool ' +
+  'output, avoid re-reading large files or repeating searches, and consider ' +
+  'whether your current approach is viable or should be changed.';
 
 // ---- History splitting / preservation ratios ----
 export const MIN_SUMMARISE_TOKENS = 200;

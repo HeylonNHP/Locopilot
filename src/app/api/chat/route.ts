@@ -55,7 +55,13 @@ import {
 } from '@/mcp';
 import { recordDiscoveredCap, resolveEffectiveNumCtx } from '@/services/capResolver';
 import { createSystemPrompt } from '@/services/chatSession';
-import { compactHistory, SYNTHETIC_NUDGE_MARKER } from '@/services/compact';
+import {
+  compactHistory,
+  COMPACTION_ADAPTIVE_DIRECTIVE,
+  COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD,
+  SYNTHETIC_NUDGE_END,
+  SYNTHETIC_NUDGE_MARKER,
+} from '@/services/compact';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_OLLAMA_BASE_URL,
@@ -1095,8 +1101,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // pipeline's latest-user-message anchor never latches onto it.
                 compactionsSinceLastPrompt += 1;
                 const adaptiveDirective =
-                  compactionsSinceLastPrompt >= 2
-                    ? ' You are repeatedly hitting the context limit — be economical with tool output, avoid re-reading large files or repeating searches, and consider whether your current approach is viable or should be changed.'
+                  compactionsSinceLastPrompt >= COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD
+                    ? COMPACTION_ADAPTIVE_DIRECTIVE
                     : ' Please continue working on the original task without asking for confirmation.';
                 currentMessages.push({
                   role: 'user',
@@ -1104,7 +1110,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     `${SYNTHETIC_NUDGE_MARKER}The conversation history was automatically compacted due to context length. ` +
                     `It has now been compacted ${compactionsSinceLastPrompt} time${compactionsSinceLastPrompt === 1 ? '' : 's'} ` +
                     `since your last message, and context usage is around ${Math.min(100, Math.round(usagePct))}%.` +
-                    `${adaptiveDirective} [End system notice]`,
+                    `${adaptiveDirective}${SYNTHETIC_NUDGE_END}`,
                 });
                 const flushResult = await flushSessionState();
                 if (!flushResult.ok) {
@@ -1889,8 +1895,8 @@ export async function POST(req: NextRequest): Promise<Response> {
               role: 'user',
               content:
                 `${SYNTHETIC_NUDGE_MARKER}Your last response was empty. Provide a direct answer now. ` +
-                'If commands are needed, call run_command. If commands already ran, summarize their output and errors.' +
-                ' [End system notice]',
+                `If commands are needed, call run_command. If commands already ran, summarize their output and errors.${ 
+                SYNTHETIC_NUDGE_END}`,
             };
             currentMessages.push(recoveryMessage);
             pendingAppends.push(recoveryMessage);
@@ -2016,7 +2022,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               nudgeLines.push(
                 '',
                 `Original request: ${originalUserRequest}`,
-                '[End system notice]'
+                SYNTHETIC_NUDGE_END.trim()
               );
               const nudgeText = nudgeLines.join('\n');
               currentMessages.push({

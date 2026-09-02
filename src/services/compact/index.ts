@@ -8,5 +8,10 @@
  */
 
 export { SYNTHETIC_NUDGE_MARKER } from './constants';
+export {
+  COMPACTION_ADAPTIVE_DIRECTIVE,
+  COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD,
+  SYNTHETIC_NUDGE_END,
+} from './constants';
 export { compactHistory } from './orchestrate';
 export type { CompactResult, CompactStats } from './types';
