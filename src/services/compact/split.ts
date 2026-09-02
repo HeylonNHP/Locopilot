@@ -25,16 +25,27 @@ import {
   PRESERVE_RECENT_TOKENS_RATIO,
   RECENT_TOKEN_BUDGET_CEILING_RATIO,
   RECENT_TOKEN_BUDGET_FLOOR_RATIO,
+  SYNTHETIC_NUDGE_MARKER,
 } from './constants';
 
 function computeRecentMessageFloor(numCtx: number): number {
   return clamp(Math.round(numCtx / 32768) + 2, 2, 8);
 }
 
-/** Returns the index of the most recent `role === 'user'` message, or -1 if none. */
+/**
+ * True when a message is a server-generated synthetic nudge rather than a
+ * real user prompt. Synthetic nudges carry the shared marker prefix so this
+ * check stays in sync with every injection site.
+ */
+export function isSyntheticNudge(message: ChatMessage | undefined): boolean {
+  if (!message || message.role !== 'user') return false;
+  return typeof message.content === 'string' && message.content.startsWith(SYNTHETIC_NUDGE_MARKER);
+}
+
+/** Returns the index of the most recent real (non-synthetic) `role === 'user'` message, or -1 if none. */
 export function findLatestUserMessageIndex(messages: ChatMessage[]): number {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]?.role === 'user') return i;
+    if (messages[i]?.role === 'user' && !isSyntheticNudge(messages[i])) return i;
   }
   return -1;
 }

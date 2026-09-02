@@ -7,5 +7,6 @@
  * layout.
  */
 
+export { SYNTHETIC_NUDGE_MARKER } from './constants';
 export { compactHistory } from './orchestrate';
 export type { CompactResult, CompactStats } from './types';

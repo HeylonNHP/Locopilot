@@ -13,6 +13,16 @@ export const SUMMARY_PREAMBLE =
   'summary of everything important that has occurred so far. Treat it as ' +
   'authoritative context for continuing the conversation.]';
 
+// ---- Synthetic system-generated user-role nudges ----
+// Server-generated LLM-only nudges (post-compaction "please continue",
+// empty-response recovery, prompt-loop continuation) are pushed into the
+// in-memory history with role 'user'. They are NOT real user prompts, so the
+// compaction pipeline's latest-user-message anchor must never latch onto one
+// — anchoring on a nudge would let the real user prompt be summarised away
+// on a second compaction within the same turn. Every synthetic nudge starts
+// its content with this marker so the anchor can recognise and skip it.
+export const SYNTHETIC_NUDGE_MARKER = '[System notice: ';
+
 // ---- History splitting / preservation ratios ----
 export const MIN_SUMMARISE_TOKENS = 200;
 export const PRESERVE_RECENT_TOKENS_RATIO = 0.12;
