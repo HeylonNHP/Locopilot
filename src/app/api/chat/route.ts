@@ -55,7 +55,7 @@ import {
 } from '@/mcp';
 import { recordDiscoveredCap, resolveEffectiveNumCtx } from '@/services/capResolver';
 import { createSystemPrompt } from '@/services/chatSession';
-import { compactHistory } from '@/services/compact';
+import { compactHistory, SYNTHETIC_NUDGE_MARKER } from '@/services/compact';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_OLLAMA_BASE_URL,
@@ -425,6 +425,13 @@ export async function POST(req: NextRequest): Promise<Response> {
       // system-prompt directive and the tool-result reminder.
       let effectiveCiteSources = true;
       let emptyResponseRecoveryAttempts = 0;
+      // How many times auto-compaction has fired since this request (i.e.
+      // since the user's last real prompt) began. Each real user message
+      // starts a fresh request, so this counter needs no explicit reset —
+      // it resets naturally per turn. Surfaced to the LLM in the
+      // post-compaction nudge so it can adapt when it repeatedly hits the
+      // context limit.
+      let compactionsSinceLastPrompt = 0;
       // Server-generated messages that have not yet been persisted.
       // flushSessionState appends these to the fresh DB message list.
       // Compaction uses a full replacement instead.
@@ -1081,11 +1088,23 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // Persist compacted history so the frontend sees the reduced state.
                 pendingReplace = [...currentMessages];
                 // LLM-only nudge – not sent to the client and not persisted.
+                // Carries the cumulative compaction count and current usage so
+                // the model can recognise it is repeatedly hitting the context
+                // limit and adapt (tighter tool output, different approach).
+                // Prefixed with SYNTHETIC_NUDGE_MARKER so the compaction
+                // pipeline's latest-user-message anchor never latches onto it.
+                compactionsSinceLastPrompt += 1;
+                const adaptiveDirective =
+                  compactionsSinceLastPrompt >= 2
+                    ? ' You are repeatedly hitting the context limit — be economical with tool output, avoid re-reading large files or repeating searches, and consider whether your current approach is viable or should be changed.'
+                    : ' Please continue working on the original task without asking for confirmation.';
                 currentMessages.push({
                   role: 'user',
                   content:
-                    'The conversation history was automatically compacted due to context length. ' +
-                    'Please continue working on the original task without asking for confirmation.',
+                    `${SYNTHETIC_NUDGE_MARKER}The conversation history was automatically compacted due to context length. ` +
+                    `It has now been compacted ${compactionsSinceLastPrompt} time${compactionsSinceLastPrompt === 1 ? '' : 's'} ` +
+                    `since your last message, and context usage is around ${Math.min(100, Math.round(usagePct))}%.` +
+                    `${adaptiveDirective} [End system notice]`,
                 });
                 const flushResult = await flushSessionState();
                 if (!flushResult.ok) {
@@ -1869,8 +1888,9 @@ export async function POST(req: NextRequest): Promise<Response> {
             const recoveryMessage: ChatMessage = {
               role: 'user',
               content:
-                'Your last response was empty. Provide a direct answer now. ' +
-                'If commands are needed, call run_command. If commands already ran, summarize their output and errors.',
+                `${SYNTHETIC_NUDGE_MARKER}Your last response was empty. Provide a direct answer now. ` +
+                'If commands are needed, call run_command. If commands already ran, summarize their output and errors.' +
+                ' [End system notice]',
             };
             currentMessages.push(recoveryMessage);
             pendingAppends.push(recoveryMessage);
@@ -1984,7 +2004,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 iteration: promptLoopIterations,
               });
               const nudgeLines = [
-                `Continue working on my original request. It is not yet complete.`,
+                `${SYNTHETIC_NUDGE_MARKER}Continue working on my original request. It is not yet complete.`,
               ];
               if (feedback) {
                 nudgeLines.push(
@@ -1993,7 +2013,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                   feedback
                 );
               }
-              nudgeLines.push('', `Original request: ${originalUserRequest}`);
+              nudgeLines.push(
+                '',
+                `Original request: ${originalUserRequest}`,
+                '[End system notice]'
+              );
               const nudgeText = nudgeLines.join('\n');
               currentMessages.push({
                 role: 'user',

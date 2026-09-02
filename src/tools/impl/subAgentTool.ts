@@ -42,7 +42,7 @@ export const subAgentToolSchema: ToolSchema = {
 };
 
 import { AUTO_COMPACT_THRESHOLD_PCT } from '@/constants';
-import { compactHistory } from '@/services/compact';
+import { compactHistory, SYNTHETIC_NUDGE_MARKER } from '@/services/compact';
 import {
   buildLlmRequestContext,
   type ChatMessage,
@@ -83,10 +83,11 @@ interface CompletedSubAgent {
   content: string;
 }
 
-const SUB_AGENT_AUTO_COMPACT_NOTICE =
+const SUB_AGENT_AUTO_COMPACT_NOTICE_BASE =
   'The conversation history was automatically compacted due to context length. ' +
   'The original orchestrator request has been preserved verbatim above. ' +
   'Please continue working on that request without asking for confirmation.';
+const SUB_AGENT_NUDGE_SUFFIX = ' [End system notice]';
 const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
 
 function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): string {
@@ -125,7 +126,7 @@ function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): s
       'CITATIONS — after web research:\n' +
       'After using web_search or fetch_url, you MUST cite your sources. Place numbered links ([1], [2], ...) ' +
       'after each claim taken from the web, and end with a "Sources:" section listing each source as ' +
-      '[n] Source Name — full URL. Use ONLY the real URLs from the tool results\' SOURCES block; never invent ' +
+      "[n] Source Name — full URL. Use ONLY the real URLs from the tool results' SOURCES block; never invent " +
       'URLs or use result_N placeholders. When you return a summary to the parent agent, include the full ' +
       'source URLs you used so the parent can cite them.\n';
   }
@@ -161,6 +162,7 @@ async function autoCompactSubAgentIfNeeded(
   output: ToolOutputSink,
   agentId: string,
   orchestratorPrompt: ChatMessage,
+  compactionsSinceTaskStart: number,
   signal?: AbortSignal
 ): Promise<boolean> {
   if (config.numCtx <= 0) {
@@ -247,9 +249,20 @@ async function autoCompactSubAgentIfNeeded(
     }
 
     messages.splice(0, messages.length, ...result.newMessages);
+    // Prefixed with SYNTHETIC_NUDGE_MARKER so the compaction pipeline's
+    // latest-user-message anchor never latches onto this notice. Carries the
+    // cumulative compaction count so the model can adapt when it repeatedly
+    // hits the context limit.
+    const adaptiveSuffix =
+      compactionsSinceTaskStart >= 2
+        ? ' You are repeatedly hitting the context limit — be economical with tool output, avoid re-reading large files or repeating work, and consider whether your current approach is viable or should be changed.'
+        : '';
     messages.push({
       role: 'user',
-      content: SUB_AGENT_AUTO_COMPACT_NOTICE,
+      content:
+        `${SYNTHETIC_NUDGE_MARKER}${SUB_AGENT_AUTO_COMPACT_NOTICE_BASE} ` +
+        `The history has been compacted ${compactionsSinceTaskStart} time${compactionsSinceTaskStart === 1 ? '' : 's'} ` +
+        `since this sub-agent started.${adaptiveSuffix}${SUB_AGENT_NUDGE_SUFFIX}`,
     });
 
     if (result.stats.newTokenCount > config.numCtx) {
@@ -451,15 +464,33 @@ async function executeNestedToolCall(
   try {
     if (toolName === 'run_command') {
       output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a command:`);
-      toolResult = await command.execute(toolCall.function.arguments, nestedProgress, output, context, signal);
+      toolResult = await command.execute(
+        toolCall.function.arguments,
+        nestedProgress,
+        output,
+        context,
+        signal
+      );
     } else if (toolName === 'mcp_call' && subAgentMcpApprovals) {
       const derivedContext: RequestContext = {
         ...(context ?? ({} as RequestContext)),
         mcpApprovals: [...subAgentMcpApprovals],
       };
-      toolResult = await command.execute(toolCall.function.arguments, nestedProgress, output, derivedContext, signal);
+      toolResult = await command.execute(
+        toolCall.function.arguments,
+        nestedProgress,
+        output,
+        derivedContext,
+        signal
+      );
     } else {
-      toolResult = await command.execute(toolCall.function.arguments, nestedProgress, output, context, signal);
+      toolResult = await command.execute(
+        toolCall.function.arguments,
+        nestedProgress,
+        output,
+        context,
+        signal
+      );
     }
   } catch (err) {
     debugLog.diagnostic({
@@ -549,6 +580,10 @@ async function runSingleAgent(
 
   let finalContent = '';
   const toolCallFingerprints = new Set<string>();
+  // How many times this sub-agent's own auto-compaction has fired. Surfaced
+  // in the post-compaction notice so the model can adapt when it repeatedly
+  // hits the context limit. Local per sub-agent; not inherited from the parent.
+  let subAgentCompactions = 0;
 
   const CIRCUIT_BREAKER_NOTICE =
     '[System: You have already called this exact tool with the same arguments in a previous turn. ' +
@@ -557,114 +592,153 @@ async function runSingleAgent(
 
   try {
     while (!isInterruptOrAbort(signal)) {
-      await autoCompactSubAgentIfNeeded(messages, config, labeledOutput, agent.id, orcPrompt, signal);
+      const compacted = await autoCompactSubAgentIfNeeded(
+        messages,
+        config,
+        labeledOutput,
+        agent.id,
+        orcPrompt,
+        subAgentCompactions + 1,
+        signal
+      );
+      if (compacted) {
+        subAgentCompactions += 1;
+      }
       if (isInterruptOrAbort(signal)) {
         break;
       }
 
-    onProgress?.(`Sub-agent ${agent.id}: thinking`);
+      onProgress?.(`Sub-agent ${agent.id}: thinking`);
 
-    // Track rough tokens and wall-clock time so the web UI can show
-    // live tokens-per-second while the sub-agent is generating.
-    const subagentStartMs = Date.now();
-    let subagentRoughTokens = 0;
-    let subagentLastTpsStatusMs = 0;
+      // Track rough tokens and wall-clock time so the web UI can show
+      // live tokens-per-second while the sub-agent is generating.
+      const subagentStartMs = Date.now();
+      let subagentRoughTokens = 0;
+      let subagentLastTpsStatusMs = 0;
 
-    const subAgentContext: LlmRequestContext = buildLlmRequestContext({
-      ...(config.provider ? { provider: config.provider } : {}),
-      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
-      baseUrl: config.baseUrl,
-      ...(context?.requestId ? { requestId: context.requestId } : {}),
-    });
+      const subAgentContext: LlmRequestContext = buildLlmRequestContext({
+        ...(config.provider ? { provider: config.provider } : {}),
+        ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+        baseUrl: config.baseUrl,
+        ...(context?.requestId ? { requestId: context.requestId } : {}),
+      });
 
-    const turnStartedAt = Date.now();
-    let chunkCount = 0;
-    let lastChunkAt = turnStartedAt;
-    debugLog.diagnostic({
-      layer: 'subagent',
-      phase: 'model_request_start',
-      requestId: context?.requestId,
-      sessionId: context?.sessionId,
-      agentId: agent.id,
-      provider: config.provider,
-      model: config.model,
-      baseUrl: config.baseUrl,
-      elapsedMs: turnStartedAt - agentStartedAt,
-      messageCount: messages.length,
-      toolCallCount: messages.reduce((total, message) => total + (message.tool_calls?.length ?? 0), 0),
-    });
-    const stallTimer = setInterval(() => {
-      const now = Date.now();
+      const turnStartedAt = Date.now();
+      let chunkCount = 0;
+      let lastChunkAt = turnStartedAt;
       debugLog.diagnostic({
         layer: 'subagent',
-        phase: 'model_wait',
+        phase: 'model_request_start',
         requestId: context?.requestId,
         sessionId: context?.sessionId,
         agentId: agent.id,
         provider: config.provider,
         model: config.model,
         baseUrl: config.baseUrl,
-        elapsedMs: now - turnStartedAt,
-        sinceLastChunkMs: now - lastChunkAt,
-        chunkCount,
+        elapsedMs: turnStartedAt - agentStartedAt,
         messageCount: messages.length,
+        toolCallCount: messages.reduce(
+          (total, message) => total + (message.tool_calls?.length ?? 0),
+          0
+        ),
       });
-    }, SUBAGENT_STALL_LOG_INTERVAL_MS);
-
-    let response: Awaited<ReturnType<typeof sendLlmChat>>;
-    try {
-      response = await sendLlmChat(
-        subAgentContext,
-        {
+      const stallTimer = setInterval(() => {
+        const now = Date.now();
+        debugLog.diagnostic({
+          layer: 'subagent',
+          phase: 'model_wait',
+          requestId: context?.requestId,
+          sessionId: context?.sessionId,
+          agentId: agent.id,
+          provider: config.provider,
           model: config.model,
-          messages,
-          tools,
-          numCtx: config.numCtx,
-          ...(config.reasoningEffort === undefined
-            ? {}
-            : { reasoningEffort: config.reasoningEffort }),
-        },
-        (chunk) => {
-          const now = Date.now();
-          chunkCount += 1;
-          lastChunkAt = now;
-          if (chunkCount === 1) {
-            debugLog.diagnostic({
-              layer: 'subagent',
-              phase: 'model_first_chunk',
-              requestId: context?.requestId,
-              sessionId: context?.sessionId,
-              agentId: agent.id,
-              provider: config.provider,
-              model: config.model,
-              baseUrl: config.baseUrl,
-              elapsedMs: now - turnStartedAt,
-            });
-          }
-          if (chunk.message?.thinking) {
-            output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
-            subagentRoughTokens += Math.max(1, countTextTokens(chunk.message.thinking, config.model));
-          }
-          if (chunk.message?.content) {
-            output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
-            subagentRoughTokens += Math.max(1, countTextTokens(chunk.message.content, config.model));
-          }
+          baseUrl: config.baseUrl,
+          elapsedMs: now - turnStartedAt,
+          sinceLastChunkMs: now - lastChunkAt,
+          chunkCount,
+          messageCount: messages.length,
+        });
+      }, SUBAGENT_STALL_LOG_INTERVAL_MS);
 
-          if (now - subagentLastTpsStatusMs > 800) {
-            const elapsedSec = (now - subagentStartMs) / 1000;
-            if (elapsedSec > 0) {
-              output.reportTps?.(+(subagentRoughTokens / elapsedSec).toFixed(2));
+      let response: Awaited<ReturnType<typeof sendLlmChat>>;
+      try {
+        response = await sendLlmChat(
+          subAgentContext,
+          {
+            model: config.model,
+            messages,
+            tools,
+            numCtx: config.numCtx,
+            ...(config.reasoningEffort === undefined
+              ? {}
+              : { reasoningEffort: config.reasoningEffort }),
+          },
+          (chunk) => {
+            const now = Date.now();
+            chunkCount += 1;
+            lastChunkAt = now;
+            if (chunkCount === 1) {
+              debugLog.diagnostic({
+                layer: 'subagent',
+                phase: 'model_first_chunk',
+                requestId: context?.requestId,
+                sessionId: context?.sessionId,
+                agentId: agent.id,
+                provider: config.provider,
+                model: config.model,
+                baseUrl: config.baseUrl,
+                elapsedMs: now - turnStartedAt,
+              });
             }
-            subagentLastTpsStatusMs = now;
-          }
-        },
-        undefined,
-        signal
-      );
-    } catch (err) {
+            if (chunk.message?.thinking) {
+              output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
+              subagentRoughTokens += Math.max(
+                1,
+                countTextTokens(chunk.message.thinking, config.model)
+              );
+            }
+            if (chunk.message?.content) {
+              output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
+              subagentRoughTokens += Math.max(
+                1,
+                countTextTokens(chunk.message.content, config.model)
+              );
+            }
+
+            if (now - subagentLastTpsStatusMs > 800) {
+              const elapsedSec = (now - subagentStartMs) / 1000;
+              if (elapsedSec > 0) {
+                output.reportTps?.(+(subagentRoughTokens / elapsedSec).toFixed(2));
+              }
+              subagentLastTpsStatusMs = now;
+            }
+          },
+          undefined,
+          signal
+        );
+      } catch (err) {
+        debugLog.diagnostic({
+          layer: 'subagent',
+          phase: isInterruptOrAbort(signal) ? 'abort' : 'error',
+          requestId: context?.requestId,
+          sessionId: context?.sessionId,
+          agentId: agent.id,
+          provider: config.provider,
+          model: config.model,
+          baseUrl: config.baseUrl,
+          elapsedMs: Date.now() - turnStartedAt,
+          sinceLastChunkMs: Date.now() - lastChunkAt,
+          chunkCount,
+          error: err,
+        });
+        throw err;
+      } finally {
+        clearInterval(stallTimer);
+      }
+
       debugLog.diagnostic({
         layer: 'subagent',
-        phase: isInterruptOrAbort(signal) ? 'abort' : 'error',
+        phase: 'model_complete',
         requestId: context?.requestId,
         sessionId: context?.sessionId,
         agentId: agent.id,
@@ -674,118 +748,99 @@ async function runSingleAgent(
         elapsedMs: Date.now() - turnStartedAt,
         sinceLastChunkMs: Date.now() - lastChunkAt,
         chunkCount,
-        error: err,
+        result: chunkCount > 0 ? 'streamed' : 'no_chunks',
       });
-      throw err;
-    } finally {
-      clearInterval(stallTimer);
-    }
 
-    debugLog.diagnostic({
-      layer: 'subagent',
-      phase: 'model_complete',
-      requestId: context?.requestId,
-      sessionId: context?.sessionId,
-      agentId: agent.id,
-      provider: config.provider,
-      model: config.model,
-      baseUrl: config.baseUrl,
-      elapsedMs: Date.now() - turnStartedAt,
-      sinceLastChunkMs: Date.now() - lastChunkAt,
-      chunkCount,
-      result: chunkCount > 0 ? 'streamed' : 'no_chunks',
-    });
+      // Emit a trailing newline so successive tool outputs and the next LLM
+      // turn are visually separated from the streamed response text.
+      output.writeAgentChunk?.(agent.id, 'content', '\n');
 
-    // Emit a trailing newline so successive tool outputs and the next LLM
-    // turn are visually separated from the streamed response text.
-    output.writeAgentChunk?.(agent.id, 'content', '\n');
+      const assistantMessage = sanitizeChatMessage(response.message);
 
-    const assistantMessage = sanitizeChatMessage(response.message);
+      if (assistantMessage.content.trim().length > 0) {
+        finalContent = assistantMessage.content.trim();
+      }
 
-    if (assistantMessage.content.trim().length > 0) {
-      finalContent = assistantMessage.content.trim();
-    }
-
-    if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
-      messages.push(assistantMessage);
-      onProgress?.(`Sub-agent ${agent.id}: completed`);
-      break;
-    }
-
-    // Collect every tool response before appending anything. This keeps the
-    // assistant message and its matching tool messages contiguous in history,
-    // satisfying the OpenAI message-ordering contract.
-    const toolResults: ChatMessage[] = [];
-
-    for (const toolCall of assistantMessage.tool_calls) {
-      if (isInterruptOrAbort(signal)) {
+      if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+        messages.push(assistantMessage);
+        onProgress?.(`Sub-agent ${agent.id}: completed`);
         break;
       }
 
-      onProgress?.(`Sub-agent ${agent.id}: ${toolCall.function.name}`);
+      // Collect every tool response before appending anything. This keeps the
+      // assistant message and its matching tool messages contiguous in history,
+      // satisfying the OpenAI message-ordering contract.
+      const toolResults: ChatMessage[] = [];
 
-      const fingerprint = `${toolCall.function.name}:${JSON.stringify(toolCall.function.arguments)}`;
-      if (toolCallFingerprints.has(fingerprint)) {
-        // The model is repeating an identical tool call. We must still emit a
-        // tool response for this tool_call_id to keep the OpenAI message ordering
-        // contract valid; use the circuit-breaker notice as the tool result.
+      for (const toolCall of assistantMessage.tool_calls) {
+        if (isInterruptOrAbort(signal)) {
+          break;
+        }
+
+        onProgress?.(`Sub-agent ${agent.id}: ${toolCall.function.name}`);
+
+        const fingerprint = `${toolCall.function.name}:${JSON.stringify(toolCall.function.arguments)}`;
+        if (toolCallFingerprints.has(fingerprint)) {
+          // The model is repeating an identical tool call. We must still emit a
+          // tool response for this tool_call_id to keep the OpenAI message ordering
+          // contract valid; use the circuit-breaker notice as the tool result.
+          toolResults.push(
+            sanitizeChatMessage({
+              role: 'tool',
+              content: CIRCUIT_BREAKER_NOTICE,
+              tool_call_id: toolCall.id,
+            })
+          );
+          continue;
+        }
+        toolCallFingerprints.add(fingerprint);
+
+        let toolResult: ToolCallResult;
+        try {
+          toolResult = await executeNestedToolCall(
+            agent.id,
+            toolCall,
+            labeledOutput,
+            onProgress,
+            agentContext,
+            signal,
+            subAgentMcpApprovals
+          );
+        } catch (err) {
+          const errorContent = err instanceof Error ? err.message : String(err);
+          toolResult = { content: `[Sub-agent tool error: ${errorContent}]` };
+          labeledOutput.writeLine(`Sub-agent tool error: ${errorContent}`);
+        }
+
         toolResults.push(
           sanitizeChatMessage({
             role: 'tool',
-            content: CIRCUIT_BREAKER_NOTICE,
+            content: toolResult.content,
             tool_call_id: toolCall.id,
-          })
-        );
-        continue;
-      }
-      toolCallFingerprints.add(fingerprint);
-
-      let toolResult: ToolCallResult;
-      try {
-        toolResult = await executeNestedToolCall(
-          agent.id,
-          toolCall,
-          labeledOutput,
-          onProgress,
-          agentContext,
-          signal,
-          subAgentMcpApprovals
-        );
-      } catch (err) {
-        const errorContent = err instanceof Error ? err.message : String(err);
-        toolResult = { content: `[Sub-agent tool error: ${errorContent}]` };
-        labeledOutput.writeLine(`Sub-agent tool error: ${errorContent}`);
-      }
-
-      toolResults.push(
-        sanitizeChatMessage({
-          role: 'tool',
-          content: toolResult.content,
-          tool_call_id: toolCall.id,
-          ...(toolResult.images ? { images: toolResult.images } : {}),
-        })
-      );
-    }
-
-    // Push the assistant message and all of its tool responses as an atomic
-    // block so no other message can be inserted between them.
-    // If the loop was interrupted (e.g. abort signal), some tool_calls may not
-    // have a collected result. Synthesize error responses for any missing ids
-    // so the OpenAI message-ordering contract is always satisfied.
-    const respondedToolIds = new Set(toolResults.map((m) => m.tool_call_id));
-    for (const tc of assistantMessage.tool_calls) {
-      if (!respondedToolIds.has(tc.id)) {
-        toolResults.push(
-          sanitizeChatMessage({
-            role: 'tool',
-            content:
-              '[Tool response missing: the tool call was interrupted before a result was produced.]',
-            tool_call_id: tc.id,
+            ...(toolResult.images ? { images: toolResult.images } : {}),
           })
         );
       }
-    }
-    messages.push(assistantMessage, ...toolResults);
+
+      // Push the assistant message and all of its tool responses as an atomic
+      // block so no other message can be inserted between them.
+      // If the loop was interrupted (e.g. abort signal), some tool_calls may not
+      // have a collected result. Synthesize error responses for any missing ids
+      // so the OpenAI message-ordering contract is always satisfied.
+      const respondedToolIds = new Set(toolResults.map((m) => m.tool_call_id));
+      for (const tc of assistantMessage.tool_calls) {
+        if (!respondedToolIds.has(tc.id)) {
+          toolResults.push(
+            sanitizeChatMessage({
+              role: 'tool',
+              content:
+                '[Tool response missing: the tool call was interrupted before a result was produced.]',
+              tool_call_id: tc.id,
+            })
+          );
+        }
+      }
+      messages.push(assistantMessage, ...toolResults);
     }
     return finalContent;
   } catch (err) {
