@@ -451,6 +451,35 @@ export async function POST(req: NextRequest): Promise<Response> {
       // Compaction uses a full replacement instead.
       const pendingAppends: PersistedChatMessage[] = [];
       let pendingReplace: PersistedChatMessage[] | null = null;
+      // Sub-agent log accumulation. The per-agent bubbles are client-only
+      // during streaming; the subagentOutputSink appends every line/chunk
+      // here so the tool-loop push site can persist one subagent_log row
+      // per agentId alongside the run_subagents tool result. Without this
+      // the end-of-turn client reload (which reads the DB) wipes the
+      // bubbles the moment the turn completes.
+      const subagentLogContent = new Map<string, string>();
+
+      /** Build a subagent_log row and remove the agent from the pending map. */
+      function takeSubagentRow(agentId: string): PersistedChatMessage {
+        const row: PersistedChatMessage = {
+          role: 'subagent_log',
+          content: subagentLogContent.get(agentId) ?? '',
+          subagentId: agentId,
+        };
+        subagentLogContent.delete(agentId);
+        return row;
+      }
+
+      /**
+       * Flush any remaining sub-agent log rows into pendingAppends. Used on
+       * the abort/error paths where the run_subagents tool result push site
+       * may never be reached.
+       */
+      function flushRemainingSubagentLogs(): void {
+        for (const agentId of subagentLogContent.keys()) {
+          pendingAppends.push(takeSubagentRow(agentId));
+        }
+      }
 
       async function flushSessionState(): Promise<{ ok: true } | { ok: false; error: string }> {
         if (activeSessionId === undefined) return { ok: true };
@@ -1837,6 +1866,9 @@ export async function POST(req: NextRequest): Promise<Response> {
               // Subagent output sink: strips ANSI, parses the [sub-agent: id]
               // prefix that makeLabeledSink prepends, and emits per-agent SSE
               // events so the client can render each agent in its own bubble.
+              // Every line is also accumulated into subagentLogContent so
+              // flushSessionState persists the bubbles for the end-of-turn
+              // client reload.
               const subagentOutputSink: ToolOutputSink = {
                 writeLine(message: string): void {
                   const clean = sanitize(message);
@@ -1844,6 +1876,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                   const agentId = match ? match[1]!.trim() : '__subagent__';
                   const text = match ? (match[2] ?? '').trimEnd() : clean.trimEnd();
                   if (text.trim()) {
+                    subagentLogContent.set(
+                      agentId,
+                      `${subagentLogContent.get(agentId) ?? ''}${text}\n`
+                    );
                     sendEvent('subagent_output', { agentId, message: text });
                   }
                 },
@@ -1851,6 +1887,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 clearInline(): void {},
                 writeAgentChunk(agentId: string, type: 'thinking' | 'content', text: string): void {
                   if (text) {
+                    subagentLogContent.set(agentId, (subagentLogContent.get(agentId) ?? '') + text);
                     sendEvent('subagent_chunk', { agentId, type, text });
                   }
                 },
@@ -1986,8 +2023,14 @@ export async function POST(req: NextRequest): Promise<Response> {
               }
             }
 
+            // Sub-agent log bubbles are client-only during streaming; persist
+            // them here (one row per agentId, before the tool results so the
+            // reloaded history matches the live streaming order) or the
+            // end-of-turn client reload wipes them from the UI.
+            const subagentRows = [...subagentLogContent.keys()].map(takeSubagentRow);
+
             currentMessages.push(assistantMessage, ...toolResults);
-            pendingAppends.push(assistantMessage, ...toolResults);
+            pendingAppends.push(...subagentRows, assistantMessage, ...toolResults);
             emptyResponseRecoveryAttempts = 0;
             debugLog.messageArraySummary(
               'tool-loop: after push',
@@ -2285,7 +2328,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === 'AbortError') {
-          // Save whatever we have so far before closing.
+          // Save whatever we have so far before closing. Sub-agent log
+          // rows are flushed too — an interrupted run_subagents batch
+          // should still leave its bubbles in the reloaded history.
+          flushRemainingSubagentLogs();
           if (activeSessionId !== undefined && sessionExists(activeSessionId)) {
             await flushSessionState().catch((err_) => {
               logger.error('chat', 'Abort flush failed', { error: err_ });
