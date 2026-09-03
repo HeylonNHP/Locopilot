@@ -25,8 +25,11 @@ import {
   buildNamespacedName,
   dispatchMCPToolCall,
   type DispatchOptions,
+  getMCPServerConfig,
+  matchesAutoApprovePattern,
   MCP_TOOL_NAMESPACE_PREFIX,
   MCP_TOOL_NAMESPACE_SEPARATOR,
+  parseMCPToolName,
 } from '@/mcp';
 
 const SERVER_NAME_REGEX = /^[\w-]+$/i;
@@ -85,8 +88,8 @@ export const mcpCallToolSchema: ToolSchema = {
   name: 'mcp_call',
   description:
     'Invoke a tool exposed by a configured MCP (Model Context Protocol) server. ' +
-    'Pass the server name and the bare tool name; the full namespaced name `mcp__<server>__<tool>` ' +
-    'is what the LLM should use to register the call. Servers and their tools are listed via the ' +
+    'You can call MCP tools either by their full namespaced name `mcp__<server>__<tool>` directly, ' +
+    'or via this tool with the server name and the bare tool name. Servers and their tools are listed via the ' +
     '`/mcp list` slash command and the `mcp__*` entries in the system tool list. ' +
     'Phase 1 default approval: each call requires explicit user approval unless the server ' +
     'declares the tool in its `autoApprove` list, or YOLO mode is on.',
@@ -204,4 +207,82 @@ export async function runMCPCall(
   if (signal !== undefined) dispatchOptions.signal = signal;
   if (approvedTools) dispatchOptions.approvedTools = approvedTools;
   return dispatchMCPToolCall(namespacedName, args.arguments ?? {}, dispatchOptions);
+}
+
+/**
+ * Decide whether a namespaced MCP target (`mcp__<server>__<tool>`) is
+ * auto-approved by the server's `autoApprove` list. Shared by the chat
+ * route's A5 branch and the sub-agent approval gate so both use the
+ * dispatcher's own glob semantics (`matchesAutoApprovePattern`, long and
+ * short form) instead of drifting back to exact-string matching.
+ */
+export async function isAutoApprovedMCPTarget(
+  serverName: string,
+  toolName: string
+): Promise<boolean> {
+  try {
+    const serverCfg = await getMCPServerConfig(serverName);
+    return (
+      serverCfg?.autoApprove?.some(
+        (pattern) =>
+          matchesAutoApprovePattern(pattern, `mcp__${serverName}__${toolName}`) ||
+          matchesAutoApprovePattern(pattern, toolName)
+      ) ?? false
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Filter `grantedTools` from an approval decision down to entries whose
+ * server actually exists in the config. Mirrors the chat route's
+ * verification loop so the sub-agent ledger cannot be extended with
+ * targets from servers that were never configured.
+ */
+export async function filterGrantedMCPTools(granted: string[]): Promise<string[]> {
+  const verified: string[] = [];
+  for (const grantedName of granted) {
+    const grantedServer = grantedName.slice('mcp__'.length, grantedName.lastIndexOf('__'));
+    try {
+      const grantedCfg = await getMCPServerConfig(grantedServer);
+      if (grantedCfg) verified.push(grantedName);
+    } catch {
+      // Best-effort: skip unverifiable targets.
+    }
+  }
+  return verified;
+}
+
+/**
+ * Dispatch a direct `mcp__<server>__<tool>` tool call (as opposed to the
+ * `mcp_call({server, tool, arguments})` form). The merged tool list
+ * exposes namespaced MCP tools to the LLM, so both the main loop and
+ * sub-agents can emit the namespaced name as `function.name` directly.
+ *
+ * Returns `null` when `name` does not parse as a namespaced MCP name —
+ * the caller then falls through to its own `[Unknown tool]` handling.
+ * Any parseable name is executed (or rejected) through the same check
+ * chain as `runMCPCall`: blocklist, skill allowlist, YOLO, and the
+ * pre-approval ledger. The dispatcher's own approval gate is the
+ * fail-closed backstop.
+ */
+export async function tryRunNamespacedMCPCall(
+  name: string,
+  args: ToolCallArguments,
+  context?: RequestContext,
+  signal?: AbortSignal
+): Promise<ToolCallResult | null> {
+  const parsed = parseMCPToolName(name);
+  if (!parsed) return null;
+
+  return runMCPCall(
+    {
+      server: parsed.serverName,
+      tool: parsed.toolName,
+      arguments: (args ?? {}) as Record<string, unknown>,
+    },
+    context,
+    signal
+  );
 }

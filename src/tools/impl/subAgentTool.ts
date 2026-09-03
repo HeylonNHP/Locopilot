@@ -1,7 +1,13 @@
 import type { ToolSchema } from '@/tools/tools';
 
 import { debugLog } from '@/app/lib/debugLogger';
+import { buildNamespacedName, parseMCPToolName } from '@/mcp';
 import { discoverSkills, getEnabledSkills, loadSkillState } from '@/services/skillManager';
+import {
+  filterGrantedMCPTools,
+  isAutoApprovedMCPTarget,
+  tryRunNamespacedMCPCall,
+} from '@/tools/impl/mcpTool';
 
 export const subAgentToolSchema: ToolSchema = {
   name: 'run_subagents',
@@ -348,7 +354,9 @@ function formatCombinedResults(results: CompletedSubAgent[], interrupted: boolea
   return sections.join('\n\n---\n\n');
 }
 
-async function executeNestedToolCall(
+// Exported for the regression test scripts (scripts/test-subagent-mcp.mjs);
+// not part of the tool's public surface.
+export async function executeNestedToolCall(
   agentId: string,
   toolCall: ToolCall,
   output: ToolOutputSink,
@@ -387,8 +395,29 @@ async function executeNestedToolCall(
   }
 
   const command = toolRegistry.get(toolName);
-  if (!command) {
+  const namespacedCall = parseMCPToolName(toolName) !== null;
+  if (!command && !namespacedCall) {
     return { content: `[Unknown tool: ${toolName}]` };
+  }
+
+  // Some provider paths deliver tool-call arguments as a JSON string even
+  // though the adapters' type says object (the main route guards the same
+  // way). Without this, the approval gate reads `server`/`tool` as empty
+  // strings and the dispatcher receives garbage.
+  let toolArgs: ToolCallArguments = toolCall.function.arguments;
+  if (typeof toolArgs === 'string') {
+    try {
+      toolArgs = JSON.parse(toolArgs);
+    } catch {
+      return {
+        content: `[Error: Tool "${toolName}" received malformed JSON arguments that could not be parsed. The model should retry with valid JSON.]`,
+      };
+    }
+    if (typeof toolArgs === 'string') {
+      return {
+        content: `[Error: Tool "${toolName}" received malformed JSON arguments that could not be parsed. The model should retry with valid JSON.]`,
+      };
+    }
   }
 
   // Phase 2 (sub-agent approval UX): if the sub-agent's parent route
@@ -400,67 +429,109 @@ async function executeNestedToolCall(
   // YOLO mode is honoured at the request-context level: if the user
   // enabled YOLO, `context.yoloMode` is true and we skip the prompt.
   const requester = context?.subAgent?.approvalRequester;
+  const argServer = typeof toolArgs?.server === 'string' ? toolArgs.server.trim() : '';
+  const argTool = typeof toolArgs?.tool === 'string' ? toolArgs.tool.trim() : '';
+  const namespacedTarget =
+    toolName === 'mcp_call'
+      ? argServer && argTool
+        ? buildNamespacedName(argServer, argTool)
+        : null
+      : namespacedCall
+        ? toolName
+        : null;
   const needsApproval =
-    (toolName === 'run_command' || toolName === 'mcp_call') &&
+    (toolName === 'run_command' || toolName === 'mcp_call' || namespacedCall) &&
     !context?.yoloMode &&
     typeof requester === 'function';
 
   if (needsApproval && requester) {
-    const risk = toolName === 'run_command' ? 'command' : 'mcp';
-    let displayArgs: unknown = toolCall.function.arguments;
-    if (toolName === 'mcp_call') {
-      // Surface the namespaced target so the user can make an
-      // informed decision (the raw `mcp_call` payload includes
-      // `server` / `tool` / `arguments`).
-      const a = toolCall.function.arguments as {
-        server?: unknown;
-        tool?: unknown;
-        arguments?: unknown;
-      };
-      displayArgs = {
-        server: typeof a?.server === 'string' ? a.server : '',
-        tool: typeof a?.tool === 'string' ? a.tool : '',
-        arguments: a?.arguments,
-      };
-    }
-    output.writeLine(
-      `\n[Sub-agent: ${agentId}] is requesting a ${risk === 'command' ? 'command' : 'MCP tool call'}: awaiting approval…`
-    );
-    const approvalStartedAt = Date.now();
-    debugLog.diagnostic({
-      layer: 'subagent',
-      phase: 'approval_wait_start',
-      ...diagnosticContext,
-    });
-    const decision = await requester({
-      toolName,
-      risk,
-      args: displayArgs,
-    });
-    debugLog.diagnostic({
-      layer: 'subagent',
-      phase: 'approval_decision',
-      ...diagnosticContext,
-      waitMs: Date.now() - approvalStartedAt,
-      result: decision.approved ? 'approved' : 'denied',
-    });
-    if (!decision.approved) {
-      const reason =
-        toolName === 'run_command' ? '[Command rejected by user]' : '[MCP call rejected by user]';
-      output.writeLine(`[Sub-agent: ${agentId}] request denied by user.`);
-      return { content: reason };
-    }
-    output.writeLine(`[Sub-agent: ${agentId}] request approved.`);
-    // Phase 3.4: persist any `grantedTools` the user also authorised
-    // for this sub-agent. The dispatcher enforces an explicit
-    // approval per call unless the namespaced target is in the
-    // sub-agent's ledger (or the server's `autoApprove` list, which
-    // is checked inside `dispatchMCPToolCall`). Adding to the
-    // ledger here lets a single sub-agent loop call the same MCP
-    // tool repeatedly without re-prompting.
-    if (toolName === 'mcp_call' && subAgentMcpApprovals && Array.isArray(decision.grantedTools)) {
-      for (const granted of decision.grantedTools) {
-        subAgentMcpApprovals.add(granted);
+    if (toolName === 'run_command') {
+      const risk = 'command' as const;
+      output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a command: awaiting approval…`);
+      const approvalStartedAt = Date.now();
+      debugLog.diagnostic({
+        layer: 'subagent',
+        phase: 'approval_wait_start',
+        ...diagnosticContext,
+      });
+      const decision = await requester({
+        toolName,
+        risk,
+        args: toolArgs,
+      });
+      debugLog.diagnostic({
+        layer: 'subagent',
+        phase: 'approval_decision',
+        ...diagnosticContext,
+        waitMs: Date.now() - approvalStartedAt,
+        result: decision.approved ? 'approved' : 'denied',
+      });
+      if (!decision.approved) {
+        output.writeLine(`[Sub-agent: ${agentId}] request denied by user.`);
+        return { content: '[Command rejected by user]' };
+      }
+      output.writeLine(`[Sub-agent: ${agentId}] request approved.`);
+    } else {
+      // MCP call (via `mcp_call` or a direct namespaced name).
+      // Skip the prompt when this exact target was already approved in
+      // this sub-agent's loop, or when the server's autoApprove list
+      // covers it — mirroring the main route's gate so the sub-agent
+      // doesn't re-prompt what the user (or config) already allowed.
+      const alreadyApproved =
+        (!!namespacedTarget && !!subAgentMcpApprovals?.has(namespacedTarget)) ||
+        (namespacedTarget ? await isAutoApprovedMCPTarget(argServer, argTool) : false);
+      if (!alreadyApproved) {
+        output.writeLine(
+          `\n[Sub-agent: ${agentId}] is requesting an MCP tool call: awaiting approval…`
+        );
+        const approvalStartedAt = Date.now();
+        debugLog.diagnostic({
+          layer: 'subagent',
+          phase: 'approval_wait_start',
+          ...diagnosticContext,
+        });
+        // For `mcp_call` surface the namespaced target so the user can
+        // make an informed decision (the raw payload includes
+        // `server` / `tool` / `arguments`).
+        const displayArgs =
+          toolName === 'mcp_call'
+            ? {
+                server: typeof toolArgs?.server === 'string' ? toolArgs.server : '',
+                tool: typeof toolArgs?.tool === 'string' ? toolArgs.tool : '',
+                arguments: toolArgs?.arguments,
+              }
+            : toolArgs;
+        const decision = await requester({
+          toolName,
+          risk: 'mcp',
+          args: displayArgs,
+        });
+        debugLog.diagnostic({
+          layer: 'subagent',
+          phase: 'approval_decision',
+          ...diagnosticContext,
+          waitMs: Date.now() - approvalStartedAt,
+          result: decision.approved ? 'approved' : 'denied',
+        });
+        if (!decision.approved) {
+          output.writeLine(`[Sub-agent: ${agentId}] request denied by user.`);
+          return { content: '[MCP call rejected by user]' };
+        }
+        output.writeLine(`[Sub-agent: ${agentId}] request approved.`);
+        // Record the approved target so this sub-agent's loop can call
+        // the same MCP tool repeatedly without re-prompting, and persist
+        // any additional `grantedTools` the user authorised. The
+        // dispatcher enforces the ledger via the derived context below.
+        // `filterGrantedMCPTools` mirrors the route's verification so
+        // entries from unconfigured servers cannot enter the ledger.
+        if (namespacedTarget && subAgentMcpApprovals) {
+          subAgentMcpApprovals.add(namespacedTarget);
+        }
+        if (subAgentMcpApprovals && Array.isArray(decision.grantedTools)) {
+          for (const granted of await filterGrantedMCPTools(decision.grantedTools)) {
+            subAgentMcpApprovals.add(granted);
+          }
+        }
       }
     }
   }
@@ -469,33 +540,22 @@ async function executeNestedToolCall(
   try {
     if (toolName === 'run_command') {
       output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a command:`);
-      toolResult = await command.execute(
-        toolCall.function.arguments,
-        nestedProgress,
-        output,
-        context,
-        signal
-      );
-    } else if (toolName === 'mcp_call' && subAgentMcpApprovals) {
+      toolResult = await command!.execute(toolArgs, nestedProgress, output, context, signal);
+    } else if ((toolName === 'mcp_call' || namespacedCall) && subAgentMcpApprovals) {
       const derivedContext: RequestContext = {
         ...(context ?? ({} as RequestContext)),
         mcpApprovals: [...subAgentMcpApprovals],
       };
-      toolResult = await command.execute(
-        toolCall.function.arguments,
-        nestedProgress,
-        output,
-        derivedContext,
-        signal
-      );
+      toolResult = namespacedCall
+        ? ((await tryRunNamespacedMCPCall(
+            toolName,
+            toolArgs,
+            derivedContext,
+            signal
+          )) as ToolCallResult)
+        : await command!.execute(toolArgs, nestedProgress, output, derivedContext, signal);
     } else {
-      toolResult = await command.execute(
-        toolCall.function.arguments,
-        nestedProgress,
-        output,
-        context,
-        signal
-      );
+      toolResult = await command!.execute(toolArgs, nestedProgress, output, context, signal);
     }
   } catch (err) {
     debugLog.diagnostic({

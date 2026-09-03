@@ -16,7 +16,11 @@ import {
 import { fetchImageToolSchema, getToolPrompt as getFetchImagePrompt } from './impl/fetchImageTool';
 import { fetchUrlToolSchema, getToolPrompt as getFetchUrlPrompt } from './impl/fetchUrlTool';
 import { getToolPrompt as getLoadSkillPrompt, loadSkillToolSchema } from './impl/loadSkillTool';
-import { getToolPrompt as getMCPCallPrompt, mcpCallToolSchema } from './impl/mcpTool';
+import {
+  getToolPrompt as getMCPCallPrompt,
+  mcpCallToolSchema,
+  tryRunNamespacedMCPCall,
+} from './impl/mcpTool';
 import { getToolPrompt as getPatchFilePrompt, patchFileToolSchema } from './impl/patchFileTool';
 import { getToolPrompt as getReadFilePrompt, readFileToolSchema } from './impl/readFileTool';
 import { getToolPrompt as getReadPdfPrompt, readPdfToolSchema } from './impl/readPdfTool';
@@ -222,8 +226,12 @@ export async function handleToolCall(
   signal?: AbortSignal
 ): Promise<ToolCallResult> {
   const command = toolRegistry.get(name);
-  if (!command) return { content: `[Unknown tool: ${name}]` };
-  return command.execute(args, onProgress, output, context, signal);
+  if (command) return command.execute(args, onProgress, output, context, signal);
+  // Namespaced MCP tools (`mcp__<server>__<tool>`) are exposed to the LLM
+  // but are not in the static registry — dispatch them through the MCP layer.
+  const mcpResult = await tryRunNamespacedMCPCall(name, args, context, signal);
+  if (mcpResult) return mcpResult;
+  return { content: `[Unknown tool: ${name}]` };
 }
 
 export { type RequestContext, type ToolCallArguments, type ToolCallResult } from './toolRegistry';

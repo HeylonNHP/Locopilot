@@ -60,6 +60,7 @@ export {
   type DispatchContext,
   dispatchMCPToolCall,
   type DispatchOptions,
+  matchesAutoApprovePattern,
   MCP_TOOL_NAMESPACE_PREFIX,
   MCP_TOOL_NAMESPACE_SEPARATOR,
   type MCPToolStub,

@@ -53,10 +53,10 @@ import {
   TPS_STATUS_MIN_INTERVAL_MS,
 } from '@/constants';
 import {
-  getMCPServerConfig,
   getMCPToolCount,
   getMergedMCPToolDefinitions,
   getMergedMCPToolDefinitionsForSearch,
+  parseMCPToolName,
 } from '@/mcp';
 import { recordDiscoveredCap, resolveEffectiveNumCtx } from '@/services/capResolver';
 import { createSystemPrompt } from '@/services/chatSession';
@@ -108,6 +108,7 @@ import { generateFallbackTitle } from '@/services/titleUtils';
 import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
 import { buildUserMessageStamp } from '@/services/userMessageStamp';
 import { recordDiscoveredNonVision } from '@/services/visionCache';
+import { filterGrantedMCPTools, isAutoApprovedMCPTarget } from '@/tools/impl/mcpTool';
 import { enterRequestScope } from '@/tools/impl/runCommandTool';
 import {
   handleToolCall,
@@ -1698,10 +1699,22 @@ export async function POST(req: NextRequest): Promise<Response> {
               }
               // ────────────────────────────────────────────────────────────
 
-              // ── Approval gate for mcp_call (skipped in YOLO mode). ──
-              if (toolName === 'mcp_call' && !effectiveYolo) {
-                const requestedServer = typeof toolArgs?.server === 'string' ? toolArgs.server : '';
-                const requestedTool = typeof toolArgs?.tool === 'string' ? toolArgs.tool : '';
+              // ── Approval gate for mcp_call and direct mcp__ namespaced
+              // calls (skipped in YOLO mode). ──
+              const isDirectNamespacedCall = parseMCPToolName(toolName) !== null;
+              if ((toolName === 'mcp_call' || isDirectNamespacedCall) && !effectiveYolo) {
+                const requestedServer = isDirectNamespacedCall
+                  ? (parseMCPToolName(toolName)?.serverName ??
+                    (typeof toolArgs?.server === 'string' ? toolArgs.server : ''))
+                  : typeof toolArgs?.server === 'string'
+                    ? toolArgs.server
+                    : '';
+                const requestedTool = isDirectNamespacedCall
+                  ? (parseMCPToolName(toolName)?.toolName ??
+                    (typeof toolArgs?.tool === 'string' ? toolArgs.tool : ''))
+                  : typeof toolArgs?.tool === 'string'
+                    ? toolArgs.tool
+                    : '';
                 const namespacedTarget =
                   requestedServer && requestedTool
                     ? `mcp__${requestedServer}__${requestedTool}`
@@ -1713,16 +1726,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                 } else {
                   let autoApproved = false;
 
-                  // A5 shortcut: on the server's autoApprove list.
-                  if (namespacedTarget) {
-                    try {
-                      const serverCfg = await getMCPServerConfig(requestedServer);
-                      if (serverCfg?.autoApprove?.includes(requestedTool)) {
-                        autoApproved = true;
-                      }
-                    } catch {
-                      // Best-effort: fall through to the prompt.
-                    }
+                  // A5 shortcut: on the server's autoApprove list. Uses the
+                  // shared helper so the route's semantics match the
+                  // dispatcher's glob matching exactly.
+                  if (requestedServer && requestedTool) {
+                    autoApproved = await isAutoApprovedMCPTarget(requestedServer, requestedTool);
                   }
 
                   if (autoApproved) {
@@ -1781,20 +1789,9 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // When the user approves, record the call and
                     // any granted pre-authorisations.
                     if (namespacedTarget) {
-                      const granted = decision.grantedTools ?? [];
+                      const granted = await filterGrantedMCPTools(decision.grantedTools ?? []);
                       for (const grantedName of granted) {
-                        const grantedServer = grantedName.slice(
-                          'mcp__'.length,
-                          grantedName.lastIndexOf('__')
-                        );
-                        try {
-                          const grantedCfg = await getMCPServerConfig(grantedServer);
-                          if (grantedCfg) {
-                            mcpApprovalsSet.add(grantedName);
-                          }
-                        } catch {
-                          // Best-effort: skip unverifiable targets.
-                        }
+                        mcpApprovalsSet.add(grantedName);
                       }
                       mcpApprovalsSet.add(namespacedTarget);
                       requestContext.mcpApprovals = [...mcpApprovalsSet];
@@ -2054,8 +2051,9 @@ export async function POST(req: NextRequest): Promise<Response> {
               role: 'user',
               content:
                 `${SYNTHETIC_NUDGE_MARKER}Your last response was empty. Provide a direct answer now. ` +
-                `If commands are needed, call run_command. If commands already ran, summarize their output and errors.${ 
-                SYNTHETIC_NUDGE_END}`,
+                `If commands are needed, call run_command. If commands already ran, summarize their output and errors.${
+                  SYNTHETIC_NUDGE_END
+                }`,
             };
             currentMessages.push(recoveryMessage);
             pendingAppends.push(recoveryMessage);
