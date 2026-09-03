@@ -34,12 +34,24 @@ export default function ChatMessageBubble({
   const [showThinking, setShowThinking] = useState(false);
   const hasThinking = Boolean(message.thinking?.trim());
   const hasContent = Boolean(message.content?.trim());
+  // An assistant message with no text and no reasoning but with tool calls
+  // is just the carrier for those calls — the following tool-result bubbles
+  // already render their output. Rendering it produces an empty "..." box.
+  const isToolCallCarrier =
+    message.role === 'assistant' &&
+    !hasContent &&
+    !hasThinking &&
+    (message.tool_calls?.length ?? 0) > 0;
 
   useEffect(() => {
     if (hasThinking && !hasContent) {
       setShowThinking(true);
     }
   }, [hasThinking, hasContent]);
+
+  if (isToolCallCarrier) {
+    return null;
+  }
 
   // Two-pass rendering: server and initial client render both output the
   // same placeholder (null), so React hydration never sees a mismatch.
