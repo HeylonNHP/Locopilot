@@ -1136,11 +1136,37 @@ export async function POST(req: NextRequest): Promise<Response> {
           const pending = peekModelSwitch(activeSessionId);
           if (!pending) return;
 
-          if (pending.model !== undefined && pending.model !== model) {
-            model = pending.model;
+          // The model itself only changes when the request asks for a new
+          // name AND it differs from what we're already running on. The
+          // provider can change independently — moving the same model name
+          // to a different provider must re-derive activeProvider /
+          // llmRequestContext / numCtx / vision / sampling so the next
+          // LLM call hits the right endpoint with the right credentials
+          // (otherwise a stale activeProvider would silently send
+          // requests to the old provider). The actual model mutation
+          // stays gated on modelChanged so a provider-only switch does
+          // not also rewrite the model name.
+          const modelChanged =
+            pending.model !== undefined && pending.model !== model;
+          const providerChanged =
+            pending.providerId !== undefined && pending.providerId !== providerId;
+          if (modelChanged) {
+            // pending.model is narrowed to string by the modelChanged
+            // check above; the cast here is just to placate TS, which
+            // doesn't narrow through the local const.
+            model = pending.model as string;
+          }
+          if (modelChanged || providerChanged) {
+            // When the model changed, prefer the explicit provider the
+            // request named (pending.providerId), otherwise keep the
+            // provider we're already using. When only the provider
+            // changed, the explicit pending.providerId is the whole
+            // point of this branch.
+            const resolvedProviderId =
+              pending.providerId ?? (modelChanged ? providerId : undefined);
             const resolved = resolveProviderRequestContext(
               config,
-              pending.providerId ?? providerId,
+              resolvedProviderId,
               model,
               requestId
             );

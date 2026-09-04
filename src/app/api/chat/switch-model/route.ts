@@ -54,9 +54,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const compactionProviderId = nonEmptyString(body.compactionProviderId);
   if (compactionProviderId) request.compactionProviderId = compactionProviderId;
 
-  if (request.model === undefined && request.compactionModel === undefined) {
+  // A provider-only switch (no model change, no compaction change) is
+  // valid: moving the same model name to a different provider must
+  // re-derive activeProvider / llmRequestContext / numCtx / vision /
+  // sampling so the next LLM call hits the right endpoint with the
+  // right credentials. Without this, the chat route's
+  // applyPendingModelSwitch would silently drop the request because
+  // `pending.model !== undefined` is false and the whole re-derivation
+  // block is gated on that.
+  if (
+    request.model === undefined &&
+    request.compactionModel === undefined &&
+    request.providerId === undefined &&
+    request.compactionProviderId === undefined
+  ) {
     return NextResponse.json(
-      { error: 'At least one of "model" or "compactionModel" is required' },
+      { error: 'At least one of "model", "compactionModel", "providerId", or "compactionProviderId" is required' },
       { status: 400 }
     );
   }

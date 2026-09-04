@@ -273,12 +273,30 @@ export default function SettingsModal({ onClose }: Props) {
           ? state.currentSessionId
           : null;
       const modelChanged = model !== state.model;
+      // A provider-only switch (same model name on a different
+      // provider) must also be carried into a streaming turn, so the
+      // running turn re-derives activeProvider / llmRequestContext /
+      // numCtx / vision / sampling at its next tool step instead of
+      // silently continuing to send requests to the stale provider.
+      const providerChanged = mainProviderId !== state.activeProviderId;
       const compactionChanged = compactionModel !== state.compactionModel;
-      if (streamingSessionId !== null && (modelChanged || compactionChanged)) {
+      if (
+        streamingSessionId !== null &&
+        (modelChanged || providerChanged || compactionChanged)
+      ) {
         dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: true } });
+        // providerId rides along whenever either the model or the
+        // provider changed — not just modelChanged — so a pure
+        // provider-only switch reaches the server. (The server's
+        // /api/chat/switch-model already accepts providerId
+        // independently of model.)
+        const sendProviderId =
+          (modelChanged || providerChanged) && mainProviderId
+            ? mainProviderId
+            : undefined;
         const accepted = await requestMidTurnModelSwitch(streamingSessionId, {
           ...(modelChanged ? { model } : {}),
-          ...(modelChanged && mainProviderId ? { providerId: mainProviderId } : {}),
+          ...(sendProviderId ? { providerId: sendProviderId } : {}),
           ...(compactionChanged ? { compactionModel } : {}),
           ...(compactionChanged && compactionProviderId ? { compactionProviderId } : {}),
         });
