@@ -84,7 +84,12 @@ export function useChatStream(
   // --------------------------------------------------------------------------
 
   const handleEvent = useCallback(
-    (event: string, data: SseEventData, requestId?: number) => {
+    (
+      event: string,
+      data: SseEventData,
+      requestId?: number,
+      replayTargetSessionId?: number
+    ) => {
       // ── session_created must ALWAYS be processed first ──────────────────
       // It syncs bufferOwnerMapRef and refs.sessionIdRef to the real
       // session ID.  If the buffer guard below intercepted it, the guard
@@ -256,12 +261,24 @@ export function useChatStream(
           break;
         }
 
-        case 'subagent_chunk': {
+         case 'subagent_chunk': {
           const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
           const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
+          // `requestId` is undefined on the replay path (when the user
+          // navigates back to a session whose events were buffered
+          // while another session was visible). Without a requestId we
+          // can't look up the owner via `bufferOwnerMapRef`, so fall
+          // back to `replayTargetSessionId` (set by
+          // `replayBufferedEvents`). This is what stops orphan
+          // `subagentBufferRef` entries (sessionId === undefined) from
+          // being flushed against an unrelated session in `finally`.
+          // `session_created` will later migrate any -1 placeholder
+          // entries to the real session id, so the buffer stays
+          // consistent across the new-session handoff.
           const ownerSessionId =
-            requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
-          const buffer = subagentBufferRef.current.get(agentId);
+            requestId !== undefined
+              ? bufferOwnerMapRef.current.get(requestId)
+              : replayTargetSessionId;          const buffer = subagentBufferRef.current.get(agentId);
           if (buffer) {
             buffer.text += text;
             if (buffer.timer) clearTimeout(buffer.timer);
@@ -659,20 +676,25 @@ export function useChatStream(
     'approval_request',
   ]);
 
-  const replayBufferedEvents = useCallback(
+   const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
       const sessionKey = targetSessionId ?? -1;
       const buffered = bufferedEventsRef.current.get(sessionKey) ?? [];
       bufferedEventsRef.current.delete(sessionKey);
       for (const { event, data } of buffered) {
         if (DELTA_EVENTS.has(event)) {
-          handleEvent(event, data);
+          // Pass `sessionKey` as `replayTargetSessionId` so the
+          // `subagent_chunk` case can attribute its buffer entry to
+          // the right session. Without this, replayed subagent chunks
+          // would create orphan entries (sessionId === undefined) that
+          // match any subsequent stream's owner in the `finally` block
+          // and get flushed against the wrong session.
+          handleEvent(event, data, undefined, sessionKey);
         }
       }
     },
     [handleEvent]
   );
-
   // ---------------------------------------------------------------------------
   // Attachment resolution — converts Attachment[] into extra message content
   // and/or a base64 images array before sending to the LLM.
