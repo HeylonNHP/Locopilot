@@ -429,8 +429,25 @@ export async function executeNestedToolCall(
   // YOLO mode is honoured at the request-context level: if the user
   // enabled YOLO, `context.yoloMode` is true and we skip the prompt.
   const requester = context?.subAgent?.approvalRequester;
-  const argServer = typeof toolArgs?.server === 'string' ? toolArgs.server.trim() : '';
-  const argTool = typeof toolArgs?.tool === 'string' ? toolArgs.tool.trim() : '';
+  // Derive server/tool the same way the main route does: for direct
+  // `mcp__<server>__<tool>` calls, parse the function name; for
+  // `mcp_call`, read the args. Without parsing the function name, a
+  // direct namespaced call with empty `toolArgs` would pass `''`/`''`
+  // to `isAutoApprovedMCPTarget`, which always returns false, so every
+  // autoApprove-covered direct call would re-prompt even when the
+  // server's `autoApprove` list already authorises it. Mirrors the gate
+  // at app/api/chat/route.ts ~L1737–1747.
+  const parsedName = namespacedCall ? parseMCPToolName(toolName) : null;
+  const argServer = parsedName
+    ? (parsedName.serverName ?? '')
+    : typeof toolArgs?.server === 'string'
+      ? toolArgs.server.trim()
+      : '';
+  const argTool = parsedName
+    ? (parsedName.toolName ?? '')
+    : typeof toolArgs?.tool === 'string'
+      ? toolArgs.tool.trim()
+      : '';
   const namespacedTarget =
     toolName === 'mcp_call'
       ? argServer && argTool

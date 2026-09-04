@@ -225,6 +225,41 @@ await checkAsync('autoApprove glob match skips the prompt', async () => {
   );
 });
 
+await checkAsync(
+  'autoApprove glob match skips the prompt for direct namespaced call',
+  async () => {
+    // Regression for the bug where the sub-agent gate read
+    // `toolArgs.server` / `toolArgs.tool` to derive the target. A
+    // direct `mcp__<server>__<tool>` call has empty `toolArgs`, so the
+    // autoApprove check was always skipped and the user was prompted
+    // even when the server's `autoApprove: ['list_*']` covered it.
+    let promptCount = 0;
+    const ledger = new Set();
+    const requester = async () => {
+      promptCount += 1;
+      return { approved: true };
+    };
+    const result = await executeNestedToolCall(
+      'a1',
+      makeToolCall('mcp__globtest__list_issues', {}),
+      noopToolOutputSink,
+      undefined,
+      makeContext(requester),
+      undefined,
+      ledger
+    );
+    assert.equal(
+      promptCount,
+      0,
+      'autoApprove-covered direct namespaced call must not prompt'
+    );
+    assert.ok(
+      result.content.startsWith('[MCP error:'),
+      `expected execution to reach the MCP layer, got: ${result.content}`
+    );
+  }
+);
+
 await checkAsync('denied mcp_call rejects without touching the ledger', async () => {
   const ledger = new Set();
   const requester = async () => ({ approved: false });
