@@ -2169,7 +2169,18 @@ export async function POST(req: NextRequest): Promise<Response> {
                 }`,
             };
             currentMessages.push(recoveryMessage);
-            pendingAppends.push(recoveryMessage);
+            // Note: the recovery nudge is intentionally NOT pushed to
+            // `pendingAppends`. The post-compaction nudge (above) follows
+            // the same pattern - `currentMessages` only - so the in-memory
+            // LLM context observes the nudge on the next inference without
+            // it being persisted to the DB. Persisting it caused the row to
+            // be loaded back on the next turn and re-injected into the new
+            // turn's LLM context, where the LLM would echo or react to a
+            // stale "your last response was empty" directive from a prior
+            // turn. The marker prefix on `recoveryMessage` still causes
+            // `findLatestUserMessageIndex` to skip it during compaction
+            // because the row remains in `currentMessages` at compaction
+            // time; only DB persistence is suppressed.
 
             // The recovery nudge is appended to `currentMessages` after the
             // authoritative token anchor was set from the LLM response. Keep
