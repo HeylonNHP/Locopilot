@@ -17,7 +17,7 @@ interface Props {
 }
 
 export default function SettingsModal({ onClose }: Props) {
-  const { state, dispatch } = useChat();
+  const { state, dispatch, streamAbortRef } = useChat();
   const [model, setModel] = useState(state.model);
   const [numCtx, setNumCtx] = useState(String(state.requestedNumCtx));
   const [yolo, setYolo] = useState(state.yolo);
@@ -294,12 +294,20 @@ export default function SettingsModal({ onClose }: Props) {
           (modelChanged || providerChanged) && mainProviderId
             ? mainProviderId
             : undefined;
-        const accepted = await requestMidTurnModelSwitch(streamingSessionId, {
-          ...(modelChanged ? { model } : {}),
-          ...(sendProviderId ? { providerId: sendProviderId } : {}),
-          ...(compactionChanged ? { compactionModel } : {}),
-          ...(compactionChanged && compactionProviderId ? { compactionProviderId } : {}),
-        });
+        const accepted = await requestMidTurnModelSwitch(
+          streamingSessionId,
+          {
+            ...(modelChanged ? { model } : {}),
+            ...(sendProviderId ? { providerId: sendProviderId } : {}),
+            ...(compactionChanged ? { compactionModel } : {}),
+            ...(compactionChanged && compactionProviderId ? { compactionProviderId } : {}),
+          },
+          // Attach to the running chat stream's signal so a Stop click
+          // while the switch request is in flight cancels it client-side
+          // and lets the route's `unregisterActiveTurn` clean the
+          // server-side `pendingSwitches[sessionId]` entry.
+          streamAbortRef.current?.signal
+        );
         if (!accepted) {
           dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
         }

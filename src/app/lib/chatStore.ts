@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, type ReactNode, useContext, useReducer } from 'react';
+import React, { createContext, type ReactNode, useContext, useReducer, useRef } from 'react';
 
 import type { ToolCall } from '@/services/llm';
 import type { VisionSupportState } from '@/services/visionCache';
@@ -1263,11 +1263,32 @@ export function selectUserMessages(state: ChatState): ChatMessage[] {
 const ChatContext = createContext<{
   state: ChatState;
   dispatch: React.Dispatch<ChatAction>;
-}>({ state: initialState, dispatch: () => {} });
+  /**
+   * Mutable holder for the AbortController of the currently-streaming chat
+   * turn. Exposed on the chat-store context so callers that live outside
+   * `page.tsx` (e.g. `ModelSelector`, `SettingsModal`) can attach their
+   * mid-turn request mid-flight fetch to the same abort signal the Stop
+   * button will fire. The holder is intentionally a plain object (not
+   * React state) — callers read `.current.signal` at the moment they need
+   * it, so the controller can be replaced on every new stream without
+   * triggering a re-render of every consumer. Replaced by `useChatStream`
+   * each time it starts a new chat turn (the previous one is aborted
+   * first so any in-flight mid-turn requests that captured the old signal
+   * are cancelled in the same Stop click).
+   */
+  streamAbortRef: { current: AbortController | null };
+}>({ state: initialState, dispatch: () => {}, streamAbortRef: { current: null } });
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(chatReducer, initialState);
-  return React.createElement(ChatContext.Provider, { value: { state, dispatch } }, children);
+  // Stable holder across renders so consumers can read `.current.signal`
+  // without registering a re-render dependency on it.
+  const streamAbortRef = useRef<AbortController | null>(null);
+  return React.createElement(
+    ChatContext.Provider,
+    { value: { state, dispatch, streamAbortRef } },
+    children
+  );
 }
 
 export function useChat() {
