@@ -488,40 +488,73 @@ export async function POST(req: NextRequest): Promise<Response> {
         // Race: session may have been deleted mid-stream by another tab.
         if (!sessionExists(sessionId)) return { ok: true };
 
+        // Run a single DB-write attempt with bounded retries. We retry
+        // transient errors (disk-full, SQLite busy, FK violations, etc.)
+        // inside flushSessionState rather than relying on the outer
+        // catch to re-attempt: the outer catch's AbortError branch
+        // covers the user-clicked-Stop case, but a transient write
+        // failure during that path surfaces as a generic Error and
+        // would otherwise drop sub-agent log bubbles forever. The
+        // backoff is short (50ms x attempt) so the route does not
+        // stall noticeably on a successful retry, and we keep
+        // `pendingReplace` / `pendingAppends` intact between attempts
+        // so every retry persists the SAME content the caller queued.
+        // Each retry re-enters `enqueueSessionWrite`, which refetches
+        // `loadSessionMessages` inside the queue - that's fine because
+        // `db.transaction(...)` in updateSessionMessages rolls back on
+        // throw, so a failed attempt leaves no partial rows.
+        const writeAttempts = 3;
+        const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+        async function writeOnce(
+          attemptLabel: string,
+          doWrite: () => Promise<void>
+        ): Promise<{ ok: true } | { ok: false; error: string }> {
+          let lastErr: unknown = undefined;
+          for (let attempt = 1; attempt <= writeAttempts; attempt++) {
+            try {
+              await doWrite();
+              return { ok: true };
+            } catch (err) {
+              lastErr = err;
+              if (attempt < writeAttempts) {
+                const backoffMs = 50 * attempt; // 50ms, 100ms between attempts
+                logger.info('chat', `${attemptLabel} retry ${attempt}/${writeAttempts - 1}`, {
+                  sessionId,
+                  backoffMs,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+                await sleep(backoffMs);
+              }
+            }
+          }
+          const message = lastErr instanceof Error ? lastErr.message : 'Unknown write error';
+          // Only surface `write_error` to the client after all retries
+          // are exhausted - sending it and then succeeding on a later
+          // attempt would be misleading.
+          sendEvent('write_error', { message });
+          return { ok: false, error: message };
+        }
+
         if (pendingReplace) {
           const replacement = pendingReplace;
-          try {
-            await enqueueSessionWrite(sessionId, () => replacement, { promptEvalCount, evalCount });
-          } catch (err) {
-            // Keep `pendingReplace` so a later attempt can retry.
-            // Note: `currentMessages` is not rolled back because the
-            // replacement is already a complete, LLM-observed state
-            // (e.g. after compaction) — removing it would break the
-            // LLM stream mid-loop. The DB will diverge; surface the
-            // error so the user can decide whether to retry.
-            const message = err instanceof Error ? err.message : 'Unknown write error';
-            sendEvent('write_error', { message });
-            return { ok: false, error: message };
+          const result = await writeOnce('flushSessionState pendingReplace', () =>
+            enqueueSessionWrite(sessionId, () => replacement, { promptEvalCount, evalCount })
+          );
+          if (!result.ok) {
+            return result;
           }
           pendingReplace = null;
         } else if (pendingAppends.length > 0) {
           const appends = [...pendingAppends];
-          try {
-            await enqueueSessionWrite(sessionId, (fresh) => [...fresh, ...appends], {
+          const result = await writeOnce('flushSessionState pendingAppends', () =>
+            enqueueSessionWrite(sessionId, (fresh) => [...fresh, ...appends], {
               promptEvalCount,
               evalCount,
-            });
-          } catch (err) {
-            // Keep `pendingAppends` so a later attempt can retry.
-            // Note: `currentMessages` is not rolled back because the
-            // newly-appended messages are the LLM's own assistant
-            // turn and the tool results it must observe on the next
-            // iteration. Removing them would break the LLM stream.
-            // The DB will diverge; surface the error so the user
-            // can decide whether to retry.
-            const message = err instanceof Error ? err.message : 'Unknown write error';
-            sendEvent('write_error', { message });
-            return { ok: false, error: message };
+            })
+          );
+          if (!result.ok) {
+            return result;
           }
           pendingAppends.length = 0;
         }
