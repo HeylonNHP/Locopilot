@@ -34,14 +34,14 @@ export default function ChatMessageBubble({
   const [showThinking, setShowThinking] = useState(false);
   const hasThinking = Boolean(message.thinking?.trim());
   const hasContent = Boolean(message.content?.trim());
-  // An assistant message with no text and no reasoning but with tool calls
-  // is just the carrier for those calls — the following tool-result bubbles
-  // already render their output. Rendering it produces an empty "..." box.
-  const isToolCallCarrier =
-    message.role === 'assistant' &&
-    !hasContent &&
-    !hasThinking &&
-    (message.tool_calls?.length ?? 0) > 0;
+  // An assistant message that has no text, no reasoning, and no tool calls
+  // is an empty placeholder (e.g. persisted by the empty-response recovery
+  // path before any real reply arrives). The follow-tool-result bubbles
+  // already render the tool output for tool-call carriers, and an empty
+  // reply produces an empty "..." box otherwise. In either case we want
+  // to render nothing.
+  const isEmptyAssistantPlaceholder =
+    message.role === 'assistant' && !hasContent && !hasThinking;
 
   useEffect(() => {
     if (hasThinking && !hasContent) {
@@ -49,7 +49,7 @@ export default function ChatMessageBubble({
     }
   }, [hasThinking, hasContent]);
 
-  if (isToolCallCarrier) {
+  if (isEmptyAssistantPlaceholder) {
     return null;
   }
 
