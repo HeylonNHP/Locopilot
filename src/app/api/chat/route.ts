@@ -65,6 +65,7 @@ import {
   compactHistory,
   COMPACTION_ADAPTIVE_DIRECTIVE,
   COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD,
+  COMPACTION_INITIAL_DIRECTIVE,
   SYNTHETIC_NUDGE_END,
   SYNTHETIC_NUDGE_MARKER,
 } from '@/services/compact';
@@ -1361,7 +1362,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 const adaptiveDirective =
                   compactionsSinceLastPrompt >= COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD
                     ? COMPACTION_ADAPTIVE_DIRECTIVE
-                    : ' Please continue working on the original task without asking for confirmation.';
+                    : COMPACTION_INITIAL_DIRECTIVE.main;
                 currentMessages.push({
                   role: 'user',
                   content:

@@ -52,6 +52,7 @@ import {
   compactHistory,
   COMPACTION_ADAPTIVE_DIRECTIVE,
   COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD,
+  COMPACTION_INITIAL_DIRECTIVE,
   SYNTHETIC_NUDGE_END,
   SYNTHETIC_NUDGE_MARKER,
 } from '@/services/compact';
@@ -98,7 +99,7 @@ interface CompletedSubAgent {
 const SUB_AGENT_AUTO_COMPACT_NOTICE_BASE =
   'The conversation history was automatically compacted due to context length. ' +
   'The original orchestrator request has been preserved verbatim above. ' +
-  'Please continue working on that request without asking for confirmation.';
+  COMPACTION_INITIAL_DIRECTIVE.subAgent;
 const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
 
 function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): string {

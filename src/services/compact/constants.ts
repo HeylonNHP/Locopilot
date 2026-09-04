@@ -35,6 +35,17 @@ export const COMPACTION_ADAPTIVE_DIRECTIVE =
   'output, avoid re-reading large files or repeating searches, and consider ' +
   'whether your current approach is viable or should be changed.';
 
+// Continuation directive sent after the FIRST auto-compaction. The wording
+// differs slightly between the main loop and sub-agents because the latter
+// is resuming a delegated task rather than the user's original request. Kept
+// here (next to COMPACTION_ADAPTIVE_DIRECTIVE) so both consumers can swap to
+// the adaptive directive at the same threshold without copy-pasted literals
+// drifting again.
+export const COMPACTION_INITIAL_DIRECTIVE = {
+  main: ' Please continue working on the original task without asking for confirmation.',
+  subAgent: 'Please continue working on that request without asking for confirmation.',
+} as const;
+
 // ---- History splitting / preservation ratios ----
 export const MIN_SUMMARISE_TOKENS = 200;
 export const PRESERVE_RECENT_TOKENS_RATIO = 0.12;
