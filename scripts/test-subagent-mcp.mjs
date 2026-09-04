@@ -34,7 +34,13 @@ import path from 'node:path';
 const fakeHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'locopilot-mcp-test-'));
 const mcpDir = path.join(fakeHome, '.locopilot');
 await fsp.mkdir(mcpDir, { recursive: true });
+// Set both HOME and USERPROFILE: on Windows `os.homedir()` reads
+// USERPROFILE (not HOME), so the production code under test would
+// otherwise load the real user's MCP config and ignore our fake one.
+// Setting USERPROFILE on POSIX is harmless - `os.homedir()` there
+// uses getuid/getpwuid, not USERPROFILE.
 process.env.HOME = fakeHome;
+process.env.USERPROFILE = fakeHome;
 
 // Server with a glob autoApprove list (short form) and one with a
 // long-form pattern. Transports are deliberately invalid — these
