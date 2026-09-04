@@ -54,7 +54,51 @@ export function requestModelSwitch(sessionId: number, request: ModelSwitchReques
   return true;
 }
 
-/** Take the pending switch for a session, removing it. */
+/**
+ * Read the pending switch for a session WITHOUT removing it.
+ *
+ * Both the main tool-call loop and any in-flight sub-agent batch poll for
+ * the same entry; whichever reads it first applies the change and calls
+ * `acknowledgeModelSwitch` to drop it. The other polls, sees an empty
+ * result, and no-ops. This is what keeps a switch from being silently
+ * consumed by a sub-agent while the main loop is parked on the batch.
+ */
+export function peekModelSwitch(sessionId: number): ModelSwitchRequest | null {
+  return pendingSwitches.get(sessionId) ?? null;
+}
+
+/**
+ * Drop the pending switch for a session. Call this only after a successful
+ * `peekModelSwitch` + apply — i.e. once the new models have been written
+ * to the request context.
+ *
+ * `peeked` is the exact object the caller received from `peekModelSwitch`.
+ * It guards against the race where a new `requestModelSwitch` merges
+ * into the entry between our peek and acknowledge (which can happen if
+ * `applyPendingModelSwitch` awaits on something — e.g. a numCtx probe —
+ * between the two calls). In that case we refuse to drop the entry so a
+ * later iteration picks up the merged request instead of losing it.
+ *
+ * Returns `true` when the entry was removed, `false` when a newer
+ * request has since merged into it.
+ */
+export function acknowledgeModelSwitch(
+  sessionId: number,
+  peeked: ModelSwitchRequest
+): boolean {
+  const current = pendingSwitches.get(sessionId);
+  if (current !== peeked) return false;
+  pendingSwitches.delete(sessionId);
+  return true;
+}
+
+/**
+ * @deprecated Destructive read: removes the entry on read. If two callers
+ * peek at the same session (main loop + sub-agent batch), whichever calls
+ * this first wins and the other silently sees `null` — exactly the bug
+ * this registry was rewritten to avoid. Use `peekModelSwitch` + an
+ * explicit `acknowledgeModelSwitch` after a successful apply instead.
+ */
 export function consumeModelSwitch(sessionId: number): ModelSwitchRequest | null {
   const pending = pendingSwitches.get(sessionId);
   if (!pending) return null;

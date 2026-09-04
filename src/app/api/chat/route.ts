@@ -34,7 +34,8 @@ import {
 import { debugLog } from '@/app/lib/debugLogger';
 import { logger } from '@/app/lib/logger';
 import {
-  consumeModelSwitch,
+  acknowledgeModelSwitch,
+  peekModelSwitch,
   registerActiveTurn,
   unregisterActiveTurn,
 } from '@/app/lib/modelSwitchRegistry';
@@ -1129,7 +1130,10 @@ export async function POST(req: NextRequest): Promise<Response> {
          */
         const applyPendingModelSwitch = async (): Promise<void> => {
           if (activeSessionId === undefined) return;
-          const pending = consumeModelSwitch(activeSessionId);
+          // Peek (non-destructive) so the main loop and a mid-flight
+          // sub-agent batch both see the same entry; whichever applies
+          // it first explicitly acknowledges afterwards.
+          const pending = peekModelSwitch(activeSessionId);
           if (!pending) return;
 
           if (pending.model !== undefined && pending.model !== model) {
@@ -1218,6 +1222,12 @@ export async function POST(req: NextRequest): Promise<Response> {
             model,
             compactionModel: effectiveCompactionModel,
           });
+          // Drop the entry now that the new models are wired into the
+          // request context. A mid-flight sub-agent batch that peeks the
+          // same session on its next iteration will see null and no-op.
+          // Pass the exact object we peeked so a fresh request that
+          // merged into the entry between peek and now is preserved.
+          acknowledgeModelSwitch(activeSessionId, pending);
         };
 
         // ── Main tool-calling loop ──────────────────────────────────
