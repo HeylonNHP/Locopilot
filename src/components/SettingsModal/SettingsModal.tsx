@@ -17,7 +17,7 @@ interface Props {
 }
 
 export default function SettingsModal({ onClose }: Props) {
-  const { state, dispatch, streamAbortRef } = useChat();
+  const { state, dispatch, abortControllersRef } = useChat();
   const [model, setModel] = useState(state.model);
   const [numCtx, setNumCtx] = useState(String(state.requestedNumCtx));
   const [yolo, setYolo] = useState(state.yolo);
@@ -302,11 +302,13 @@ export default function SettingsModal({ onClose }: Props) {
             ...(compactionChanged ? { compactionModel } : {}),
             ...(compactionChanged && compactionProviderId ? { compactionProviderId } : {}),
           },
-          // Attach to the running chat stream's signal so a Stop click
-          // while the switch request is in flight cancels it client-side
-          // and lets the route's `unregisterActiveTurn` clean the
-          // server-side `pendingSwitches[sessionId]` entry.
-          streamAbortRef.current?.signal
+          // Attach to the running turn's signal — looked up per session
+          // from the shared abort map, so it is the SAME controller the
+          // Stop button aborts. A Stop click while the switch request is in
+          // flight cancels it client-side and lets the route's
+          // `unregisterActiveTurn` clean the server-side
+          // `pendingSwitches[sessionId]` entry.
+          abortControllersRef.current.get(streamingSessionId)?.signal
         );
         if (!accepted) {
           dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });

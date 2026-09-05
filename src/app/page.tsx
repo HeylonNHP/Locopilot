@@ -26,12 +26,14 @@ import { useChat } from './lib/chatStore';
 
 /** Inner component — uses useSearchParams so must live inside Suspense. */
 function HomeInner() {
-  const { state, dispatch } = useChat();
+  // The per-session AbortController map lives on the chat-store context (the
+  // single source of truth, created in ChatProvider) so the stream lifecycle
+  // below and out-of-tree consumers (ModelSelector, SettingsModal) all share
+  // one instance.
+  const { state, dispatch, abortControllersRef } = useChat();
   const [showSettings, setShowSettings] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
-
-  const abortControllersRef = useRef<Map<number, AbortController>>(new Map());
 
   const { isCompactingRef, isGeneratingTitleRef } = useSyncRefs(isCompacting, isGeneratingTitle);
 

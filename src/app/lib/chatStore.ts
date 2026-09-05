@@ -1264,29 +1264,42 @@ const ChatContext = createContext<{
   state: ChatState;
   dispatch: React.Dispatch<ChatAction>;
   /**
-   * Mutable holder for the AbortController of the currently-streaming chat
-   * turn. Exposed on the chat-store context so callers that live outside
+   * Per-session map of AbortControllers — the SAME instance `page.tsx`
+   * passes into `useChatStream` / `useActionHandlers` / `useSlashCommands`.
+   * `useChatStream` sets `map.set(sessionId, controller)` when a turn starts,
+   * re-keys `-1` → real session id on the `session_created` event, and
+   * deletes the entry in the turn's `finally`; `handleStop` aborts
+   * `map.get(visibleSessionId)`.
+   *
+   * Exposed on the chat-store context so callers that live outside
    * `page.tsx` (e.g. `ModelSelector`, `SettingsModal`) can attach their
-   * mid-turn request mid-flight fetch to the same abort signal the Stop
-   * button will fire. The holder is intentionally a plain object (not
-   * React state) — callers read `.current.signal` at the moment they need
-   * it, so the controller can be replaced on every new stream without
-   * triggering a re-render of every consumer. Replaced by `useChatStream`
-   * each time it starts a new chat turn (the previous one is aborted
-   * first so any in-flight mid-turn requests that captured the old signal
-   * are cancelled in the same Stop click).
+   * in-flight mid-turn model-switch fetch to the same abort signal the Stop
+   * button will fire: read `.current.get(streamingSessionId)?.signal` at the
+   * moment the fetch is issued. The lookup is per session (not a single
+   * "current" controller) so it stays correct when several sessions stream
+   * concurrently — the fetch is always tied to the turn it is switching,
+   * never to whichever turn started last. The holder is a plain ref (not
+   * React state), so reading it never triggers a re-render.
    */
-  streamAbortRef: { current: AbortController | null };
-}>({ state: initialState, dispatch: () => {}, streamAbortRef: { current: null } });
+  abortControllersRef: { current: Map<number, AbortController> };
+}>({
+  state: initialState,
+  dispatch: () => {},
+  abortControllersRef: { current: new Map() },
+});
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(chatReducer, initialState);
-  // Stable holder across renders so consumers can read `.current.signal`
-  // without registering a re-render dependency on it.
-  const streamAbortRef = useRef<AbortController | null>(null);
+  // The per-session abort map's single source of truth. `page.tsx` (HomeInner)
+  // takes it from this context and passes it down to `useChatStream`,
+  // `useActionHandlers` and `useSlashCommands`, so the controller a mid-turn
+  // model-switch fetch reads is the SAME controller the Stop button aborts.
+  // Stable across renders so consumers can read `.current` without
+  // registering a re-render dependency on it.
+  const abortControllersRef = useRef<Map<number, AbortController>>(new Map());
   return React.createElement(
     ChatContext.Provider,
-    { value: { state, dispatch, streamAbortRef } },
+    { value: { state, dispatch, abortControllersRef } },
     children
   );
 }

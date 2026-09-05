@@ -83,7 +83,7 @@ export default function ModelSelector({
   onClose,
   mode = 'model',
 }: ModelSelectorProps) {
-  const { state, dispatch, streamAbortRef } = useChat();
+  const { state, dispatch, abortControllersRef } = useChat();
 
   // Destructure only the fields used by this component so callbacks do not
   // depend on the entire state object (which changes on every render during
@@ -113,21 +113,23 @@ export default function ModelSelector({
     async (payload: MidTurnModelSwitch) => {
       if (streamingSessionId === null) return;
       dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: true } });
-      // Attach the mid-turn fetch to the chat-stream's signal: if the user
-      // clicks Stop while the request is in flight, the fetch is aborted
-      // client-side and the server-side `pendingSwitches[sessionId]` is
-      // cleared by the route's `unregisterActiveTurn` rather than being
-      // silently dropped after the turn's finally runs.
+      // Attach the mid-turn fetch to the signal of the turn it is switching
+      // — looked up per session from the shared abort map, i.e. the SAME
+      // controller the Stop button aborts. If the user clicks Stop while the
+      // request is in flight, the fetch is aborted client-side and the
+      // server-side `pendingSwitches[sessionId]` is cleared by the route's
+      // `unregisterActiveTurn` rather than being silently dropped after the
+      // turn's finally runs.
       const accepted = await requestMidTurnModelSwitch(
         streamingSessionId,
         payload,
-        streamAbortRef.current?.signal
+        abortControllersRef.current.get(streamingSessionId)?.signal
       );
       if (!accepted) {
         dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
       }
     },
-    [dispatch, streamingSessionId, streamAbortRef]
+    [dispatch, streamingSessionId, abortControllersRef]
   );
 
   const [search, setSearch] = useState('');
