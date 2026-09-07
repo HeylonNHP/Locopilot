@@ -57,6 +57,12 @@ import {
   SYNTHETIC_NUDGE_MARKER,
 } from '@/services/compact';
 import {
+  buildEmptyResponseRecoveryNudge,
+  EmptyResponseRecoveryTracker,
+  hasMeaningfulAssistantContent,
+  MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS,
+} from '@/services/emptyResponseRecovery';
+import {
   buildLlmRequestContext,
   type ChatMessage,
   type LlmRequestContext,
@@ -97,9 +103,9 @@ interface CompletedSubAgent {
 }
 
 const SUB_AGENT_AUTO_COMPACT_NOTICE_BASE =
-  'The conversation history was automatically compacted due to context length. ' +
-  'The original orchestrator request has been preserved verbatim above. ' +
-  COMPACTION_INITIAL_DIRECTIVE.subAgent;
+  `The conversation history was automatically compacted due to context length. ` +
+  `The original orchestrator request has been preserved verbatim above. ${ 
+  COMPACTION_INITIAL_DIRECTIVE.subAgent}`;
 const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
 
 function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): string {
@@ -667,6 +673,11 @@ async function runSingleAgent(
   // in the post-compaction notice so the model can adapt when it repeatedly
   // hits the context limit. Local per sub-agent; not inherited from the parent.
   let subAgentCompactions = 0;
+  // Tracks consecutive empty assistant replies so the loop can retry them
+  // instead of silently returning nothing (see
+  // src/services/emptyResponseRecovery.ts — the policy, attempt cap, and
+  // nudge wording are shared with the main chat loop).
+  const emptyResponseRecovery = new EmptyResponseRecoveryTracker();
 
   const CIRCUIT_BREAKER_NOTICE =
     '[System: You have already called this exact tool with the same arguments in a previous turn. ' +
@@ -848,10 +859,43 @@ async function runSingleAgent(
       }
 
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+        // Empty-response recovery (parity with the main chat loop): an
+        // assistant reply with no meaningful text is retried with a shared
+        // synthetic nudge instead of silently ending the agent. The empty
+        // assistant message is still pushed first so the model observes its
+        // own empty turn, exactly like the main loop. Once the attempt cap
+        // is exhausted the empty reply is accepted as final and the
+        // orchestrator receives the usual
+        // "[Sub-agent completed without a final text response.]" marker.
+        if (
+          !hasMeaningfulAssistantContent(assistantMessage) &&
+          emptyResponseRecovery.shouldRecover()
+        ) {
+          emptyResponseRecovery.recordAttempt();
+          debugLog.diagnostic({
+            layer: 'subagent',
+            phase: 'empty_response_recovery',
+            requestId: context?.requestId,
+            sessionId: context?.sessionId,
+            agentId: agent.id,
+            attempt: emptyResponseRecovery.attemptsUsed,
+            maxAttempts: MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS,
+          });
+          labeledOutput.writeLine(
+            `[empty response #${emptyResponseRecovery.attemptsUsed}/${MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS}] retrying with a direct-answer nudge`
+          );
+          messages.push(assistantMessage, buildEmptyResponseRecoveryNudge());
+          continue;
+        }
         messages.push(assistantMessage);
         onProgress?.(`Sub-agent ${agent.id}: completed`);
         break;
       }
+
+      // A tool-call turn is productive regardless of its text — reset the
+      // empty-response streak (mirrors the main loop's reset on its
+      // tool-call path in src/app/api/chat/route.ts).
+      emptyResponseRecovery.reset();
 
       // Collect every tool response before appending anything. This keeps the
       // assistant message and its matching tool messages contiguous in history,

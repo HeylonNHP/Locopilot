@@ -74,6 +74,12 @@ import {
   DEFAULT_OLLAMA_BASE_URL,
 } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
+import {
+  buildEmptyResponseRecoveryNudge,
+  EmptyResponseRecoveryTracker,
+  hasMeaningfulAssistantContent,
+  sanitizeAssistantTextFragment,
+} from '@/services/emptyResponseRecovery';
 import { createSession, getSessionName, renameSession, sessionExists } from '@/services/history';
 import {
   buildLlmRequestContext,
@@ -104,7 +110,7 @@ import {
   getEnabledSkills,
   loadSkillState,
 } from '@/services/skillManager';
-import { sanitizeChatMessage, stripSpecialTokens } from '@/services/textUtils';
+import { sanitizeChatMessage } from '@/services/textUtils';
 import { generateSessionTitle, sanitizeContentForTitle } from '@/services/titleGeneration';
 import { generateFallbackTitle } from '@/services/titleUtils';
 import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
@@ -132,8 +138,6 @@ import { createSseStream, isRetryableError } from './sseStream';
 // Prevent static generation – this route must always run on the server.
 export const dynamic = 'force-dynamic';
 
-const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 3;
-const CHANNEL_LABEL_ONLY_PATTERN = /^\s*(?:thought|analysis|final|commentary)\s*$/i;
 const VALID_DONE_REASONS = new Set(['stop', 'length', 'load', 'unload']);
 
 /**
@@ -228,11 +232,6 @@ function mergeClientMessages(
   ];
 }
 
-function sanitizeAssistantTextFragment(text: string): string {
-  const cleaned = stripSpecialTokens(text ?? '');
-  return CHANNEL_LABEL_ONLY_PATTERN.test(cleaned.trim()) ? '' : cleaned;
-}
-
 /**
  * Build the LLM-bound copy of a user message. When the promptTimestamps
  * toggle is on and the message carries a createdAt, prepend a
@@ -256,15 +255,6 @@ function maybeInjectPromptTimestamp(
   const { createdAt: _createdAt, ...rest } = message;
   void _createdAt;
   return { ...rest, content: `${stamp}\n${message.content}` };
-}
-
-function hasMeaningfulAssistantContent(message: ChatMessage): boolean {
-  const cleanedContent = sanitizeAssistantTextFragment(message.content ?? '').trim();
-  if (cleanedContent.length === 0) {
-    return false;
-  }
-
-  return !CHANNEL_LABEL_ONLY_PATTERN.test(cleanedContent);
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
@@ -440,7 +430,10 @@ export async function POST(req: NextRequest): Promise<Response> {
       // SOURCES block is always appended to tool results; this flag gates the
       // system-prompt directive and the tool-result reminder.
       let effectiveCiteSources = true;
-      let emptyResponseRecoveryAttempts = 0;
+      // Tracks consecutive empty assistant responses so the loop can retry
+      // them (see src/services/emptyResponseRecovery.ts — the policy is
+      // shared with the sub-agent loop).
+      const emptyResponseRecovery = new EmptyResponseRecoveryTracker();
       // How many times auto-compaction has fired since this request (i.e.
       // since the user's last real prompt) began. Each real user message
       // starts a fresh request, so this counter needs no explicit reset —
@@ -2101,7 +2094,8 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             currentMessages.push(assistantMessage, ...toolResults);
             pendingAppends.push(...subagentRows, assistantMessage, ...toolResults);
-            emptyResponseRecoveryAttempts = 0;
+            // A tool-call turn is productive regardless of its text.
+            emptyResponseRecovery.reset();
             debugLog.messageArraySummary(
               'tool-loop: after push',
               currentMessages,
@@ -2157,17 +2151,10 @@ export async function POST(req: NextRequest): Promise<Response> {
           pendingAppends.push(assistantMessage);
 
           if (hasMeaningfulAssistantContent(assistantMessage)) {
-            emptyResponseRecoveryAttempts = 0;
-          } else if (emptyResponseRecoveryAttempts < MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS) {
-            emptyResponseRecoveryAttempts += 1;
-            const recoveryMessage: ChatMessage = {
-              role: 'user',
-              content:
-                `${SYNTHETIC_NUDGE_MARKER}Your last response was empty. Provide a direct answer now. ` +
-                `If commands are needed, call run_command. If commands already ran, summarize their output and errors.${
-                  SYNTHETIC_NUDGE_END
-                }`,
-            };
+            emptyResponseRecovery.reset();
+          } else if (emptyResponseRecovery.shouldRecover()) {
+            emptyResponseRecovery.recordAttempt();
+            const recoveryMessage: ChatMessage = buildEmptyResponseRecoveryNudge();
             currentMessages.push(recoveryMessage);
             // Note: the recovery nudge is intentionally NOT pushed to
             // `pendingAppends`. The post-compaction nudge (above) follows

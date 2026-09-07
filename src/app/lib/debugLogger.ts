@@ -97,6 +97,7 @@ export type DiagnosticPhase =
   | 'nested_tool_end'
   | 'compaction_start'
   | 'compaction_end'
+  | 'empty_response_recovery'
   | 'abort'
   | 'error'
   | 'model_switched'
