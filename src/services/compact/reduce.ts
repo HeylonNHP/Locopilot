@@ -35,7 +35,8 @@ export async function produceConversationSummary(
   preparedHistoryMessages: ChatMessage[],
   onProgress?: (message: string) => void,
   signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ReasoningEffort,
+  onTps?: (tps: number) => void
 ): Promise<string> {
   const sourceEstimate = countMessagesTokens(preparedHistoryMessages, model);
   const safeInputBudget = computeSafeInputBudget(numCtx);
@@ -52,6 +53,7 @@ export async function produceConversationSummary(
       ...(onProgress ? { onProgress } : {}),
       ...(signal ? { signal } : {}),
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+      ...(onTps ? { onTps } : {}),
     });
   }
 
@@ -84,6 +86,7 @@ export async function produceConversationSummary(
       ...(onProgress ? { onProgress } : {}),
       ...(signal ? { signal } : {}),
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+      ...(onTps ? { onTps } : {}),
     });
     chunkSummaries.push(summary);
   }
@@ -97,7 +100,8 @@ export async function produceConversationSummary(
     chunkSummaries,
     onProgress,
     signal,
-    reasoningEffort
+    reasoningEffort,
+    onTps
   );
 }
 
@@ -114,7 +118,8 @@ export async function reduceSummaryGroups(
   summaries: string[],
   onProgress?: (message: string) => void,
   signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ReasoningEffort,
+  onTps?: (tps: number) => void
 ): Promise<string> {
   if (summaries.length === 1) {
     return summaries[0]!;
@@ -162,7 +167,8 @@ export async function reduceSummaryGroups(
       budget,
       onProgress,
       signal,
-      reasoningEffort
+      reasoningEffort,
+      onTps
     );
     batchSummaries.push(combined);
   }
@@ -175,6 +181,7 @@ export async function reduceSummaryGroups(
     batchSummaries,
     onProgress,
     signal,
-    reasoningEffort
+    reasoningEffort,
+    onTps
   );
 }

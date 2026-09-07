@@ -40,6 +40,11 @@ import { findLatestUserMessageIndex, splitHistoryForCompaction } from './split';
  * @param signal          - Optional AbortSignal.
  * @param reasoningEffort - Optional reasoning effort level forwarded to the
  *                          provider adapters for every compaction LLM call.
+ * @param onTps           - Optional live tokens-per-second reporter, invoked
+ *                          while the distillation and summarisation LLM calls
+ *                          stream, so the UI can show compaction speed. Not
+ *                          wired to the token-measurement call (it generates
+ *                          at most one token, so it has no meaningful rate).
  */
 export async function compactHistory(
   ctx: LlmRequestContext,
@@ -51,7 +56,8 @@ export async function compactHistory(
   remainingRetries: number = 2,
   onStats?: (stats: CompactStats) => void,
   signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ReasoningEffort,
+  onTps?: (tps: number) => void
 ): Promise<CompactResult> {
   const oldTokenCount = await measureConversationTokens(
     ctx,
@@ -135,7 +141,8 @@ export async function compactHistory(
     model,
     onProgress,
     signal,
-    reasoningEffort
+    reasoningEffort,
+    onTps
   );
 
   // Also distill large tool outputs in the preserved window so they don't land
@@ -148,7 +155,8 @@ export async function compactHistory(
     model,
     onProgress,
     signal,
-    reasoningEffort
+    reasoningEffort,
+    onTps
   );
 
   // Generate the summary: single-shot when it fits, bounded map-reduce when the
@@ -161,7 +169,8 @@ export async function compactHistory(
     preparedHistoryMessages,
     onProgress,
     signal,
-    reasoningEffort
+    reasoningEffort,
+    onTps
   );
 
   // Rebuild the message history: a single assistant message holds the preamble
@@ -211,7 +220,8 @@ export async function compactHistory(
       remainingRetries - 1,
       onStats,
       signal,
-      reasoningEffort
+      reasoningEffort,
+      onTps
     );
     // Report stats relative to the original pre-compaction history.
     return {

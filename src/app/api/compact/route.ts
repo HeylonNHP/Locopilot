@@ -207,7 +207,11 @@ export async function POST(request: NextRequest): Promise<Response> {
           // own default mapping. Mirrors the chat route's convention.
           compactionReasoningEffort !== undefined && compactionReasoningEffort !== 'off'
             ? compactionReasoningEffort
-            : undefined
+            : undefined,
+          // Live compaction speed for the t/s badge.
+          (tps: number) => {
+            sendEvent('status', { phase: 'compacting', tps });
+          }
         );
 
         const parsedSessionId =

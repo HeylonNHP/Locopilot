@@ -9,7 +9,9 @@
 
 import type { ReasoningEffort } from '@/types/chatConfig';
 
+import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
 import { type ChatMessage, type LlmRequestContext, sendLlmChat } from '@/services/llm';
+import { LiveThroughputMeter } from '@/services/tokenThroughput';
 
 import {
   TOOL_DISTILL_CHAR_THRESHOLD,
@@ -61,7 +63,8 @@ export async function distillToolMessages(
   model: string,
   onProgress?: (message: string) => void,
   signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ReasoningEffort,
+  onTps?: (tps: number) => void
 ): Promise<ChatMessage[]> {
   const distilledMessages: ChatMessage[] = [];
 
@@ -111,6 +114,9 @@ export async function distillToolMessages(
       `Tool output:\n${distillInputContent}`;
 
     let distilledContent = '';
+    // Live t/s meter so the UI can show generation speed while the
+    // distillation requests run (same shared policy as the main loop).
+    const liveMeter = new LiveThroughputMeter(model, TPS_STATUS_MIN_INTERVAL_MS);
     const distillResponse = await sendLlmChat(
       ctx,
       {
@@ -130,6 +136,8 @@ export async function distillToolMessages(
       (chunk) => {
         if (chunk.message?.content) {
           distilledContent += chunk.message.content;
+          liveMeter.onText(chunk.message.content);
+          liveMeter.maybeReport((tps) => onTps?.(tps));
           onProgress?.(
             `Distilling tool output ${index + 1}/${historyMessages.length} (${toolName})... (${distilledContent.length} chars)`
           );

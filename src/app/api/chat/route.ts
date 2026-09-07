@@ -1341,7 +1341,12 @@ export async function POST(req: NextRequest): Promise<Response> {
                   1,
                   2,
                   undefined,
-                  req.signal
+                  req.signal,
+                  undefined,
+                  // Live compaction speed for the t/s badge.
+                  (tps: number) => {
+                    sendEvent('status', { phase: 'compacting', tps });
+                  }
                 );
                 // Replace server-side history with the compacted result.
                 const preservedSystemMessage = currentMessages[0];

@@ -411,7 +411,7 @@ export function useSlashCommands({
             } | null = null;
             let errorMessage: string | null = null;
 
-            while (true) {
+             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
               const event = value.event || 'message';
@@ -419,6 +419,15 @@ export function useSlashCommands({
                 const parsed = JSON.parse(value.data);
                 if (event === 'compact_progress' && typeof parsed.message === 'string') {
                   dispatch({ type: 'COMPACT_PROGRESS', message: parsed.message });
+                } else if (event === 'status' && typeof parsed.tps === 'number') {
+                  // Live compaction speed for the t/s badge (same badge as
+                  // generation). Scoped to the compacting session so a
+                  // session switch mid-compaction cannot cross wires.
+                  dispatch({
+                    type: 'SET_CURRENT_TPS',
+                    tps: parsed.tps,
+                    ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
+                  });
                 } else if (event === 'compact' && Array.isArray(parsed.messages)) {
                   compactData = parsed;
                 } else if (event === 'error' && typeof parsed.message === 'string') {
@@ -428,7 +437,6 @@ export function useSlashCommands({
                 // Ignore malformed SSE frames
               }
             }
-
             if (errorMessage) throw new Error(errorMessage);
             if (!compactData) throw new Error('Compaction returned an invalid response.');
 
@@ -497,13 +505,19 @@ export function useSlashCommands({
                 // Ignore — the stream may already be closed.
               }
             }
-            if (abortControllersRef.current.get(COMPACTION_ABORT_KEY) === abortController) {
+             if (abortControllersRef.current.get(COMPACTION_ABORT_KEY) === abortController) {
               abortControllersRef.current.delete(COMPACTION_ABORT_KEY);
             }
             isCompactingRef.current = false;
             setIsCompacting(false);
-          }
-          return;
+            // The badge was showing the compaction LLM's speed — clear it so
+            // a stale rate does not linger after compaction ends.
+            dispatch({
+              type: 'SET_CURRENT_TPS',
+              tps: null,
+              ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
+            });
+          }          return;
         }
 
         case 'title': {

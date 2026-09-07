@@ -255,7 +255,13 @@ async function autoCompactSubAgentIfNeeded(
       1,
       2,
       undefined,
-      signal
+      signal,
+      undefined,
+      // Live compaction speed — the route forwards reportTps to the client,
+      // so the t/s badge keeps updating while the sub-agent compacts.
+      (tps: number) => {
+        output.reportTps?.(tps);
+      }
     );
 
     // After compaction, ensure the original orchestrator prompt is at position 1.

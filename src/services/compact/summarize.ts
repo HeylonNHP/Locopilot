@@ -10,7 +10,9 @@
 
 import type { ReasoningEffort } from '@/types/chatConfig';
 
+import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
 import { type ChatMessage, type LlmRequestContext, sendLlmChatStream } from '@/services/llm';
+import { LiveThroughputMeter } from '@/services/tokenThroughput';
 
 import type { SummaryBudget } from './types';
 
@@ -51,9 +53,15 @@ async function streamSummary(
   numPredict: number | undefined,
   onProgress?: (message: string) => void,
   signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ReasoningEffort,
+  onTps?: (tps: number) => void
 ): Promise<string> {
   let text = '';
+  // Live t/s meter so the UI can show generation speed while compaction runs
+  // (same shared policy as the main loop: rebaseline at first token, min
+  // interval, minimum measurement window). Fresh meter per attempt so the
+  // empty-response retry starts its own measurement.
+  const liveMeter = new LiveThroughputMeter(model, TPS_STATUS_MIN_INTERVAL_MS);
   for await (const chunk of sendLlmChatStream(ctx, {
     model,
     messages,
@@ -69,8 +77,10 @@ async function streamSummary(
     const content = chunk.message?.content ?? '';
     if (content.length > 0) {
       text += content;
+      liveMeter.onText(content);
       onProgress?.(`AI is summarizing... (${text.length} chars)`);
     }
+    liveMeter.maybeReport((tps) => onTps?.(tps));
   }
   return text.trim();
 }
@@ -88,6 +98,8 @@ interface SummariseChunkParams {
   onProgress?: (message: string) => void;
   signal?: AbortSignal;
   reasoningEffort?: ReasoningEffort;
+  /** Optional live t/s reporter so the UI can show compaction speed. */
+  onTps?: (tps: number) => void;
 }
 
 /**
@@ -106,6 +118,7 @@ export async function summariseChunk(params: SummariseChunkParams): Promise<stri
     onProgress,
     signal,
     reasoningEffort,
+    onTps,
   } = params;
 
   const historyText = historyMessages
@@ -142,7 +155,8 @@ export async function summariseChunk(params: SummariseChunkParams): Promise<stri
     budget,
     forwardProgress,
     signal,
-    reasoningEffort
+    reasoningEffort,
+    onTps
   );
 }
 
@@ -161,7 +175,8 @@ export async function summariseMessages(
   budget: SummaryBudget,
   onProgress?: (message: string) => void,
   signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort
+  reasoningEffort?: ReasoningEffort,
+  onTps?: (tps: number) => void
 ): Promise<string> {
   const summaryNumPredict = Math.min(
     numCtx,
@@ -179,7 +194,8 @@ export async function summariseMessages(
     summaryNumPredict,
     onProgress,
     signal,
-    reasoningEffort
+    reasoningEffort,
+    onTps
   );
 
   // If the model returned nothing (can happen with very small inputs and a
@@ -206,7 +222,8 @@ export async function summariseMessages(
       undefined,
       onProgress,
       signal,
-      reasoningEffort
+      reasoningEffort,
+      onTps
     );
   }
 
