@@ -11,8 +11,19 @@ export interface SseTokenStats {
   evalCount: number;
   totalTokens: number;
   tokenLimit: number;
-  promptTps?: number;
-  evalTps?: number;
+  /**
+   * Turn-aggregate rates. Always present on `done` events; null means the
+   * rate was unknown this turn (no generation observed, or the provider
+   * reported neither durations nor usable counts) so the client must clear
+   * any previous-turn value rather than keep displaying it.
+   */
+  promptTps?: number | null;
+  evalTps?: number | null;
+  /**
+   * True when evalTps was derived from wall-clock time (provider reported no
+   * eval durations); the UI tags such values "(est)".
+   */
+  evalTpsEstimated?: boolean;
   isEstimated?: boolean;
   /**
    * The model's runtime cap as known to the server at the end of the

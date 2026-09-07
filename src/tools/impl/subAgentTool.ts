@@ -47,7 +47,7 @@ export const subAgentToolSchema: ToolSchema = {
   },
 };
 
-import { AUTO_COMPACT_THRESHOLD_PCT } from '@/constants';
+import { AUTO_COMPACT_THRESHOLD_PCT, TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
 import {
   compactHistory,
   COMPACTION_ADAPTIVE_DIRECTIVE,
@@ -71,7 +71,8 @@ import {
   type ToolDefinition,
 } from '@/services/llm';
 import { sanitizeChatMessage } from '@/services/textUtils';
-import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
+import { countMessagesTokens } from '@/services/tokenizer';
+import { LiveThroughputMeter } from '@/services/tokenThroughput';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import {
   type IToolCommand,
@@ -707,11 +708,13 @@ async function runSingleAgent(
 
       onProgress?.(`Sub-agent ${agent.id}: thinking`);
 
-      // Track rough tokens and wall-clock time so the web UI can show
-      // live tokens-per-second while the sub-agent is generating.
-      const subagentStartMs = Date.now();
-      let subagentRoughTokens = 0;
-      let subagentLastTpsStatusMs = 0;
+      // Live t/s meter so the web UI can show the sub-agent's generation
+      // speed in the status bar. Same shared policy as the main loop: the
+      // clock rebaselines at the first token-bearing chunk (excluding model
+      // load and prompt processing), and the rate freezes instead of decaying
+      // while the model streams unobservable tokens such as tool-call
+      // arguments. See src/services/tokenThroughput.ts.
+      const liveMeter = new LiveThroughputMeter(config.model, TPS_STATUS_MIN_INTERVAL_MS);
 
       const subAgentContext: LlmRequestContext = buildLlmRequestContext({
         ...(config.provider ? { provider: config.provider } : {}),
@@ -789,26 +792,24 @@ async function runSingleAgent(
             }
             if (chunk.message?.thinking) {
               output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
-              subagentRoughTokens += Math.max(
-                1,
-                countTextTokens(chunk.message.thinking, config.model)
-              );
+              liveMeter.onText(chunk.message.thinking);
             }
             if (chunk.message?.content) {
               output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
-              subagentRoughTokens += Math.max(
-                1,
-                countTextTokens(chunk.message.content, config.model)
-              );
+              liveMeter.onText(chunk.message.content);
+            }
+            // Tool-call arguments usually stream invisibly (adapters
+            // accumulate the deltas internally) — count them retroactively
+            // from whichever chunk surfaces the calls.
+            if (chunk.message?.tool_calls && chunk.message.tool_calls.length > 0) {
+              liveMeter.onJson(JSON.stringify(chunk.message.tool_calls));
             }
 
-            if (now - subagentLastTpsStatusMs > 800) {
-              const elapsedSec = (now - subagentStartMs) / 1000;
-              if (elapsedSec > 0) {
-                output.reportTps?.(+(subagentRoughTokens / elapsedSec).toFixed(2));
-              }
-              subagentLastTpsStatusMs = now;
-            }
+            // The meter self-throttles (min interval) and self-gates (only
+            // when new tokens arrived) — see tokenThroughput.ts.
+            liveMeter.maybeReport((tps) => {
+              output.reportTps?.(tps);
+            });
           },
           undefined,
           signal

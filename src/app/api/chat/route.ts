@@ -113,7 +113,13 @@ import {
 import { sanitizeChatMessage } from '@/services/textUtils';
 import { generateSessionTitle, sanitizeContentForTitle } from '@/services/titleGeneration';
 import { generateFallbackTitle } from '@/services/titleUtils';
-import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
+import { countMessagesTokens } from '@/services/tokenizer';
+import {
+  type CleanTurnStats,
+  extractTurnStats,
+  LiveThroughputMeter,
+  TurnThroughputAggregator,
+} from '@/services/tokenThroughput';
 import { buildUserMessageStamp } from '@/services/userMessageStamp';
 import { recordDiscoveredNonVision } from '@/services/visionCache';
 import { filterGrantedMCPTools, isAutoApprovedMCPTarget } from '@/tools/impl/mcpTool';
@@ -671,6 +677,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       let activeSessionId: number | undefined = parsedSessionId;
       let promptEvalCount = 0;
       let evalCount = 0;
+      // Aggregates generation speed across every LLM call in this turn
+      // (sum of counts / sum of durations), so a multi-call tool loop
+      // reports the turn's true rate instead of "last call wins". See
+      // src/services/tokenThroughput.ts for the shared policy.
+      const turnThroughput = new TurnThroughputAggregator();
 
       // Fail fast if the client is trying to resume a session that was
       // deleted in another tab. Without this guard the server burns LLM
@@ -1462,12 +1473,20 @@ export async function POST(req: NextRequest): Promise<Response> {
           let content = '';
           let thinking = '';
           let toolCalls: ChatMessage['tool_calls'] | undefined;
-          let promptEvalDuration = 0;
-          let evalDuration = 0;
-          let wallClockTps: number | null = null;
-          let streamStartMs = 0;
-          let roughTokens = 0;
-          let lastTpsStatusMs = 0;
+          // Guard-extracted metrics from this call's terminal chunk (empty
+          // until a non-heartbeat terminal chunk arrives). Recorded into
+          // turnThroughput after the call completes.
+          let finalChunkStats: CleanTurnStats = {};
+          // Live t/s meter for this call: rebaselines at the first
+          // token-bearing chunk so model load and prompt processing are
+          // excluded from the rate, freezes (instead of decaying) while the
+          // model streams unobservable tokens such as tool-call arguments,
+          // and counts those arguments once they surface. See
+          // src/services/tokenThroughput.ts for the shared policy.
+          const liveMeter = new LiveThroughputMeter(
+            model as string,
+            TPS_STATUS_MIN_INTERVAL_MS
+          );
           let firstChunkLogged = false;
           // Captured on the chunk with `done: true`. Distinguishes a natural
           // end-of-sequence (`stop`) from a token-cap truncation (`length`)
@@ -1505,9 +1524,8 @@ export async function POST(req: NextRequest): Promise<Response> {
 
           while (true) {
             try {
-              streamStartMs = Date.now();
-              roughTokens = 0;
-              lastTpsStatusMs = 0;
+              liveMeter.reset();
+              finalChunkStats = {};
 
               firstChunkLogged = false;
 
@@ -1536,7 +1554,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                     sendEvent('thinking', { content: thinkingChunk });
                     // Count thinking tokens toward live throughput so the TPS
                     // badge stays visible during long reasoning chains.
-                    roughTokens += countTextTokens(thinkingChunk, model as string);
+                    liveMeter.onText(thinkingChunk);
                   }
                 }
 
@@ -1546,41 +1564,51 @@ export async function POST(req: NextRequest): Promise<Response> {
                   if (contentChunk) {
                     content += contentChunk;
                     sendEvent('chunk', { content: contentChunk });
-                    roughTokens += countTextTokens(contentChunk, model as string);
+                    liveMeter.onText(contentChunk);
                   }
                 }
 
-                // Live token count for t/s display — emit at most once every 800 ms.
-                if (roughTokens > 0) {
-                  const now = Date.now();
-                  if (now - lastTpsStatusMs > TPS_STATUS_MIN_INTERVAL_MS) {
-                    const elapsedSec = (now - streamStartMs) / 1000;
-                    if (elapsedSec > 0) {
-                      sendEvent('status', {
-                        phase: 'responding',
-                        tps: +(roughTokens / elapsedSec).toFixed(2),
-                      });
-                    }
-                    lastTpsStatusMs = now;
-                  }
-                }
+                // Live t/s emission — the meter self-throttles (min interval)
+                // and self-gates (only when new tokens arrived, so the rate
+                // freezes instead of decaying while tool-call arguments stream
+                // invisibly).
+                liveMeter.maybeReport((tps) => {
+                  sendEvent('status', { phase: 'responding', tps });
+                });
 
-                // Capture tool calls from the final (or any) chunk.
+                // Capture tool calls from the final (or any) chunk. Count the
+                // argument JSON into the live numerator retroactively — most
+                // adapters accumulate argument deltas internally and only
+                // surface the complete call here, so without this the tokens
+                // the model just generated would be invisible to the rate.
                 if (msg?.tool_calls && msg.tool_calls.length > 0) {
                   toolCalls = msg.tool_calls;
+                  liveMeter.onJson(JSON.stringify(msg.tool_calls));
                 }
 
-                // Capture authoritative token counts and durations from the final chunk.
+                // Capture authoritative token counts and durations from the
+                // final chunk. load/unload heartbeats are terminal chunks
+                // with no metrics — they must not zero the captured values,
+                // but their done_reason is still recorded (the phantom-
+                // assistant guard below depends on it).
                 if (chunk.done) {
-                  promptEvalCount = chunk.prompt_eval_count ?? 0;
-                  evalCount = chunk.eval_count ?? 0;
-                  promptEvalDuration = chunk.prompt_eval_duration ?? 0;
-                  evalDuration = chunk.eval_duration ?? 0;
                   lastDoneReason =
                     typeof chunk.done_reason === 'string' &&
                     VALID_DONE_REASONS.has(chunk.done_reason)
                       ? (chunk.done_reason as DoneReason)
                       : undefined;
+                  if (lastDoneReason !== 'load' && lastDoneReason !== 'unload') {
+                    finalChunkStats = extractTurnStats(chunk);
+                    // Retain previous values when this chunk reports nothing
+                    // (defence in depth; the heartbeat check above is the
+                    // primary guard).
+                    if (finalChunkStats.promptEvalCount !== undefined) {
+                      promptEvalCount = finalChunkStats.promptEvalCount;
+                    }
+                    if (finalChunkStats.evalCount !== undefined) {
+                      evalCount = finalChunkStats.evalCount;
+                    }
+                  }
                 }
               }
 
@@ -1595,12 +1623,15 @@ export async function POST(req: NextRequest): Promise<Response> {
                 result: firstChunkLogged ? 'streamed' : 'no_chunks',
               });
 
-              // Wall-clock fallback in case Ollama durations are missing.
-              const wallClockElapsedMs = Date.now() - streamStartMs;
-              wallClockTps =
-                evalCount > 0 && wallClockElapsedMs > 0
-                  ? +(evalCount / (wallClockElapsedMs / 1000)).toFixed(2)
-                  : null;
+              // Record this call's throughput sample into the turn
+              // aggregate. The wall-clock window runs from the first
+              // token-bearing chunk (load + prompt processing excluded) and
+              // is only used when the provider reports no durations.
+              turnThroughput.recordCall({
+                stats: finalChunkStats,
+                wallElapsedMs:
+                  liveMeter.firstTokenAt === null ? null : Date.now() - liveMeter.firstTokenAt,
+              });
 
               // Preserve the first successful response for auto-titling
               // across retries in case the subsequent attempt differs.
@@ -1651,12 +1682,8 @@ export async function POST(req: NextRequest): Promise<Response> {
               toolCalls = undefined;
               promptEvalCount = 0;
               evalCount = 0;
-              promptEvalDuration = 0;
-              evalDuration = 0;
-              wallClockTps = null;
-              streamStartMs = 0;
-              roughTokens = 0;
-              lastTpsStatusMs = 0;
+              finalChunkStats = {};
+              liveMeter.reset();
               firstChunkLogged = false;
               lastDoneReason = undefined;
 
@@ -2365,15 +2392,13 @@ export async function POST(req: NextRequest): Promise<Response> {
 
           const totalTokens = promptEvalCount + evalCount;
 
-          // Compute tokens-per-second from Ollama's nanosecond durations.
-          // evalDuration is the generation phase; promptEvalDuration is the prompt-processing phase.
-          const promptTps =
-            promptEvalDuration > 0
-              ? +(promptEvalCount / (promptEvalDuration / 1_000_000_000)).toFixed(2)
-              : undefined;
-          const evalTps =
-            evalDuration > 0 ? +(evalCount / (evalDuration / 1_000_000_000)).toFixed(2) : undefined;
-          const effectiveEvalTps = evalTps ?? wallClockTps;
+          // Turn-level tokens-per-second from the aggregator: authoritative
+          // sum(evalCount)/sum(evalDuration) when the provider reports
+          // durations (Ollama), sum/sum wall-clock fallback (tagged estimated
+          // via evalTpsEstimated) otherwise. Fields are always present —
+          // null means "unknown this turn" so the client clears any stale
+          // previous-turn value instead of redisplaying it.
+          const tpsSnapshot = turnThroughput.snapshot();
 
           sendEvent('done', {
             content: finalContent,
@@ -2385,8 +2410,9 @@ export async function POST(req: NextRequest): Promise<Response> {
               totalTokens,
               tokenLimit: effectiveNumCtx,
               modelContextLimit,
-              ...(typeof promptTps === 'number' ? { promptTps } : {}),
-              ...(typeof effectiveEvalTps === 'number' ? { evalTps: effectiveEvalTps } : {}),
+              promptTps: tpsSnapshot.promptTps,
+              evalTps: tpsSnapshot.evalTps,
+              ...(tpsSnapshot.evalTpsEstimated ? { evalTpsEstimated: true } : {}),
             },
             doneReason: lastDoneReason && lastDoneReason !== 'unknown' ? lastDoneReason : 'stop',
           });

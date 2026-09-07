@@ -83,6 +83,61 @@ export function useChatStream(
   const requestFailedMapRef = useRef<Map<number, boolean>>(new Map());
   // --------------------------------------------------------------------------
 
+  /**
+   * Clear a session's t/s read-out: both the live badge value and the
+   * end-of-turn rate fields inside tokenStats. Used on error/abort paths —
+   * without the tokenStats clear, the PREVIOUS turn's evalTps would keep
+   * displaying as if it belonged to the aborted/errored turn (the store's
+   * SET_TOKEN_STATS merge preserves tps fields that a payload omits).
+   */
+  const clearTpsReadout = useCallback(
+    (targetSessionId?: number) => {
+      dispatch({
+        type: 'SET_CURRENT_TPS',
+        tps: null,
+        ...(targetSessionId === undefined ? {} : { targetSessionId }),
+      });
+      dispatch({
+        type: 'SET_TOKEN_STATS',
+        stats: { evalTps: null, promptTps: null, evalTpsEstimated: false },
+        ...(targetSessionId === undefined ? {} : { targetSessionId }),
+      });
+    },
+    [dispatch]
+  );
+
+  /**
+   * Apply a terminal `done` event that was buffered while the stream's owner
+   * session was a background session. The buffered `done` is the ONLY carrier
+   * of the end-of-turn tokenStats (including the authoritative t/s rate) —
+   * the buffer is discarded in the stream's `finally` without a full replay,
+   * so without this flush the owner slot would keep showing its last live
+   * mid-stream estimate forever after the user switches back. Returns true
+   * when a buffered `done` was found and applied.
+   */
+  const flushBufferedDoneFor = useCallback(
+    (sessionId: number): boolean => {
+      const buffered = bufferedEventsRef.current.get(sessionId);
+      if (!buffered) return false;
+      const doneEntry = [...buffered].reverse().find(({ event }) => event === 'done');
+      if (!doneEntry) return false;
+      const data = doneEntry.data as SseEventData;
+      if (data.tokenStats) {
+        dispatch({ type: 'SET_TOKEN_STATS', stats: data.tokenStats, targetSessionId: sessionId });
+      }
+      if (typeof data.doneReason === 'string') {
+        dispatch({
+          type: 'SET_DONE_REASON',
+          reason: isDoneReason(data.doneReason) ? data.doneReason : 'unknown',
+          targetSessionId: sessionId,
+        });
+      }
+      clearTpsReadout(sessionId);
+      return true;
+    },
+    [dispatch, clearTpsReadout]
+  );
+
   const handleEvent = useCallback(
     (
       event: string,
@@ -276,9 +331,10 @@ export function useChatStream(
           // entries to the real session id, so the buffer stays
           // consistent across the new-session handoff.
           const ownerSessionId =
-            requestId !== undefined
-              ? bufferOwnerMapRef.current.get(requestId)
-              : replayTargetSessionId;          const buffer = subagentBufferRef.current.get(agentId);
+            requestId === undefined
+              ? replayTargetSessionId
+              : bufferOwnerMapRef.current.get(requestId);
+          const buffer = subagentBufferRef.current.get(agentId);
           if (buffer) {
             buffer.text += text;
             if (buffer.timer) clearTimeout(buffer.timer);
@@ -437,7 +493,7 @@ export function useChatStream(
             // coerces missing values to 'stop' and is the source of truth for
             // valid values; this is purely defensive.
             const reason: DoneReason = isDoneReason(data.doneReason) ? data.doneReason : 'unknown';
-            const doneOwnerSessionId =
+             const doneOwnerSessionId =
               requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
             dispatch({
               type: 'SET_DONE_REASON',
@@ -445,10 +501,13 @@ export function useChatStream(
               ...(doneOwnerSessionId === undefined ? {} : { targetSessionId: doneOwnerSessionId }),
             });
           }
-          dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+          // The live rough estimate is superseded by the authoritative
+          // tokenStats just applied. Clear it scoped to the owning session —
+          // an unscoped clear would wipe the VISIBLE session's badge when a
+          // background stream's buffer is replayed on switch-back.
+          clearTpsReadout(targetSessionId);
           break;
         }
-
         case 'error': {
           // LLM / network failure during streaming. Mark the request
           // as failed (so the user's `retryPayloadRef` is preserved)
@@ -460,14 +519,12 @@ export function useChatStream(
           } else {
             dispatch({ type: 'SET_ERROR', error: errorMessage, targetSessionId });
           }
-          dispatch({
-            type: 'SET_CURRENT_TPS',
-            tps: null,
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
+          // An errored turn has no t/s of its own — clear both the live
+          // value and any previous turn's end-of-turn rate (the store merge
+          // would otherwise keep displaying the old rate).
+          clearTpsReadout(targetSessionId);
           break;
         }
-
         case 'write_error': {
           // Persistence failure for a session-messages write. Surface the
           // message to the user; the DB and the LLM-observed in-memory
@@ -478,19 +535,17 @@ export function useChatStream(
             typeof data.message === 'string'
               ? `Failed to save message to database: ${data.message}`
               : 'Failed to save message to database: Unknown error';
-          if (targetSessionId === undefined) {
+           if (targetSessionId === undefined) {
             dispatch({ type: 'SET_ERROR', error: writeErrorMessage });
           } else {
             dispatch({ type: 'SET_ERROR', error: writeErrorMessage, targetSessionId });
           }
-          dispatch({
-            type: 'SET_CURRENT_TPS',
-            tps: null,
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
+          // A persistence failure is still a failed turn as far as the t/s
+          // read-out is concerned — clear both the live value and any stale
+          // end-of-turn rate.
+          clearTpsReadout(targetSessionId);
           break;
         }
-
         case 'clear_assistant': {
           dispatch({
             type: 'REMOVE_LAST_ASSISTANT',
@@ -499,18 +554,17 @@ export function useChatStream(
           break;
         }
 
-        default: {
+         default: {
           break;
         }
       }
     },
-    [dispatch]
+    [dispatch, clearTpsReadout]
   );
 
   /**
    * Retry a failed chat turn using the originally-stored request payload.
-   */
-  const retry = useCallback(async () => {
+   */  const retry = useCallback(async () => {
     const sessionId = refs.sessionIdRef.current ?? -1;
     if (!retryPayloadRef.current || streamingSessions.has(sessionId)) return;
 
@@ -590,8 +644,11 @@ export function useChatStream(
       if (!details) {
         requestFailedMapRef.current.set(requestId, true);
         dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
-      } else if (details.name === 'AbortError') {
-        // User clicked Stop — silently ignore
+       } else if (details.name === 'AbortError') {
+        // User clicked Stop — the turn never completed, so the t/s read-out
+        // must not keep displaying the previous turn's rate as if it
+        // belonged to this one.
+        clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
       } else if (
         details.message.includes('input stream') ||
         details.message.includes('network') ||
@@ -604,12 +661,13 @@ export function useChatStream(
           error:
             'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
         });
+        clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
       } else {
         requestFailedMapRef.current.set(requestId, true);
         dispatch({ type: 'SET_ERROR', error: details.message });
+        clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
       }
-    } finally {
-      const ownerId = bufferOwnerMapRef.current.get(requestId);
+    } finally {      const ownerId = bufferOwnerMapRef.current.get(requestId);
 
       // Only flush subagent buffers belonging to this session
       for (const [agentId, entry] of subagentBufferRef.current.entries()) {
@@ -636,9 +694,18 @@ export function useChatStream(
           return next;
         });
         dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
+        // Apply a terminal `done` that was buffered while this stream's
+        // owner was a background session: its tokenStats (including the
+        // final t/s) must reach the owner slot before the buffer is
+        // discarded, otherwise the slot would keep displaying a frozen
+        // live estimate after the user switches back.
+        flushBufferedDoneFor(ownerId);
         bufferOwnerMapRef.current.delete(requestId);
         bufferedEventsRef.current.delete(ownerId);
       }
+      // Clear the live value scoped to the OWNER (unscoped fallback when the
+      // owner is unknown) — never wipe a different session's badge.
+      clearTpsReadout(ownerId);
       loadSessions();
       // Delayed refresh to pick up auto-generated title from background task
       setTimeout(() => loadSessions(), 2000);
@@ -646,10 +713,8 @@ export function useChatStream(
         retryPayloadRef.current = null;
       }
       requestFailedMapRef.current.delete(requestId);
-      dispatch({ type: 'SET_CURRENT_TPS', tps: null });
     }
-  }, [dispatch, handleEvent, refs, abortControllersRef, loadSessions, streamingSessions]);
-
+  }, [dispatch, handleEvent, clearTpsReadout, flushBufferedDoneFor, refs, abortControllersRef, loadSessions, streamingSessions]);
   /**
    * Call this after loading a session's messages to replay any SSE events that
    * were buffered while the user was viewing a different session.  No-op when
@@ -972,13 +1037,17 @@ export function useChatStream(
             handleEvent(value.event || 'message', { content: value.data }, requestId);
           }
         }
-      } catch (err: unknown) {
+       } catch (err: unknown) {
         const details = getStreamErrorDetails(err);
         if (!details) {
           requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
+          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
         } else if (details.name === 'AbortError') {
-          // User clicked Stop — silently ignore
+          // User clicked Stop — the turn never completed, so the t/s
+          // read-out must not keep displaying the previous turn's rate as
+          // if it belonged to this one.
+          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
         } else if (
           details.message.includes('input stream') ||
           details.message.includes('network') ||
@@ -991,9 +1060,11 @@ export function useChatStream(
             error:
               'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
           });
+          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
         } else {
           requestFailedMapRef.current.set(requestId, true);
           dispatch({ type: 'SET_ERROR', error: details.message });
+          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
         }
       } finally {
         const ownerId = bufferOwnerMapRef.current.get(requestId);
@@ -1024,20 +1095,30 @@ export function useChatStream(
             return next;
           });
           dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
+          // Apply a terminal `done` that was buffered while this stream's
+          // owner was a background session: its tokenStats (including the
+          // final t/s) must reach the owner slot before the buffer is
+          // discarded, otherwise the slot would keep displaying a frozen
+          // live estimate after the user switches back.
+          flushBufferedDoneFor(ownerId);
           bufferOwnerMapRef.current.delete(requestId);
           bufferedEventsRef.current.delete(ownerId);
         }
+        // Clear the live value scoped to the OWNER (unscoped fallback when
+        // the owner is unknown) — never wipe a different session's badge.
+        clearTpsReadout(ownerId);
         loadSessions();
         if (!requestFailedMapRef.current.get(requestId)) {
           retryPayloadRef.current = null;
         }
         requestFailedMapRef.current.delete(requestId);
-        dispatch({ type: 'SET_CURRENT_TPS', tps: null });
       }
     },
     [
       dispatch,
       handleEvent,
+      clearTpsReadout,
+      flushBufferedDoneFor,
       refs,
       abortControllersRef,
       loadSessions,
@@ -1045,6 +1126,5 @@ export function useChatStream(
       streamingSessions,
     ]
   );
-
   return { sendChatMessage, retry, handleEvent, replayBufferedEvents };
 }

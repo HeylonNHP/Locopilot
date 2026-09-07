@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
+import { resolveTpsDisplay } from '@/app/lib/tpsDisplay';
 import CompletionModeSelector from '@/components/CompletionModeSelector';
 import ModelSelector from '@/components/ModelSelector';
 import ReasoningEffortSelector from '@/components/ReasoningEffortSelector';
@@ -156,10 +157,13 @@ export default function StatusBar() {
   const isEstimated = tokenStats?.isEstimated ?? tokenStats === null;
   const sourceLabel = isEstimated ? '(est)' : '';
 
-  // Tokens-per-second display: live rough estimate during streaming,
-  // accurate Ollama-calculated value after the turn finishes.
-  const tpsValue = currentTps ?? tokenStats?.evalTps ?? tokenStats?.promptTps;
-  const tpsLabel = tpsValue === null || tpsValue === undefined ? null : `${tpsValue} t/s`;
+  // Tokens-per-second display. Precedence and formatting live in
+  // resolveTpsDisplay (src/app/lib/tpsDisplay.ts): the live rough estimate
+  // during streaming, the end-of-turn rate after it (tagged "(est)" when
+  // derived from wall-clock time), and never the prompt-processing rate —
+  // that measures a different phase and would badly mislead as "t/s".
+  const tpsDisplay = resolveTpsDisplay(currentTps, tokenStats);
+  const tpsLabel = tpsDisplay?.label ?? null;
 
   // "Model max" hint. The cap is the GGUF training context for Ollama
   // (or the provider's advertised cap for OpenAI-compatible). When the

@@ -111,8 +111,9 @@ export interface SessionState {
     evalCount: number;
     totalTokens: number;
     tokenLimit: number;
-    promptTps?: number;
-    evalTps?: number;
+    promptTps?: number | null;
+    evalTps?: number | null;
+    evalTpsEstimated?: boolean;
     isEstimated?: boolean;
     modelContextLimit?: number | null;
   } | null;
@@ -277,8 +278,9 @@ interface ChatState {
     evalCount: number;
     totalTokens: number;
     tokenLimit: number;
-    promptTps?: number;
-    evalTps?: number;
+    promptTps?: number | null;
+    evalTps?: number | null;
+    evalTpsEstimated?: boolean;
     isEstimated?: boolean;
     /**
      * The model's runtime cap as reported by the server. `null`
