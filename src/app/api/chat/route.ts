@@ -1576,14 +1576,14 @@ export async function POST(req: NextRequest): Promise<Response> {
                   sendEvent('status', { phase: 'responding', tps });
                 });
 
-                // Capture tool calls from the final (or any) chunk. Count the
-                // argument JSON into the live numerator retroactively — most
-                // adapters accumulate argument deltas internally and only
-                // surface the complete call here, so without this the tokens
-                // the model just generated would be invisible to the rate.
+                // Capture tool calls from the final (or any) chunk. Their
+                // argument JSON is deliberately NOT counted into the live
+                // rate — it surfaces retroactively in one chunk with no
+                // honest timestamp, and counting it at arrival produced
+                // six-figure t/s spikes (tokens over a few-ms window). The
+                // authoritative end-of-turn rate covers those tokens.
                 if (msg?.tool_calls && msg.tool_calls.length > 0) {
                   toolCalls = msg.tool_calls;
-                  liveMeter.onJson(JSON.stringify(msg.tool_calls));
                 }
 
                 // Capture authoritative token counts and durations from the

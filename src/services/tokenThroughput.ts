@@ -13,10 +13,11 @@
  *   so connection setup, model load, and prompt-processing time are excluded
  *   from the rate (matching the authoritative eval_duration-based figure
  *   Ollama reports). Emissions are gated on NEW tokens having arrived since
- *   the last emission: while the model streams a large tool-call argument
- *   (invisible to the chunk stream) the previously reported rate is frozen
- *   instead of decaying toward zero, and the tool-call arguments are counted
- *   into the numerator once they surface.
+ *   the last emission AND on a minimum measurement window: while the model
+ *   streams a large tool-call argument (invisible to the chunk stream) the
+ *   previously reported rate is frozen instead of decaying toward zero, and
+ *   unobservable tokens are never dumped into the numerator retroactively
+ *   (that once produced six-figure t/s spikes).
  * - Turn aggregator: rates are aggregated as sum(evalCount)/sum(evalDuration)
  *   across every LLM call in the turn, so a multi-call tool loop reports the
  *   turn's true generation speed instead of "last (shortest) call wins".
@@ -29,6 +30,14 @@
  */
 
 import { countTextTokens } from '@/services/tokenizer';
+
+/**
+ * Minimum elapsed time (since the meter's rebaseline) before a live rate may
+ * be reported. Bounds the rate any single oversized chunk can claim: a
+ * report divides tokens by this window at worst, instead of by the few
+ * milliseconds between a bulk token arrival and the next chunk.
+ */
+const MIN_REPORT_WINDOW_MS = 1000;
 
 /**
  * How long the generation phase took per LLM call, plus the raw wire metrics
@@ -123,11 +132,19 @@ function round2(value: number): number {
 
 /**
  * Live tokens-per-second meter for one LLM call (streaming). Counts tokens
- * from thinking/content/tool-argument chunks, rebaselines its clock at the
- * first token, and emits throttled progress reports — but only while new
- * tokens are actually arriving, so the displayed rate freezes (rather than
- * decaying toward zero) while the model streams unobservable tokens such as
- * tool-call arguments.
+ * from thinking/content chunks, rebaselines its clock at the first token,
+ * and emits throttled progress reports — but only while new tokens are
+ * actually arriving and at least MIN_REPORT_WINDOW_MS of measured generation
+ * time has accumulated, so the displayed rate freezes (rather than decaying
+ * toward zero) while the model streams unobservable tokens such as tool-call
+ * arguments, and can never spike from a sub-second measurement window.
+ *
+ * Tool-call arguments are deliberately NOT counted into the live rate: they
+ * stream invisibly through most adapters and surface retroactively in one
+ * chunk, so they carry no honest timestamp — dumping them into the numerator
+ * at arrival time produced absurd spikes (e.g. 639,000 t/s from 5,000
+ * argument tokens measured over a 3 ms window). The authoritative end-of-turn
+ * rate from the provider's eval counts (TurnThroughputAggregator) covers them.
  *
  * The clock source is injectable for tests.
  */
@@ -139,7 +156,7 @@ export class LiveThroughputMeter {
   /** Timestamp of the first token-bearing chunk (rebaseline point). */
   private startMs = 0;
   private tokens = 0;
-  private tokensAtLastEmit = 0;
+  private tokensAtLastCheck = 0;
   private lastEmitMs = 0;
 
   constructor(
@@ -160,15 +177,6 @@ export class LiveThroughputMeter {
     this.tokens += countTextTokens(text, this.model);
   }
 
-  /**
-   * Count tokens carried by tool-call arguments once they surface (they
-   * stream invisibly through most adapters, so they are usually counted
-   * retroactively from the terminal chunk).
-   */
-  onJson(json: string): void {
-    this.onText(json);
-  }
-
   /** True once at least one token-bearing chunk has been observed. */
   get hasTokens(): boolean {
     return this.startMs !== 0;
@@ -181,19 +189,35 @@ export class LiveThroughputMeter {
 
   /**
    * Emit a progress report through the callback if (and only if) new tokens
-   * have arrived since the last report and the minimum interval has elapsed.
-   * While no new tokens arrive, nothing is emitted and the consumer's
-   * previously displayed rate stays frozen.
+   * have arrived since the last check, the minimum interval has elapsed,
+   * and at least MIN_REPORT_WINDOW_MS of measured generation time has
+   * accumulated. While no new tokens arrive, nothing is emitted and the
+   * consumer's previously displayed rate stays frozen.
    */
   maybeReport(report: (tps: number) => void): void {
     if (this.startMs === 0 || this.tokens === 0) return;
-    if (this.tokens === this.tokensAtLastEmit) return;
+    // Freeze gate: only reconsider the rate when new tokens have arrived
+    // since the last check; otherwise the displayed rate stays frozen (no
+    // decay). A bulk arrival skipped for a too-small window counts as
+    // checked — it is never emitted later as a diluted spike.
+    if (this.tokens === this.tokensAtLastCheck) return;
     const t = this.now();
+    // Minimum measurement window. A report divides the token count by the
+    // time since the first token-bearing chunk. When a large batch of
+    // tokens lands in one chunk near the start of the measurement (a
+    // provider flushing buffered stream output in one chunk), a tiny window
+    // would produce an absurd rate (hundreds of thousands of t/s) that the
+    // freeze semantics then pin on the badge. Requiring a full second of
+    // measured generation time defers the first emission until there is
+    // something meaningful to report.
+    const elapsedMs = t - this.startMs;
+    if (elapsedMs < MIN_REPORT_WINDOW_MS) {
+      this.tokensAtLastCheck = this.tokens;
+      return;
+    }
     if (this.lastEmitMs !== 0 && t - this.lastEmitMs <= this.minIntervalMs) return;
-    const elapsedSec = (t - this.startMs) / 1000;
-    if (elapsedSec <= 0) return;
-    report(round2(this.tokens / elapsedSec));
-    this.tokensAtLastEmit = this.tokens;
+    report(round2(this.tokens / (elapsedMs / 1000)));
+    this.tokensAtLastCheck = this.tokens;
     this.lastEmitMs = t;
   }
 
@@ -201,7 +225,7 @@ export class LiveThroughputMeter {
   reset(): void {
     this.startMs = 0;
     this.tokens = 0;
-    this.tokensAtLastEmit = 0;
+    this.tokensAtLastCheck = 0;
     this.lastEmitMs = 0;
   }
 }

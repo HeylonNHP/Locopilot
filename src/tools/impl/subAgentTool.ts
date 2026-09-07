@@ -798,15 +798,11 @@ async function runSingleAgent(
               output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
               liveMeter.onText(chunk.message.content);
             }
-            // Tool-call arguments usually stream invisibly (adapters
-            // accumulate the deltas internally) — count them retroactively
-            // from whichever chunk surfaces the calls.
-            if (chunk.message?.tool_calls && chunk.message.tool_calls.length > 0) {
-              liveMeter.onJson(JSON.stringify(chunk.message.tool_calls));
-            }
 
-            // The meter self-throttles (min interval) and self-gates (only
-            // when new tokens arrived) — see tokenThroughput.ts.
+            // The meter self-throttles (min interval), self-gates (only when
+            // new tokens arrived) and requires a minimum measurement window —
+            // see tokenThroughput.ts. Tool-call argument JSON is deliberately
+            // not counted (it surfaces retroactively with no timestamp).
             liveMeter.maybeReport((tps) => {
               output.reportTps?.(tps);
             });

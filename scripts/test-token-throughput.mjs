@@ -15,16 +15,19 @@
  * model streamed unobservable tool-call arguments, (c) reported only the last
  * LLM call's rate after a multi-call tool loop, (d) silently displayed
  * wall-clock estimates identically to authoritative Ollama rates, (e) could
- * show prompt-processing speed (5-50x generation speed) as "t/s", and
- * (f) could be zeroed or string-concatenated by malformed provider metrics.
+ * show prompt-processing speed (5-50x generation speed) as "t/s", (f) could
+ * be zeroed or string-concatenated by malformed provider metrics, and (g)
+ * could spike to six-figure t/s when a bulk token arrival (retroactively
+ * counted tool-call arguments, or a provider flushing buffered stream
+ * output in one chunk) was measured over a window of a few milliseconds.
  */
 
-import { resolveTpsDisplay } from '../src/app/lib/tpsDisplay.ts';
 import {
   extractTurnStats,
   LiveThroughputMeter,
   TurnThroughputAggregator,
 } from '../src/services/tokenThroughput.ts';
+import { resolveTpsDisplay } from '../src/app/lib/tpsDisplay.ts';
 
 let pass = 0;
 let fail = 0;
@@ -106,9 +109,9 @@ console.log('LiveThroughputMeter');
   meter.maybeReport((tps) => reports.push(tps));
   assertEq(reports.length, 0, 'no report before any tokens');
   meter.onText('hello');
-  clock.advance(100);
+  clock.advance(1100);
   meter.maybeReport((tps) => reports.push(tps));
-  assertEq(reports.length, 1, 'first token-bearing chunk triggers a report');
+  assertEq(reports.length, 1, 'first token-bearing chunk triggers a report after the min window');
   assertTrue(reports[0] > 0, 'reported rate is positive');
 }
 
@@ -121,12 +124,12 @@ console.log('LiveThroughputMeter');
   const meterLate = new LiveThroughputMeter('test-model', 800, late.now);
   late.advance(10_000);
   meterLate.onText(text);
-  late.advance(1000);
+  late.advance(1100);
   meterLate.maybeReport(() => {});
   const early = makeClock();
   const meterEarly = new LiveThroughputMeter('test-model', 800, early.now);
   meterEarly.onText(text);
-  early.advance(1000);
+  early.advance(1100);
   meterEarly.maybeReport(() => {});
   const reportsLate = [];
   const reportsEarly = [];
@@ -146,7 +149,9 @@ console.log('LiveThroughputMeter');
   const meter = new LiveThroughputMeter('test-model', 800, clock.now);
   const reports = [];
   meter.onText('some generated text');
+  clock.advance(1100);
   meter.maybeReport((tps) => reports.push(tps));
+  assertEq(reports.length, 1, 'first report fires after the minimum window');
   clock.advance(60_000);
   meter.maybeReport((tps) => reports.push(tps));
   assertEq(reports.length, 1, 'no new tokens -> no new emission (rate freezes, no decay)');
@@ -162,7 +167,9 @@ console.log('LiveThroughputMeter');
   const meter = new LiveThroughputMeter('test-model', 800, clock.now);
   const reports = [];
   meter.onText('first');
+  clock.advance(1100);
   meter.maybeReport((tps) => reports.push(tps));
+  assertEq(reports.length, 1, 'first report emitted');
   clock.advance(100);
   meter.onText('second');
   meter.maybeReport((tps) => reports.push(tps));
@@ -174,23 +181,46 @@ console.log('LiveThroughputMeter');
 }
 
 {
-  // Tool-call arguments count into the numerator once they surface.
+  // REGRESSION (six-figure t/s spikes): a token dump measured over a tiny
+  // window must never be reported. A tool-call-only response surfaces its
+  // whole argument payload in one chunk, the meter rebaselines at that
+  // instant, and the done chunk arrives a few ms later — the old meter
+  // computed e.g. 5000 tokens / 3 ms = 1.6M t/s and the freeze semantics
+  // then pinned that value on the badge for the whole tool execution.
   const clock = makeClock();
   const meter = new LiveThroughputMeter('test-model', 800, clock.now);
-  meter.onText('short');
-  const tokensBefore = meter.hasTokens;
-  meter.onJson(JSON.stringify([{ id: 'call_1', function: { name: 'x', arguments: 'a'.repeat(4000) } }]));
-  assertTrue(tokensBefore, 'meter observed tokens before tool args');
-  clock.advance(1000);
   const reports = [];
+  meter.onText('x'.repeat(2000)); // bulk arrival (any single oversized chunk)
+  clock.advance(3);
   meter.maybeReport((tps) => reports.push(tps));
-  assertTrue(reports[0] > 0, 'report after counting tool arguments is positive');
+  assertEq(reports.length, 0, 'sub-second measurement window is never reported');
+  clock.advance(2_000_000);
+  meter.maybeReport((tps) => reports.push(tps));
+  assertEq(reports.length, 0, 'no new tokens -> still no emission (frozen, not spiking)');
+}
+
+{
+  // Bulk-flush boundedness: tokens landing in one chunk shortly after the
+  // first can only be reported over a window of at least one second, so the
+  // worst-case rate any single oversized chunk can claim is bounded.
+  const clock = makeClock();
+  const meter = new LiveThroughputMeter('test-model', 800, clock.now);
+  let reported = 0;
+  meter.onText('bulk tokens arriving in one buffered chunk');
+  clock.advance(50); // second chunk lands 50 ms after the first
+  meter.onText('more bulk tokens');
+  clock.advance(1000); // window now 1050 ms, above the minimum
+  meter.maybeReport((tps) => {
+    reported = tps;
+  });
+  assertTrue(reported > 0, 'bounded report emitted once the window reaches one second');
 }
 
 {
   const clock = makeClock();
   const meter = new LiveThroughputMeter('test-model', 800, clock.now);
   meter.onText('text');
+  clock.advance(1100);
   meter.maybeReport(() => {});
   meter.reset();
   const reports = [];
