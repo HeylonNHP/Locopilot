@@ -19,12 +19,12 @@
  * (f) could be zeroed or string-concatenated by malformed provider metrics.
  */
 
+import { resolveTpsDisplay } from '../src/app/lib/tpsDisplay.ts';
 import {
   extractTurnStats,
   LiveThroughputMeter,
   TurnThroughputAggregator,
 } from '../src/services/tokenThroughput.ts';
-import { resolveTpsDisplay } from '../src/app/lib/tpsDisplay.ts';
 
 let pass = 0;
 let fail = 0;
@@ -45,18 +45,6 @@ function assertTrue(value, label) {
     pass += 1;
   } else {
     console.error(`  FAIL  ${label}\n        expected truthy, got: ${value}`);
-    fail += 1;
-  }
-}
-
-function assertApproxEq(actual, expected, epsilon, label) {
-  if (Math.abs(actual - expected) <= epsilon) {
-    console.log(`  PASS  ${label}`);
-    pass += 1;
-  } else {
-    console.error(
-      `  FAIL  ${label}\n        expected ~${expected} (+/-${epsilon}), got: ${actual}`
-    );
     fail += 1;
   }
 }

@@ -19,8 +19,8 @@ import { SYNTHETIC_NUDGE_END, SYNTHETIC_NUDGE_MARKER } from '../src/services/com
 import {
   buildEmptyResponseRecoveryNudge,
   EmptyResponseRecoveryTracker,
-  MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS,
   hasMeaningfulAssistantContent,
+  MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS,
   sanitizeAssistantTextFragment,
 } from '../src/services/emptyResponseRecovery.ts';
 
