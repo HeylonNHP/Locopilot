@@ -1,10 +1,12 @@
 'use client';
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
-import { useChat } from '@/app/lib/chatStore';
+import { type LLmModel, useChat } from '@/app/lib/chatStore';
 import { type MidTurnModelSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
+
+import { toggleProviderCollapsed, useCollapsedProviders } from './collapsedProviders';
 
 import './ModelSelector.scss';
 
@@ -76,6 +78,165 @@ interface ModelSelectorProps {
   mode?: 'model' | 'compaction';
 }
 
+/**
+ * Group models by provider display name, preserving the order in which
+ * providers first appear (a Map keeps insertion order, and duplicate
+ * display names merge into one section - matching the previous grouping).
+ */
+function groupModelsByProvider(models: LLmModel[]): Array<[string, LLmModel[]]> {
+  const byProvider = new Map<string, LLmModel[]>();
+  for (const model of models) {
+    const group = byProvider.get(model.providerName);
+    if (group) {
+      group.push(model);
+    } else {
+      byProvider.set(model.providerName, [model]);
+    }
+  }
+  return [...byProvider.entries()];
+}
+
+interface ModelItemProps {
+  model: LLmModel;
+  active: boolean;
+  onSelect: (modelName: string, providerId?: string) => void;
+}
+
+function ModelItem({ model, active, onSelect }: ModelItemProps) {
+  const capabilityBadges = getCapabilityBadges(model.capabilities);
+  return (
+    <button
+      type="button"
+      className={`model-selector-item ${active ? 'model-selector-item-active' : ''}`}
+      onClick={() => onSelect(model.name, model.providerId)}
+      title={
+        capabilityBadges.length > 0
+          ? `${model.displayName ?? model.name} (${capabilityBadges.join(', ')})`
+          : (model.displayName ?? model.name)
+      }
+    >
+      <span className="model-selector-check">
+        {active && (
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M3 8.5L6.5 12L13 5"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
+      </span>
+      <span className="model-selector-content">
+        <span className="model-selector-name">{model.displayName ?? model.name}</span>
+        {capabilityBadges.length > 0 && (
+          <span
+            className="model-selector-badges"
+            aria-label={`Capabilities: ${capabilityBadges.join(', ')}`}
+          >
+            {capabilityBadges.map((badge) => (
+              <span key={badge} className="model-selector-badge">
+                {badge}
+              </span>
+            ))}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+interface ProviderSectionProps {
+  providerName: string;
+  models: LLmModel[];
+  /** Whether this section is collapsed in browsing mode. */
+  collapsed: boolean;
+  /**
+   * While a search term is active every matching model must be visible, so
+   * sections render expanded and the header degrades to an inert label -
+   * a toggle with no visible effect would be a dead affordance.
+   */
+  searching: boolean;
+  isModelActive: (model: LLmModel) => boolean;
+  onSelect: (modelName: string, providerId?: string) => void;
+  onToggle: (providerName: string) => void;
+}
+
+function ProviderSection({
+  providerName,
+  models,
+  collapsed,
+  searching,
+  isModelActive,
+  onSelect,
+  onToggle,
+}: ProviderSectionProps) {
+  const contentId = useId();
+  const expanded = searching || !collapsed;
+  const containsActive = models.some(isModelActive);
+
+  const header = searching ? (
+    <div className="model-selector-provider-header">
+      <span className="model-selector-provider-name">{providerName}</span>
+      <span className="model-selector-provider-count">{models.length}</span>
+    </div>
+  ) : (
+    <button
+      type="button"
+      className="model-selector-provider-header"
+      onClick={() => onToggle(providerName)}
+      aria-expanded={expanded}
+      aria-controls={contentId}
+      title={expanded ? `Collapse ${providerName}` : `Expand ${providerName}`}
+    >
+      <span className="model-selector-provider-name">{providerName}</span>
+      {collapsed && containsActive && (
+        <span
+          className="model-selector-provider-active-dot"
+          title="Contains the active model"
+          aria-hidden="true"
+        />
+      )}
+      <span className="model-selector-provider-count">{models.length}</span>
+      <svg
+        className="model-selector-provider-chevron"
+        width="12"
+        height="12"
+        viewBox="0 0 16 16"
+        fill="none"
+        aria-hidden="true"
+      >
+        <path
+          d="M4 6l4 4 4-4"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
+
+  return (
+    <div className="model-selector-provider-section">
+      {header}
+      {expanded && (
+        <div id={contentId} className="model-selector-provider-items">
+          {models.map((m) => (
+            <ModelItem
+              key={`${m.providerId}::${m.name}`}
+              model={m}
+              active={isModelActive(m)}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ModelSelector({
   anchorRef,
   lastClickRef,
@@ -136,12 +297,32 @@ export default function ModelSelector({
   const [position, setPosition] = useState({ left: 0, bottom: 0, maxHeight: 420 });
   const panelRef = useRef<HTMLDivElement>(null);
 
+  // Provider-section collapse state: shared between the main-model and
+  // compaction selector instances and persisted across reloads (see
+  // collapsedProviders.ts for why this lives outside chatStore).
+  const collapsedProviders = useCollapsedProviders();
+
+  // While searching, all matching models are shown regardless of collapse
+  // state - hiding matches behind a collapsed section would make the search
+  // feel broken.
+  const searching = search.trim().length > 0;
+
   const filteredModels = models.filter((m) => {
     const term = search.toLowerCase();
     return (
       m.name.toLowerCase().includes(term) || (m.displayName ?? '').toLowerCase().includes(term)
     );
   });
+
+  // For compaction mode, match on the compaction-specific provider id
+  // (transient) instead of the active chat provider id.
+  const isModelActive = useCallback(
+    (m: LLmModel) =>
+      mode === 'compaction'
+        ? m.name === activeModel && m.providerId === compactionProviderId
+        : m.name === activeModel && m.providerId === activeProviderId,
+    [mode, activeModel, compactionProviderId, activeProviderId]
+  );
 
   // Position the dropdown above the anchor when opened, centred horizontally.
   // We measure in a layout effect to avoid a flash of wrong position, and
@@ -360,71 +541,18 @@ export default function ModelSelector({
         {filteredModels.length === 0 ? (
           <div className="model-selector-empty">No models found</div>
         ) : (
-          (() => {
-            const byProvider: Record<string, typeof filteredModels> = {};
-            for (const m of filteredModels) {
-              const group = byProvider[m.providerName] ?? [];
-              group.push(m);
-              byProvider[m.providerName] = group;
-            }
-            return Object.entries(byProvider).flatMap(([providerName, providerModels]) => [
-              <div key={`__header__${providerName}`} className="model-selector-provider-header">
-                {providerName}
-              </div>,
-              ...providerModels.map((m) => {
-                const capabilityBadges = getCapabilityBadges(m.capabilities);
-                // For compaction mode, match on the compaction-specific
-                // provider id (transient) instead of the active chat
-                // provider id.
-                const isActive =
-                  mode === 'compaction'
-                    ? m.name === activeModel && m.providerId === compactionProviderId
-                    : m.name === activeModel && m.providerId === activeProviderId;
-
-                return (
-                  <button
-                    key={`${m.providerId}::${m.name}`}
-                    className={`model-selector-item ${isActive ? 'model-selector-item-active' : ''}`}
-                    onClick={() => handleSelect(m.name, m.providerId)}
-                    title={
-                      capabilityBadges.length > 0
-                        ? `${m.displayName ?? m.name} (${capabilityBadges.join(', ')})`
-                        : (m.displayName ?? m.name)
-                    }
-                  >
-                    <span className="model-selector-check">
-                      {isActive && (
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                          <path
-                            d="M3 8.5L6.5 12L13 5"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                    </span>
-                    <span className="model-selector-content">
-                      <span className="model-selector-name">{m.displayName ?? m.name}</span>
-                      {capabilityBadges.length > 0 && (
-                        <span
-                          className="model-selector-badges"
-                          aria-label={`Capabilities: ${capabilityBadges.join(', ')}`}
-                        >
-                          {capabilityBadges.map((badge) => (
-                            <span key={badge} className="model-selector-badge">
-                              {badge}
-                            </span>
-                          ))}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                );
-              }),
-            ]);
-          })()
+          groupModelsByProvider(filteredModels).map(([providerName, providerModels]) => (
+              <ProviderSection
+                key={providerName}
+                providerName={providerName}
+                models={providerModels}
+                collapsed={collapsedProviders[providerName] === true}
+                searching={searching}
+                isModelActive={isModelActive}
+                onSelect={handleSelect}
+                onToggle={toggleProviderCollapsed}
+              />
+            ))
         )}
       </div>
     </div>,
