@@ -9,6 +9,14 @@ import {
   tryRunNamespacedMCPCall,
 } from '@/tools/impl/mcpTool';
 
+/**
+ * Guidance is intentionally shared by the schema and generated system prompt
+ * so provider adapters and the main tool-awareness prompt give the model the
+ * same default-on/explicit-opt-out semantics.
+ */
+export const SHARED_SUMMARIES_GUIDANCE =
+  'Shared summaries are enabled by default and are usually preferred: for dependent workflows such as research → implementation → review, omit share_summaries or set it to true so later agents can build on completed work instead of repeating it. Set share_summaries to false only when agents must remain genuinely independent, such as blind reviews, parallel alternatives, or work where prior conclusions could create anchoring or cross-contamination.';
+
 export const subAgentToolSchema: ToolSchema = {
   name: 'run_subagents',
   description:
@@ -39,8 +47,7 @@ export const subAgentToolSchema: ToolSchema = {
       },
       share_summaries: {
         type: 'boolean',
-        description:
-          "Optional, default true. When true (the default), each subsequent sub-agent in this call receives the completed summaries of earlier sub-agents in its prompt, so they can build on each other. Set to false only when each sub-agent's work must be truly independent and cross-context contamination would mislead results.",
+        description: SHARED_SUMMARIES_GUIDANCE,
       },
     },
     required: ['agents'],
@@ -105,8 +112,9 @@ interface CompletedSubAgent {
 
 const SUB_AGENT_AUTO_COMPACT_NOTICE_BASE =
   `The conversation history was automatically compacted due to context length. ` +
-  `The original orchestrator request has been preserved verbatim above. ${ 
-  COMPACTION_INITIAL_DIRECTIVE.subAgent}`;
+  `The original orchestrator request has been preserved verbatim above. ${
+    COMPACTION_INITIAL_DIRECTIVE.subAgent
+  }`;
 const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
 
 function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): string {
@@ -1135,12 +1143,14 @@ export function getToolPrompt(): string {
     | { properties?: Record<string, { description?: string }> }
     | undefined;
   const agentProps = agentItems?.properties ?? {};
+  const shareSummariesDescription =
+    schema.parameters.properties.share_summaries?.description ?? SHARED_SUMMARIES_GUIDANCE;
   const params = `agents: Array<{ id: string, prompt: string }>, share_summaries?: boolean`;
   return (
     `3. ${schema.name}(${params})\n` +
     `   ${schema.description}\n\n` +
     `   - agents[].id: ${agentProps.id?.description ?? ''}\n` +
     `   - agents[].prompt: ${agentProps.prompt?.description ?? ''}\n` +
-    `   - share_summaries: optional boolean, default true. When true (the default), each later sub-agent in this call receives the completed summaries of earlier sub-agents. Set false only when each sub-agent's work must be truly independent.\n`
+    `   - share_summaries: ${shareSummariesDescription}\n`
   );
 }

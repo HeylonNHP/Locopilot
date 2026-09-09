@@ -38,7 +38,11 @@ import {
   getToolPrompt as getSearchMcpToolsPrompt,
   searchMcpToolsToolSchema,
 } from './impl/searchMcpToolsTool';
-import { getToolPrompt as getSubAgentPrompt, subAgentToolSchema } from './impl/subAgentTool';
+import {
+  getToolPrompt as getSubAgentPrompt,
+  SHARED_SUMMARIES_GUIDANCE,
+  subAgentToolSchema,
+} from './impl/subAgentTool';
 import { getToolPrompt as getWebSearchPrompt, webSearchToolSchema } from './impl/webSearchTool';
 import { getToolPrompt as getWriteFilePrompt, writeFileToolSchema } from './impl/writeFileTool';
 
@@ -193,6 +197,7 @@ export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean
     }${getReadFilePrompt()}${getPatchFilePrompt()}${getWriteFilePrompt()}${getLoadSkillPrompt()}${getCreateSkillPrompt()}${getReadPdfPrompt()}${getMCPCallPrompt()}${getSearchMcpToolsPrompt()}${getRenderMermaidPrompt()}Tool-use policy:\n` +
     `- If a user request requires terminal/filesystem/system inspection, call run_command directly.\n` +
     `- Use sub-agents aggressively for any information-heavy or multi-step work — they absorb intermediate results into isolated contexts, preserving your own context window for high-level reasoning. You do NOT need the user to request them.\n` +
+    `- ${SHARED_SUMMARIES_GUIDANCE}\n` +
     `- If a URL appears to be an image (e.g. ends in .jpg, .png, .gif, .webp, .bmp), prefer fetch_image over fetch_url.\n` +
     `- If a URL or local path ends in .pdf, prefer read_pdf over fetch_url or read_file.\n` +
     `- Do NOT ask the user for permission yourself; ${
