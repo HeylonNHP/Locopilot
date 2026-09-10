@@ -1184,8 +1184,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // requests to the old provider). The actual model mutation
           // stays gated on modelChanged so a provider-only switch does
           // not also rewrite the model name.
-          const modelChanged =
-            pending.model !== undefined && pending.model !== model;
+          const modelChanged = pending.model !== undefined && pending.model !== model;
           const providerChanged =
             pending.providerId !== undefined && pending.providerId !== providerId;
           if (modelChanged) {
@@ -1488,10 +1487,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // model streams unobservable tokens such as tool-call arguments,
           // and counts those arguments once they surface. See
           // src/services/tokenThroughput.ts for the shared policy.
-          const liveMeter = new LiveThroughputMeter(
-            model as string,
-            TPS_STATUS_MIN_INTERVAL_MS
-          );
+          const liveMeter = new LiveThroughputMeter(model as string, TPS_STATUS_MIN_INTERVAL_MS);
           let firstChunkLogged = false;
           // Captured on the chunk with `done: true`. Distinguishes a natural
           // end-of-sequence (`stop`) from a token-cap truncation (`length`)
@@ -1958,25 +1954,29 @@ export async function POST(req: NextRequest): Promise<Response> {
                 },
               };
 
-              // Subagent output sink: strips ANSI, parses the [sub-agent: id]
-              // prefix that makeLabeledSink prepends, and emits per-agent SSE
-              // events so the client can render each agent in its own bubble.
-              // Every line is also accumulated into subagentLogContent so
-              // flushSessionState persists the bubbles for the end-of-turn
-              // client reload.
+              // Subagent output sink: retains the structured agent ID supplied
+              // by makeLabeledSink and emits per-agent SSE events so the client
+              // can render each agent in its own bubble. Output text is kept
+              // free of transport/display prefixes. Every line is also
+              // accumulated so flushSessionState persists the bubbles for the
+              // end-of-turn client reload.
+              const appendSubagentLine = (agentId: string, message: string): void => {
+                const cleanAgentId = sanitize(agentId).trim() || '__subagent__';
+                const text = sanitize(message).trimEnd();
+                if (text.trim()) {
+                  subagentLogContent.set(
+                    cleanAgentId,
+                    `${subagentLogContent.get(cleanAgentId) ?? ''}${text}\n`
+                  );
+                  sendEvent('subagent_output', { agentId: cleanAgentId, message: text });
+                }
+              };
               const subagentOutputSink: ToolOutputSink = {
                 writeLine(message: string): void {
-                  const clean = sanitize(message);
-                  const match = clean.match(/^\[sub-agent:\s*([^\]]+)]\s([\S\s]*)$/);
-                  const agentId = match ? match[1]!.trim() : '__subagent__';
-                  const text = match ? (match[2] ?? '').trimEnd() : clean.trimEnd();
-                  if (text.trim()) {
-                    subagentLogContent.set(
-                      agentId,
-                      `${subagentLogContent.get(agentId) ?? ''}${text}\n`
-                    );
-                    sendEvent('subagent_output', { agentId, message: text });
-                  }
+                  appendSubagentLine('__subagent__', message);
+                },
+                writeAgentLine(agentId: string, message: string): void {
+                  appendSubagentLine(agentId, message);
                 },
                 writeInline(_message: string): void {},
                 clearInline(): void {},

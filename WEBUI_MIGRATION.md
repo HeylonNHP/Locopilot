@@ -156,7 +156,7 @@ npm start       # Production server
 - `run_subagents` tool calls now stream their output to the browser via a new `subagent_output` SSE event.
 - Each distinct sub-agent gets its own collapsible bubble (collapsed state is toggled with a ▶/▼ button); the bubble expands by default so output is visible while the agent runs.
 - The log auto-scrolls to the latest line as messages arrive.
-- The `[sub-agent: id]` prefix emitted by `makeLabeledSink` is stripped and used to route output to the correct bubble; unrecognised lines fall back to a `__subagent__` bucket.
+- Sub-agent output is attributed with a structured `agentId` through `ToolOutputSink.writeAgentLine`; display-only prefixes are no longer embedded in log text. Unstructured legacy writes still fall back to a `__subagent__` bucket.
 
 ## Known Bugs
 

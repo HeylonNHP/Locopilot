@@ -32,7 +32,7 @@ export function SubagentLogBubble({ message }: Props) {
           }
         >
           <span>{subagentCollapsed ? '▶' : '▼'}</span>
-          <span>🤖 Sub-agent: {message.subagentId ?? 'unknown'}</span>
+          <span>🤖 {message.subagentId ?? 'unknown'}</span>
         </button>
         {!subagentCollapsed && (
           <pre ref={subagentLogRef} className="bubble-subagent-log">

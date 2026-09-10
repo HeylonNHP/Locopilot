@@ -161,17 +161,19 @@ function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): s
   return prompt;
 }
 
-function prefixLines(message: string, prefix: string): string[] {
-  return message.split(/\r?\n/).map((line) => `${prefix}${line}`);
-}
-
-function makeLabeledSink(baseSink: ToolOutputSink, id: string): ToolOutputSink {
-  const prefix = `[sub-agent: ${id}] `;
-
+// Exported for the network-free sub-agent output regression checks.
+export function makeAgentSink(baseSink: ToolOutputSink, id: string): ToolOutputSink {
   return {
     writeLine(message: string): void {
-      for (const line of prefixLines(message, prefix)) {
-        baseSink.writeLine(line);
+      for (const line of message.split(/\r?\n/)) {
+        // Web sinks can retain the agent identity structurally. The fallback
+        // intentionally emits plain text as well: the old textual prefix was
+        // display-only framing, not part of the sub-agent protocol.
+        if (baseSink.writeAgentLine) {
+          baseSink.writeAgentLine(id, line);
+        } else {
+          baseSink.writeLine(line);
+        }
       }
     },
     writeInline(): void {
@@ -227,7 +229,7 @@ async function autoCompactSubAgentIfNeeded(
     return false;
   }
 
-  const labeledOutput = makeLabeledSink(output, agentId);
+  const agentOutput = makeAgentSink(output, agentId);
   const compactionRequestId = config.compactionLlmRequestContext?.requestId;
   const compactStartedAt = Date.now();
   debugLog.diagnostic({
@@ -239,9 +241,7 @@ async function autoCompactSubAgentIfNeeded(
     baseUrl: config.compactionLlmRequestContext?.baseUrl ?? config.baseUrl,
     messageCount: messages.length,
   });
-  labeledOutput.writeLine(
-    `⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...`
-  );
+  agentOutput.writeLine(`⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...`);
   try {
     // Chat requests provide a resolved compaction context so a selected
     // compaction provider/model is authoritative. Legacy callers do not, so
@@ -299,7 +299,7 @@ async function autoCompactSubAgentIfNeeded(
     });
 
     if (result.stats.newTokenCount > config.numCtx) {
-      labeledOutput.writeLine(
+      agentOutput.writeLine(
         `⚠ Compaction reduced context but history is still over the model limit ` +
           `(${result.stats.newTokenCount}/${config.numCtx} tokens). The next turn may fail.`
       );
@@ -330,7 +330,7 @@ async function autoCompactSubAgentIfNeeded(
       error: err,
     });
     const message = err instanceof Error ? err.message : String(err);
-    labeledOutput.writeLine(`⚠ Auto-compaction failed: ${message}`);
+    agentOutput.writeLine(`⚠ Auto-compaction failed: ${message}`);
     return false;
   }
 }
@@ -486,7 +486,7 @@ export async function executeNestedToolCall(
   if (needsApproval && requester) {
     if (toolName === 'run_command') {
       const risk = 'command' as const;
-      output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a command: awaiting approval…`);
+      output.writeLine('\nRequesting a command: awaiting approval…');
       const approvalStartedAt = Date.now();
       debugLog.diagnostic({
         layer: 'subagent',
@@ -506,10 +506,10 @@ export async function executeNestedToolCall(
         result: decision.approved ? 'approved' : 'denied',
       });
       if (!decision.approved) {
-        output.writeLine(`[Sub-agent: ${agentId}] request denied by user.`);
+        output.writeLine('Request denied by user.');
         return { content: '[Command rejected by user]' };
       }
-      output.writeLine(`[Sub-agent: ${agentId}] request approved.`);
+      output.writeLine('Request approved.');
     } else {
       // MCP call (via `mcp_call` or a direct namespaced name).
       // Skip the prompt when this exact target was already approved in
@@ -520,9 +520,7 @@ export async function executeNestedToolCall(
         (!!namespacedTarget && !!subAgentMcpApprovals?.has(namespacedTarget)) ||
         (namespacedTarget ? await isAutoApprovedMCPTarget(argServer, argTool) : false);
       if (!alreadyApproved) {
-        output.writeLine(
-          `\n[Sub-agent: ${agentId}] is requesting an MCP tool call: awaiting approval…`
-        );
+        output.writeLine('\nRequesting an MCP tool call: awaiting approval…');
         const approvalStartedAt = Date.now();
         debugLog.diagnostic({
           layer: 'subagent',
@@ -553,10 +551,10 @@ export async function executeNestedToolCall(
           result: decision.approved ? 'approved' : 'denied',
         });
         if (!decision.approved) {
-          output.writeLine(`[Sub-agent: ${agentId}] request denied by user.`);
+          output.writeLine('Request denied by user.');
           return { content: '[MCP call rejected by user]' };
         }
-        output.writeLine(`[Sub-agent: ${agentId}] request approved.`);
+        output.writeLine('Request approved.');
         // Record the approved target so this sub-agent's loop can call
         // the same MCP tool repeatedly without re-prompting, and persist
         // any additional `grantedTools` the user authorised. The
@@ -578,7 +576,7 @@ export async function executeNestedToolCall(
   let toolResult: ToolCallResult;
   try {
     if (toolName === 'run_command') {
-      output.writeLine(`\n[Sub-agent: ${agentId}] is requesting a command:`);
+      output.writeLine('\nRequesting a command:');
       toolResult = await command!.execute(toolArgs, nestedProgress, output, context, signal);
     } else if ((toolName === 'mcp_call' || namespacedCall) && subAgentMcpApprovals) {
       const derivedContext: RequestContext = {
@@ -635,7 +633,7 @@ async function runSingleAgent(
   skillSummary?: string,
   priorResults?: CompletedSubAgent[]
 ): Promise<string> {
-  const labeledOutput = makeLabeledSink(output, agent.id);
+  const agentOutput = makeAgentSink(output, agent.id);
   // Create a per-sub-agent working-directory scope so each agent's `cd`
   // commands and relative path resolutions are isolated from the parent
   // and from sibling sub-agents.
@@ -707,7 +705,7 @@ async function runSingleAgent(
       const compacted = await autoCompactSubAgentIfNeeded(
         messages,
         config,
-        labeledOutput,
+        agentOutput,
         agent.id,
         orcPrompt,
         subAgentCompactions + 1,
@@ -892,7 +890,7 @@ async function runSingleAgent(
             attempt: emptyResponseRecovery.attemptsUsed,
             maxAttempts: MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS,
           });
-          labeledOutput.writeLine(
+          agentOutput.writeLine(
             `[empty response #${emptyResponseRecovery.attemptsUsed}/${MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS}] retrying with a direct-answer nudge`
           );
           messages.push(assistantMessage, buildEmptyResponseRecoveryNudge());
@@ -941,7 +939,7 @@ async function runSingleAgent(
           toolResult = await executeNestedToolCall(
             agent.id,
             toolCall,
-            labeledOutput,
+            agentOutput,
             onProgress,
             agentContext,
             signal,
@@ -950,7 +948,7 @@ async function runSingleAgent(
         } catch (err) {
           const errorContent = err instanceof Error ? err.message : String(err);
           toolResult = { content: `[Sub-agent tool error: ${errorContent}]` };
-          labeledOutput.writeLine(`Sub-agent tool error: ${errorContent}`);
+          agentOutput.writeLine(`Sub-agent tool error: ${errorContent}`);
         }
 
         toolResults.push(

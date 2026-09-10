@@ -14,6 +14,7 @@
     "test:diagnostics": "npx tsx scripts/test-diagnostic-logging.mjs",
     "test:provider-persistence": "npx tsx scripts/test-provider-persistence.mjs",
     "test:subagent-shared-summaries": "npx tsx scripts/test-subagent-shared-summaries.mjs",
+    "test:subagent-output": "npx tsx scripts/test-subagent-output.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
