@@ -22,12 +22,12 @@
  * output in one chunk) was measured over a window of a few milliseconds.
  */
 
+import { resolveTpsDisplay } from '../src/app/lib/tpsDisplay.ts';
 import {
   extractTurnStats,
   LiveThroughputMeter,
   TurnThroughputAggregator,
 } from '../src/services/tokenThroughput.ts';
-import { resolveTpsDisplay } from '../src/app/lib/tpsDisplay.ts';
 
 let pass = 0;
 let fail = 0;
@@ -139,7 +139,11 @@ console.log('LiveThroughputMeter');
   early.advance(1000);
   meterLate.maybeReport((tps) => reportsLate.push(tps));
   meterEarly.maybeReport((tps) => reportsEarly.push(tps));
-  assertEq(reportsLate[0], reportsEarly[0], 'lead time before first chunk is excluded from the rate');
+  assertEq(
+    reportsLate[0],
+    reportsEarly[0],
+    'lead time before first chunk is excluded from the rate'
+  );
 }
 
 {
@@ -235,7 +239,12 @@ console.log('TurnThroughputAggregator');
   // Single Ollama-style call: authoritative duration-based rate.
   const agg = new TurnThroughputAggregator();
   agg.recordCall({
-    stats: { promptEvalCount: 100, evalCount: 60, promptEvalDuration: 1_000_000_000, evalDuration: 2_000_000_000 },
+    stats: {
+      promptEvalCount: 100,
+      evalCount: 60,
+      promptEvalDuration: 1_000_000_000,
+      evalDuration: 2_000_000_000,
+    },
   });
   const snap = agg.snapshot();
   assertEq(snap.evalTps, 30, 'single call: 60 tokens / 2 s = 30 t/s');
@@ -305,8 +314,16 @@ console.log('TurnThroughputAggregator');
 console.log('resolveTpsDisplay');
 
 {
-  assertEq(resolveTpsDisplay(109.74, { evalTps: 21 }).value, 109.74, 'live value preferred over end-of-turn rate');
-  assertEq(resolveTpsDisplay(null, { evalTps: 21 }).value, 21, 'end-of-turn evalTps used when no live value');
+  assertEq(
+    resolveTpsDisplay(109.74, { evalTps: 21 }).value,
+    109.74,
+    'live value preferred over end-of-turn rate'
+  );
+  assertEq(
+    resolveTpsDisplay(null, { evalTps: 21 }).value,
+    21,
+    'end-of-turn evalTps used when no live value'
+  );
   assertEq(
     resolveTpsDisplay(null, { evalTps: 21, evalTpsEstimated: true }).label,
     '21.00 t/s (est)',
@@ -323,11 +340,19 @@ console.log('resolveTpsDisplay');
     'prompt-processing rate is NEVER displayed as generation t/s'
   );
   assertEq(resolveTpsDisplay(null, null), null, 'no data -> null');
-  assertEq(resolveTpsDisplay(0, { evalTps: 21 }).value, 21, 'zero live value falls through to end-of-turn rate');
+  assertEq(
+    resolveTpsDisplay(0, { evalTps: 21 }).value,
+    21,
+    'zero live value falls through to end-of-turn rate'
+  );
   assertEq(resolveTpsDisplay(-5, { evalTps: 21 }).value, 21, 'negative live value falls through');
   assertEq(resolveTpsDisplay(Number.NaN, { evalTps: null }), null, 'NaN live value -> null');
   assertEq(resolveTpsDisplay(null, { evalTps: Number.NaN }), null, 'NaN end-of-turn value -> null');
-  assertEq(resolveTpsDisplay(109.74, null).label, '109.74 t/s', 'live value formats with two decimals');
+  assertEq(
+    resolveTpsDisplay(109.74, null).label,
+    '109.74 t/s',
+    'live value formats with two decimals'
+  );
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
