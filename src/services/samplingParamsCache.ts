@@ -242,6 +242,50 @@ export function recordDiscoveredUnsupportedParam(
 }
 
 /**
+ * True when `name` is one of the standard sampling parameters this cache
+ * tracks. Lets a caller map an upstream error's free-form param token
+ * (from `parseUnsupportedParamFromError`) onto a known registry entry
+ * before recording a discovery, without hand-rolling a duplicate list.
+ */
+export function isKnownSamplingParam(name: string): name is SamplingParamName {
+  return (SAMPLING_PARAM_NAMES as readonly string[]).includes(name);
+}
+
+/**
+ * Synchronously read the currently cached support verdict for every
+ * standard sampling parameter — no probe, no network, no cache writes.
+ *
+ * This is what lets ANY call site short-circuit straight to the cache:
+ * the main chat route resolves `samplingParamSupport` explicitly (via
+ * `resolveSamplingParamSupportMap`, which can also consult a proactive
+ * probe), but sub-agents, the prompt-loop judge/critic, compaction, and
+ * title generation never do — they build their own request params and
+ * have no reason to know this cache exists. Without this function, a
+ * parameter already discovered unsupported for a model keeps getting
+ * re-sent (and re-rejected) by every one of those callers forever.
+ *
+ * Missing/unset entries resolve to the same optimistic `'supported'`
+ * default `resolveSamplingParamSupport` would produce, so the returned
+ * map is safe to assign directly onto `ChatParams['samplingParamSupport']`
+ * even when nothing has been discovered yet.
+ */
+export function peekSamplingParamSupportMap(
+  baseUrl: string,
+  provider: LlmProvider | undefined,
+  modelName: string,
+  now: number = Date.now()
+): Record<SamplingParamName, ResolvedSamplingParamSupport> {
+  const result = {} as Record<SamplingParamName, ResolvedSamplingParamSupport>;
+  for (const paramName of SAMPLING_PARAM_NAMES) {
+    const entry = getCachedEntry(baseUrl, provider, modelName, paramName, now);
+    result[paramName] = entry
+      ? { state: entry.state, source: entry.provenance === 'probe' ? 'probe' : 'cache' }
+      : { state: 'supported', source: 'default' };
+  }
+  return result;
+}
+
+/**
  * Resolve the support state for a single sampling parameter, using the
  * cache, the optional probe, and the provider's optimistic default.
  * See the module-level docstring for the full resolution order and

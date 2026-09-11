@@ -22,8 +22,14 @@ import type { AdapterRetryConfig } from '@/types/chatConfig';
 import { debugLog } from '@/app/lib/debugLogger';
 import { DEFAULT_ADAPTER_RETRY, RETRY_MAX_ATTEMPTS_LIMIT } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
-import { getModelContextLimitFromInfo } from '@/services/llmContextLimit';
 import {
+  getModelContextLimitFromInfo,
+  parseUnsupportedParamFromError,
+} from '@/services/llmContextLimit';
+import {
+  isKnownSamplingParam,
+  peekSamplingParamSupportMap,
+  recordDiscoveredUnsupportedParam,
   type SamplingParamName,
   type SamplingParamSupportMap,
 } from '@/services/samplingParamsCache';
@@ -982,6 +988,61 @@ function applySupportedSamplingParams(
   }
 }
 
+/**
+ * Resolve the sampling-param support map to actually build the payload
+ * with. Prefers a verdict the caller already resolved (the chat route's
+ * `resolveSamplingParamSupportMap`, which can consult a live probe);
+ * otherwise falls back to a synchronous cache peek so every OTHER caller
+ * of this adapter — sub-agents, prompt-loop judge/critic, compaction,
+ * title generation — still benefits from anything already discovered
+ * unsupported for this (baseUrl, provider, model), without having to
+ * know the cache exists or thread anything through themselves.
+ */
+function resolveEffectiveSamplingParamSupport(
+  ctx: LlmRequestContext,
+  params: ChatParams
+): NonNullable<ChatParams['samplingParamSupport']> {
+  if (params.samplingParamSupport) return params.samplingParamSupport;
+  return peekSamplingParamSupportMap(
+    ctx.baseUrl,
+    ctx.provider ?? 'openai-compatible',
+    params.model
+  );
+}
+
+/**
+ * Inspect a failed request for an "unsupported sampling parameter"
+ * signal and, when found, teach the cache immediately — regardless of
+ * which caller made the request. This is the reactive half of the fix:
+ * `resolveEffectiveSamplingParamSupport` above only helps once a
+ * verdict exists; this is what creates that verdict from the very first
+ * rejection, so the very next call (from ANY caller) omits the field.
+ *
+ * Mirrors the chat route's own reactive-discovery block (the route's
+ * copy stays in place as a safety net and to drive its SSE
+ * `sampling_param_unsupported` status event for the UI); recording the
+ * same verdict twice is harmless — it just refreshes the cache TTL.
+ */
+function recordUnsupportedParamIfDiscovered(
+  ctx: LlmRequestContext,
+  model: string,
+  err: unknown
+): void {
+  if (!(err instanceof OpenAI.APIError)) return;
+  const upstream = pickUpstreamError(err);
+  const candidate =
+    parseUnsupportedParamFromError(upstream.upstreamMessage ?? '') ??
+    parseUnsupportedParamFromError(err.message ?? '');
+  if (candidate && isKnownSamplingParam(candidate)) {
+    recordDiscoveredUnsupportedParam(
+      ctx.baseUrl,
+      model,
+      candidate,
+      ctx.provider ?? 'openai-compatible'
+    );
+  }
+}
+
 function buildResponseParams(params: ChatParams, stream: boolean): ResponseCreateParamsBase {
   const effectiveMessages =
     params.visionSupported === false ? stripImagesFromMessages(params.messages) : params.messages;
@@ -1103,7 +1164,11 @@ async function sendOpenAICompatibleChat(
   }
 
   // Non-streaming path.
-  const payload = buildResponseParams(params, false);
+  const effectiveParams: ChatParams = {
+    ...params,
+    samplingParamSupport: resolveEffectiveSamplingParamSupport(ctx, params),
+  };
+  const payload = buildResponseParams(effectiveParams, false);
   const requestOptions: Record<string, unknown> = {};
   if (timeoutMs !== undefined) requestOptions.timeout = timeoutMs;
   if (signal) requestOptions.signal = signal;
@@ -1117,6 +1182,9 @@ async function sendOpenAICompatibleChat(
     );
     return toChatApiResponse(response as Response);
   } catch (err) {
+    // Teach the cache immediately so the very next call — from ANY
+    // caller, not just this one — omits the rejected parameter.
+    recordUnsupportedParamIfDiscovered(ctx, params.model, err);
     // Final-failure debug dump only — retry already logged each attempt.
     await logAdapter400(ctx.baseUrl, params.model, payload, err, ctx.requestId);
     throw err;
@@ -1128,7 +1196,11 @@ async function* sendOpenAICompatibleChatStream(
   params: StreamChatParams
 ): AsyncGenerator<ChatApiResponse> {
   const client = buildClient(ctx);
-  const payload = buildResponseParams(params, true);
+  const effectiveParams: StreamChatParams = {
+    ...params,
+    samplingParamSupport: resolveEffectiveSamplingParamSupport(ctx, params),
+  };
+  const payload = buildResponseParams(effectiveParams, true);
 
   let stream: Stream<ResponseStreamEvent>;
   try {
@@ -1150,6 +1222,9 @@ async function* sendOpenAICompatibleChatStream(
         ) as unknown as Promise<Stream<ResponseStreamEvent>>
     )) as Stream<ResponseStreamEvent>;
   } catch (err) {
+    // Teach the cache immediately so the very next call — from ANY
+    // caller, not just this one — omits the rejected parameter.
+    recordUnsupportedParamIfDiscovered(ctx, params.model, err);
     // Final-failure debug dump only — retry already logged each attempt.
     await logAdapter400(ctx.baseUrl, params.model, payload, err, ctx.requestId);
     throw err;
