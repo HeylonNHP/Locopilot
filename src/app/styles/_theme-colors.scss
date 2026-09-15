@@ -35,6 +35,7 @@ html[data-theme='frutiger-aero'] {
   --glass-heavy: rgba(255, 255, 255, 0.28);
   --glass-light: rgba(255, 255, 255, 0.08);
   --glass-panel: rgba(255, 255, 255, 0.12); // sidebar / input-area / status-bar panels
+  --glass-panel-solid: rgba(240, 248, 255, 0.94); // content-viewing overlays (e.g. mermaid) needing legibility over --glass-panel's translucency
   --glass-border: rgba(255, 255, 255, 0.45);
   --glass-border-soft: rgba(255, 255, 255, 0.25);
 
@@ -173,6 +174,7 @@ html[data-theme='dark'] {
   --glass-heavy: rgba(255, 255, 255, 0.12);
   --glass-light: rgba(255, 255, 255, 0.04);
   --glass-panel: rgba(12, 20, 34, 0.82);
+  --glass-panel-solid: rgba(12, 20, 34, 0.94);
   --glass-border: rgba(255, 255, 255, 0.1);
   --glass-border-soft: rgba(255, 255, 255, 0.06);
   // Glass surface highlights

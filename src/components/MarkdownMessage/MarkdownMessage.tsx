@@ -1,11 +1,14 @@
 'use client';
 import DOMPurify from 'isomorphic-dompurify';
 import { marked } from 'marked';
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatSourceWithLineNumbers, renderMermaidInPre } from './mermaidRenderer';
 
 import './MarkdownMessage.scss';
+
+const MermaidOverlay = dynamic(() => import('@/components/MermaidOverlay'), { ssr: false });
 
 interface Props {
   source: string;
@@ -319,7 +322,14 @@ function extractFrozenBlocks(frozen: string): FrozenBlock[] {
 
 function MermaidBlock({ source }: { source: string }) {
   const containerRef = useRef<HTMLPreElement>(null);
+  const expandBtnRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string | null>(null);
+  // Whether an <svg> actually exists in the container yet. Deliberately not
+  // derived from `result.success` (can be true with no SVG produced in some
+  // edge cases) or the `mermaid-pending` class (never removed anywhere),
+  // so the expand button only appears once a diagram has really rendered.
+  const [ready, setReady] = useState(false);
+  const [overlaySvg, setOverlaySvg] = useState<string | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -332,13 +342,17 @@ function MermaidBlock({ source }: { source: string }) {
     // with the rendered SVG or, on error, an error panel.
     container.innerHTML = `<code class="language-mermaid">${escapeHtml(source)}</code>`;
     setError(null);
+    setReady(false);
 
     let cancelled = false;
     const rafId = requestAnimationFrame(async () => {
       if (cancelled) return;
       try {
         const result = await renderMermaidInPre(container);
-        if (!cancelled && !result.success) {
+        if (cancelled) return;
+        if (result.success) {
+          setReady(container.querySelector('svg') !== null);
+        } else {
           setError(result.error);
         }
       } catch (err) {
@@ -353,6 +367,20 @@ function MermaidBlock({ source }: { source: string }) {
       cancelAnimationFrame(rafId);
     };
   }, [source]);
+
+  const handleExpand = useCallback(() => {
+    const svg = containerRef.current?.querySelector('svg');
+    if (!svg) return;
+    // Clone the already-rendered SVG rather than re-rendering mermaid fresh:
+    // it's already vector (lossless under CSS-transform zoom) and already
+    // has theme colours baked in. Known tradeoff: click-directive handlers
+    // bound by mermaid's bindFunctions do not survive the clone.
+    setOverlaySvg(svg.outerHTML);
+  }, []);
+
+  const handleCloseOverlay = useCallback(() => {
+    setOverlaySvg(null);
+  }, []);
 
   const handleCopy = useCallback(async () => {
     const fallbackCopy = () => {
@@ -412,7 +440,29 @@ function MermaidBlock({ source }: { source: string }) {
     );
   }
 
-  return <pre ref={containerRef} className="mermaid-rendered mermaid-pending" />;
+  return (
+    <div className="mermaid-block">
+      <pre ref={containerRef} className="mermaid-rendered mermaid-pending" />
+      {ready && (
+        <button
+          ref={expandBtnRef}
+          type="button"
+          className="mermaid-expand-btn"
+          aria-label="Expand diagram"
+          onClick={handleExpand}
+        >
+          <span aria-hidden="true">⤢</span>
+        </button>
+      )}
+      {overlaySvg !== null && (
+        <MermaidOverlay
+          svgMarkup={overlaySvg}
+          onClose={handleCloseOverlay}
+          returnFocusRef={expandBtnRef}
+        />
+      )}
+    </div>
+  );
 }
 
 function escapeHtml(text: string): string {

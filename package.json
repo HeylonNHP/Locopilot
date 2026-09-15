@@ -55,6 +55,7 @@
     "playwright": "^1.59.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "react-zoom-pan-pinch": "^4.2.0",
     "undici": "^7.28.0"
   },
   "devDependencies": {
