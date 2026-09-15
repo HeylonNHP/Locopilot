@@ -57,6 +57,14 @@ export default function MermaidOverlay({ svgMarkup, onClose, returnFocusRef }: P
           maxScale={8}
           limitToBounds={false}
           centerOnInit
+          // `smooth` (default true) scales the zoom step by the wheel
+          // event's raw deltaY, which is tuned for trackpads that emit many
+          // small deltas. A physical mouse wheel reports one large deltaY
+          // per notch (~100+), which under `smooth` blew the zoom straight
+          // to minScale/maxScale on a single click. Disabling it makes each
+          // wheel notch apply a fixed `step` instead, regardless of the
+          // input device's deltaY magnitude.
+          smooth={false}
           wheel={{ step: 0.1 }}
           doubleClick={{ mode: 'reset' }}
         >
