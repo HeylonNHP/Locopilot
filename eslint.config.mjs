@@ -11,7 +11,16 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   // Ignore build/runtime directories
   {
-    ignores: ['.next/', 'dist/', 'node_modules/', 'coverage/', '*.db*', '*.wasm', 'next-env.d.ts'],
+    ignores: [
+      '.next/',
+      'dist/',
+      '**/dist/',
+      'node_modules/',
+      'coverage/',
+      '*.db*',
+      '*.wasm',
+      'next-env.d.ts',
+    ],
   },
 
   // Base JavaScript recommended rules

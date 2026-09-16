@@ -14,12 +14,17 @@
 //   • Streaming-safe — guards DOM access with `isConnected` checks.
 //   • Theme-aware — pulls accent / background CSS variables from the
 //     document so the rendered diagram inherits the current theme.
+//   • Legible — measures the rendered diagram and repairs label contrast
+//     when a `classDef` leaves behind an unreadable text colour. See
+//     `mermaidContrast.ts`.
 //   • Tolerant — on syntax error, surfaces the original source plus
 //     the parser error in an inline panel rather than throwing away
 //     the user's message.
 // ================================================================
 
 import type { Mermaid } from 'mermaid';
+
+import { ensureReadableText } from './mermaidContrast';
 
 type MermaidTheme = 'default' | 'dark';
 type ResolvedTheme = 'light' | 'dark';
@@ -259,9 +264,25 @@ export async function renderMermaidInPre(
     preElement.classList.add('mermaid-rendered');
     preElement.innerHTML = svg;
 
+    const svgRoot = preElement.querySelector('svg');
+
+    // Mermaid's theme variables only supply *defaults*: a `classDef` sets the
+    // shape fill but leaves the label colour on the theme, so a light fill can
+    // end up carrying a light text colour. Measure what was painted and repair
+    // the label colour where contrast is inadequate.
+    //
+    // This runs in the same task as the innerHTML assignment above, so the
+    // browser never paints an unreadable intermediate frame.
+    if (svgRoot) {
+      try {
+        ensureReadableText(svgRoot);
+      } catch {
+        // Purely cosmetic — never let this break the render.
+      }
+    }
+
     // Mermaid annotates the SVG with click handlers; without these
     // links/click navigation in the diagram won't work.
-    const svgRoot = preElement.querySelector('svg');
     if (svgRoot && bindFunctions) {
       try {
         bindFunctions(svgRoot);

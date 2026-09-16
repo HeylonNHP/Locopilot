@@ -33,7 +33,7 @@ import { ServerMermaidEnvironmentError, withServerMermaidEnvironment } from '@/l
 export const renderMermaidToolSchema: ToolSchema = {
   name: 'render_mermaid',
   description:
-    'Validates a Mermaid diagram for syntax correctness before output. The tool does NOT render the diagram itself — it only validates syntax. To show the diagram to the user, include the (validated) diagram in your response wrapped in a ```mermaid code block. The frontend will render it interactively.',
+    'Validates a Mermaid diagram for syntax correctness before output. The tool does NOT render the diagram itself — it only validates syntax. To show the diagram to the user, include the (validated) diagram in your response wrapped in a ```mermaid code block. The frontend will render it interactively. Choose whatever node and edge fills suit the content, including specific colours a user asks for; you do not need to set label text colours, because the frontend measures the rendered diagram and corrects label contrast automatically.',
   parameters: {
     type: 'object',
     properties: {
