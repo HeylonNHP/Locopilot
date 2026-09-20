@@ -188,6 +188,27 @@ export interface SubAgentConfig {
     risk: 'command' | 'network' | 'file' | 'mcp' | 'other';
     args: unknown;
   }) => Promise<{ approved: boolean; grantedTools?: string[] }>;
+  /**
+   * Optional hook for the parent chat route to learn about a context-window
+   * cap that a *sub-agent's* LLM call discovered reactively. A sub-agent runs
+   * its own LLM calls, so a provider 400 that names the real cap (e.g.
+   * llama-server's "request (N tokens) exceeds the available context size
+   * (M tokens)") is otherwise invisible to the route: the route's own
+   * reactive 400 branch only sees errors from the main loop's calls.
+   *
+   * The sub-agent has already folded `cap` into its own config (numCtx and,
+   * when the compaction runtime is the same server+model, compactionNumCtx)
+   * and into the resolver's discovered-cap cache before invoking this hook.
+   * The route is responsible for the remaining request-scoped effects:
+   * lowering `effectiveNumCtx`, recording `modelContextLimit`, and emitting
+   * the `context_limit_adjusted` status event so the client's token badge and
+   * the main loop's own auto-compaction gate use the corrected cap for the
+   * rest of this turn.
+   *
+   * A no-op when undefined — the legacy TUI and the test harnesses do not
+   * provide it.
+   */
+  onContextLimitDiscovered?: (cap: number) => void;
 }
 
 // --- Shared tool argument and result types ---

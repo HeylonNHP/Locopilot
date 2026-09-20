@@ -32,9 +32,55 @@ import type { LlmModelInfo } from './adapters/llmAdapter';
  *
  * `max_context_length` is also accepted because some OpenAI-compatible
  * providers (LM Studio) advertise it that way.
+ *
+ * `n_ctx` and `n_ctx_train` are llama.cpp's own field names. llama-server's
+ * `/v1/models` entry carries a `meta` object for the currently loaded model
+ * — `meta.n_ctx` is the served `--ctx-size` and `meta.n_ctx_train` is the
+ * GGUF training window. Without these two keys the object walk found nothing
+ * behind a llama.cpp-backed provider, the cap resolved to `null`, and
+ * `resolveEffectiveNumCtx` fell back to the *requested* numCtx: a
+ * 1,000,000-token setting therefore survived against a server that only
+ * accepts 262,144 tokens.
  */
 export const CONTEXT_LIMIT_KEY_PATTERN =
-  /(?:^|[._])(?:context_length|num_ctx|context_window|max_position_embeddings|max_sequence_length|max_context_length)$/i;
+  /(?:^|[._])(?:context_length|num_ctx|context_window|max_position_embeddings|max_sequence_length|max_context_length|n_ctx|n_ctx_train)$/i;
+
+/**
+ * Relative authority of the keys matched by {@link CONTEXT_LIMIT_KEY_PATTERN}
+ * when one payload contains more than one of them.
+ *
+ * `n_ctx` (rank 2) is llama.cpp's *served* window — the exact size
+ * llama-server accepts for a request — so it outranks every training-time or
+ * Modelfile-declared value. `n_ctx_train` (rank 0) is the weakest signal: a
+ * RoPE/yarn-extended server routinely serves *more* than the GGUF training
+ * window, and a deliberately reduced `--ctx-size` serves *less*, so the
+ * training value must never win over an explicit served or declared size.
+ *
+ * Every standard key shares rank 1, which preserves the historical "first
+ * match in `Object.entries` order wins" behaviour for all payloads that
+ * contain no `n_ctx`/`n_ctx_train` key.
+ */
+const CONTEXT_LIMIT_KEY_RANK_N_CTX_SERVED = 2;
+const CONTEXT_LIMIT_KEY_RANK_STANDARD = 1;
+const CONTEXT_LIMIT_KEY_RANK_N_CTX_TRAIN = 0;
+
+/**
+ * Rank for a key that matches {@link CONTEXT_LIMIT_KEY_PATTERN}, or `null`
+ * when the key is not a context-limit key at all. Exported for the
+ * network-free cap-discovery regression checks.
+ */
+export function contextLimitKeyRank(key: string): number | null {
+  if (!CONTEXT_LIMIT_KEY_PATTERN.test(key)) {
+    return null;
+  }
+  if (/(?:^|[._])n_ctx$/i.test(key)) {
+    return CONTEXT_LIMIT_KEY_RANK_N_CTX_SERVED;
+  }
+  if (/(?:^|[._])n_ctx_train$/i.test(key)) {
+    return CONTEXT_LIMIT_KEY_RANK_N_CTX_TRAIN;
+  }
+  return CONTEXT_LIMIT_KEY_RANK_STANDARD;
+}
 
 /**
  * Parse a positive integer from a value that may be a number or a string.
@@ -53,31 +99,49 @@ export function parsePositiveInteger(value: unknown): number | null {
 
 /**
  * Recursively walk an object looking for any key matching
- * {@link CONTEXT_LIMIT_KEY_PATTERN}. Returns the first positive integer
- * found, or null. Walks depth-first; if the same key appears in multiple
- * places, the first one wins. Earlier keys in the alternation are not
- * prioritised — the recursion order is the source order of `Object.entries`.
+ * {@link CONTEXT_LIMIT_KEY_PATTERN}. Returns the highest-authority positive
+ * integer found, or null.
+ *
+ * Authority is decided by {@link contextLimitKeyRank} rather than by mere
+ * source order, so a llama.cpp payload that carries both `meta.n_ctx`
+ * (served) and `meta.n_ctx_train` (training) resolves to the served value
+ * no matter which field the JSON happens to list first. Keys of equal rank
+ * keep the historical tie-break: the first one in `Object.entries` order
+ * wins, and an unparseable value never displaces a parseable one.
  */
 export function findContextLimitInObject(value: unknown): number | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
+  let best: number | null = null;
+  let bestRank = -1;
 
-  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
-    if (CONTEXT_LIMIT_KEY_PATTERN.test(key)) {
-      const parsed = parsePositiveInteger(nestedValue);
-      if (parsed !== null) {
-        return parsed;
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== 'object') {
+      return;
+    }
+    if (Array.isArray(node)) {
+      // Array entries are addressed by numeric index, so no key inside an
+      // array can match the pattern — recurse for nested objects only.
+      for (const item of node) {
+        visit(item);
       }
+      return;
     }
 
-    const nestedLimit = findContextLimitInObject(nestedValue);
-    if (nestedLimit !== null) {
-      return nestedLimit;
-    }
-  }
+    for (const [key, nestedValue] of Object.entries(node as Record<string, unknown>)) {
+      const rank = contextLimitKeyRank(key);
+      if (rank !== null && rank > bestRank) {
+        const parsed = parsePositiveInteger(nestedValue);
+        if (parsed !== null) {
+          best = parsed;
+          bestRank = rank;
+        }
+      }
 
-  return null;
+      visit(nestedValue);
+    }
+  };
+
+  visit(value);
+  return best;
 }
 
 /**
@@ -142,32 +206,47 @@ export function getModelContextLimitFromInfo(info: LlmModelInfo): number | null 
 }
 
 /**
- * Parse the model context limit out of an OpenAI-compatible 400 error
- * body. The reference message format is:
+ * Error-body phrasings that disclose a model's real context cap, tried in
+ * order. The first pattern that matches yields the cap.
  *
- *   "This model's maximum context length is 16385 tokens. Please reduce
- *    the length of the messages."
+ *   1. OpenAI / vLLM:
+ *      "This model's maximum context length is 16385 tokens. Please reduce
+ *       the length of the messages."
+ *      "This model's maximum context length is 4096 tokens, however you
+ *       requested 8192 tokens (8192 in the messages, 0 in the completion)."
  *
- * vLLM uses a similar but more verbose phrasing that the regex below
- * also matches:
+ *   2. llama.cpp / llama-server (llama-swap, llama.cpp model manager):
+ *      "request (326517 tokens) exceeds the available context size
+ *       (262144 tokens), try increasing it"
+ *      The bracketed count that follows "available context size" is the
+ *      server's `--ctx-size` — the same `meta.n_ctx` value the proactive
+ *      `/v1/models` walk now reads, so a 400 teaches the resolver the cap
+ *      even when the model was unloaded at probe time.
  *
- *   "This model's maximum context length is 4096 tokens, however you
- *    requested 8192 tokens (8192 in the messages, 0 in the completion)."
- *
- * Anthropic and llama.cpp-server use different phrasing and are not
- * currently supported; if/when an Anthropic adapter is added, extend
- * this function with the additional pattern.
+ * Anthropic is not supported; if/when an Anthropic adapter is added, extend
+ * this list with the additional pattern.
  *
  * Returns null if the message does not contain a parseable positive
  * integer cap.
  */
+const CONTEXT_LIMIT_ERROR_PATTERNS: RegExp[] = [
+  /maximum context length is (\d+) tokens/i,
+  /exceeds the available context size \((\d+) tokens\)/i,
+];
+
 export function parseContextLimitFromError(message: string): number | null {
-  const match = message.match(/maximum context length is (\d+) tokens/i);
-  if (!match?.[1]) {
-    return null;
+  for (const pattern of CONTEXT_LIMIT_ERROR_PATTERNS) {
+    const match = message.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+    const parsed = Number.parseInt(match[1], 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
   }
-  const parsed = Number.parseInt(match[1], 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+
+  return null;
 }
 
 /**

@@ -105,6 +105,51 @@ assertEq(
   262144,
   'first matching key in Object.entries order wins'
 );
+
+// llama.cpp: llama-server's /v1/models entry carries the served window and
+// the GGUF training window under `meta`. The served `n_ctx` is the value the
+// server actually enforces, so it must win — and it must win regardless of
+// key order, since JSON field order is not a contract.
+assertEq(
+  findContextLimitInObject({
+    model_info: {
+      model: 'Ornith-1.5-35B-A3B-Heretic-MTP-APEX-I-Quality',
+      meta: {
+        vocab_type: true,
+        n_vocab: 248320,
+        n_ctx: 262144,
+        n_ctx_train: 262144,
+        n_embd: 2048,
+      },
+    },
+  }),
+  262144,
+  'llama.cpp meta.n_ctx → 262144'
+);
+assertEq(
+  findContextLimitInObject({ meta: { n_ctx_train: 131072, n_ctx: 262144 } }),
+  262144,
+  'llama.cpp served n_ctx outranks n_ctx_train when the training value comes first'
+);
+assertEq(
+  findContextLimitInObject({ meta: { n_ctx_train: 131072 }, 'qwen3.context_length': 32768 }),
+  32768,
+  'declared context_length outranks the GGUF training window (n_ctx_train)'
+);
+assertEq(
+  findContextLimitInObject({ meta: { n_ctx_train: 262144 } }),
+  262144,
+  'n_ctx_train alone is still a usable (weakest) cap'
+);
+assertNull(
+  findContextLimitInObject({ meta: { n_vocab: 248320, n_embd: 2048 } }),
+  'llama.cpp meta without n_ctx/n_ctx_train → null'
+);
+assertEq(
+  findContextLimitInObject({ meta: { n_ctx: '262144' } }),
+  262144,
+  'string-valued n_ctx is parsed like every other key'
+);
 console.log('');
 
 // ── parseContextLimitFromText ───────────────────────────────────────────────
@@ -176,6 +221,33 @@ assertEq(
   8192,
   'synthetic OpenAI model_info with max_context_length → 8192'
 );
+
+console.log('getModelContextLimitFromInfo — llama.cpp /v1/models payload');
+assertEq(
+  getModelContextLimitFromInfo({
+    model_info: {
+      model: 'Ornith-1.5-35B-A3B-Heretic-MTP-APEX-I-Quality',
+      tags: [],
+      object: 'model',
+      owned_by: 'llamacpp',
+      architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+      meta: { n_vocab: 248320, n_ctx: 262144, n_ctx_train: 262144, n_params: 35505251456 },
+      status: { value: 'loaded', args: ['--ctx-size', '262144', '--jinja'] },
+    },
+  }),
+  262144,
+  'llama.cpp model_info (meta.n_ctx 262144, args --ctx-size 262144) → 262144'
+);
+assertEq(
+  getModelContextLimitFromInfo({
+    model_info: {
+      meta: { n_ctx: 262144 },
+      status: { args: ['--ctx-size', '262144'] },
+    },
+  }),
+  262144,
+  'no Modelfile/parameters → structured walk still finds meta.n_ctx'
+);
 console.log('');
 
 // ── parseContextLimitFromError ──────────────────────────────────────────────
@@ -199,6 +271,35 @@ assertNull(parseContextLimitFromError('Invalid API key'), 'unrelated error → n
 assertNull(
   parseContextLimitFromError('context length exceeded: 4122 > 4096'),
   'Ollama-style error (no "this model\'s" prefix) → null'
+);
+
+// llama.cpp / llama-server (and llama-swap-style model managers) report the
+// over-budget request in a different shape. This is the exact message that
+// killed the odometer-location sub-agent.
+assertEq(
+  parseContextLimitFromError(
+    '400 request (326517 tokens) exceeds the available context size (262144 tokens), try increasing it'
+  ),
+  262144,
+  'llama.cpp "exceeds the available context size (262144 tokens)" → 262144'
+);
+assertEq(
+  parseContextLimitFromError(
+    'the request exceeds the available context size (393216 tokens), try increasing it'
+  ),
+  393216,
+  'llama.cpp phrasing without the leading status code → 393216'
+);
+assertEq(
+  parseContextLimitFromError(
+    "This model's maximum context length is 4096 tokens. request (8192 tokens) exceeds the available context size (2048 tokens)"
+  ),
+  4096,
+  'OpenAI phrasing wins when both phrasings appear'
+);
+assertNull(
+  parseContextLimitFromError('the request exceeds the available context size, try increasing it'),
+  'llama.cpp phrasing without a bracketed count → null'
 );
 console.log('');
 

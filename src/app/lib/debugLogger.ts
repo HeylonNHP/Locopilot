@@ -98,6 +98,7 @@ export type DiagnosticPhase =
   | 'compaction_start'
   | 'compaction_end'
   | 'empty_response_recovery'
+  | 'context_limit_recovery'
   | 'abort'
   | 'error'
   | 'model_switched'

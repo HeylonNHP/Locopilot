@@ -55,6 +55,7 @@ export const subAgentToolSchema: ToolSchema = {
 };
 
 import { AUTO_COMPACT_THRESHOLD_PCT, TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
+import { recordDiscoveredCap } from '@/services/capResolver';
 import {
   compactHistory,
   COMPACTION_ADAPTIVE_DIRECTIVE,
@@ -72,11 +73,13 @@ import {
 import {
   buildLlmRequestContext,
   type ChatMessage,
+  getLlmApiErrorMessage,
   type LlmRequestContext,
   sendLlmChat,
   type ToolCall,
   type ToolDefinition,
 } from '@/services/llm';
+import { parseContextLimitFromError } from '@/services/llmContextLimit';
 import { sanitizeChatMessage } from '@/services/textUtils';
 import { countMessagesTokens } from '@/services/tokenizer';
 import { LiveThroughputMeter } from '@/services/tokenThroughput';
@@ -95,6 +98,29 @@ function isInterruptOrAbort(signal?: AbortSignal): boolean {
   return signal?.aborted === true;
 }
 
+function errorMessageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Human-readable message for a failed sub-agent LLM call.
+ *
+ * Prefers the adapter's own extraction — `getLlmApiErrorMessage` is the exact
+ * helper the main chat route uses — so the sub-agent and the route always agree
+ * about what the upstream said, and the reactive context-limit parse below
+ * inspects the same text the route would. Falls back to `err.message` when the
+ * probe itself throws: an exception raised inside a `catch` block would
+ * otherwise replace the original failure with a confusing secondary error.
+ */
+async function describeLlmFailure(ctx: LlmRequestContext, err: unknown): Promise<string> {
+  try {
+    const message = await getLlmApiErrorMessage(ctx, err);
+    return message.trim().length > 0 ? message : errorMessageOf(err);
+  } catch {
+    return errorMessageOf(err);
+  }
+}
+
 interface SubAgentSpec {
   id?: string;
   prompt?: string;
@@ -108,6 +134,18 @@ interface SubAgentToolArgs extends ToolCallArguments {
 interface CompletedSubAgent {
   id: string;
   content: string;
+  /**
+   * Set when the agent never produced a summary — a provider error, an
+   * unexpected throw, or a model that returned no text at all. `content` is
+   * then empty and every renderer reports the agent as *missing work* rather
+   * than as a completed agent with an empty report.
+   *
+   * There is deliberately no "partial summary" variant: a truncated report is
+   * unverifiable, and `share_summaries` would hand it to sibling agents as
+   * trusted context. A failed agent is reported loudly so the parent can re-run
+   * it (see `formatAgentFailure`).
+   */
+  failure?: string;
 }
 
 const SUB_AGENT_AUTO_COMPACT_NOTICE_BASE =
@@ -116,6 +154,63 @@ const SUB_AGENT_AUTO_COMPACT_NOTICE_BASE =
     COMPACTION_INITIAL_DIRECTIVE.subAgent
   }`;
 const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
+
+/**
+ * How many times one sub-agent may react to a provider context-limit 400 by
+ * force-compacting its history and retrying the same turn. One is deliberate:
+ * the first 400 discloses the server's real window, after which the corrected
+ * `config.numCtx` makes the ordinary `AUTO_COMPACT_THRESHOLD_PCT` gate fire on
+ * its own. A second 400 *after* a successful compaction therefore means
+ * something else is wrong (auth, a malformed tool call, or a single prompt
+ * larger than the whole window) and retrying would only burn the batch.
+ */
+const MAX_CONTEXT_LIMIT_FORCED_COMPACT_ATTEMPTS = 1;
+
+/**
+ * Fold a provider-discovered context cap into the sub-agent runtime.
+ *
+ * Called when a sub-agent's own LLM call is rejected with a context-limit error
+ * that names the real cap. Three effects, mirroring what the chat route's
+ * reactive 400 branch does for the main loop:
+ *
+ *   1. `recordDiscoveredCap` writes the cap into the resolver's per-(baseUrl,
+ *      model) cache so the next proactive probe agrees and no second 400 is
+ *      needed.
+ *   2. This config is mutated in place. `config` IS the route's
+ *      `requestContext.subAgent` object, so the corrected cap also covers every
+ *      remaining sub-agent in the same `run_subagents` batch, and the forced
+ *      compaction's post-compaction notice reports the corrected size.
+ *   3. `onContextLimitDiscovered` lets the route apply the request-scoped
+ *      effects (lower `effectiveNumCtx`, set `modelContextLimit`, emit the
+ *      `context_limit_adjusted` status event) so the main loop's own gate and
+ *      the client's token badge use the corrected cap for the rest of the turn.
+ *
+ * Exported for the network-free sub-agent context-limit regression checks.
+ */
+export function adoptDiscoveredContextLimit(config: SubAgentConfig, cap: number): void {
+  if (!Number.isFinite(cap) || cap <= 0) {
+    return;
+  }
+
+  recordDiscoveredCap(config.baseUrl, config.model, cap);
+  // `Math.min`: the discovery says "you may not plan for more than N tokens",
+  // so it can never raise a ceiling that the user or the resolver deliberately
+  // chose below the server's cap.
+  config.numCtx = Math.min(config.numCtx, cap);
+
+  // The compaction request has its own (provider, model, numCtx) triple. When
+  // that triple points at the same server+model that just rejected us, it
+  // inherited the same over-estimate — so the compaction call itself would 400
+  // with the identical error. An explicit compaction provider on another server
+  // keeps its own cap.
+  const compactionModel = config.compactionModel || config.model;
+  const compactionBaseUrl = config.compactionLlmRequestContext?.baseUrl ?? config.baseUrl;
+  if (compactionModel === config.model && compactionBaseUrl === config.baseUrl) {
+    config.compactionNumCtx = Math.min(config.compactionNumCtx ?? cap, cap);
+  }
+
+  config.onContextLimitDiscovered?.(cap);
+}
 
 function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): string {
   const dateTimeStr = new Date().toLocaleString('en-US', {
@@ -192,7 +287,18 @@ async function autoCompactSubAgentIfNeeded(
   agentId: string,
   orchestratorPrompt: ChatMessage,
   compactionsSinceTaskStart: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /**
+   * Skip the proactive `AUTO_COMPACT_THRESHOLD_PCT` gate. Set by the reactive
+   * context-limit path in `runSingleAgent` after a provider 400: the provider
+   * has already told us this request was too big, so waiting for the
+   * percentage gate — which is measured against a `numCtx` that was still wrong
+   * when the request was sent — would just reproduce the same rejection. The
+   * `numCtx <= 0` and `messages.length < 4` guards still apply: they exist so
+   * `compactHistory` can never be handed a history whose split logic turns into
+   * an empty `messagesToSummarise`.
+   */
+  force = false
 ): Promise<boolean> {
   if (config.numCtx <= 0) {
     return false;
@@ -225,7 +331,7 @@ async function autoCompactSubAgentIfNeeded(
 
   const tokensUsed = countMessagesTokens(messages, config.model);
   const pct = (tokensUsed / config.numCtx) * 100;
-  if (pct < AUTO_COMPACT_THRESHOLD_PCT) {
+  if (!force && pct < AUTO_COMPACT_THRESHOLD_PCT) {
     return false;
   }
 
@@ -241,7 +347,11 @@ async function autoCompactSubAgentIfNeeded(
     baseUrl: config.compactionLlmRequestContext?.baseUrl ?? config.baseUrl,
     messageCount: messages.length,
   });
-  agentOutput.writeLine(`⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...`);
+  agentOutput.writeLine(
+    force
+      ? `⚠ Provider rejected the request for context length — compacting the history at ${pct.toFixed(0)}% of ${config.numCtx} tokens...`
+      : `⚡ Context at ${pct.toFixed(0)}% — auto-compacting before continuing...`
+  );
   try {
     // Chat requests provide a resolved compaction context so a selected
     // compaction provider/model is authoritative. Legacy callers do not, so
@@ -355,15 +465,12 @@ function validateAgentSpecs(agents: SubAgentSpec[] | undefined): string | null {
   return null;
 }
 
-function formatCombinedResults(results: CompletedSubAgent[], interrupted: boolean): string {
-  const sections = results.map((result) => {
-    const content =
-      result.content.trim().length > 0
-        ? result.content.trim()
-        : '[Sub-agent completed without a final text response.]';
-
-    return [`sub_agent: ${result.id}`, 'final_response:', content].join('\n');
-  });
+// Exported alongside `formatAgentFailure` for the network-free sub-agent
+// failure-reporting regression checks.
+export function formatCombinedResults(results: CompletedSubAgent[], interrupted: boolean): string {
+  const sections = results.map((result) =>
+    [`sub_agent: ${result.id}`, 'final_response:', renderAgentContent(result)].join('\n')
+  );
 
   if (sections.length === 0) {
     sections.push('[run_subagents completed without any sub-agent results.]');
@@ -373,7 +480,59 @@ function formatCombinedResults(results: CompletedSubAgent[], interrupted: boolea
     sections.push('[run_subagents interrupted by user.]');
   }
 
-  return sections.join('\n\n---\n\n');
+  const body = sections.join('\n\n---\n\n');
+  const failures = results.filter((result) => Boolean(result.failure));
+  if (failures.length === 0) {
+    return body;
+  }
+
+  // The banner leads the tool result on purpose. A `run_subagents` result can
+  // be tens of thousands of tokens, and a failure note that only appears after
+  // the last successful agent's report is trivially missed — which is exactly
+  // how a missing result gets silently treated as a completed one.
+  return [
+    `[⚠ ${failures.length} of ${results.length} sub-agent(s) returned NO summary: ${failures
+      .map((failure) => `"${failure.id}"`)
+      .join(', ')}. ` +
+      `Their work is MISSING, not empty — do not assume it was done or cite it. ` +
+      `If you still need it, re-run those agents with run_subagents; a narrower prompt or a split task usually avoids the failure.]`,
+    '',
+    body,
+  ].join('\n');
+}
+
+/**
+ * Render one agent's section body: its summary when it produced one, or the
+ * loud failure notice when it did not. Never returns an empty string, so no
+ * rendering path can imply a completed agent with a blank report.
+ */
+function renderAgentContent(result: CompletedSubAgent): string {
+  if (result.failure) {
+    return formatAgentFailure(result.id, result.failure);
+  }
+  const trimmed = result.content.trim();
+  if (trimmed.length > 0) {
+    return trimmed;
+  }
+  // Defensive: `execute()` marks a text-less agent as a failure, so this only
+  // fires for a hand-built entry (e.g. a test fixture).
+  return '[⚠ Sub-agent returned no summary — its work is missing.]';
+}
+
+/**
+ * Loud per-agent notice for an agent that died before producing a summary.
+ *
+ * Says what the parent actually needs to know: the work does not exist, so
+ * re-run it rather than working around a gap you cannot see the shape of.
+ * Exported alongside `formatCombinedResults` for the network-free sub-agent
+ * failure-reporting regression checks.
+ */
+export function formatAgentFailure(id: string, reason: string): string {
+  return (
+    `[⚠ Sub-agent "${id}" returned NO summary — its work is missing, not empty.\n` +
+    `Reason: ${reason}\n` +
+    `If that work is still needed, re-run this agent with run_subagents.]`
+  );
 }
 
 // Exported for the regression test scripts (scripts/test-subagent-mcp.mjs);
@@ -614,12 +773,30 @@ export async function executeNestedToolCall(
   return toolResult;
 }
 
-function formatPriorResultsBlock(priorResults: CompletedSubAgent[]): string {
-  const sections = priorResults.map((r) => {
-    const trimmed = r.content.trim().length > 0 ? r.content.trim() : '[no final response]';
-    return `### sub-agent "${r.id}"\n${trimmed}`;
-  });
-  return `## Prior sub-agent results\n\nThe following sub-agents in this \`run_subagents\` call completed before you. Their final summaries are included for context — use them, do not re-derive what they already concluded, and continue with your own task as instructed below.\n\n${sections.join('\n\n')}\n\n---\n\n`;
+// Exported for the network-free sub-agent failure-reporting regression checks.
+export function formatPriorResultsBlock(priorResults: CompletedSubAgent[]): string {
+  // Agents that returned no summary are not "prior results" — they are
+  // absences. Listing them under a header that promises trusted sibling
+  // context would tell the next agent that work which never happened was
+  // already done, and that claim would then be repeated in its own summary.
+  const isMissing = (result: CompletedSubAgent): boolean =>
+    Boolean(result.failure) || result.content.trim().length === 0;
+  const usable = priorResults.filter((result) => !isMissing(result));
+  const missing = priorResults.filter(isMissing);
+
+  const sections = usable.map((r) => `### sub-agent "${r.id}"\n${r.content.trim()}`);
+  const missingNote =
+    missing.length > 0
+      ? `\n\n⚠ ${missing.length} earlier sub-agent${missing.length === 1 ? '' : 's'} in this batch returned no summary (${missing
+          .map((r) => `"${r.id}"`)
+          .join(
+            ', '
+          )}). That work is missing, not done — do not assume it was covered, and say so if it falls inside your own task.`
+      : '';
+
+  return `## Prior sub-agent results\n\nThe following sub-agents in this \`run_subagents\` call completed before you. Their final summaries are included for context — use them, do not re-derive what they already concluded, and continue with your own task as instructed below.${missingNote}\n\n${sections.join(
+    '\n\n'
+  )}\n\n---\n\n`;
 }
 
 async function runSingleAgent(
@@ -634,6 +811,23 @@ async function runSingleAgent(
   priorResults?: CompletedSubAgent[]
 ): Promise<string> {
   const agentOutput = makeAgentSink(output, agent.id);
+
+  // Terminal-status guard: whatever ends this agent — provider error, an
+  // unexpected throw from the loop, or a user abort — its bubble must end with
+  // a reason instead of stopping mid-log (which is indistinguishable from an
+  // empty response in the UI). `writeLine` reaches the UI through the per-agent
+  // sink (`writeAgentLine` → `appendSubagentLine` in the chat route), so the
+  // line is streamed live *and* persisted into the agent's `subagent_log` row.
+  // Written at most once, so nested failure paths cannot stack notices.
+  let terminalNoticeWritten = false;
+  const writeTerminalNotice = (reason: string): void => {
+    if (terminalNoticeWritten) {
+      return;
+    }
+    terminalNoticeWritten = true;
+    agentOutput.writeLine(`⚠ Sub-agent stopped: ${reason}`);
+  };
+
   // Create a per-sub-agent working-directory scope so each agent's `cd`
   // commands and relative path resolutions are isolated from the parent
   // and from sibling sub-agents.
@@ -686,6 +880,10 @@ async function runSingleAgent(
   // in the post-compaction notice so the model can adapt when it repeatedly
   // hits the context limit. Local per sub-agent; not inherited from the parent.
   let subAgentCompactions = 0;
+  // How many times the reactive context-limit path below has force-compacted
+  // this agent's history. Distinct from `subAgentCompactions`, which counts
+  // *every* compaction (that one feeds the post-compaction notice text).
+  let contextLimitCompactions = 0;
   // Tracks consecutive empty assistant replies so the loop can retry them
   // instead of silently returning nothing (see
   // src/services/emptyResponseRecovery.ts — the policy, attempt cap, and
@@ -837,6 +1035,69 @@ async function runSingleAgent(
           chunkCount,
           error: err,
         });
+
+        if (isInterruptOrAbort(signal)) {
+          writeTerminalNotice('interrupted by user');
+          throw err;
+        }
+
+        const apiMessage = await describeLlmFailure(subAgentContext, err);
+
+        // ── Reactive context-limit recovery (route-400 parity) ──────────
+        // A sub-agent's own LLM call is the one place a provider 400 that
+        // names the real context cap can surface *without the chat route ever
+        // seeing it* (the route's reactive branch only inspects errors from
+        // the main loop's calls). The proactive probe cannot cover providers
+        // that hide the cap in an unrecognised field, nor a model that was
+        // unloaded when it was probed — so learn from the rejection itself:
+        // record the cap, force one compaction, retry the same turn. Nothing
+        // has been appended to `messages` on this path, so the retry cannot
+        // violate the assistant/tool_call ordering contract.
+        const discoveredCap = parseContextLimitFromError(apiMessage);
+        if (
+          discoveredCap !== null &&
+          contextLimitCompactions < MAX_CONTEXT_LIMIT_FORCED_COMPACT_ATTEMPTS
+        ) {
+          contextLimitCompactions += 1;
+          adoptDiscoveredContextLimit(config, discoveredCap);
+          debugLog.diagnostic({
+            layer: 'subagent',
+            phase: 'context_limit_recovery',
+            requestId: context?.requestId,
+            sessionId: context?.sessionId,
+            agentId: agent.id,
+            provider: config.provider,
+            model: config.model,
+            baseUrl: config.baseUrl,
+            attempt: contextLimitCompactions,
+            discoveredCap,
+            numCtxAfter: config.numCtx,
+            messageCount: messages.length,
+          });
+
+          const forceCompacted = await autoCompactSubAgentIfNeeded(
+            messages,
+            config,
+            agentOutput,
+            agent.id,
+            orcPrompt,
+            subAgentCompactions + 1,
+            signal,
+            true
+          );
+
+          if (forceCompacted) {
+            subAgentCompactions += 1;
+            agentOutput.writeLine('↻ Retrying this turn on the compacted history.');
+            continue;
+          }
+
+          agentOutput.writeLine(
+            '⚠ The history is too short to compact, so this turn cannot be retried.'
+          );
+        }
+
+        writeTerminalNotice(apiMessage);
         throw err;
       } finally {
         clearInterval(stallTimer);
@@ -873,9 +1134,10 @@ async function runSingleAgent(
         // synthetic nudge instead of silently ending the agent. The empty
         // assistant message is still pushed first so the model observes its
         // own empty turn, exactly like the main loop. Once the attempt cap
-        // is exhausted the empty reply is accepted as final and the
-        // orchestrator receives the usual
-        // "[Sub-agent completed without a final text response.]" marker.
+        // is exhausted the empty reply is accepted as final, and the tool
+        // reports the agent as having returned NO summary (see
+        // `formatAgentFailure`) rather than quietly substituting a
+        // placeholder that could be mistaken for a completed report.
         if (
           !hasMeaningfulAssistantContent(assistantMessage) &&
           emptyResponseRecovery.shouldRecover()
@@ -992,6 +1254,10 @@ async function runSingleAgent(
       elapsedMs: Date.now() - agentStartedAt,
       error: err,
     });
+    // Any throw that reached this level bypassed the per-turn handler above
+    // (or was re-thrown by it), so guarantee the bubble still ends with a
+    // reason rather than mid-stream text.
+    writeTerminalNotice(isInterruptOrAbort(signal) ? 'interrupted by user' : errorMessageOf(err));
     throw err;
   } finally {
     debugLog.diagnostic({
@@ -1102,7 +1368,18 @@ export class SubAgentTool implements IToolCommand {
           skillSummary,
           shareSummaries ? results : undefined
         );
-        results.push({ id: agent.id, content });
+        // An agent that ends with no text produced nothing usable. Recording it
+        // as a failure makes it loud (leading banner + per-agent notice) instead
+        // of a placeholder line buried inside a multi-thousand-token tool result.
+        if (content.trim().length === 0) {
+          results.push({
+            id: agent.id,
+            content: '',
+            failure: `the model returned no text response (${MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS} empty-response recovery attempts were exhausted)`,
+          });
+        } else {
+          results.push({ id: agent.id, content });
+        }
         debugLog.diagnostic({
           layer: 'subagent',
           phase: 'cleanup',
@@ -1113,9 +1390,11 @@ export class SubAgentTool implements IToolCommand {
           result: 'completed',
         });
       } catch (err) {
+        const failureMessage = err instanceof Error ? err.message : String(err);
         results.push({
           id: agent.id,
-          content: `[Sub-agent error: ${err instanceof Error ? err.message : String(err)}]`,
+          content: '',
+          failure: failureMessage,
         });
         debugLog.diagnostic({
           layer: 'subagent',

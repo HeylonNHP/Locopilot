@@ -709,6 +709,76 @@ export async function POST(req: NextRequest): Promise<Response> {
       // to this main request context rather than another configured provider.
       let compactionLlmRequestContext: LlmRequestContext = llmRequestContext;
       let compactionNumCtx = effectiveNumCtx;
+      /**
+       * The per-request tool context. Declared here (not inside the `try`
+       * below) because `adoptDiscoveredContextLimit` — which the reactive
+       * `catch` at the bottom of this handler also calls — has to be able to
+       * reach it; declarations inside a `try` block are not visible to that
+       * block's sibling `catch` clause.
+       */
+      let requestContext: RequestContext;
+
+      /**
+       * Fold a context-window cap that a provider just disclosed into this
+       * request's state.
+       *
+       * Shared by two callers that must never drift:
+       *
+       *   1. The reactive 400 branch in this handler's `catch` below — the
+       *      main loop's own LLM call was rejected, so the error body is
+       *      parsed here.
+       *   2. `SubAgentConfig.onContextLimitDiscovered` — a sub-agent runs its
+       *      own LLM calls, so a provider 400 from *inside* `run_subagents`
+       *      never reaches the `catch` above. Without this hook the main loop
+       *      finishes the turn still believing the stale (too large) cap, and
+       *      the client keeps showing it.
+       *
+       * `effectiveNumCtx` is only ever *lowered*: the discovery means "you
+       * may not plan for more than N tokens", so it can never raise a ceiling
+       * that the user or the cap resolver deliberately chose below the
+       * server's window.
+       */
+      const adoptDiscoveredContextLimit = (cap: number): void => {
+        if (!Number.isFinite(cap) || cap <= 0) {
+          return;
+        }
+
+        effectiveNumCtx = Math.min(effectiveNumCtx, cap);
+        modelContextLimit = cap;
+        recordDiscoveredCap(activeProvider?.baseUrl ?? effectiveBaseUrl, model as string, cap);
+
+        // Keep the request-scoped copies in step with the resolved value:
+        // `requestContext` is the object every tool sees (`read_file`,
+        // `read_pdf` and `fetch_url` read `numCtx` off it for their token
+        // warnings), and a mid-turn model switch re-applies
+        // `effectiveNumCtx` to it. Guarded because an early failure inside
+        // the `try` below can reach this branch before the context exists.
+        if (requestContext) {
+          requestContext.numCtx = effectiveNumCtx;
+        }
+
+        // The main loop's compaction request has its own (provider, model,
+        // numCtx) triple. When it points at the same server+model that just
+        // rejected us it inherited the same over-estimate, so the compaction
+        // call itself would 400 with the identical error.
+        const compactionRuntimeMatches =
+          effectiveCompactionModel === (model as string) &&
+          (compactionLlmRequestContext.baseUrl ?? effectiveBaseUrl) ===
+            (activeProvider?.baseUrl ?? effectiveBaseUrl);
+        if (compactionRuntimeMatches) {
+          compactionNumCtx = Math.min(compactionNumCtx, cap);
+        }
+
+        try {
+          sendEvent('status', {
+            phase: 'context_limit_adjusted',
+            tokenLimit: effectiveNumCtx,
+            modelContextLimit: cap,
+          });
+        } catch {
+          // Controller may already be closed – ignore.
+        }
+      };
 
       try {
         if (!activeSessionId) {
@@ -765,7 +835,6 @@ export async function POST(req: NextRequest): Promise<Response> {
         // Load runtime tool configuration from disk so that web search
         // and YOLO settings reflect the latest user preferences.
         // Build per-request context from config (no global state setters).
-        let requestContext: RequestContext;
         let disabledSubAgent: string[] = [];
 
         const buildRequestContext = (
@@ -819,6 +888,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               mcpApprovals: [...mcpApprovalsSet],
               approvalRequester: requestSubAgentApproval,
               refreshModels: refreshSubAgentModels,
+              onContextLimitDiscovered: adoptDiscoveredContextLimit,
             },
           };
         };
@@ -2460,23 +2530,8 @@ export async function POST(req: NextRequest): Promise<Response> {
         // is notified via the existing `status` channel so the client
         // can update its in-memory display.
         const discoveredLimit = parseContextLimitFromError(message);
-        if (discoveredLimit !== null && discoveredLimit !== effectiveNumCtx) {
-          effectiveNumCtx = discoveredLimit;
-          modelContextLimit = discoveredLimit;
-          recordDiscoveredCap(
-            activeProvider?.baseUrl ?? effectiveBaseUrl,
-            model as string,
-            discoveredLimit
-          );
-          try {
-            sendEvent('status', {
-              phase: 'context_limit_adjusted',
-              tokenLimit: discoveredLimit,
-              modelContextLimit: discoveredLimit,
-            });
-          } catch {
-            // Controller may already be closed – ignore.
-          }
+        if (discoveredLimit !== null) {
+          adoptDiscoveredContextLimit(discoveredLimit);
         }
 
         // Parse the error message for a "vision not supported" signal.
