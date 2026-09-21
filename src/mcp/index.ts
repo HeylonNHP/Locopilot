@@ -18,6 +18,7 @@ import type { MCPServerConfig } from './types';
 
 import { getClientManager } from './clientManager';
 import { listMCPServers, loadMCPConfig } from './configLoader';
+import { peekAuthorizationUrl } from './oauthProvider';
 import {
   buildMCPToolDefinitions,
   buildMCPToolDefinitionsForSearch,
@@ -197,14 +198,17 @@ export async function listMCPServersWithStatus(
         tools: [],
         toolCount: 0,
       };
-      // Phase 3.5: hint the UI that OAuth is the reason
-      // the server can't auto-connect. The `authUrl` field
-      // is the loopback redirect URL the user will be sent
-      // back to; the chat UI combines this with the
-      // `lastError` text to render the "Authenticate"
+      // Phase 3.5 / F9: when the server has an `oauth` block it will
+      // need the user's consent, so hint the UI that OAuth is the
+      // reason it can't auto-connect. Surface the REAL authorization
+      // URL when one has been stashed by `redirectToAuthorization`
+      // (D3); never fabricate a placeholder, and omit the field when no
+      // URL exists yet so the UI renders no link. The chat UI combines
+      // this with the `lastError` text to render the "Authenticate"
       // button.
       if (server.oauth !== undefined) {
-        entry.authUrl = 'http://127.0.0.1:0/oauth/callback';
+        const authUrl = peekAuthorizationUrl(server.name);
+        if (authUrl !== undefined) entry.authUrl = authUrl;
       }
       out.push(entry);
       continue;
@@ -223,14 +227,16 @@ export async function listMCPServersWithStatus(
       })),
       toolCount: handle.tools.length,
     };
-    // Phase 3.5: when the handle is in `auth_required` we
-    // also include a placeholder `authUrl` field so the UI
-    // can render the static loopback redirect hint. The
-    // actual IdP authorization URL is printed to the
-    // dev-server stderr (the SDK does not hand it back to
-    // the browser for security).
+    // Phase 3.5 / F9 / D3: when the handle is in `auth_required`,
+    // include the REAL authorization URL that `redirectToAuthorization`
+    // stashed for this server (if the SDK has reached that step yet).
+    // The old code hard-coded an unusable `127.0.0.1:0` placeholder and
+    // relied on a terminal-only hint for the real URL; we now return the
+    // real URL, or omit the field entirely when none is known, so the UI
+    // can render a direct link without inventing one.
     if (handle.status === 'auth_required') {
-      entry.authUrl = 'http://127.0.0.1:0/oauth/callback';
+      const authUrl = peekAuthorizationUrl(server.name);
+      if (authUrl !== undefined) entry.authUrl = authUrl;
     }
     out.push(entry);
   }
@@ -395,9 +401,9 @@ export async function getMCPServerConfig(name: string): Promise<MCPServerConfig 
  *
  * Drops any saved tokens and triggers a fresh connection attempt
  * so the SDK builds a new authorization URL. The handle is
- * flipped to `auth_required` (with the URL printed to stderr)
- * and the chat UI's "needs auth" pill is updated via the
- * `auth-required` event on the MCP event bus.
+ * flipped to `auth_required` and the real authorization URL (when
+ * the SDK has reached that step) is returned here and also pushed
+ * to the chat UI via the `auth-required` event on the MCP event bus.
  *
  * Used by `POST /api/mcp/auth`.
  */

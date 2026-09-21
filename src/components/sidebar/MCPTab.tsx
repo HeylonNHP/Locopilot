@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { MCPStatusEntry } from '@/mcp';
 
+// D4: the auth/error text is now accurate and actionable (it names the real
+// cause), so give it more room than the old 200-char cut. The full text is
+// always available via the element's `title` attribute.
+const MCP_ERROR_MAX_LEN = 320;
+
 const STATUS_LABEL: Record<MCPStatusEntry['status'], string> = {
   connected: 'Connected',
   connecting: 'Connecting…',
@@ -125,9 +130,19 @@ export default function MCPTab() {
     };
 
     const handleState = (event: MessageEvent<string>): void => {
-      let payload: { kind?: string; entries?: MCPStatusEntry[] } | null = null;
+      let payload: {
+        kind?: string;
+        entries?: MCPStatusEntry[];
+        serverName?: string;
+        authUrl?: string;
+      } | null = null;
       try {
-        payload = JSON.parse(event.data) as { kind?: string; entries?: MCPStatusEntry[] };
+        payload = JSON.parse(event.data) as {
+          kind?: string;
+          entries?: MCPStatusEntry[];
+          serverName?: string;
+          authUrl?: string;
+        };
       } catch {
         // Malformed frame — fall through to a refetch.
       }
@@ -135,6 +150,20 @@ export default function MCPTab() {
         if (togglingRef.current) return;
         setServers(payload.entries);
         return;
+      }
+      // D3: the `auth-required` frame carries the REAL authorization URL.
+      // Merge it into the matching server immediately so the link can appear
+      // without waiting for the debounced refetch below (which still runs to
+      // pick up any other status change).
+      if (payload?.kind === 'auth-required' && typeof payload.serverName === 'string') {
+        const { serverName, authUrl } = payload;
+        setServers((prev) =>
+          prev.map((s) =>
+            s.name === serverName
+              ? { ...s, status: 'auth_required', authUrl: authUrl ?? s.authUrl }
+              : s
+          )
+        );
       }
       scheduleFetch();
     };
@@ -283,15 +312,20 @@ export default function MCPTab() {
           ok?: boolean;
           error?: string;
           connected?: boolean;
+          authUrl?: string;
         };
         if (!res.ok || data.ok !== true) {
           throw new Error(data.error ?? `HTTP ${res.status}`);
         }
-        // The auth URL is printed to the dev-server stderr. We
-        // can't show it inline (the SDK doesn't hand it back to
-        // the browser for security), but a fresh connect
-        // attempt will surface it via the chat route's
-        // auth-required handling and via the server log.
+        // D3: the response now carries the REAL authorization URL (when the
+        // SDK has produced one). Merge it into the matching server immediately
+        // so the link appears without waiting for the refetch below.
+        if (typeof data.authUrl === 'string') {
+          const authUrl = data.authUrl;
+          setServers((prev) =>
+            prev.map((s) => (s.name === name ? { ...s, status: 'auth_required', authUrl } : s))
+          );
+        }
         // Eagerly re-fetch the server list so the pill flips
         // from "needs auth" to "connecting" / "connected".
         await fetchServers();
@@ -378,18 +412,17 @@ export default function MCPTab() {
                     // server whose 401 we have not
                     // yet satisfied. The button
                     // calls /api/mcp/auth which
-                    // drops the saved tokens and
-                    // re-triggers the connect; the
-                    // SDK prints the auth URL to
-                    // the dev-server stderr and
-                    // starts the loopback listener.
+                    // drops the saved tokens,
+                    // re-triggers the connect and
+                    // returns the real authorization
+                    // URL (which the link below shows).
                     // Bug #10 fix: disabled while
                     // a request is in flight.
                     <button
                       className="skills-panel-mcp-auth-btn"
                       onClick={() => authenticateServer(server.name)}
                       disabled={inFlightAuthsRef.current.has(server.name)}
-                      title="Open the OAuth authorization URL printed to the dev-server stderr"
+                      title="Start the OAuth authorization flow"
                     >
                       {inFlightAuthsRef.current.has(server.name)
                         ? 'Authenticating…'
@@ -418,13 +451,23 @@ export default function MCPTab() {
                 )}
                 {showError && (
                   <div className="skills-panel-mcp-item-error" title={server.lastError}>
-                    {truncate(server.lastError ?? '', 200)}
+                    {truncate(server.lastError ?? '', MCP_ERROR_MAX_LEN)}
                   </div>
                 )}
                 {showAuth && (
                   <div className="skills-panel-mcp-item-error" title={server.lastError ?? ''}>
-                    {truncate(server.lastError ?? 'OAuth 2.1 + PKCE required.', 200)}
+                    {truncate(server.lastError ?? 'OAuth 2.1 + PKCE required.', MCP_ERROR_MAX_LEN)}
                   </div>
+                )}
+                {showAuth && server.authUrl && (
+                  <a
+                    className="skills-panel-mcp-auth-link"
+                    href={server.authUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open authorization page ↗
+                  </a>
                 )}
               </div>
             );

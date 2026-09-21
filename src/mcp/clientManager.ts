@@ -29,11 +29,13 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
+import { debugLog } from '@/app/lib/debugLogger';
 import { logger } from '@/app/lib/logger';
 import { killProcessTreeByPid } from '@/tools/processTree';
 
 import { expandEnvRefsInRecord } from './envExpansion';
 import { emitMCPEvent } from './events';
+import { classifyMCPOAuthFailure } from './oauthDiagnostics';
 import {
   buildOAuthProvider,
   consumeAuthorizationCode,
@@ -96,6 +98,26 @@ function extractHttpStatusCode(err: unknown): number | undefined {
     typeof (err as { code: unknown }).code === 'number'
   ) {
     return (err as { code: number }).code;
+  }
+  return undefined;
+}
+
+/**
+ * The RFC 6749 `error` code carried by the SDK's `OAuthError` subclasses
+ * (`InvalidClientError`, `InvalidClientMetadataError`, `ServerError`, … —
+ * see `@modelcontextprotocol/sdk/server/auth/errors.js`). Duck-typed off a
+ * string `errorCode` property so we don't have to import every SDK error
+ * class just to classify a failure. Returns `undefined` when the error
+ * carries no usable code (e.g. an empty `ServerError`).
+ */
+function extractOAuthErrorCode(err: unknown): string | undefined {
+  if (
+    typeof err === 'object' &&
+    err !== null &&
+    'errorCode' in err &&
+    typeof (err as { errorCode: unknown }).errorCode === 'string'
+  ) {
+    return (err as { errorCode: string }).errorCode;
   }
   return undefined;
 }
@@ -671,7 +693,50 @@ class MCPClientManager {
       // DO NOT close the transport here — `finishAuthAndRetry`
       // will need it to perform the token exchange. Closing
       // it would make the retry path unreachable.
-      const isAuthRequired = err instanceof UnauthorizedError || extractHttpStatusCode(err) === 401;
+      //
+      // D2 fix: a client-registration failure (e.g. an authorization server
+      // that rejects RFC 7591 Dynamic Client Registration) is just as much an
+      // auth problem as a 401 — it needs the user's Authenticate affordance
+      // and an accurate reason — but it must NOT keep the transport alive,
+      // because no authorization code can ever arrive for it. The pure,
+      // unit-tested `classifyMCPOAuthFailure` labels the failure and decides
+      // both, using the AS metadata we persisted at discovery time.
+      const httpStatus = extractHttpStatusCode(err);
+      const oauthErrorCode = extractOAuthErrorCode(err);
+      const discoveryState = await loadOAuthState(serverName);
+      const meta = discoveryState.authorizationServerMetadata;
+      const classification = classifyMCPOAuthFailure({
+        interactive,
+        isUnauthorized: err instanceof UnauthorizedError,
+        httpStatus,
+        oauthErrorCode,
+        errorMessage: message,
+        authUrlStashed: peekAuthorizationUrl(serverName) !== undefined,
+        clientConfigured: config.oauth?.clientId !== undefined,
+        cimdConfigured: config.oauth?.clientMetadataUrl !== undefined,
+        discovery:
+          meta === undefined
+            ? undefined
+            : {
+                clientIdMetadataDocumentSupported:
+                  meta.client_id_metadata_document_supported === true,
+                registrationEndpointPresent: meta.registration_endpoint !== undefined,
+              },
+      });
+      const isAuthRequired = classification.isAuthProblem;
+      // D4: leave an on-disk breadcrumb for the underlying cause. The
+      // MCP/OAuth path previously logged only via `console.*`, so a field
+      // failure like the Atlassian DCR rejection left NO trace in
+      // `logs/locopilot-debug.log`.
+      debugLog.diagnostic({
+        layer: 'mcp',
+        phase: 'oauth_error',
+        serverName,
+        failureKind: classification.kind,
+        httpStatus,
+        oauthErrorCode,
+        isAuthRequired,
+      });
       // F7: continue the backoff sequence from the handle this connect is
       // replacing (0 for a first-ever attempt).
       const failureCount = previousFailureCount + 1;
@@ -681,20 +746,12 @@ class MCPClientManager {
         client,
         status: isAuthRequired ? 'auth_required' : 'error',
         tools: [],
-        // The SDK's `UnauthorizedError` swallows the
-        // original error message (just sets
-        // `message = 'Unauthorized'`), so the user
-        // can't tell from this text alone whether the
-        // flow timed out, the IdP rejected the request,
-        // or the user simply hasn't authorised yet. The
-        // appended hint covers the two most common
-        // post-`auth_required` states: a hung listener
-        // (5-minute timeout) and a still-pending first
-        // handshake. Bug #2 asks us to surface the
-        // timeout specifically; we do so in the hint.
-        lastError: isAuthRequired
-          ? `OAuth required: open the chat or click "Authenticate" in the MCP panel to grant access. (Underlying SDK error: ${message}. If the URL was printed but no callback arrived, the flow timed out after 5 minutes \u2014 re-run /mcp auth <server> to try again.)`
-          : message,
+        // D2/D4: for an auth problem use the classifier's accurate,
+        // actionable message (it names the real cause — e.g. that the
+        // server rejects Dynamic Client Registration — rather than the
+        // SDK's `UnauthorizedError`/empty `ServerError` text). Every other
+        // failure keeps the raw described error.
+        lastError: isAuthRequired ? classification.userMessage : message,
         // F5: retain the transport + controller so teardown can reach them —
         // aborting the background OAuth listener (F9), terminating the HTTP
         // session (F22) and tree-killing the stdio child (F6).
@@ -704,8 +761,9 @@ class MCPClientManager {
         failureCount,
         nextRetryAt: computeNextRetryAt(failureCount),
       };
-      if (!isAuthRequired) {
-        // Non-auth failures: reap the client/child now. The AbortSignal usually
+      if (!classification.keepTransport) {
+        // Non-auth failures (and registration failures, which can never
+        // yield a code): reap the client/child now. The AbortSignal usually
         // already tore it down, but be defensive — and route it through
         // `teardownHandle` so the stdio GRANDCHILD is tree-killed (F6) even
         // when the direct `cmd.exe` child is already gone.
@@ -732,7 +790,14 @@ class MCPClientManager {
         lastError: failed.lastError,
       });
       if (isAuthRequired) {
-        emitMCPEvent({ kind: 'auth-required', serverName });
+        // F9/D3: carry the real authorization URL (when one was stashed by
+        // `redirectToAuthorization`) so the UI can render a direct link
+        // instead of only relying on the dev-server stderr.
+        emitMCPEvent({
+          kind: 'auth-required',
+          serverName,
+          authUrl: peekAuthorizationUrl(serverName),
+        });
       }
       placeholder.setError(err);
       // For non-auth failures, surface a connection error so
@@ -1105,11 +1170,13 @@ class MCPClientManager {
       }
       // Bug #4: a non-auth failure was silently being collapsed into a
       // misleading "needs auth" pill. Record the actual cause and re-emit a
-      // `state` event so the UI shows the truthful error.
+      // `state` event so the UI shows the truthful error. (The old text told
+      // the user to hunt for an auth URL in the dev-server log — wrong, because
+      // in this path no auth URL was ever generated.)
       const message = describeError(err);
       const handle = this.handles.get(serverName);
       if (handle !== undefined) {
-        handle.lastError = `OAuth flow did not complete. Check the dev-server log for the auth URL and complete the flow in your browser. If the URL doesn't appear, run /mcp auth ${serverName} again. (Underlying error: ${message})`;
+        handle.lastError = `OAuth sign-in for "${serverName}" failed: ${message}`;
         handle.status = 'error';
         emitMCPEvent({
           kind: 'state',
@@ -1134,6 +1201,19 @@ class MCPClientManager {
   private async completeAuthorization(serverName: string, code: string): Promise<void> {
     const result = await this.finishAuthAndRetry(serverName, code);
     if (!result.ok) {
+      // D4: record the failed token exchange on disk (the MCP path otherwise
+      // only logged to console).
+      // `reason` (not `error`) is deliberate: `errorMetadata` only keeps
+      // name/code/status from an object, so a plain string passed as `error`
+      // would be recorded as `{ errorType: 'string' }` and the actual reason
+      // would be lost.
+      debugLog.diagnostic({
+        layer: 'mcp',
+        phase: 'oauth_token_exchange',
+        serverName,
+        result: 'failed',
+        reason: result.reason,
+      });
       const handle = this.handles.get(serverName);
       if (handle !== undefined) {
         handle.status = 'error';
@@ -1157,7 +1237,20 @@ class MCPClientManager {
   private markAuthorizationFlowFailed(serverName: string, message: string): void {
     const handle = this.handles.get(serverName);
     if (handle === undefined || handle.status !== 'auth_required') return;
-    handle.lastError = `OAuth flow did not complete: ${message}`;
+    // D4: when the listener ended because the 5-minute callback window
+    // elapsed, name the cause and the recovery action instead of the generic
+    // "did not complete" prefix (which reads as if the user did something
+    // wrong). Any other cause keeps the generic wording.
+    const timedOut = /timed?\s*out|timeout/i.test(message);
+    handle.lastError = timedOut
+      ? `Timed out after 5 minutes waiting for the browser callback. Click Authenticate to retry, or paste the redirect URL via /mcp auth ${serverName}.`
+      : `OAuth flow did not complete: ${message}`;
+    debugLog.diagnostic({
+      layer: 'mcp',
+      phase: 'oauth_error',
+      serverName,
+      failureKind: timedOut ? 'authorization_timeout' : 'other',
+    });
     emitMCPEvent({
       kind: 'state',
       serverName,

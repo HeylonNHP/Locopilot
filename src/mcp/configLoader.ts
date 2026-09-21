@@ -408,14 +408,15 @@ function normaliseOneServer(raw: unknown, key: string): MCPServerConfig {
 
 /**
  * Validate and shape the `oauth` block from raw config. We accept
- * the documented subset (clientId / clientSecret / scopes /
- * authorizationServerUrl) and silently drop anything else — keeps
+ * the documented subset (clientId / clientSecret / clientMetadataUrl /
+ * scopes / authorizationServerUrl) and silently drop anything else — keeps
  * the loader forward-compatible with future SDK fields without
  * forcing a config bump.
  *
  * `${env.X}` expansion is applied to the secret (the only field
- * expected to carry a credential) so a user can keep the
- * `clientSecret` out of `mcp.json`.
+ * expected to carry a credential) and to `clientMetadataUrl` (which
+ * points at a public document but is still convenient to keep in
+ * the environment) so a user can keep both out of `mcp.json`.
  *
  * Bug #8 fix: an unresolved `${env.X}` reference in `clientSecret`
  * used to silently fall through to the empty string, leaving the
@@ -427,6 +428,11 @@ function normaliseOneServer(raw: unknown, key: string): MCPServerConfig {
  * `clientId` and `scopes` — `clientId` is also expanded and we
  * apply the same check for symmetry, since a blank `client_id`
  * is just as broken as a blank `client_secret`.)
+ *
+ * `clientMetadataUrl` (SEP-991 / CIMD) is validated to be an HTTPS
+ * URL with a non-root pathname — the same constraint the SDK applies
+ * in its `isHttpsUrl` check — so a bad value fails loudly at load
+ * time rather than mid-auth.
  */
 function normaliseOAuthConfig(raw: Record<string, unknown>, key: string): MCPOAuthConfig {
   const result: MCPOAuthConfig = {};
@@ -462,6 +468,41 @@ function normaliseOAuthConfig(raw: Record<string, unknown>, key: string): MCPOAu
       }
     }
     if (scopes.length > 0) result.scopes = scopes;
+  }
+  if (typeof raw.clientMetadataUrl === 'string' && raw.clientMetadataUrl.length > 0) {
+    const expanded = expandEnvRefs(
+      raw.clientMetadataUrl,
+      `MCP server "${key}" oauth.clientMetadataUrl`
+    );
+    if (expanded.warnings.length > 0) {
+      for (const w of expanded.warnings) console.warn(`[mcp] ${w}`);
+    }
+    assertNoUnresolvedEnvRefs(
+      raw.clientMetadataUrl,
+      expanded.warnings,
+      `MCP server "${key}" oauth.clientMetadataUrl`
+    );
+    const url = expanded.value;
+    // Mirror the SDK's `isHttpsUrl` (client/auth.js): the authorization
+    // server fetches this document over the public internet, so it must
+    // be https and live at a non-root pathname. Fail loudly at load time
+    // rather than letting the SDK throw mid-auth.
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new MCPConfigError(
+        `MCP server "${key}" oauth.clientMetadataUrl must be a valid HTTPS URL with a non-root pathname ` +
+          `(got "${url}")`
+      );
+    }
+    if (parsed.protocol !== 'https:' || parsed.pathname === '/') {
+      throw new MCPConfigError(
+        `MCP server "${key}" oauth.clientMetadataUrl must be a valid HTTPS URL with a non-root pathname ` +
+          `(got "${url}")`
+      );
+    }
+    result.clientMetadataUrl = url;
   }
   if (typeof raw.authorizationServerUrl === 'string' && raw.authorizationServerUrl.length > 0) {
     result.authorizationServerUrl = raw.authorizationServerUrl;

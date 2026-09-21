@@ -7,10 +7,10 @@
  *
  * Two modes:
  *  - `{ server }` only: drop any saved tokens and start a fresh
- *    authorization flow. The server's URL is printed to the
- *    locopilot dev-server stderr (so a headless user can copy /
- *    paste it) and the handle is flipped to `auth_required` so
- *    the chat UI can render a clickable "Authenticate" button.
+ *    authorization flow. The real authorization URL is returned in
+ *    the response (when the SDK has produced one) and the handle is
+ *    flipped to `auth_required` so the chat UI can render a clickable
+ *    "Authenticate" button plus a direct authorization link.
  *  - `{ server, code }`: forward the captured authorization code
  *    to the SDK via `transport.finishAuth(code)` and retry the
  *    connection. Used by the serverless fallback (where the
@@ -109,5 +109,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       { status: 400 }
     );
   }
-  return NextResponse.json({ ok: true, server: serverName, connected: false });
+  // D3: surface the REAL authorization URL when one was stashed by the
+  // SDK's `redirectToAuthorization`, so the UI can render a direct link
+  // immediately. Omit the field entirely when no URL exists yet.
+  const authUrl = result.authUrl;
+  return NextResponse.json(
+    authUrl === undefined
+      ? { ok: true, server: serverName, connected: false }
+      : { ok: true, server: serverName, connected: false, authUrl }
+  );
 }

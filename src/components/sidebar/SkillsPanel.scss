@@ -771,6 +771,29 @@
     }
   }
 
+  // ── Authorization link (Phase 3.5 / D3) ─────────────────────
+  &-mcp-auth-link {
+    display: inline-block;
+    margin-top: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--accent);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.15s ease;
+
+    &:hover {
+      color: var(--accent-hover);
+      text-decoration: underline;
+    }
+    &:focus-visible {
+      outline: 2px solid rgba(var(--rgb-accent), 0.5);
+      outline-offset: 2px;
+      border-radius: 3px;
+    }
+  }
+
   // ── Tool count label (MCP) ─────────────────────────────────
   &-mcp-toolcount {
     font-size: 10px;

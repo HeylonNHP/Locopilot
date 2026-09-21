@@ -53,6 +53,7 @@ import path from 'node:path';
 
 import type {
   MCPOAuthTokenStoreFile,
+  MCPSavedAuthorizationServerMetadata,
   MCPSavedClientInformation,
   MCPSavedOAuthState,
   MCPSavedOAuthTokens,
@@ -232,6 +233,28 @@ function sanitiseState(raw: Record<string, unknown>): MCPSavedOAuthState {
   }
   if (typeof raw.authorizationServerUrl === 'string' && raw.authorizationServerUrl.length > 0) {
     state.authorizationServerUrl = raw.authorizationServerUrl;
+  }
+  // Persist the narrow RFC 8414 metadata slice so a later classification of
+  // a failed auth attempt can tell whether the server advertised CIMD / DCR
+  // without re-running discovery. Copy only known keys of the correct type,
+  // and only set the field when at least one key survived (so a hand-edited
+  // empty object does not linger in the store).
+  const metadata = raw.authorizationServerMetadata;
+  if (isPlainObject(metadata)) {
+    const saved: MCPSavedAuthorizationServerMetadata = {};
+    if (typeof metadata.client_id_metadata_document_supported === 'boolean') {
+      saved.client_id_metadata_document_supported = metadata.client_id_metadata_document_supported;
+    }
+    if (typeof metadata.registration_endpoint === 'string') {
+      saved.registration_endpoint = metadata.registration_endpoint;
+    }
+    if (typeof metadata.authorization_endpoint === 'string') {
+      saved.authorization_endpoint = metadata.authorization_endpoint;
+    }
+    if (typeof metadata.token_endpoint === 'string') {
+      saved.token_endpoint = metadata.token_endpoint;
+    }
+    if (Object.keys(saved).length > 0) state.authorizationServerMetadata = saved;
   }
   // F10: round-trip the pinned loopback port (validate it is a
   // usable TCP port number so a hand-edited file can't break bind).

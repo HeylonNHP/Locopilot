@@ -90,6 +90,18 @@ export interface MCPOAuthConfig {
    */
   clientSecret?: string | undefined;
   /**
+   * SEP-991 / CIMD: a public HTTPS URL the authorization server fetches to
+   * identify this client. Required for authorization servers that advertise
+   * `client_id_metadata_document_supported: true` but reject RFC 7591 Dynamic
+   * Client Registration (e.g. Atlassian's MCP server).
+   *
+   * MUST be https with a non-root path (the SDK enforces this). The document is
+   * fetched by the authorization server over the public internet, so it cannot be
+   * a loopback URL. Public information, not a secret. A configured `clientId`
+   * always takes precedence.
+   */
+  clientMetadataUrl?: string | undefined;
+  /**
    * OAuth 2.1 scopes to request, as an array of scope strings.
    * The provider joins them with a single space before sending
    * the request, per RFC 6749 §3.3.
@@ -178,6 +190,14 @@ export interface MCPSavedClientInformation {
   redirect_uris?: string[] | undefined;
 }
 
+/** Narrow slice of RFC 8414 authorization-server metadata kept for diagnostics. */
+export interface MCPSavedAuthorizationServerMetadata {
+  client_id_metadata_document_supported?: boolean | undefined;
+  registration_endpoint?: string | undefined;
+  authorization_endpoint?: string | undefined;
+  token_endpoint?: string | undefined;
+}
+
 /**
  * Subset of the SDK's `OAuthTokens` that we persist. We deliberately
  * keep the field names identical to the SDK so the JSON file is
@@ -233,6 +253,13 @@ export interface MCPSavedOAuthState {
    * auth attempts can skip the well-known round-trip.
    */
   authorizationServerUrl?: string | undefined;
+  /**
+   * The narrow slice of the RFC 8414 authorization-server metadata that
+   * discovery returned. Persisted so a later classification of a failed
+   * auth attempt can tell whether the server advertised CIMD / DCR without
+   * re-running discovery. Never contains secrets.
+   */
+  authorizationServerMetadata?: MCPSavedAuthorizationServerMetadata | undefined;
   /**
    * Pinned loopback port for this server's OAuth callback (F10). Pinning
    * keeps the `redirect_uri` stable across restarts so a persisted

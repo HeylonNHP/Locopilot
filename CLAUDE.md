@@ -167,6 +167,44 @@ Feature summary:
 - **Smart Extraction**: Uses `@mozilla/readability` and `cheerio` to extract clean text from HTML, ignoring navbars and boilerplate.
 - **Configurable limits**: Timeouts and character limits are enforced to keep history manageable.
 
+## MCP OAuth client registration & diagnostics
+
+MCP servers that need OAuth 2.1 carry an `oauth` block in `~/.locopilot/mcp.json`.
+Client identity is chosen by a priority chain (`resolveClientRegistrationStrategy`
+in `src/mcp/oauthDiagnostics.ts`):
+
+- `configured` — a pre-registered `oauth.clientId` (plus `oauth.clientSecret`
+  when the server requires one) always wins.
+- `cimd` — SEP-991 Client ID Metadata Documents. Set `oauth.clientMetadataUrl`
+  to a **public HTTPS URL with a non-root pathname**; the authorization server
+  fetches that document to identify Locopilot. `configLoader` validates the
+  shape eagerly. This is the branch Atlassian's MCP server needs — it
+  advertises `client_id_metadata_document_supported: true` and rejects DCR.
+- `dcr` — RFC 7591 Dynamic Client Registration, the SDK's fallback.
+- `unavailable` — neither CIMD nor DCR; the user must supply `oauth.clientId`.
+
+`classifyMCPOAuthFailure` (same module) labels a failed connect as a
+discriminated-union failure and decides the handle status. A genuine 401 keeps
+the live transport alive for the later token exchange; every other auth
+problem — including a rejected or unsupported client registration — surfaces as
+`auth_required` with an accurate message and reaps the transport. Only
+`interactive` connects (the Authenticate button / `/mcp auth`) can reach the
+registration branches, so background/eager connects never report an auth
+problem the user cannot act on. The classifier also guards on the stashed
+authorization URL: an AS that advertises CIMD would otherwise have _every_
+post-consent failure mislabelled as a registration problem, but a stashed URL
+proves the SDK already had a client identity, so registration cannot be the
+cause. The real authorization URL is stashed in memory
+(`peekAuthorizationUrl` / `clearAuthorizationUrl` in `oauthProvider.ts`) and
+rendered by the sidebar; no placeholder URL is ever fabricated.
+
+MCP/OAuth diagnostics land in `logs/locopilot-debug.log` via
+`debugLog.diagnostic({ layer: 'mcp', phase: 'oauth_*', failureKind, … })`
+(`src/app/lib/debugLogger.ts`). Use the `oauth_discovery`, `oauth_redirect`,
+`oauth_callback`, `oauth_token_exchange`, or `oauth_error` phases when extending
+the flow. Regression coverage lives in `scripts/test-mcp-oauth.mjs`
+(`npm run test:mcp-oauth`).
+
 ## LLM maintenance instruction (always keep up to date)
 
 - PURPOSE: Document developer intent, UX constraints, and tool behaviors for contributors and automated agents.

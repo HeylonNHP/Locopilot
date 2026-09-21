@@ -16,38 +16,49 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
 
-// Ensure logs directory exists (server-side only).
-// If the directory cannot be created, fall back to a silent logger
-// so the server does not crash on startup.
 const logDir = path.join(process.cwd(), 'logs');
-try {
-  if (!fs.existsSync(logDir)) {
-    fs.mkdirSync(logDir, { recursive: true });
-  }
-} catch (err) {
-  console.error(
-    `[debugLogger] Warning: could not create logs directory at ${logDir}:`,
-    err instanceof Error ? err.message : String(err)
-  );
-  console.error('[debugLogger] Debug logging will be disabled for this session.');
-}
 
-let pinoLogger: pino.Logger;
-try {
-  pinoLogger = pino(
-    {
-      level: 'debug',
-      timestamp: pino.stdTimeFunctions.isoTime,
-    },
-    pino.destination(path.join(logDir, 'locopilot-debug.log'))
-  );
-} catch (err) {
-  console.error(
-    '[debugLogger] Warning: could not initialise pino logger:',
-    err instanceof Error ? err.message : String(err)
-  );
-  console.error('[debugLogger] Debug logging will be disabled for this session.');
-  pinoLogger = pino({ level: 'silent' });
+let pinoLogger: pino.Logger | undefined;
+
+/**
+ * Lazily create the pino logger on first use.
+ *
+ * Why lazy rather than at module load: `pino.destination(...)` opens a
+ * SonicBoom and registers a process-exit flush hook. A process that merely
+ * *imports* this module — for example a standalone `scripts/test-*.mjs` that
+ * pulls in `configLoader` (which now reaches `clientManager`) — would then
+ * print a spurious `sonic boom is not ready yet` stack trace the moment it
+ * calls `process.exit()` before the async destination is ready. Deferring
+ * creation until the first log call removes that noise for every importer
+ * that never logs, with no change to the file, format, or behaviour for
+ * importers that do.
+ *
+ * The logs directory is created here too (idempotently) so it always exists
+ * before the first write. If anything fails, fall back to a silent logger so
+ * the server never crashes on startup.
+ */
+function getLogger(): pino.Logger {
+  if (pinoLogger !== undefined) return pinoLogger;
+  try {
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+    pinoLogger = pino(
+      {
+        level: 'debug',
+        timestamp: pino.stdTimeFunctions.isoTime,
+      },
+      pino.destination(path.join(logDir, 'locopilot-debug.log'))
+    );
+  } catch (err) {
+    console.error(
+      '[debugLogger] Warning: could not initialise pino logger:',
+      err instanceof Error ? err.message : String(err)
+    );
+    console.error('[debugLogger] Debug logging will be disabled for this session.');
+    pinoLogger = pino({ level: 'silent' });
+  }
+  return pinoLogger;
 }
 
 export interface ToolTraceEntry {
@@ -102,10 +113,15 @@ export type DiagnosticPhase =
   | 'abort'
   | 'error'
   | 'model_switched'
-  | 'cleanup';
+  | 'cleanup'
+  | 'oauth_discovery'
+  | 'oauth_redirect'
+  | 'oauth_callback'
+  | 'oauth_token_exchange'
+  | 'oauth_error';
 
 export interface DiagnosticTraceEntry {
-  layer: 'route' | 'subagent' | 'adapter';
+  layer: 'route' | 'subagent' | 'adapter' | 'mcp';
   phase: DiagnosticPhase;
   requestId?: string | undefined;
   sessionId?: number | undefined;
@@ -165,7 +181,7 @@ export const debugLog = {
   /** Log a tool-message-related trace entry */
   toolMessage(entry: ToolTraceEntry) {
     const { contentPreview, ...rest } = entry;
-    pinoLogger.debug(
+    getLogger().debug(
       {
         ...rest,
         contentPreview: truncate(contentPreview, 120),
@@ -187,7 +203,7 @@ export const debugLog = {
       tool_call_id: m.tool_call_id ?? null,
       toolCallCount: m.tool_calls?.length ?? 0,
     }));
-    pinoLogger.debug(
+    getLogger().debug(
       {
         label,
         sessionId: context?.sessionId,
@@ -202,7 +218,7 @@ export const debugLog = {
   /** Log a privacy-safe lifecycle breadcrumb for stalled requests. */
   diagnostic(entry: DiagnosticTraceEntry) {
     const { baseUrl, error, ...rest } = entry;
-    pinoLogger.debug(
+    getLogger().debug(
       {
         ...rest,
         ...(baseUrl ? { baseUrlOrigin: redactDiagnosticEndpoint(baseUrl) } : {}),
@@ -214,6 +230,6 @@ export const debugLog = {
 
   /** Generic debug log for ad-hoc tracing */
   debug(label: string, data?: Record<string, unknown>) {
-    pinoLogger.debug(data ?? {}, `[trace] ${label}`);
+    getLogger().debug(data ?? {}, `[trace] ${label}`);
   },
 };

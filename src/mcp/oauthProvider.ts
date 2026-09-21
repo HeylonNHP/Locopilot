@@ -55,9 +55,15 @@ import type {
 import { spawn } from 'node:child_process';
 import * as http from 'node:http';
 
-import type { MCPOAuthConfig, MCPSavedOAuthState, MCPServerConfig } from './types';
+import type {
+  MCPOAuthConfig,
+  MCPSavedAuthorizationServerMetadata,
+  MCPSavedOAuthState,
+  MCPServerConfig,
+} from './types';
 
 import { emitMCPEvent } from './events';
+import { providerClientMetadataUrl } from './oauthDiagnostics';
 import { clearOAuthState, loadOAuthState, saveOAuthState } from './oauthTokenStore';
 
 // --- Public factory ---
@@ -292,6 +298,15 @@ export async function buildOAuthProvider(
     allocatedPort = 0;
   }
 
+  // SEP-991 / CIMD (F23): a stale authorization URL from a previous flow must
+  // not be shown to the user NOR fool the failure classifier into thinking a
+  // fresh authorization is awaiting consent. Clear it before building the
+  // provider so every interactive attempt starts from a clean slate. A new URL
+  // is stashed by `redirectToAuthorization` only if the SDK reaches that step.
+  if (opts.interactive) {
+    clearAuthorizationUrl(config.name);
+  }
+
   return new LocopilotOAuthProvider(
     config.name,
     oauthConfig,
@@ -383,6 +398,22 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       return 'http://127.0.0.1:0/oauth/callback';
     }
     return getLoopbackRedirectUrl(this.loopbackPort);
+  }
+
+  /**
+   * SEP-991 / CIMD. Delegates to `providerClientMetadataUrl`, so this is a
+   * usable URL only when `clientMetadataUrl` is configured and no
+   * pre-registered `clientId` is set. The SDK gates the URL-based client-id
+   * branch on `client_id_metadata_document_supported` itself.
+   *
+   * Returns an empty string (rather than `undefined`) when no identity should
+   * be advertised: the SDK's `OAuthClientProvider` declares
+   * `clientMetadataUrl?: string` without an explicit `| undefined`, which
+   * `exactOptionalPropertyTypes` will not accept from a getter. The SDK treats
+   * a falsy value as "not set", so `''` behaves identically to `undefined`.
+   */
+  get clientMetadataUrl(): string {
+    return providerClientMetadataUrl(this.oauthConfig) ?? '';
   }
 
   get clientMetadata(): OAuthClientMetadata {
@@ -1010,6 +1041,30 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       ...state,
       authorizationServerUrl: discovery.authorizationServerUrl,
     };
+    // F23: narrow-persist just enough RFC 8414 metadata for the failure
+    // classifier to tell whether the server advertised CIMD / DCR. The SDK
+    // calls this after discovery, before registration, so the value is
+    // available by the time a registration failure is classified. Only copy
+    // known keys of the correct type; `discoveryState()` deliberately keeps
+    // returning only `authorizationServerUrl`.
+    const metadata = discovery.authorizationServerMetadata;
+    if (metadata !== undefined) {
+      const saved: MCPSavedAuthorizationServerMetadata = {};
+      if (typeof metadata.client_id_metadata_document_supported === 'boolean') {
+        saved.client_id_metadata_document_supported =
+          metadata.client_id_metadata_document_supported;
+      }
+      if (typeof metadata.registration_endpoint === 'string') {
+        saved.registration_endpoint = metadata.registration_endpoint;
+      }
+      if (typeof metadata.authorization_endpoint === 'string') {
+        saved.authorization_endpoint = metadata.authorization_endpoint;
+      }
+      if (typeof metadata.token_endpoint === 'string') {
+        saved.token_endpoint = metadata.token_endpoint;
+      }
+      if (Object.keys(saved).length > 0) next.authorizationServerMetadata = saved;
+    }
     await this.mutateState(next);
   }
 
@@ -1157,6 +1212,16 @@ function stashAuthorizationUrl(serverName: string, url: string): void {
  */
 export function peekAuthorizationUrl(serverName: string): string | undefined {
   return getAuthUrls().get(serverName);
+}
+
+/**
+ * F23: forget any stashed authorization URL for a server. Called at the start
+ * of an interactive connect (see `buildOAuthProvider`) so a stale URL from a
+ * previous, abandoned flow can neither be shown to the user nor make the
+ * failure classifier believe a fresh authorization is awaiting consent.
+ */
+export function clearAuthorizationUrl(serverName: string): void {
+  getAuthUrls().delete(serverName);
 }
 
 // --- Helpers ---
