@@ -40,6 +40,7 @@ import {
   unregisterActiveTurn,
 } from '@/app/lib/modelSwitchRegistry';
 import { enqueueSessionRename, enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
+import { clearSteerMessages, drainSteerMessages } from '@/app/lib/steerRegistry';
 import {
   AUTO_COMPACT_THRESHOLD_PCT,
   DEFAULT_NUM_CTX,
@@ -482,6 +483,25 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
       }
 
+      /**
+       * Fold any steering messages still queued when the turn is wrapping up
+       * into the persisted history, instead of letting them vanish because
+       * no further loop iteration ever came along to drain them (e.g. a
+       * message pinned to a sub-agent that never ran again before the batch
+       * — and the turn — ended). This is a backstop only: the real
+       * guarantee against losing a user's typed text is client-side (it
+       * holds the draft until a matching `steer_applied` event arrives and
+       * restores it to the composer otherwise).
+       */
+      function salvageSteerMessages(): void {
+        if (activeSessionId === undefined) return;
+        for (const steer of clearSteerMessages(activeSessionId)) {
+          const steerMessage: ChatMessage = { role: 'user', content: steer.text };
+          currentMessages.push(steerMessage);
+          pendingAppends.push(steerMessage);
+        }
+      }
+
       async function flushSessionState(): Promise<{ ok: true } | { ok: false; error: string }> {
         if (activeSessionId === undefined) return { ok: true };
         const sessionId = activeSessionId;
@@ -888,6 +908,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               mcpApprovals: [...mcpApprovalsSet],
               approvalRequester: requestSubAgentApproval,
               refreshModels: refreshSubAgentModels,
+              applySteerMessages: applySteerToSubAgent,
               onContextLimitDiscovered: adoptDiscoveredContextLimit,
             },
           };
@@ -899,6 +920,29 @@ export async function POST(req: NextRequest): Promise<Response> {
         // finished. `applyPendingModelSwitch` is declared further down; this
         // only dereferences it at call time, from inside the tool loop.
         const refreshSubAgentModels = (): Promise<void> => applyPendingModelSwitch();
+
+        // Splices any steering messages queued for a running sub-agent
+        // straight into that sub-agent's own (loop-local) message array.
+        // Called at the top of `runSingleAgent`'s loop, same boundary as
+        // `refreshSubAgentModels` above. `target: 'main'` entries are left
+        // untouched here — they are only ever drained by the main loop,
+        // never mid-batch, so a main-targeted steer can never land ahead of
+        // this sub-agent's own tool-call/tool-result rows.
+        const applySteerToSubAgent = async (
+          messages: ChatMessage[],
+          agentId: string
+        ): Promise<void> => {
+          if (activeSessionId === undefined) return;
+          for (const steer of drainSteerMessages(activeSessionId, 'subagent', agentId)) {
+            messages.push({ role: 'user', content: steer.text });
+            sendEvent('status', {
+              phase: 'steer_applied',
+              steerId: steer.id,
+              steerTarget: 'subagent',
+              agentId,
+            });
+          }
+        };
 
         // Phase 2 (sub-agent approval UX): build a closure that lets a
         // sub-agent bubble an approval request up to the main route's
@@ -1369,6 +1413,27 @@ export async function POST(req: NextRequest): Promise<Response> {
           // streaming. Done before auto-compaction so compaction also runs
           // on the newly selected models and context size.
           await applyPendingModelSwitch();
+
+          // Pick up any steering messages the user sent to the main agent
+          // while this turn was streaming. Also done before auto-compaction:
+          // pushing the steering text now makes it the newest real user
+          // message in `currentMessages`, so compaction's existing "preserve
+          // the latest user message verbatim" anchor (`isSyntheticNudge` /
+          // split.ts) protects it automatically — it is genuine user
+          // content, not a synthetic nudge, so it is persisted normally
+          // (pendingAppends) rather than following the ephemeral-nudge path.
+          if (activeSessionId !== undefined) {
+            for (const steer of drainSteerMessages(activeSessionId, 'main')) {
+              const steerMessage: ChatMessage = { role: 'user', content: steer.text };
+              currentMessages.push(steerMessage);
+              pendingAppends.push(steerMessage);
+              sendEvent('status', {
+                phase: 'steer_applied',
+                steerId: steer.id,
+                steerTarget: 'main',
+              });
+            }
+          }
 
           // Auto-compact when approaching the context limit, mirroring the
           // server-side autoCompactIfNeeded() logic in services/chatSession.ts.
@@ -2455,6 +2520,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
           // Persist final state (append any remaining server-generated
           // messages to the latest DB state).
+          salvageSteerMessages();
           const flushResult = await flushSessionState();
           if (!flushResult.ok) {
             // Bail out of the outer tool loop; the catch handler
@@ -2501,6 +2567,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // rows are flushed too — an interrupted run_subagents batch
           // should still leave its bubbles in the reloaded history.
           flushRemainingSubagentLogs();
+          salvageSteerMessages();
           if (activeSessionId !== undefined && sessionExists(activeSessionId)) {
             await flushSessionState().catch((err_) => {
               logger.error('chat', 'Abort flush failed', { error: err_ });

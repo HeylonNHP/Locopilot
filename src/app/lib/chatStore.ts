@@ -135,7 +135,7 @@ export interface SessionState {
   } | null;
 }
 
-interface ChatState {
+export interface ChatState {
   messages: ChatMessage[];
   sessions: Session[];
   currentSessionId: number | null;
@@ -273,6 +273,32 @@ interface ChatState {
    * new model on board yet, instead of implying the swap was instant.
    */
   modelSwitchPending: boolean;
+  /**
+   * The agent id of the sub-agent a `run_subagents` batch is currently
+   * running, or null when no batch is in flight (or it's between agents).
+   * Sub-agents execute sequentially, so at most one id is ever active.
+   * Derived purely from SSE events the client already receives
+   * (`subagent_output`/`subagent_chunk` set it, the matching `tool_result`
+   * for `run_subagents` clears it) — no server round trip needed. Drives
+   * the steer-input's main/sub-agent target toggle.
+   */
+  activeSubagentId: string | null;
+  /**
+   * A steering message that has been sent to `/api/chat/steer` and
+   * accepted (the server returned an id) but not yet confirmed applied by
+   * a matching `steer_applied` status event. Held here — rather than
+   * clearing the composer immediately — so the text can be restored to
+   * the input if the turn ends, aborts, or errors before the ack arrives
+   * (see the `STOP_STREAMING` case below).
+   */
+  pendingSteerDraft: { id: string; text: string; target: 'main' | 'subagent'; agentId?: string } | null;
+  /**
+   * Text a steering message send never got acknowledged for and was
+   * restored for the user to see again. Consumed once by `ChatInput` on
+   * mount (it seeds its input from this and clears it) — separate from
+   * `inputDraft`, which has its own lifecycle for history navigation.
+   */
+  steerRestoreText: string | null;
   tokenStats: {
     promptEvalCount: number;
     evalCount: number;
@@ -1177,12 +1203,21 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const isVisibleSession =
         (state.currentSessionId === null && action.sessionId === -1) ||
         state.currentSessionId === action.sessionId;
+      // A steering message that never got a `steer_applied` ack before the
+      // last streaming session ended is restored to `steerRestoreText`
+      // rather than silently lost — mirrors the model-switch-pending reset
+      // just above, gated the same way on "nothing is streaming any more".
+      const undraftedSteer = nextSet.size === 0 ? state.pendingSteerDraft : null;
       return {
         ...state,
         streamingSessions: nextSet,
         // A switch that never got applied dies with the turn — the newly
         // picked model is already what the next turn will send.
         ...(nextSet.size === 0 ? { modelSwitchPending: false } : {}),
+        ...(nextSet.size === 0 ? { activeSubagentId: null } : {}),
+        ...(undraftedSteer
+          ? { pendingSteerDraft: null, steerRestoreText: undraftedSteer.text }
+          : {}),
         ...(isVisibleSession ? { compactingPhases: [] } : {}),
       };
     }
@@ -1256,6 +1291,9 @@ const initialState: ChatState = {
   // JSDoc above for the full state machine.
   visionState: 'unknown',
   modelSwitchPending: false,
+  activeSubagentId: null,
+  pendingSteerDraft: null,
+  steerRestoreText: null,
 };
 
 export function selectUserMessages(state: ChatState): ChatMessage[] {

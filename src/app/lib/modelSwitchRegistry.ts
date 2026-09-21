@@ -106,6 +106,16 @@ export function consumeModelSwitch(sessionId: number): ModelSwitchRequest | null
   return pending;
 }
 
+/**
+ * Whether a session currently has a streaming turn. Shared with
+ * `steerRegistry.ts` so steering-message requests are gated on the same
+ * turn-liveness tracking as model switches, instead of keeping a second
+ * `Set` in sync.
+ */
+export function hasActiveTurn(sessionId: number): boolean {
+  return activeTurns.has(sessionId);
+}
+
 /** Mark a turn as streaming so switches for its session are accepted. */
 export function registerActiveTurn(sessionId: number, requestId: string): void {
   const turns = activeTurns.get(sessionId);

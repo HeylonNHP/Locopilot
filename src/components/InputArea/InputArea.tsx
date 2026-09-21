@@ -2,6 +2,7 @@
 
 import { useChat } from '@/app/lib/chatStore';
 import ChatInput, { type Attachment } from '@/components/ChatInput';
+import SteerInput from '@/components/SteerInput';
 
 interface InputAreaProps {
   isStreaming: boolean;
@@ -41,11 +42,14 @@ export function InputArea({
   if (isStreaming) {
     const phase = compactingPhases.length > 0 ? compactingPhases.at(-1) : 'Streaming...';
     return (
-      <div className="streaming-indicator">
-        <span className="text-accent font-14">● {phase}</span>
-        <button onClick={onStop} className="stop-btn">
-          Stop
-        </button>
+      <div className="streaming-area">
+        <div className="streaming-indicator">
+          <span className="text-accent font-14">● {phase}</span>
+          <button onClick={onStop} className="stop-btn">
+            Stop
+          </button>
+        </div>
+        <SteerInput />
       </div>
     );
   }

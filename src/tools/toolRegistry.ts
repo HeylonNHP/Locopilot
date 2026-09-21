@@ -14,7 +14,7 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
-import type { LlmRequestContext, ToolDefinition } from '@/services/llm';
+import type { ChatMessage, LlmRequestContext, ToolDefinition } from '@/services/llm';
 import type { ReasoningEffort } from '@/types/chatConfig';
 
 import {
@@ -144,6 +144,17 @@ export interface SubAgentConfig {
    * {@link approvalRequester}.
    */
   refreshModels?: () => Promise<void>;
+  /**
+   * Splices any steering messages the user has queued for this running
+   * sub-agent into its (loop-local) message history, mutating `messages`
+   * in place. Called at the top of each sub-agent iteration, right after
+   * {@link refreshModels}. Takes `messages` explicitly rather than
+   * capturing it — unlike the model-switch registry, a sub-agent's history
+   * is a local variable inside `runSingleAgent`, not part of this shared
+   * config object, so there is nothing else to mutate in place. A no-op
+   * when undefined or when nothing is queued for this agent.
+   */
+  applySteerMessages?: (messages: ChatMessage[], agentId: string) => Promise<void>;
   /**
    * Reasoning effort for OpenAI-compatible providers. Maps to the
    * wire `reasoning_effort` field. When 'off', sub-agents send

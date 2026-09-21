@@ -6,6 +6,7 @@ import type { VisionSupportState } from '@/services/visionCache';
 import type { LlmProvider } from '@/types/chatConfig';
 
 import { useInputHistory } from '@/app/hooks/useInputHistory';
+import { useChat } from '@/app/lib/chatStore';
 
 import './ChatInput.scss';
 
@@ -235,7 +236,14 @@ function extractPaths(e: React.DragEvent): string[] {
 }
 
 export default function ChatInput({ onSend, disabled, visionState, provider }: Props) {
-  const [input, setInput] = useState('');
+  const { state, dispatch } = useChat();
+  // Seed from any steering message that was sent mid-turn but never got a
+  // `steer_applied` ack (turn ended/aborted/errored first) — ChatInput
+  // fully unmounts while streaming, so this is the only place that text
+  // can land once the composer reappears. Read once via the lazy
+  // initializer; the mount-only effect below clears it so it isn't
+  // re-seeded on a later remount.
+  const [input, setInput] = useState(() => state.steerRestoreText ?? '');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -244,6 +252,14 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const inputHistory = useInputHistory();
+
+  useEffect(() => {
+    if (state.steerRestoreText !== null) {
+      dispatch({ type: 'SET_CONFIG', config: { steerRestoreText: null } });
+    }
+    // Mount-only: consumes whatever steerRestoreText was seeded above,
+    // deliberately not re-running if it changes again while mounted.
+  }, []);
 
   const addAttachments = useCallback(async (files: File[]) => {
     const accepted = files.filter(isAccepted);

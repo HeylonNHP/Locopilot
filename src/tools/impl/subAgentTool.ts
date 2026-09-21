@@ -900,6 +900,10 @@ async function runSingleAgent(
       // Pick up a mid-turn model switch before compaction so both this
       // iteration's LLM call and its compaction use the new models.
       await config.refreshModels?.();
+      // Pick up any steering messages the user sent to this running
+      // sub-agent, at the same boundary. `messages` is passed explicitly
+      // since it's local to this call, not part of the shared `config`.
+      await config.applySteerMessages?.(messages, agent.id);
       const compacted = await autoCompactSubAgentIfNeeded(
         messages,
         config,

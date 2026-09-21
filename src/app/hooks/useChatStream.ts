@@ -285,6 +285,13 @@ export function useChatStream(
             },
             ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
+          // The run_subagents batch this result closes out is no longer
+          // running anything — clear the steer-target toggle's "sub-agent
+          // is active" signal. Sub-agents run sequentially, so there is
+          // never more than one to disambiguate.
+          if (data.name === 'run_subagents') {
+            dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: null } });
+          }
           trace('tool_result event', {
             name: data.name,
             toolCallId: data.toolCallId,
@@ -307,18 +314,21 @@ export function useChatStream(
           break;
         }
         case 'subagent_output': {
+          const outputAgentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
           dispatch({
             type: 'SUBAGENT_OUTPUT',
-            agentId: typeof data.agentId === 'string' ? data.agentId : '__subagent__',
+            agentId: outputAgentId,
             message: typeof data.message === 'string' ? data.message : String(data.message ?? ''),
             ...(targetSessionId === undefined ? {} : { targetSessionId }),
           });
+          dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: outputAgentId } });
           break;
         }
 
          case 'subagent_chunk': {
           const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
           const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
+          dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: agentId } });
           // `requestId` is undefined on the replay path (when the user
           // navigates back to a session whose events were buffered
           // while another session was visible). Without a requestId we
@@ -403,6 +413,23 @@ export function useChatStream(
           if (data.phase === 'model_switched') {
             dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
             dispatch({ type: 'SET_VISION_STATE', state: 'unknown' });
+          }
+          // The server has spliced a queued steering message into the
+          // conversation. Only now — not when the send was first accepted
+          // — do we echo it into the transcript and release the held
+          // draft, matching on `steerId` so a stale ack from an earlier
+          // draft (e.g. after a fast-follow second steer) can't clear the
+          // wrong one.
+          if (data.phase === 'steer_applied') {
+            const draft = refs.pendingSteerDraftRef.current;
+            if (draft && draft.id === data.steerId) {
+              dispatch({
+                type: 'ADD_MESSAGE',
+                message: { role: 'user', content: draft.text },
+                ...(targetSessionId === undefined ? {} : { targetSessionId }),
+              });
+              dispatch({ type: 'SET_CONFIG', config: { pendingSteerDraft: null } });
+            }
           }
           break;
         }

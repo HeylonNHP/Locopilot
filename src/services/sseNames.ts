@@ -65,7 +65,8 @@ export type ChatPhase =
   | 'context_limit_adjusted'
   | 'vision_unsupported'
   | 'sampling_param_unsupported'
-  | 'model_switched';
+  | 'model_switched'
+  | 'steer_applied';
 
 export const CHAT_PHASES: readonly ChatPhase[] = [
   'compacting',
@@ -82,6 +83,7 @@ export const CHAT_PHASES: readonly ChatPhase[] = [
   'vision_unsupported',
   'sampling_param_unsupported',
   'model_switched',
+  'steer_applied',
 ];
 
 // ── `done.doneReason` ──────────────────────────────────────────────────────

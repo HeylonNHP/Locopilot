@@ -90,6 +90,17 @@ export interface SseEventPayloadMap {
      */
     model?: string;
     compactionModel?: string;
+    /**
+     * Set on `phase: 'steer_applied'`. Identifies which queued steering
+     * message (by the id `/api/chat/steer` returned) was just spliced into
+     * the conversation, and whether it went to the main agent or a
+     * sub-agent (with `agentId` when the latter) — lets the client match
+     * this event back to the held composer draft and echo it into the
+     * transcript.
+     */
+    steerId?: string;
+    steerTarget?: 'main' | 'subagent';
+    agentId?: string;
   };
   compact_progress: { message: string };
   compact: { messages: ChatMessage[]; stats: CompactStats };

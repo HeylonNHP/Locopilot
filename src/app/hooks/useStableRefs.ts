@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 
-import type { ChatMessage, LLmModel, Session, WebSearchConfig } from '@/app/lib/chatStore';
+import type { ChatMessage, ChatState, LLmModel, Session, WebSearchConfig } from '@/app/lib/chatStore';
 import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
 /** A mutable ref container (the writable counterpart to React 19's read-only RefObject). */
@@ -53,6 +53,13 @@ export interface StableRefs {
   webSearchRef: WritableRef<WebSearchConfig>;
   completionModeRef: WritableRef<CompletionMode>;
   maxPromptLoopIterationsRef: WritableRef<number>;
+  /**
+   * Mirrors `state.pendingSteerDraft` so the SSE `status` handler in
+   * `useChatStream.ts` can read the currently-held steering-message draft
+   * (to match a `steer_applied` ack and echo its text) without widening
+   * `handleEvent`'s dependency array to the whole store state.
+   */
+  pendingSteerDraftRef: WritableRef<ChatState['pendingSteerDraft']>;
 }
 
 interface StableRefsInput {
@@ -76,6 +83,7 @@ interface StableRefsInput {
   webSearch: WebSearchConfig;
   completionMode: CompletionMode;
   maxPromptLoopIterations: number;
+  pendingSteerDraft: ChatState['pendingSteerDraft'];
 }
 
 /**
@@ -104,6 +112,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const webSearchRef = useRef(state.webSearch);
   const completionModeRef = useRef(state.completionMode);
   const maxPromptLoopIterationsRef = useRef(state.maxPromptLoopIterations);
+  const pendingSteerDraftRef = useRef(state.pendingSteerDraft);
 
   // sessionIdRef must be updated synchronously during render (not in a useEffect)
   // so the buffer guard in useChatStream.ts sees the new session immediately after
@@ -169,6 +178,9 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   useEffect(() => {
     maxPromptLoopIterationsRef.current = state.maxPromptLoopIterations;
   }, [state.maxPromptLoopIterations]);
+  useEffect(() => {
+    pendingSteerDraftRef.current = state.pendingSteerDraft;
+  }, [state.pendingSteerDraft]);
 
   // Return a stable container so the same object identity is returned every render.
   // Individual ref objects (created by useRef above) are already stable; only the
@@ -196,6 +208,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       webSearchRef,
       completionModeRef,
       maxPromptLoopIterationsRef,
+      pendingSteerDraftRef,
     };
   }
   return containerRef.current;

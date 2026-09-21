@@ -59,10 +59,76 @@
 }
 
 // ── Streaming indicator ──────────────────────────────────────
+.streaming-area {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .streaming-indicator {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+// ── Mid-turn steering input ───────────────────────────────────
+.steer-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.steer-input-target {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.steer-input-target-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  &-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-on-accent, #fff);
+  }
+}
+
+.steer-input-field {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-panel);
+  color: var(--text-primary);
+
+  &:disabled {
+    opacity: 0.6;
+  }
+}
+
+.steer-input-send-btn {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
 }
 
 // ── Stop button ──────────────────────────────────────────────
