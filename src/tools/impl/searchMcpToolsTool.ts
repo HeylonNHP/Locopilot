@@ -23,17 +23,13 @@ import type { ToolSchema } from '@/tools/tools';
 import {
   buildMCPToolStubs,
   getClientManager,
+  MCP_NAMESPACED_NAME_REGEX,
+  MCP_SERVER_NAME_REGEX,
+  MCP_TOOL_NAME_REGEX,
   type MCPToolInfo,
   type MCPToolStub,
   parseMCPToolName,
 } from '@/mcp';
-
-// Match the full `mcp__<server>__<tool>` form. Mirrors the regex in
-// `mcp/schemaAdapter.ts` (used by `parseMCPToolName`); duplicated here
-// so the validator produces a clean error before any further work.
-const NAMESPACE_REGEX = /^mcp__[\d_a-z-]+__[\w.-]+$/;
-const SERVER_NAME_REGEX = /^[\w-]+$/i;
-const TOOL_NAME_REGEX = /^[\w.-]+$/;
 
 function isPlainString(value: unknown): value is string {
   return typeof value === 'string';
@@ -48,7 +44,7 @@ function validateNameArg(value: unknown): string | null {
   if (trimmed.length === 0) {
     return '[Error: search_mcp_tools: "name" must be a non-empty string or omitted]';
   }
-  if (!NAMESPACE_REGEX.test(trimmed)) {
+  if (!MCP_NAMESPACED_NAME_REGEX.test(trimmed)) {
     return '[Error: search_mcp_tools: "name" must be a valid mcp__<server>__<tool> name]';
   }
   // Re-parse to make sure both segments are individually sane (the
@@ -58,10 +54,10 @@ function validateNameArg(value: unknown): string | null {
   if (!parsed) {
     return '[Error: search_mcp_tools: "name" must be a valid mcp__<server>__<tool> name]';
   }
-  if (!SERVER_NAME_REGEX.test(parsed.serverName)) {
+  if (!MCP_SERVER_NAME_REGEX.test(parsed.serverName)) {
     return `[Error: search_mcp_tools: server segment "${parsed.serverName}" is not a valid server name]`;
   }
-  if (!TOOL_NAME_REGEX.test(parsed.toolName)) {
+  if (!MCP_TOOL_NAME_REGEX.test(parsed.toolName)) {
     return `[Error: search_mcp_tools: tool segment "${parsed.toolName}" is not a valid tool name]`;
   }
   return null;
@@ -76,7 +72,7 @@ function validateServerArg(value: unknown): string | null {
   if (trimmed.length === 0) {
     return '[Error: search_mcp_tools: "server" must be a non-empty string or omitted]';
   }
-  if (!SERVER_NAME_REGEX.test(trimmed)) {
+  if (!MCP_SERVER_NAME_REGEX.test(trimmed)) {
     return '[Error: search_mcp_tools: "server" must be kebab-case (letters, digits, underscore, dash only)]';
   }
   return null;

@@ -28,24 +28,36 @@
  * - HMR-safe: `watcher`, `started`, `debounceTimer`, and the current
  *   file-watcher (if any) are pinned to `globalThis` so Next.js's
  *   dev-mode re-evaluation of `mcp/index.ts` does not leak handles.
- * - On `process.beforeExit`, `SIGINT`, and `SIGTERM` we close the
- *   watcher so the process can exit cleanly.
+ * - F8: on a cold start we synchronously create `~/.locopilot/` before
+ *   calling `fs.watch` (which throws ENOENT on a missing path), and if
+ *   the dir watcher fails to attach we schedule a BOUNDED retry instead
+ *   of latching a dead state. We register ONLY a `beforeExit` handler —
+ *   installing SIGINT/SIGTERM handlers removed Node's default
+ *   terminate-on-signal behaviour, so the first Ctrl+C no longer quit.
  */
 
 import { existsSync, type FSWatcher, watch } from 'node:fs';
 import path from 'node:path';
 
-import { ensureMCPConfigFile, getMCPConfigPath } from './configLoader';
+import { ensureMCPConfigDirSync, ensureMCPConfigFile, getMCPConfigPath } from './configLoader';
 import { emitMCPEvent } from './events';
 import { reloadMCP } from './index';
 
 const DEBOUNCE_MS = 150;
+// F8: bounded retry parameters for a failed directory-watch attach. Each
+// retry re-runs `startMCPConfigWatcher`; the counter resets on success.
+const WATCH_RETRY_MS = 2000;
+const MAX_WATCH_RETRIES = 5;
 const GLOBAL_KEY = '__mcpConfigWatcher';
 
 interface WatcherState {
   dirWatcher: FSWatcher | null;
   fileWatcher: FSWatcher | null;
   debounceTimer: ReturnType<typeof setTimeout> | null;
+  // F8: bounded retry bookkeeping for a failed dir-watch attach. The
+  // timer is `unref()`ed so it never keeps the process alive.
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  watchRetries: number;
   started: boolean;
   shutdownHooked: boolean;
 }
@@ -58,6 +70,8 @@ function getState(): WatcherState {
       dirWatcher: null,
       fileWatcher: null,
       debounceTimer: null,
+      retryTimer: null,
+      watchRetries: 0,
       started: false,
       shutdownHooked: false,
     };
@@ -69,37 +83,85 @@ function getState(): WatcherState {
 function hookShutdown(state: WatcherState): void {
   if (state.shutdownHooked) return;
   state.shutdownHooked = true;
-  const close = (): void => {
-    stopMCPConfigWatcher();
-  };
-  process.once('beforeExit', close);
-  process.once('SIGINT', close);
-  process.once('SIGTERM', close);
+  // F8: register ONLY `beforeExit`. We deliberately do NOT install
+  // SIGINT/SIGTERM handlers: doing so removes Node's default
+  // terminate-on-signal behaviour, and our handler only closed the
+  // watchers without exiting — which is exactly why the first Ctrl+C
+  // stopped quitting the process. Both watchers use `persistent: false`,
+  // so they never hold the event loop open and `beforeExit` fires
+  // naturally once the process is otherwise idle. We do NOT call
+  // `process.exit()` here — that would preempt other async teardown.
+  process.once('beforeExit', stopMCPConfigWatcher);
 }
 
 /**
  * Start watching `mcp.json`. Safe to call multiple times — subsequent
  * calls are no-ops. Must only be called from server-side code.
+ *
+ * SYNCHRONOUS: `mcp/index.ts` calls this at module-evaluation time, so
+ * it must never become an async function.
  */
 export function startMCPConfigWatcher(): void {
   const state = getState();
   if (state.started) return;
+
+  // F8: create `~/.locopilot/` synchronously BEFORE watching. `fs.watch`
+  // throws ENOENT synchronously when its path is missing, and
+  // `ensureMCPConfigFile()` is async — so on a cold first run the watcher
+  // used to lose a race against it and latch a dead state forever.
+  ensureMCPConfigDirSync();
+
+  const target = getMCPConfigPath();
+
+  // Step 1: attach the directory watcher. Only mark the watcher as
+  // `started` once it is actually live; on failure leave `started` false
+  // and schedule a bounded retry so hot-reload is not dead for the whole
+  // process lifetime (F8).
+  if (!attachDirWatcher(state)) {
+    state.started = false;
+    scheduleWatchRetry(state);
+    return;
+  }
+
   state.started = true;
+  state.watchRetries = 0;
   hookShutdown(state);
 
-  // Convenience: ensure the config file exists before we start watching.
-  // Fire-and-forget — don't block watcher startup on file creation.
+  // Convenience: ensure the config file exists. Fire-and-forget — the
+  // directory watcher is already live and will pick the file up when it
+  // appears.
   ensureMCPConfigFile().catch(() => {
     /* ignore */
   });
 
+  // Step 2: if the file already exists, also start a file-level
+  // watcher for finer-grained change events. (The directory watcher
+  // is the source of truth — this is an optimization for editors
+  // that fire many in-place `change` events.)
+  if (existsSync(target)) {
+    attachFileWatcher(state, target);
+  }
+}
+
+/**
+ * Attach the directory watcher for `~/.locopilot/`. Returns `false` when
+ * the watch could not be created (e.g. the path vanished between the
+ * synchronous `mkdir` and the `watch` call). F8: the returned flag lets
+ * the caller schedule a bounded retry instead of latching a dead state.
+ *
+ * Also wires an `'error'` listener: an unhandled EventEmitter `'error'`
+ * event would crash the process, so on error we close the watcher and
+ * schedule a retry too.
+ */
+function attachDirWatcher(state: WatcherState): boolean {
   const target = getMCPConfigPath();
   const dir = path.dirname(target);
 
   // Step 1: always start a directory watcher. This is the stable
   // handle — the parent inode does not change on atomic save.
+  let watcher: FSWatcher;
   try {
-    state.dirWatcher = watch(dir, { persistent: false }, (_eventType, filename) => {
+    watcher = watch(dir, { persistent: false }, (_eventType, filename) => {
       // Only react when the event is on our target file. Other
       // files in `~/.locopilot/` (sessions, etc.) are ignored.
       if (!filename) return;
@@ -116,22 +178,52 @@ export function startMCPConfigWatcher(): void {
       attachFileWatcher(state, target);
     });
   } catch (err) {
-    // Fall back to file-level watch if the directory can't be
-    // watched (rare; usually means $HOME is gone). The file-level
-    // watch has the atomic-save limitation described in the
-    // header, but a broken $HOME is already a worse problem.
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[mcp-config-watcher] could not watch ${dir}: ${message}`);
-    attachFileWatcher(state, target);
+    state.dirWatcher = null;
+    return false;
   }
 
-  // Step 2: if the file already exists, also start a file-level
-  // watcher for finer-grained change events. (The directory watcher
-  // is the source of truth — this is an optimization for editors
-  // that fire many in-place `change` events.)
-  if (existsSync(target)) {
-    attachFileWatcher(state, target);
+  state.dirWatcher = watcher;
+  // F8: an unhandled `'error'` event on an EventEmitter throws and would
+  // crash the process. Close the dead watcher and schedule a bounded
+  // retry so hot-reload recovers.
+  watcher.on('error', (err) => {
+    if (state.dirWatcher) {
+      try {
+        state.dirWatcher.close();
+      } catch {
+        /* ignore */
+      }
+      state.dirWatcher = null;
+    }
+    console.error(`[mcp-config-watcher] directory watch error on ${dir}: ${err.message}`);
+    state.started = false;
+    scheduleWatchRetry(state);
+  });
+  return true;
+}
+
+/**
+ * F8: schedule a bounded re-attempt of `startMCPConfigWatcher` after a
+ * failed attach. The timer is `unref()`ed so it never holds the event
+ * loop open. Guarded so overlapping failures don't stack timers, and
+ * capped at `MAX_WATCH_RETRIES` consecutive failures.
+ */
+function scheduleWatchRetry(state: WatcherState): void {
+  if (state.retryTimer !== null) return;
+  if (state.watchRetries >= MAX_WATCH_RETRIES) {
+    console.error(
+      `[mcp-config-watcher] giving up after ${MAX_WATCH_RETRIES} attempts to watch the config directory; hot-reload is disabled until restart`
+    );
+    return;
   }
+  state.watchRetries += 1;
+  state.retryTimer = setTimeout(() => {
+    state.retryTimer = null;
+    startMCPConfigWatcher();
+  }, WATCH_RETRY_MS);
+  state.retryTimer.unref();
 }
 
 function attachFileWatcher(state: WatcherState, target: string): void {
@@ -197,6 +289,12 @@ export function stopMCPConfigWatcher(): void {
   const g = globalThis as unknown as Record<string, unknown>;
   const state = g[GLOBAL_KEY] as WatcherState | undefined;
   if (!state) return;
+  // F8: cancel any pending bounded-retry timer so a stopped watcher
+  // cannot resurrect itself.
+  if (state.retryTimer !== null) {
+    clearTimeout(state.retryTimer);
+    state.retryTimer = null;
+  }
   if (state.debounceTimer !== null) {
     clearTimeout(state.debounceTimer);
     state.debounceTimer = null;
@@ -218,4 +316,5 @@ export function stopMCPConfigWatcher(): void {
     state.dirWatcher = null;
   }
   state.started = false;
+  state.watchRetries = 0;
 }

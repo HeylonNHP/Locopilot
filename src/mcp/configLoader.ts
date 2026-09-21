@@ -17,7 +17,7 @@
  *   (PATH, LD_PRELOAD, NODE_OPTIONS, IFS, BASH_FUNC_*, etc.).
  */
 
-import { promises as fsp } from 'node:fs';
+import { promises as fsp, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -99,6 +99,21 @@ export function getMCPConfigPath(): string {
   return path.join(os.homedir(), MCP_CONFIG_DIRNAME, MCP_CONFIG_FILENAME);
 }
 
+/**
+ * F8: synchronously create `~/.locopilot/`. `fs.watch()` throws ENOENT
+ * synchronously when its path is missing, and `ensureMCPConfigFile()` is
+ * async and only calls `mkdir` after several awaits — so the config watcher
+ * lost a cold-start race against it. The watcher calls this BEFORE watch(dir).
+ * Best-effort: failures are logged and swallowed.
+ */
+export function ensureMCPConfigDirSync(): void {
+  try {
+    mkdirSync(path.dirname(getMCPConfigPath()), { recursive: true, mode: 0o700 });
+  } catch (err) {
+    console.error(`[mcp] failed to create MCP config directory: ${(err as Error).message}`);
+  }
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -121,92 +136,35 @@ function validateServerName(name: string, key: string): void {
   }
 }
 
-function validateHttpConfig(server: MCPServerConfig, key: string): void {
-  const transport = server.transport;
-  if (transport.type === 'stdio') {
-    throw new MCPConfigError(
-      `MCP server "${key}": validateHttpConfig called on a stdio server (internal error)`
-    );
-  }
-  if (typeof transport.url !== 'string' || transport.url.trim().length === 0) {
-    throw new MCPConfigError(
-      `MCP server "${key}": ${transport.type} transport requires a non-empty "url"`
-    );
-  }
-  // Light URL-shape check. We don't validate the scheme strictly (some
-  // users run local servers on `http://localhost:...`); a runtime
-  // connection error will surface a real config issue more clearly.
-  let parsed: URL;
-  try {
-    parsed = new URL(transport.url);
-  } catch {
-    throw new MCPConfigError(`MCP server "${key}": "${transport.url}" is not a valid URL`);
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new MCPConfigError(
-      `MCP server "${key}": URL scheme must be http(s); got "${parsed.protocol}"`
-    );
-  }
-  if (transport.headers !== undefined) {
-    if (
-      !isPlainObject(transport.headers) ||
-      !Object.values(transport.headers).every((value) => typeof value === 'string')
-    ) {
-      throw new MCPConfigError(
-        `MCP server "${key}": ${transport.type} "headers" must be a string→string object`
-      );
-    }
-    for (const headerKey of Object.keys(transport.headers)) {
-      // Header names are case-insensitive per RFC 7230, but we keep
-      // the user's original casing in the config. Just sanity-check
-      // the shape.
-      if (headerKey.trim().length === 0 || /[\n\r]/.test(headerKey)) {
-        throw new MCPConfigError(
-          `MCP server "${key}": header name ${JSON.stringify(headerKey)} is invalid`
-        );
-      }
-      if (/[\n\r]/.test(transport.headers[headerKey] ?? '')) {
-        throw new MCPConfigError(
-          `MCP server "${key}": header "${headerKey}" contains a CR/LF (header-injection attempt)`
-        );
-      }
-    }
-  }
-}
-
-function validateTransportConfig(server: MCPServerConfig, key: string): void {
-  const transport = server.transport;
-  if (transport.type === 'stdio') {
-    validateStdioConfig(server, key);
-  } else {
-    validateHttpConfig(server, key);
-  }
-}
-
-function validateStdioConfig(server: MCPServerConfig, key: string): void {
-  const transport = server.transport;
-  if (transport.type !== 'stdio') {
-    throw new MCPConfigError(
-      `MCP server "${key}": validateStdioConfig called on a non-stdio server (internal error)`
-    );
-  }
-  if (typeof transport.command !== 'string' || transport.command.trim().length === 0) {
+/**
+ * F13: validate the RAW stdio transport object directly (no coercion).
+ * Previously `normaliseServer` coerced (`String(...)`, `.map(String)`)
+ * and dropped bad values before this ran, so the loud errors below were
+ * dead code on the parse path (`"args": "foo"` was silently dropped,
+ * `{"FOO":123}` became `"123"`).
+ */
+function validateStdioConfig(transportRaw: Record<string, unknown>, key: string): void {
+  if (typeof transportRaw.command !== 'string' || transportRaw.command.trim().length === 0) {
     throw new MCPConfigError(`MCP server "${key}": stdio transport requires a non-empty "command"`);
   }
   if (
-    transport.args !== undefined &&
-    (!Array.isArray(transport.args) || !transport.args.every((arg) => typeof arg === 'string'))
+    transportRaw.args !== undefined &&
+    (!Array.isArray(transportRaw.args) ||
+      !transportRaw.args.every((arg) => typeof arg === 'string'))
   ) {
     throw new MCPConfigError(`MCP server "${key}": stdio "args" must be an array of strings`);
   }
-  if (transport.env !== undefined) {
+  if (transportRaw.env !== undefined) {
     if (
-      !isPlainObject(transport.env) ||
-      !Object.values(transport.env).every((value) => typeof value === 'string')
+      !isPlainObject(transportRaw.env) ||
+      !Object.values(transportRaw.env).every((value) => typeof value === 'string')
     ) {
       throw new MCPConfigError(`MCP server "${key}": stdio "env" must be a string→string object`);
     }
-    for (const envKey of Object.keys(transport.env)) {
+    for (const envKey of Object.keys(transportRaw.env)) {
+      // F13: this rejection is now actually reachable — raw validation
+      // runs BEFORE `expandEnvRefsInRecord` skips dangerous keys with a
+      // warning, so the loud error is no longer dead code.
       if (isDangerousEnvKey(envKey)) {
         throw new MCPConfigError(
           `MCP config error: server "${key}" sets env key "${envKey}" which can lead to code injection. ` +
@@ -215,36 +173,127 @@ function validateStdioConfig(server: MCPServerConfig, key: string): void {
       }
     }
   }
-  if (transport.cwd !== undefined && typeof transport.cwd !== 'string') {
+  if (transportRaw.cwd !== undefined && typeof transportRaw.cwd !== 'string') {
     throw new MCPConfigError(`MCP server "${key}": stdio "cwd" must be a string`);
   }
+}
+
+/**
+ * F13: validate the RAW http/sse transport object directly (no coercion).
+ * `type` is passed in explicitly (rather than read from a normalised
+ * transport) so the existing `http`/`sse` error wording is preserved.
+ */
+function validateHttpConfig(
+  transportRaw: Record<string, unknown>,
+  key: string,
+  type: string
+): void {
+  if (typeof transportRaw.url !== 'string' || transportRaw.url.trim().length === 0) {
+    throw new MCPConfigError(`MCP server "${key}": ${type} transport requires a non-empty "url"`);
+  }
+  // Light URL-shape check. We don't validate the scheme strictly (some
+  // users run local servers on `http://localhost:...`); a runtime
+  // connection error will surface a real config issue more clearly.
+  let parsed: URL;
+  try {
+    parsed = new URL(transportRaw.url);
+  } catch {
+    throw new MCPConfigError(`MCP server "${key}": "${transportRaw.url}" is not a valid URL`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new MCPConfigError(
+      `MCP server "${key}": URL scheme must be http(s); got "${parsed.protocol}"`
+    );
+  }
+  const headers = transportRaw.headers;
+  if (headers !== undefined) {
+    if (
+      !isPlainObject(headers) ||
+      !Object.values(headers).every((value) => typeof value === 'string')
+    ) {
+      throw new MCPConfigError(
+        `MCP server "${key}": ${type} "headers" must be a string→string object`
+      );
+    }
+    const headerRecord = headers as Record<string, string>;
+    for (const headerKey of Object.keys(headerRecord)) {
+      // Header names are case-insensitive per RFC 7230, but we keep
+      // the user's original casing in the config. Just sanity-check
+      // the shape.
+      if (headerKey.trim().length === 0 || /[\n\r]/.test(headerKey)) {
+        throw new MCPConfigError(
+          `MCP server "${key}": header name ${JSON.stringify(headerKey)} is invalid`
+        );
+      }
+      if (/[\n\r]/.test(headerRecord[headerKey] ?? '')) {
+        throw new MCPConfigError(
+          `MCP server "${key}": header "${headerKey}" contains a CR/LF (header-injection attempt)`
+        );
+      }
+    }
+  }
+}
+
+/**
+ * F13: server-level (transport-agnostic) shape checks. Previously these
+ * lived inside `validateStdioConfig`, so an HTTP/SSE server's
+ * `"autoApprove": "x"` / `"timeoutSeconds": "30"` was silently ignored.
+ * They now run for every transport, before any coercion.
+ */
+function validateServerMeta(raw: Record<string, unknown>, key: string): void {
   if (
-    server.autoApprove !== undefined &&
-    (!Array.isArray(server.autoApprove) ||
-      !server.autoApprove.every((entry) => typeof entry === 'string'))
+    raw.autoApprove !== undefined &&
+    (!Array.isArray(raw.autoApprove) ||
+      !raw.autoApprove.every((entry) => typeof entry === 'string'))
   ) {
     throw new MCPConfigError(`MCP server "${key}": "autoApprove" must be an array of strings`);
   }
   if (
-    server.timeoutSeconds !== undefined &&
-    (typeof server.timeoutSeconds !== 'number' ||
-      !Number.isFinite(server.timeoutSeconds) ||
-      server.timeoutSeconds <= 0)
+    raw.timeoutSeconds !== undefined &&
+    (typeof raw.timeoutSeconds !== 'number' ||
+      !Number.isFinite(raw.timeoutSeconds) ||
+      raw.timeoutSeconds <= 0)
   ) {
     throw new MCPConfigError(
       `MCP server "${key}": "timeoutSeconds" must be a positive finite number`
     );
   }
   if (
-    server.disabledTools !== undefined &&
-    (!Array.isArray(server.disabledTools) ||
-      !server.disabledTools.every((entry) => typeof entry === 'string'))
+    raw.disabledTools !== undefined &&
+    (!Array.isArray(raw.disabledTools) ||
+      !raw.disabledTools.every((entry) => typeof entry === 'string'))
   ) {
     throw new MCPConfigError(`MCP server "${key}": "disabledTools" must be an array of strings`);
   }
+  if (raw.disabled !== undefined && typeof raw.disabled !== 'boolean') {
+    throw new MCPConfigError(`MCP server "${key}": "disabled" must be a boolean`);
+  }
 }
 
-function normaliseServer(raw: unknown, key: string): MCPServerConfig {
+/**
+ * F13: dispatch to the transport-specific validator with the RAW
+ * transport object + type string, so validation happens BEFORE
+ * coercion/expansion.
+ */
+function validateTransportConfig(
+  transportRaw: Record<string, unknown>,
+  transportType: string,
+  key: string
+): void {
+  if (transportType === 'stdio') {
+    validateStdioConfig(transportRaw, key);
+  } else {
+    validateHttpConfig(transportRaw, key, transportType);
+  }
+}
+
+/**
+ * FIX 2: validate + normalise ONE raw server entry, throwing the existing
+ * `MCPConfigError` messages (name regex / forbidden-name / transport shape /
+ * the F13 raw-shape validators) for a single server. Extracted so both the
+ * strict and lenient parsers share exactly the same per-server validation.
+ */
+function normaliseOneServer(raw: unknown, key: string): MCPServerConfig {
   if (!isPlainObject(raw)) {
     throw new MCPConfigError(`MCP server "${key}" must be an object`);
   }
@@ -278,16 +327,22 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
     );
   }
 
+  // F13: validate the RAW shapes BEFORE coercion/expansion, so the loud
+  // validators (and the dangerous-key rejection) run on exactly what the
+  // user wrote rather than on values already coerced or silently dropped.
+  validateServerMeta(raw, key);
+  validateTransportConfig(transportRaw, transportType, key);
+
   // Expand `${env.X}` placeholders in stdio env and HTTP headers.
   // Done in `normaliseServer` so the expanded form is what the runtime
   // sees — the user can leave the raw `${env.X}` form in their config
-  // and it'll be evaluated at load time.
+  // and it'll be evaluated at load time. The raw records are validated
+  // above, so `expandEnvRefsInRecord` receives them directly (no
+  // `String(...)` coercion that could hide a bad shape).
   let expandedStdioEnv: Record<string, string> | undefined;
   if (transportType === 'stdio' && transportRaw.env !== undefined) {
     const envResult = expandEnvRefsInRecord(
-      isPlainObject(transportRaw.env)
-        ? Object.fromEntries(Object.entries(transportRaw.env).map(([k, v]) => [k, String(v)]))
-        : undefined,
+      transportRaw.env as Record<string, string>,
       `MCP server "${key}" stdio env`
     );
     if (envResult.warnings.length > 0) {
@@ -298,9 +353,7 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
   let expandedHttpHeaders: Record<string, string> | undefined;
   if (transportType !== 'stdio' && transportRaw.headers !== undefined) {
     const headersResult = expandEnvRefsInRecord(
-      isPlainObject(transportRaw.headers)
-        ? Object.fromEntries(Object.entries(transportRaw.headers).map(([k, v]) => [k, String(v)]))
-        : undefined,
+      transportRaw.headers as Record<string, string>,
       `MCP server "${key}" ${transportType} headers`
     );
     if (headersResult.warnings.length > 0) {
@@ -309,18 +362,21 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
     expandedHttpHeaders = headersResult.expanded;
   }
 
+  // F13: build the transport/server objects from the already-validated
+  // raw values WITHOUT coercion — a bad shape must now fail loudly in
+  // the validators above, not be silently dropped or stringified here.
   const transport: MCPServerConfig['transport'] =
     transportType === 'stdio'
       ? {
           type: 'stdio',
-          command: String(transportRaw.command ?? ''),
-          args: Array.isArray(transportRaw.args) ? transportRaw.args.map(String) : undefined,
+          command: transportRaw.command as string,
+          args: transportRaw.args as string[] | undefined,
           env: expandedStdioEnv,
-          cwd: typeof transportRaw.cwd === 'string' ? transportRaw.cwd : undefined,
+          cwd: transportRaw.cwd as string | undefined,
         }
       : {
           type: transportType as 'http' | 'sse',
-          url: String(transportRaw.url ?? ''),
+          url: transportRaw.url as string,
           headers: expandedHttpHeaders,
         };
 
@@ -331,23 +387,22 @@ function normaliseServer(raw: unknown, key: string): MCPServerConfig {
   if (typeof raw.description === 'string') {
     server.description = raw.description;
   }
-  if (Array.isArray(raw.autoApprove)) {
-    server.autoApprove = raw.autoApprove.map(String);
+  if (raw.autoApprove !== undefined) {
+    server.autoApprove = raw.autoApprove as string[];
   }
-  if (typeof raw.timeoutSeconds === 'number') {
-    server.timeoutSeconds = raw.timeoutSeconds;
+  if (raw.timeoutSeconds !== undefined) {
+    server.timeoutSeconds = raw.timeoutSeconds as number;
   }
-  if (Array.isArray(raw.disabledTools)) {
-    server.disabledTools = raw.disabledTools.map(String);
+  if (raw.disabledTools !== undefined) {
+    server.disabledTools = raw.disabledTools as string[];
   }
-  if (typeof raw.disabled === 'boolean') {
-    server.disabled = raw.disabled;
+  if (raw.disabled !== undefined) {
+    server.disabled = raw.disabled as boolean;
   }
   if (isPlainObject(raw.oauth)) {
     server.oauth = normaliseOAuthConfig(raw.oauth, name);
   }
 
-  validateTransportConfig(server, key);
   return server;
 }
 
@@ -467,10 +522,64 @@ export function parseMCPConfig(raw: unknown): MCPRootConfig {
 
   const mcpServers: Record<string, MCPServerConfig> = {};
   for (const [key, value] of Object.entries(serversField)) {
-    mcpServers[key] = normaliseServer(value, key);
+    mcpServers[key] = normaliseOneServer(value, key);
   }
 
   return { mcpServers };
+}
+
+/**
+ * FIX 2: per-server lenient parser. Unlike `parseMCPConfig`, a single malformed
+ * server no longer blanks the WHOLE config — valid entries are kept and each
+ * invalid one is reported as `{ server, message }`.
+ *
+ * This matters because F13 made the raw validators reachable: a config that
+ * merely carried a bad field (a numeric env value, `timeoutSeconds` as a
+ * string, `args` as a string, a `PATH` env key, …) used to coerce silently and
+ * now throws. Strict parsing would therefore drop EVERY server from the UI and
+ * tool list and make the broken file un-fixable from the sidebar (PUT
+ * /api/mcp re-parses the whole file).
+ *
+ * Structural problems (root not an object, `mcpServers` not an object) still
+ * throw exactly as `parseMCPConfig` does — only individual server entries are
+ * skipped instead of aborting the whole file.
+ *
+ * `source` is an optional label (e.g. the file path) prefixed to each error
+ * message for context.
+ */
+export function parseMCPConfigLenient(
+  raw: unknown,
+  source?: string
+): { config: MCPRootConfig; errors: { server: string; message: string }[] } {
+  if (!isPlainObject(raw)) {
+    throw new MCPConfigError('MCP config root must be an object');
+  }
+
+  // Accept either the canonical `mcpServers` or the VS Code `servers` key.
+  const serversField = (raw.mcpServers ?? raw.servers) as unknown;
+  if (serversField === undefined) {
+    // No servers block at all — return an empty config (not an error).
+    return { config: { mcpServers: {} }, errors: [] };
+  }
+  if (!isPlainObject(serversField)) {
+    throw new MCPConfigError('"mcpServers" must be an object keyed by server name');
+  }
+
+  const mcpServers: Record<string, MCPServerConfig> = {};
+  const errors: { server: string; message: string }[] = [];
+  for (const [key, value] of Object.entries(serversField)) {
+    try {
+      mcpServers[key] = normaliseOneServer(value, key);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push({
+        server: key,
+        message: source === undefined ? message : `${source}: ${message}`,
+      });
+    }
+  }
+
+  return { config: { mcpServers }, errors };
 }
 
 /**
@@ -509,8 +618,16 @@ export async function loadMCPConfig(): Promise<MCPRootConfig> {
   }
 
   try {
-    return parseMCPConfig(parsed);
+    // FIX 2: parse leniently so ONE malformed server does not blank the whole
+    // config. Each skipped server is logged individually.
+    const { config, errors } = parseMCPConfigLenient(parsed);
+    for (const error of errors) {
+      console.error(`[mcp] ignoring server "${error.server}": ${error.message}`);
+    }
+    return config;
   } catch (err) {
+    // Structural problems (root / `mcpServers` not an object) still blank the
+    // config exactly as before — only individual bad servers are skipped.
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[mcp] ${configPath} failed validation: ${message}`);
     return { mcpServers: {} };
@@ -607,13 +724,23 @@ export async function saveMCPServerDisabled(name: string, disabled: boolean): Pr
     // malformed server entry, a `name` field that doesn't match
     // the key, an unknown transport type), the next read would
     // silently drop the whole file's servers — data loss.
-    // Force the user to fix their config file before they can
-    // toggle servers.
+    //
+    // FIX 2: validate PER SERVER so toggling a HEALTHY server still works while
+    // a DIFFERENT server entry is malformed. Only the TARGET server must be
+    // valid; structural problems (root / `mcpServers` not an object) still
+    // abort the save via the throw below.
+    let lenientErrors: { server: string; message: string }[];
     try {
-      parseMCPConfig(parsed);
+      lenientErrors = parseMCPConfigLenient(parsed).errors;
     } catch (err) {
       throw new MCPConfigError(
         `MCP config is invalid and cannot be edited safely: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    const targetError = lenientErrors.find((error) => error.server === name);
+    if (targetError !== undefined) {
+      throw new MCPConfigError(
+        `MCP config is invalid and cannot be edited safely: ${targetError.message}`
       );
     }
     const serversField = (parsed.mcpServers ?? parsed.servers) as unknown;

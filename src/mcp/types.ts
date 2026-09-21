@@ -16,6 +16,9 @@
  */
 
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import type { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 // --- On-disk configuration types ---
 
@@ -163,6 +166,16 @@ export interface MCPSavedClientInformation {
   client_secret?: string | undefined;
   client_id_issued_at?: number | undefined;
   client_secret_expires_at?: number | undefined;
+  /**
+   * The `redirect_uris` this client was registered against (F10). Used to
+   * detect that the current loopback redirect no longer matches the
+   * registration, so we re-register instead of sending a redirect the IdP
+   * will reject with `invalid_redirect_uri`.
+   *
+   * Absent on entries written before this fix — that absence deliberately
+   * triggers a one-time re-registration.
+   */
+  redirect_uris?: string[] | undefined;
 }
 
 /**
@@ -201,14 +214,32 @@ export interface MCPSavedOAuthState {
    * Cleared once the code is exchanged. Only present for the
    * brief window between the user opening the auth URL and the
    * callback hitting our loopback server.
+   *
+   * @deprecated Superseded by `codeVerifiers` (F18). Still read as a
+   * fallback so an entry written by an older build keeps working.
    */
   codeVerifier?: string | undefined;
+  /**
+   * PKCE code verifiers for in-flight flows, keyed by the OAuth `state`
+   * (flow id) — F18. Two overlapping flows for one server used to share a
+   * single slot, so flow B's verifier overwrote flow A's and the second
+   * token exchange failed with `invalid_grant`. Pruned per-flow on success
+   * or abandonment.
+   */
+  codeVerifiers?: Record<string, string> | undefined;
   /**
    * Last known authorization server URL (from RFC 9728 / 8414
    * discovery, or the static override). Persisted so subsequent
    * auth attempts can skip the well-known round-trip.
    */
   authorizationServerUrl?: string | undefined;
+  /**
+   * Pinned loopback port for this server's OAuth callback (F10). Pinning
+   * keeps the `redirect_uri` stable across restarts so a persisted
+   * dynamically-registered client stays valid. Absent until the first auth
+   * attempt allocates one.
+   */
+  loopbackPort?: number | undefined;
 }
 
 /**
@@ -233,13 +264,36 @@ export type MCPConnectionStatus =
 export interface MCPToolInfo {
   name: string;
   description: string | undefined;
-  /** JSON Schema describing the tool's input parameters. */
+  /**
+   * JSON Schema describing the tool's input parameters.
+   *
+   * F3: the index signature carries every extra JSON-Schema keyword the
+   * server sent (`$defs`, `definitions`, `$ref`, `additionalProperties`,
+   * `$schema`, `title`, …). Those used to be dropped when the schema was
+   * handed to the model, which broke any fastmcp/pydantic/zod-generated
+   * server that emits `$ref` into `$defs` — the model saw a dangling
+   * reference it could not resolve.
+   */
   inputSchema: {
     type: 'object';
     properties?: Record<string, unknown> | undefined;
     required?: string[] | undefined;
+    [schemaKeyword: string]: unknown;
   };
 }
+
+/**
+ * Concrete SDK transport union. The three transports expose slightly
+ * different surfaces (e.g. only the streamable-HTTP transport has
+ * `terminateSession()`); `clientManager` handles those with duck-typing.
+ *
+ * Retained on the handle so teardown can release the remote HTTP session
+ * (F22) and reap the stdio process tree before the SDK drops the pid (F6).
+ */
+export type MCPClientTransport =
+  | StdioClientTransport
+  | StreamableHTTPClientTransport
+  | SSEClientTransport;
 
 /**
  * A live connection to a single MCP server. Process-global (one per
@@ -254,6 +308,21 @@ export interface MCPClientHandle {
   tools: MCPToolInfo[];
   lastError?: string;
   lastConnectedAt?: number;
+  /**
+   * Retained so teardown can close it exactly once, terminate the HTTP
+   * session (F22) and tree-kill the stdio child (F6). The final connected
+   * handle used to drop it (only the connecting placeholder kept one), so
+   * `connect()`'s stale-handle path and the non-fatal-error path could never
+   * reach the live transport and leaked the client/child process (F5).
+   * Optional because handles that never finished connecting have none.
+   */
+  transport?: MCPClientTransport | undefined;
+  /** Per-connect AbortController, signalled by teardown to unwind in-flight work (F5/F9). */
+  abortController?: AbortController | undefined;
+  /** F7: consecutive auto-connect failures. Reset on success / forced connect. */
+  failureCount?: number | undefined;
+  /** F7: epoch-ms; an implicit auto-connect must NOT dial before this. */
+  nextRetryAt?: number | undefined;
 }
 
 // --- Error classes ---

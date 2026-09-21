@@ -14,16 +14,20 @@
  * - Persisted `clientInformation` / `tokens` / `codeVerifier` via
  *   `mcp/oauthTokenStore.ts` so the user does not have to
  *   re-authenticate on every server restart.
- * - A loopback HTTP listener on a per-server reserved port that
- *   captures the authorization code from the IdP's 302 redirect.
- *   `redirectToAuthorization` prints the auth URL to stderr AND
- *   blocks on the listener (with a 5-minute timeout, CSRF `state`
- *   validation, and AbortSignal support) so the SDK's
- *   orchestrator doesn't return `'REDIRECT'` until the user has
- *   finished the consent flow. The captured code is stashed on a
- *   process-global; the manager's `reauthenticate` picks it up
- *   and calls `transport.finishAuth(code)` to perform the actual
- *   token exchange (this is what the SDK does internally).
+ * - A loopback HTTP listener on a per-server PINNED port that
+ *   captures the authorization code from the IdP's 302 redirect,
+ *   with a 5-minute timeout, CSRF `state` validation, and
+ *   AbortSignal support. The port is persisted (F10) so the
+ *   `redirect_uri` a dynamically-registered client was registered
+ *   against stays valid across restarts.
+ * - Non-blocking authorization (F9): `redirectToAuthorization`
+ *   stashes the auth URL, emits an `auth-required` event, launches
+ *   the browser, then returns immediately while the listener runs
+ *   in the background and reports back through `OAuthFlowHooks`.
+ *   The captured code is stashed on a process-global; the manager's
+ *   `reauthenticate` picks it up and calls
+ *   `transport.finishAuth(code)` to perform the actual token
+ *   exchange (this is what the SDK does internally).
  * - Auto-launch the user's default browser after printing the
  *   auth URL to stderr, falling back to stderr-only if the
  *   browser cannot be opened.
@@ -51,18 +55,43 @@ import type {
 import { spawn } from 'node:child_process';
 import * as http from 'node:http';
 
-import type {
-  MCPOAuthConfig,
-  MCPSavedOAuthState,
-  MCPServerConfig,
-} from './types';
+import type { MCPOAuthConfig, MCPSavedOAuthState, MCPServerConfig } from './types';
 
+import { emitMCPEvent } from './events';
 import { clearOAuthState, loadOAuthState, saveOAuthState } from './oauthTokenStore';
 
 // --- Public factory ---
 
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
 const LOOPBACK_HOST = '127.0.0.1';
+/**
+ * F18: fallback key for the per-flow PKCE verifier map when the flow
+ * id (`state`) is somehow unavailable. A single slot shared by every
+ * flow is the very thing this fix removes, so this is only a safety
+ * net — normal flows always have a state.
+ */
+const DEFAULT_FLOW_KEY = '__default__';
+
+/**
+ * Hooks the client manager injects to own the background
+ * authorization flow (F9). `buildOAuthProvider` no longer blocks the
+ * caller for up to 5 minutes: `redirectToAuthorization` starts the
+ * loopback listener in the background and reports its outcome through
+ * these callbacks. The manager keeps the transport alive while the
+ * flow is in flight and runs the token exchange when `onCode` fires.
+ *
+ * Deliberately defined here (not imported from `clientManager`) so
+ * there is no import cycle: the provider is the producer, the manager
+ * is the consumer.
+ */
+export interface OAuthFlowHooks {
+  /** Aborts the background listener when the handle is torn down. */
+  signal: AbortSignal;
+  /** A loopback callback captured a code — run the token exchange. */
+  onCode: (code: string, state: string | null) => void;
+  /** The flow ended without a code (timeout, abort, port busy, IdP error). */
+  onFailure: (message: string) => void;
+}
 
 /**
  * Returns the URL where the IdP should redirect after consent.
@@ -99,6 +128,56 @@ async function allocateLoopbackPort(): Promise<number> {
       probe.close(() => resolve(port));
     });
   });
+}
+
+/**
+ * Bind-probe a specific loopback port. Resolves `true` when the port
+ * is currently free on `LOOPBACK_HOST`, `false` otherwise (in use, or
+ * an error). F10: used to decide whether a pinned port is still usable
+ * before reusing it.
+ */
+async function canBindLoopbackPort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = http.createServer();
+    probe.once('error', () => resolve(false));
+    probe.listen(port, LOOPBACK_HOST, () => {
+      probe.close(() => resolve(true));
+    });
+  });
+}
+
+/**
+ * Resolve the loopback callback port for a server (F10). Prefers a
+ * persisted `loopbackPort` when it is still bindable, otherwise
+ * allocates an ephemeral port and persists it. Pinning keeps the
+ * `redirect_uri` stable so a dynamically-registered client stays
+ * valid across restarts — a fresh ephemeral port each construction
+ * would make the IdP reject the new redirect with
+ * `invalid_redirect_uri`, which the SDK does NOT recover from
+ * programmatically.
+ *
+ * A persist failure is logged and non-fatal: the in-memory port is
+ * still returned so the current flow works; the worst case is that the
+ * port changes again on the next restart.
+ */
+async function resolveLoopbackPort(serverName: string): Promise<number> {
+  const saved = await loadOAuthState(serverName);
+  const pinned = saved.loopbackPort;
+  if (pinned !== undefined && (await canBindLoopbackPort(pinned))) {
+    return pinned;
+  }
+  const port = await allocateLoopbackPort();
+  try {
+    const next: MCPSavedOAuthState = { ...saved, loopbackPort: port };
+    await saveOAuthState(serverName, next);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[mcp-oauth:${serverName}] could not persist loopback port ${port}: ${message}. ` +
+        `The redirect URI may change on the next restart, which can require re-registering the client.`
+    );
+  }
+  return port;
 }
 
 /**
@@ -166,10 +245,15 @@ function launchBrowser(url: string): Promise<boolean> {
  * openConnection`) is responsible for only calling this at all when
  * `interactive` is true or a cached token already exists — see the
  * comment there for why that split matters.
+ *
+ * `opts.flow` (F9) carries the background-flow hooks. When present,
+ * `redirectToAuthorization` runs the loopback listener in the
+ * background and reports back through the hooks instead of blocking
+ * the caller.
  */
 export async function buildOAuthProvider(
   config: MCPServerConfig,
-  opts: { interactive: boolean }
+  opts: { interactive: boolean; flow?: OAuthFlowHooks }
 ): Promise<OAuthClientProvider | undefined> {
   if (config.transport.type === 'stdio') {
     // stdio servers have no HTTP handshake, so OAuth is
@@ -188,13 +272,15 @@ export async function buildOAuthProvider(
   // DCR + auth still works once the user clicks "Authenticate".
   const oauthConfig = config.oauth ?? {};
 
-  // Allocate the loopback port at construction time so the SDK's
-  // synchronous `redirectUrl` getter has a stable value. The
-  // actual HTTP server is only started on the first auth flow
-  // kickoff (see `startCallbackServer`).
+  // Resolve the loopback port at construction time so the SDK's
+  // synchronous `redirectUrl` getter has a stable value. F10: this
+  // reuses the port we persisted last time (when still bindable) so
+  // the `redirect_uri` a dynamically-registered client was
+  // registered against stays valid. The actual HTTP server is only
+  // started on the first auth flow kickoff (see `startCallbackServer`).
   let allocatedPort: number;
   try {
-    allocatedPort = await allocateLoopbackPort();
+    allocatedPort = await resolveLoopbackPort(config.name);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(
@@ -210,7 +296,8 @@ export async function buildOAuthProvider(
     config.name,
     oauthConfig,
     allocatedPort,
-    opts.interactive
+    opts.interactive,
+    opts.flow
   );
 }
 
@@ -224,18 +311,34 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
    * this before doing anything user-visible — see that method.
    */
   private readonly interactive: boolean;
+  /** F9: background-flow hooks injected by the client manager (optional). */
+  private readonly flow: OAuthFlowHooks | undefined;
   private cachedState: MCPSavedOAuthState | null = null;
+  /**
+   * F18: the OAuth `state` (flow id) of the current flow, captured in
+   * `state()`. Keys this flow's PKCE verifier and pending code. Unlike
+   * `currentState` it is NOT cleared by `runCallbackFlow`'s finally —
+   * the later token exchange on this same provider still needs it.
+   */
+  private flowState: string | null = null;
+  /**
+   * F9: guards against a second `redirectToAuthorization` starting a
+   * second loopback listener on the same port.
+   */
+  private flowInFlight = false;
 
   constructor(
     serverName: string,
     oauthConfig: MCPOAuthConfig,
     loopbackPort: number,
-    interactive: boolean
+    interactive: boolean,
+    flow: OAuthFlowHooks | undefined
   ) {
     this.serverName = serverName;
     this.oauthConfig = oauthConfig;
     this.loopbackPort = loopbackPort;
     this.interactive = interactive;
+    this.flow = flow;
   }
   /**
    * CSRF nonce for the in-flight authorization flow. The SDK
@@ -313,6 +416,16 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     if (this.currentState === null) {
       this.currentState = await randomBase64Url(16);
     }
+    // F18/FIX 7: remember the state (flow id) so the PKCE verifier and the
+    // pending code can be keyed by it. We deliberately do NOT clear this in
+    // `redirectToAuthorization`: the later `codeVerifier()` call on the same
+    // provider instance needs to resolve THIS flow's verifier. `flowState`
+    // intentionally persists for the lifetime of this provider instance —
+    // `runCallbackFlow`'s finally only resets `currentState`, because the token
+    // exchange runs AFTER the callback settles and still needs it. The provider
+    // instance is per-connect (a fresh one is built for every `openConnection`),
+    // so this is not a process- or manager-global leak.
+    this.flowState = this.currentState;
     return this.currentState;
   }
 
@@ -320,6 +433,43 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     const state = await this.getState();
     const saved = state.clientInformation;
     if (saved !== undefined) {
+      // FIX 6: a saved dynamically-registered client must not shadow a
+      // statically-configured `oauth.clientId` the user added LATER. Prefer the
+      // configured app registration unless the saved client IS that client.
+      if (
+        this.oauthConfig.clientId !== undefined &&
+        saved.client_id !== this.oauthConfig.clientId
+      ) {
+        // We return the CONFIGURED client information rather than `undefined`.
+        // The SDK (`authInternal` in client/auth.js) treats an `undefined`
+        // clientInformation() as "no client yet" and falls into Dynamic Client
+        // Registration — the opposite of preserving the configured clientId —
+        // so returning the configured object is what actually keeps it.
+        return this.configuredClientInformation();
+      }
+      // F10: a dynamically-registered client is only valid for the
+      // redirect_uris it was registered against. If the current
+      // `redirectUrl` isn't among them (e.g. the loopback port moved
+      // before it was pinned, or an old store file has no recorded
+      // redirects), forget the client so the SDK performs a fresh
+      // Dynamic Client Registration against the current redirect.
+      // `invalid_redirect_uri` is NOT in the SDK's programmatic
+      // recovery set, so it must be prevented, not recovered.
+      //
+      // A statically-configured `clientId` cannot be re-registered,
+      // so we always return it and let the IdP reject a genuinely bad
+      // redirect.
+      const isDynamicallyRegistered = this.oauthConfig.clientId === undefined;
+      const redirectMatches =
+        saved.redirect_uris !== undefined && saved.redirect_uris.includes(this.redirectUrl);
+      if (isDynamicallyRegistered && !redirectMatches) {
+        // Clear via the get/mutate helpers (not a raw file write) so a
+        // concurrent save through `mutateState` cannot resurrect it.
+        const cleared: MCPSavedOAuthState = { ...state };
+        delete cleared.clientInformation;
+        await this.mutateState(cleared);
+        return undefined;
+      }
       const result: OAuthClientInformationMixed = { client_id: saved.client_id };
       if (saved.client_secret !== undefined) result.client_secret = saved.client_secret;
       if (saved.client_id_issued_at !== undefined)
@@ -333,13 +483,24 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     // is not available (i.e. the server doesn't advertise a
     // `registration_endpoint`).
     if (this.oauthConfig.clientId !== undefined) {
-      const result: OAuthClientInformationMixed = { client_id: this.oauthConfig.clientId };
-      if (this.oauthConfig.clientSecret !== undefined) {
-        result.client_secret = this.oauthConfig.clientSecret;
-      }
-      return result;
+      return this.configuredClientInformation();
     }
     return undefined;
+  }
+
+  /**
+   * FIX 6: build the OAuth client information from the statically-configured
+   * `oauth.clientId` / `oauth.clientSecret`. Returns `undefined` when no
+   * `clientId` is configured (the SDK then drives Dynamic Client Registration).
+   */
+  private configuredClientInformation(): OAuthClientInformationMixed | undefined {
+    const clientId = this.oauthConfig.clientId;
+    if (clientId === undefined) return undefined;
+    const result: OAuthClientInformationMixed = { client_id: clientId };
+    if (this.oauthConfig.clientSecret !== undefined) {
+      result.client_secret = this.oauthConfig.clientSecret;
+    }
+    return result;
   }
 
   async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
@@ -349,8 +510,18 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       client_id: info.client_id,
     };
     if (info.client_secret !== undefined) stored.client_secret = info.client_secret;
-    if (info.client_id_issued_at !== undefined) stored.client_id_issued_at = info.client_id_issued_at;
-    if (info.client_secret_expires_at !== undefined) stored.client_secret_expires_at = info.client_secret_expires_at;
+    if (info.client_id_issued_at !== undefined)
+      stored.client_id_issued_at = info.client_id_issued_at;
+    if (info.client_secret_expires_at !== undefined)
+      stored.client_secret_expires_at = info.client_secret_expires_at;
+    // F10: persist the redirects the registration was made against so
+    // `clientInformation()` can later tell whether the saved client is
+    // still valid for the current loopback redirect.
+    const redirects =
+      'redirect_uris' in info && Array.isArray(info.redirect_uris)
+        ? info.redirect_uris
+        : this.clientMetadata.redirect_uris;
+    stored.redirect_uris = redirects.map(String);
     next.clientInformation = stored;
     await this.mutateState(next);
   }
@@ -382,22 +553,46 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     if (tokens.scope !== undefined) stored.scope = tokens.scope;
     if (tokens.refresh_token !== undefined) stored.refresh_token = tokens.refresh_token;
     next.tokens = stored;
-    // A successful token exchange implies the in-flight code
-    // verifier has done its job. Wipe it from disk so a
-    // re-fetched file doesn't carry around a stale PKCE
-    // secret.
+    // F18: a successful token exchange implies THIS flow's code
+    // verifier has done its job. Remove only our entry (keyed by the
+    // flow's `state`) so a concurrent flow for the same server keeps
+    // its verifier; drop the map entirely once empty. Also delete the
+    // legacy single-slot field.
+    const key = this.flowState ?? DEFAULT_FLOW_KEY;
+    if (next.codeVerifiers !== undefined) {
+      const remaining = { ...next.codeVerifiers };
+      delete remaining[key];
+      if (Object.keys(remaining).length > 0) {
+        next.codeVerifiers = remaining;
+      } else {
+        delete next.codeVerifiers;
+      }
+    }
     delete next.codeVerifier;
     await this.mutateState(next);
   }
 
   async saveCodeVerifier(verifier: string): Promise<void> {
     const state = await this.getState();
-    const next: MCPSavedOAuthState = { ...state, codeVerifier: verifier };
+    // F18: key the verifier by the flow's `state` (flow id). The SDK
+    // calls `state()` before `saveCodeVerifier()`, so `flowState` is
+    // set here. Two overlapping flows for one server used to share a
+    // single slot, so flow B's verifier clobbered flow A's and the
+    // first exchange failed PKCE with `invalid_grant`.
+    const key = this.flowState ?? DEFAULT_FLOW_KEY;
+    const next: MCPSavedOAuthState = {
+      ...state,
+      codeVerifiers: { ...state.codeVerifiers, [key]: verifier },
+    };
     await this.mutateState(next);
   }
 
   async codeVerifier(): Promise<string> {
     const state = await this.getState();
+    // F18: resolve this flow's verifier, falling back to the legacy
+    // single-slot field for entries written by an older build.
+    const fromFlow = this.flowState === null ? undefined : state.codeVerifiers?.[this.flowState];
+    if (fromFlow !== undefined) return fromFlow;
     if (state.codeVerifier === undefined) {
       // The SDK has done something out of order: it asked for
       // the verifier before saving one. This happens when the
@@ -413,36 +608,37 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
    * The SDK calls this when it has built the full authorization
    * URL and wants the user to visit it. We:
    *
-   *   1) Print the URL to stderr (or, in the chat UI, surface it
-   *      as a clickable link).
-   *   2) Spin up the loopback HTTP server (if we have a port)
-   *      and block until the IdP's callback hits us.
+   *   1) Print the URL to stderr and stash it (F9) so the client
+   *      manager / chat UI can surface a clickable link.
+   *   2) Emit an `auth-required` event carrying the URL.
    *   3) Auto-launch the user's default browser.
+   *   4) If we have a loopback port, start the listener in the
+   *      BACKGROUND and return immediately (F9).
    *
    * Bugs fixed in this revision:
-   *   - #1: validate the `state` query param against the value
-   *     returned by `state()`. Mismatch → reject with a clear
-   *     error and respond 400 to the IdP.
-   *   - #2: hard 5-minute timeout. If the user walks away the
-   *     listener is closed and the Promise rejects with
-   *     `'OAuth flow timed out after 5 minutes'`. The manager
-   *     catches and surfaces `'auth_required'` + lastError.
-   *   - #3: optional `AbortSignal` to tear down the listener if
-   *     the parent request is aborted.
-   *   - #6: a `finally` block clears the in-memory
-   *     `currentState`. The on-disk `codeVerifier` is only wiped
-   *     here when the callback did NOT deliver a code (timeout,
-   *     abort, IdP-reported error) — a captured code still needs
-   *     that verifier for the token exchange the caller runs
-   *     afterwards (see the "IMPORTANT" note below).
+   *   - #1 / F17: validate the `state` query param against the value
+   *     returned by `state()`, failing CLOSED (a missing `state` is a
+   *     mismatch). See `startCallbackServer`.
+   *   - #2: hard 5-minute timeout inside `startCallbackServer`.
+   *   - #3: optional `AbortSignal` (now supplied via `flow.signal`).
+   *   - #6 / F9: the in-memory `currentState` is cleared in
+   *     `runCallbackFlow`'s `finally`, while `flowState` is kept so a
+   *     pending token exchange can still resolve its verifier. The
+   *     on-disk verifier is only cleared when NO code was captured.
    *   - #7: auto-launch the browser after printing the URL.
-   *     If the launch fails, fall back to stderr printing.
    *
-   * On success, the captured `code` is stashed on a
-   * process-global keyed by server name. The host is then
-   * expected to call `transport.finishAuth(code)` (via the
-   * manager's `reauthenticate` flow) to trigger the actual
-   * token exchange.
+   * F9 (non-blocking): this method used to `await startCallbackServer`
+   * and thus block the HTTP request for up to 5 minutes, with the
+   * browser auto-launch happening inside the request. It now returns
+   * immediately after kicking off `runCallbackFlow`; the SDK then
+   * throws `UnauthorizedError`, `openConnection` flips the handle to
+   * `auth_required` (another engineer keeps the transport alive for
+   * the exchange), and the outcome is reported through `OAuthFlowHooks`.
+   *
+   * On success, the captured `code` is stashed on a process-global
+   * keyed by server name + `state`. The host is then expected to call
+   * `transport.finishAuth(code)` (via the manager's `reauthenticate`
+   * flow) to trigger the actual token exchange.
    *
    * Non-interactive guard: this is also reachable from a
    * background/eager connect (e.g. a cached token that turned out
@@ -466,9 +662,15 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       return;
     }
     const url = authorizationUrl.toString();
-    // The chat UI listens for `auth-required` events and
-    // surfaces the URL — but stderr is the safety net for
-    // headless / non-interactive use.
+    // F9: stash the URL so the client manager (and the UI via
+    // `peekAuthorizationUrl`) can retrieve it AFTER the HTTP request
+    // that started this flow has already returned.
+    stashAuthorizationUrl(this.serverName, url);
+    // F9: the flow now runs in the background and outlives the HTTP
+    // request, so the UI needs a real link rather than relying on the
+    // dev-server stderr.
+    emitMCPEvent({ kind: 'auth-required', serverName: this.serverName, authUrl: url });
+    // stderr is the safety net for headless / non-interactive use.
     // Use console.error (not log) so it stands out; this is
     // actionable user input.
     console.error(
@@ -495,46 +697,100 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       return;
     }
 
-    // Bug #1: capture the in-memory CSRF nonce at flow-start.
-    // `state()` memoizes the value, but capture it here so the
-    // `finally` block can clear the same reference even if
-    // `state()` is never called.
-    const expectedState = this.currentState;
+    // F9: a per-provider guard so a second call cannot start a second
+    // listener on the same port. The SDK will still throw
+    // `UnauthorizedError` on the second call, which is correct.
+    if (this.flowInFlight) {
+      console.error(
+        `[mcp-oauth:${this.serverName}] An OAuth callback listener is already running for this provider; not starting a second one.`
+      );
+      return;
+    }
+    this.flowInFlight = true;
 
-    let codeCaptured = false;
+    // F9: capture the CSRF nonce now and run the listener in the
+    // background. We deliberately do NOT await: blocking here for up
+    // to 5 minutes is the bug being fixed. The SDK call that invoked
+    // us throws `UnauthorizedError` as soon as we return, which is the
+    // intended `auth_required` transition.
+    const expectedState = this.currentState;
+    void this.runCallbackFlow(expectedState);
+  }
+
+  /**
+   * Background owner of one loopback authorization flow (F9).
+   *
+   * Runs `startCallbackServer` (which may take up to 5 minutes) and
+   * reports the outcome through the injected `OAuthFlowHooks`:
+   *   - a captured code → `flow.onCode(code, state)` (handled inside
+   *     `startCallbackServer` just before the listener closes);
+   *   - no code (timeout / abort / IdP error / port busy) → this
+   *     flow's verifier is cleared and, unless the caller aborted us,
+   *     `flow.onFailure(message)` is called.
+   *
+   * `finally` clears `currentState` (so the next flow starts fresh)
+   * but KEEPS `flowState`: the pending token exchange that follows a
+   * captured code runs on this same provider instance and must still
+   * resolve this flow's PKCE verifier.
+   */
+  private async runCallbackFlow(expectedState: string | null): Promise<void> {
     try {
-      const result = await this.startCallbackServer(expectedState);
-      codeCaptured = result.codeCaptured;
-    } finally {
-      // Bug #6: clear the in-memory CSRF nonce so the next auth
-      // flow starts fresh.
-      this.currentState = null;
-      // IMPORTANT: only wipe the on-disk PKCE code verifier when
-      // NO code was captured (timeout, abort, server error, or an
-      // IdP-reported `error` param). The token exchange itself
-      // (`transport.finishAuth(code)`, driven by `reauthenticate`'s
-      // pending-code check or the manual code-paste route) runs
-      // AFTER this method has already returned — deleting the
-      // verifier here unconditionally, as a prior revision did,
-      // wiped it before that exchange ever ran, so every
-      // authorization attempt failed PKCE validation on the very
-      // next step. `saveTokens` deletes it on a real successful
-      // exchange; this is only for the abandoned-flow case.
-      if (!codeCaptured) {
-        try {
-          const state = await this.getState();
-          if (state.codeVerifier !== undefined) {
-            const next: MCPSavedOAuthState = { ...state };
-            delete next.codeVerifier;
-            await this.mutateState(next);
-          }
-        } catch (err) {
-          // Non-fatal: the worst case is a stale verifier
-          // sitting in the file until the next save.
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[mcp-oauth:${this.serverName}] failed to clear code verifier: ${message}`);
-        }
+      const result = await this.startCallbackServer(expectedState, this.flow?.signal);
+      if (!result.codeCaptured) {
+        // Timeout / abort / IdP-reported error: no exchange will run,
+        // so this flow's verifier is dead weight.
+        await this.clearVerifier();
       }
+    } catch (err) {
+      if (this.flow?.signal.aborted) {
+        // The handle was torn down deliberately; clean up quietly and
+        // do NOT report a failure the user never caused.
+        await this.clearVerifier();
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[mcp-oauth:${this.serverName}] OAuth callback flow failed: ${message}`);
+        await this.clearVerifier();
+        this.flow?.onFailure(message);
+      }
+    } finally {
+      this.currentState = null;
+      this.flowInFlight = false;
+    }
+  }
+
+  /**
+   * Remove only THIS flow's PKCE verifier (plus the legacy single-slot
+   * field) via the get/mutate helpers, so a concurrent flow keeps
+   * theirs and a concurrent save cannot resurrect ours (F18).
+   */
+  private async clearVerifier(): Promise<void> {
+    try {
+      const state = await this.getState();
+      const key = this.flowState ?? DEFAULT_FLOW_KEY;
+      const next: MCPSavedOAuthState = { ...state };
+      let changed = false;
+      if (next.codeVerifiers !== undefined) {
+        const remaining = { ...next.codeVerifiers };
+        delete remaining[key];
+        if (Object.keys(remaining).length > 0) {
+          next.codeVerifiers = remaining;
+        } else {
+          delete next.codeVerifiers;
+        }
+        changed = true;
+      }
+      if (next.codeVerifier !== undefined) {
+        delete next.codeVerifier;
+        changed = true;
+      }
+      if (changed) {
+        await this.mutateState(next);
+      }
+    } catch (err) {
+      // Non-fatal: the worst case is a stale verifier sitting in the
+      // file until the next save.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[mcp-oauth:${this.serverName}] failed to clear code verifier: ${message}`);
     }
   }
 
@@ -615,11 +871,20 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
             sendError(res, 404, 'not found');
             return;
           }
-          // Bug #1: validate the `state` query param
-          // against the value returned by `state()`.
-          // Reject mismatches with 400 + clear error.
+          // Bug #1 / F17: validate the `state` query param against
+          // the value returned by `state()`. FAIL CLOSED: a null
+          // `expectedState` (which should not happen — the SDK always
+          // calls `state()` first) or a missing `state` on the
+          // callback is treated as a mismatch, so we never accept an
+          // unauthenticated callback.
+          //
+          // A constant-time comparison is deliberately NOT used here:
+          // this is a loopback-only listener bound to 127.0.0.1, the
+          // nonce is a 16-byte CSPRNG value, and PKCE is the real
+          // control protecting the code exchange — so a timing side
+          // channel on this compare buys an attacker nothing.
           const returnedState = parsed.searchParams.get('state');
-          if (expectedState !== null && returnedState !== expectedState) {
+          if (expectedState === null || returnedState === null || returnedState !== expectedState) {
             sendError(res, 400, 'state mismatch');
             return;
           }
@@ -642,12 +907,19 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
             sendError(res, 400, 'missing "code" query parameter');
             return;
           }
-          // Stash the code on a process-global so the
-          // manager's `reauthenticate` (or
+          // Stash the code on a process-global (keyed by server name
+          // AND `state`; F18) so the manager's `reauthenticate` (or
           // `finishAuthAndRetry`) can pick it up.
-          stashAuthorizationCode(this.serverName, code);
+          stashAuthorizationCode(this.serverName, code, expectedState);
           sendOk(res);
-          setImmediate(() => settleResolve(true));
+          // F9: close the listener BEFORE the token exchange runs, so
+          // the port is free (and a retry that re-binds it does not
+          // hit EADDRINUSE). `settleResolve` tears the server down;
+          // `onCode` then hands the flow back to the client manager.
+          setImmediate(() => {
+            settleResolve(true);
+            this.flow?.onCode(code, expectedState);
+          });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           sendError(res, 500, message);
@@ -717,7 +989,10 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
         break;
       }
       case 'verifier': {
+        // F18: invalidating "the verifier" means the legacy single
+        // slot AND the whole per-flow map.
         delete next.codeVerifier;
+        delete next.codeVerifiers;
         break;
       }
       default: {
@@ -758,20 +1033,28 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
  * server name, and the manager's `reauthenticate` (or
  * `finishAuthAndRetry`) consumes it.
  *
- * Single-entry; the next flow overwrites. We use `globalThis` to
- * be HMR-safe (Next.js dev mode re-evaluates modules, so a
- * module-level Map would be re-created and lose the entry).
+ * F18: entries are stored in a per-server ARRAY tagged with the
+ * OAuth `state` (flow id). Two overlapping flows for one server used
+ * to share a single slot, so flow B's code overwrote flow A's and the
+ * wrong code/verifier pairing failed PKCE. `consumeAuthorizationCode`
+ * now selects by `state`, and refuses to guess when more than one
+ * fresh entry exists and no state was supplied.
+ *
+ * We use `globalThis` to be HMR-safe (Next.js dev mode re-evaluates
+ * modules, so a module-level Map would be re-created and lose the
+ * entry).
  */
 const GLOBAL_KEY = '__mcpOAuthPendingCode';
 
 interface PendingCode {
   code: string;
+  state: string | null;
   receivedAt: number;
 }
 
-function getPending(): Map<string, PendingCode> {
+function getPending(): Map<string, PendingCode[]> {
   const g = globalThis as unknown as Record<string, unknown>;
-  let map = g[GLOBAL_KEY] as Map<string, PendingCode> | undefined;
+  let map = g[GLOBAL_KEY] as Map<string, PendingCode[]> | undefined;
   if (!map) {
     map = new Map();
     g[GLOBAL_KEY] = map;
@@ -779,27 +1062,101 @@ function getPending(): Map<string, PendingCode> {
   return map;
 }
 
-function stashAuthorizationCode(serverName: string, code: string): void {
-  getPending().set(serverName, { code, receivedAt: Date.now() });
+function pruneExpired(entries: PendingCode[], now: number): PendingCode[] {
+  return entries.filter((entry) => now - entry.receivedAt <= CALLBACK_TIMEOUT_MS);
+}
+
+function stashAuthorizationCode(serverName: string, code: string, state: string | null): void {
+  const map = getPending();
+  const now = Date.now();
+  const fresh = pruneExpired(map.get(serverName) ?? [], now);
+  fresh.push({ code, state, receivedAt: now });
+  map.set(serverName, fresh);
 }
 
 /**
- * Drain and return the stashed code (if any) for the given
- * server. Returns `undefined` when no code is waiting. The caller
+ * Drain and return the stashed code (if any) for the given server.
+ * Returns `undefined` when no matching code is waiting. The caller
  * is expected to call this from the post-401 retry path, e.g. in
  * `reauthenticate`.
+ *
+ * F18:
+ * - with a `state`, returns the exact match (and removes only it);
+ * - without a `state`, returns a code ONLY when exactly one fresh
+ *   entry exists — otherwise it logs and returns `undefined` rather
+ *   than guessing, which is what caused the wrong-code/verifier
+ *   pairing.
+ *
+ * Expired entries are pruned on every read.
  */
-export function consumeAuthorizationCode(serverName: string): string | undefined {
-  const entry = getPending().get(serverName);
-  if (!entry) return undefined;
-  getPending().delete(serverName);
-  // Reject codes older than the timeout; they're almost
-  // certainly stale (e.g. the user walked away and the loopback
-  // server timed out, then came back hours later).
-  if (Date.now() - entry.receivedAt > CALLBACK_TIMEOUT_MS) {
+export function consumeAuthorizationCode(serverName: string, state?: string): string | undefined {
+  const map = getPending();
+  const now = Date.now();
+  const entries = pruneExpired(map.get(serverName) ?? [], now);
+  if (entries.length === 0) {
+    map.delete(serverName);
     return undefined;
   }
-  return entry.code;
+  if (state !== undefined) {
+    const index = entries.findIndex((entry) => entry.state === state);
+    if (index === -1) {
+      map.set(serverName, entries);
+      return undefined;
+    }
+    const [entry] = entries.splice(index, 1);
+    if (entries.length > 0) {
+      map.set(serverName, entries);
+    } else {
+      map.delete(serverName);
+    }
+    return entry?.code;
+  }
+  if (entries.length !== 1) {
+    // Never guess which flow a bare code belongs to. Keep the
+    // entries so a subsequent caller with a `state` can still match.
+    map.set(serverName, entries);
+    console.error(
+      `[mcp-oauth:${serverName}] ${entries.length} pending authorization codes; cannot choose one without a state, ignoring.`
+    );
+    return undefined;
+  }
+  const [only] = entries;
+  map.delete(serverName);
+  return only?.code;
+}
+
+// --- Authorization-URL stash (F9) ---
+
+/**
+ * F9: the flow runs in the background, so the authorization URL is no
+ * longer available as a local variable on the request that started it.
+ * We stash the latest URL per server on a `globalThis`-pinned map so
+ * the client manager / UI can retrieve it later. The `auth-required`
+ * event also carries it; this is the pull-based counterpart.
+ */
+const AUTH_URL_GLOBAL_KEY = '__mcpOAuthAuthUrl';
+
+function getAuthUrls(): Map<string, string> {
+  const g = globalThis as unknown as Record<string, unknown>;
+  let map = g[AUTH_URL_GLOBAL_KEY] as Map<string, string> | undefined;
+  if (!map) {
+    map = new Map();
+    g[AUTH_URL_GLOBAL_KEY] = map;
+  }
+  return map;
+}
+
+function stashAuthorizationUrl(serverName: string, url: string): void {
+  getAuthUrls().set(serverName, url);
+}
+
+/**
+ * Return the most recently stashed authorization URL for a server, or
+ * `undefined` when none is known. Non-consuming (`peek`): the caller
+ * may read it more than once (e.g. re-render the UI).
+ */
+export function peekAuthorizationUrl(serverName: string): string | undefined {
+  return getAuthUrls().get(serverName);
 }
 
 // --- Helpers ---

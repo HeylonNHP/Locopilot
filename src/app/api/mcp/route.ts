@@ -2,7 +2,12 @@
  * REST endpoints for MCP (Model Context Protocol) server inspection.
  *
  *   GET  /api/mcp        - list configured servers, their status, and tools
- *                          (?connect=<name> forces a lazy connect for that one server)
+ *                          (?connect=<name> forces a lazy connect for that one server;
+ *                           ?eager=1 opts into eager connection of every enabled
+ *                           server and ?force=1 bypasses the per-server retry
+ *                           backoff — both are F7 opt-ins used by the sidebar for
+ *                           first-load discovery / explicit retry, so a plain GET
+ *                           never re-dials a broken server)
  *   POST /api/mcp        - { action: "reload" } closes all live clients and
  *                          re-reads the on-disk config.
  *   PUT  /api/mcp        - { name, action: "enable" | "disable" } flips the
@@ -32,9 +37,20 @@ export const dynamic = 'force-dynamic';
 const VALID_NAME_REGEX = /^[\w-]+$/i;
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const connectName = request.nextUrl.searchParams.get('connect');
+  const params = request.nextUrl.searchParams;
+  const connectName = params.get('connect');
+  // F7: eagerly connecting every enabled server is now OPT-IN. The
+  // sidebar sends `?eager=1` for first-load discovery and explicit
+  // retries; `?force=1` additionally bypasses the retry backoff. A
+  // plain GET must be side-effect free, otherwise the SSE-driven
+  // refetch re-dials unreachable servers and spins the
+  // connect→SSE→GET /api/mcp→connect loop.
+  const eager = params.get('eager') === '1';
+  const force = params.get('force') === '1';
   try {
-    const result = await listMCPServersWithStatus(connectName ? { connect: connectName } : {});
+    const result = await listMCPServersWithStatus(
+      connectName ? { connect: connectName } : { eagerConnect: eager, force }
+    );
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

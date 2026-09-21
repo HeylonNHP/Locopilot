@@ -5,7 +5,9 @@
  * Rules:
  * - `${env.HOME}` → reads `process.env.HOME`
  * - `$HOME`       → reads `process.env.HOME` (legacy POSIX form)
- * - `$$`          → literal `$` (escape)
+ * - `$$`          → literal `$` (escape; made reachable by F14 — the
+ *   pattern previously had no `$$` alternative, so this branch was dead
+ *   and `"$$HOME"` expanded to `"$C:/Users/..."`)
  * - Unresolved references resolve to the empty string and emit a
  *   warning (so the user can see why their header is blank in the
  *   server log)
@@ -26,7 +28,11 @@
 
 import { isDangerousEnvKey } from './dangerousEnv';
 
-const ENV_REF_PATTERN = /\${env\.([A-Z_a-z]\w*)}|\$([A-Z_a-z]\w*)/g;
+// F14: `\$\$` is the FIRST alternative so the replacer's `$$`-escape
+// branch is actually reachable. A single `replaceAll` pass keeps expansion
+// non-recursive (the replacer's returned text is never re-scanned), so a
+// literal `$` output can't be re-expanded and there are no cycles.
+const ENV_REF_PATTERN = /\$\$|\${env\.([A-Z_a-z]\w*)}|\$([A-Z_a-z]\w*)/g;
 const DOLLAR_ESCAPE = '$$';
 
 export interface EnvExpansionResult {

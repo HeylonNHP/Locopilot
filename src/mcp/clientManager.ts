@@ -15,9 +15,11 @@
  *   SDK re-fetches the tool list and hands us the updated array).
  * - Per-request state (AbortSignal, approval tokens) is **not** stored
  *   on the handle. It's passed into `callTool()` from the dispatcher.
- * - `shutdown()` is wired to `process.on('SIGTERM')` and the Next.js
- *   `process.on('beforeExit')` so spawned subprocesses are reaped when
- *   the dev server stops.
+ * - Shutdown (`closeAll()`) is wired to `process.on('SIGTERM' | 'SIGINT' |
+ *   'beforeExit')` so spawned subprocesses are reaped when the dev server
+ *   stops. The manager itself is pinned on `globalThis` (F1) so Next.js
+ *   dev-mode HMR reuses it instead of orphaning live children and stacking
+ *   duplicate signal handlers.
  */
 
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -28,10 +30,15 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import { logger } from '@/app/lib/logger';
+import { killProcessTreeByPid } from '@/tools/processTree';
 
 import { expandEnvRefsInRecord } from './envExpansion';
 import { emitMCPEvent } from './events';
-import { buildOAuthProvider, consumeAuthorizationCode } from './oauthProvider';
+import {
+  buildOAuthProvider,
+  consumeAuthorizationCode,
+  peekAuthorizationUrl,
+} from './oauthProvider';
 import { clearOAuthState, loadOAuthState } from './oauthTokenStore';
 import {
   type MCPClientHandle,
@@ -45,6 +52,33 @@ const CLIENT_NAME = 'locopilot';
 const CLIENT_VERSION = '0.0.1';
 
 const DEFAULT_TIMEOUT_SECONDS = 60;
+
+/**
+ * F7: per-server auto-connect backoff. After a failed (or `auth_required`)
+ * connect, an implicit/lazy connect for the same server is suppressed until
+ * `nextRetryAt`, which grows exponentially from BASE up to MAX with ±25%
+ * jitter.
+ *
+ * Without this, a broken server is re-dialled by every chat request AND every
+ * `?connect=` listing, and each failure fans an SSE `state` frame out to the
+ * MCP tab, whose refetch re-dials again — the connect → SSE → refetch loop.
+ */
+const CONNECT_BACKOFF_BASE_MS = 5000;
+const CONNECT_BACKOFF_MAX_MS = 300_000;
+
+/**
+ * F7: the epoch-ms `nextRetryAt` for the Nth consecutive failure.
+ *
+ * Exponential growth caps at `CONNECT_BACKOFF_MAX_MS`; the ±25% jitter stops
+ * a fleet of failing servers from all retrying on the same tick (and stops a
+ * single broken server from producing a perfectly periodic retry storm).
+ */
+function computeNextRetryAt(failureCount: number): number {
+  const exponential = CONNECT_BACKOFF_BASE_MS * 2 ** (failureCount - 1);
+  const capped = Math.min(exponential, CONNECT_BACKOFF_MAX_MS);
+  const jitter = 0.75 + Math.random() * 0.5;
+  return Date.now() + Math.round(capped * jitter);
+}
 
 /**
  * The SDK's `StreamableHTTPError` / `SseError` both carry the raw
@@ -226,6 +260,17 @@ class MCPClientManager {
    */
   private inFlight = new Map<string, Promise<MCPClientHandle>>();
 
+  /**
+   * FIX 4: the AbortController of the MOST RECENT in-flight connect for a
+   * server. `connect()` deletes a stale handle from `handles` and yields inside
+   * `replaceStaleHandleThenConnect` (awaiting teardown) before `openConnection`
+   * installs a placeholder, so a concurrent `disconnect()` would find no handle
+   * to abort and then await the handshake for up to the full request timeout
+   * (60s). This map lets `disconnect()` cancel that handshake directly. Entries
+   * are removed by `teardownHandle` once the handshake they guarded is over.
+   */
+  private readonly connectControllers = new Map<string, AbortController>();
+
   private rootConfig: MCPRootConfig = { mcpServers: {} };
 
   /**
@@ -243,15 +288,23 @@ class MCPClientManager {
    *
    * `opts.interactive` (default `false`) must be `true` only for a
    * connect the user explicitly asked for — the "Authenticate"
-   * button (`reauthenticate`) or the code-paste fallback
-   * (`finishAuthAndRetry`). Every other caller (eager warmup,
+   * button (`reauthenticate`). Every other caller (eager warmup,
    * on-demand tool-call connects, the `?connect=` listing param)
    * leaves it `false`, which tells `openConnection` never to trigger
    * the SDK's Dynamic Client Registration / browser-redirect flow —
    * see the comment there.
+   *
+   * `opts.force` (default `false`) bypasses the F7 backoff for a
+   * user-initiated reconnect. An implicit connect for a server whose
+   * `nextRetryAt` is still in the future resolves the cached handle
+   * WITHOUT dialling — see the silent-skip comment below.
    */
-  connect(serverName: string, opts: { interactive?: boolean } = {}): Promise<MCPClientHandle> {
+  connect(
+    serverName: string,
+    opts: { interactive?: boolean; force?: boolean } = {}
+  ): Promise<MCPClientHandle> {
     const interactive = opts.interactive ?? false;
+    const force = opts.force ?? false;
     // Already connected? Return the cached handle.
     const existing = this.handles.get(serverName);
     if (existing && existing.status === 'connected') {
@@ -267,6 +320,36 @@ class MCPClientManager {
     const inFlight = this.inFlight.get(serverName);
     if (inFlight) return inFlight;
 
+    // FIX 1: an `auth_required` handle owns a live background OAuth flow whose
+    // loopback listener is tied to this connect's AbortController. An implicit
+    // connect (connectAllEnabled on every chat turn, `?eager=1`, a reload) must
+    // neither tear it down — which would abort the listener, wipe the PKCE
+    // verifier and make the user's already-open consent page redirect to a dead
+    // port — nor re-dial it. Only the user's Authenticate action (`interactive`,
+    // or `force` for an explicit retry) may restart the flow. Resolve the cached
+    // handle silently: no spawn, no placeholder, no event. The F7 backoff skip
+    // below still covers `error` and `disconnected` handles.
+    if (!force && !interactive && existing?.status === 'auth_required') {
+      return Promise.resolve(existing);
+    }
+
+    // F7: silent backoff skip. An implicit connect (not forced, not
+    // interactive) for a server that recently failed resolves the cached
+    // handle WITHOUT spawning, WITHOUT creating a placeholder and WITHOUT
+    // emitting any event. The silence is the whole point: emitting here would
+    // push an SSE frame, the MCP tab would refetch, and the refetch would call
+    // `connect()` again — the connect → SSE → refetch loop. A forced connect
+    // (the "Connect" button) or an interactive one (auth) always dials, so the
+    // user can retry immediately.
+    if (
+      !force &&
+      !interactive &&
+      existing?.nextRetryAt !== undefined &&
+      Date.now() < existing.nextRetryAt
+    ) {
+      return Promise.resolve(existing);
+    }
+
     const config = this.rootConfig.mcpServers[serverName];
     if (!config) {
       return Promise.reject(
@@ -279,7 +362,16 @@ class MCPClientManager {
       );
     }
 
-    const promise = this.openConnection(serverName, config, interactive);
+    // F5: a stale `error` / `disconnected` / `auth_required` handle may still
+    // own a live client + child (a non-fatal `onerror` does not stop the SDK).
+    // Tear it down before dialling, inside the shared in-flight promise so
+    // concurrent callers coalesce and `disconnect()` sees the stale entry gone.
+    const promise = this.replaceStaleHandleThenConnect(
+      existing,
+      serverName,
+      config,
+      interactive || force
+    );
     this.inFlight.set(serverName, promise);
     // Clean up the in-flight map once settled (success OR failure)
     // so future calls either reuse the cached handle or start a
@@ -294,6 +386,29 @@ class MCPClientManager {
   }
 
   /**
+   * F5: replace a stale handle with a fresh connection. When a handle exists it
+   * is removed from the map FIRST (so a late `onclose` from the dying client
+   * cannot clobber the placeholder we are about to install) and torn down via
+   * the shared `teardownHandle`, then `openConnection` dials anew.
+   *
+   * The prior failure count is threaded through so the fresh failure (if this
+   * attempt also fails) continues the F7 backoff sequence.
+   */
+  private async replaceStaleHandleThenConnect(
+    existing: MCPClientHandle | undefined,
+    serverName: string,
+    config: MCPServerConfig,
+    interactive: boolean
+  ): Promise<MCPClientHandle> {
+    const previousFailureCount = existing?.failureCount ?? 0;
+    if (existing !== undefined) {
+      this.handles.delete(serverName);
+      await this.teardownHandle(serverName, existing);
+    }
+    return this.openConnection(serverName, config, interactive, previousFailureCount);
+  }
+
+  /**
    * Internal: perform the actual connect. Creates the transport,
    * the client, and the AbortController that `disconnect()` will
    * signal on. The connecting placeholder is stored in
@@ -302,7 +417,8 @@ class MCPClientManager {
   private async openConnection(
     serverName: string,
     config: MCPServerConfig,
-    interactive: boolean
+    interactive: boolean,
+    previousFailureCount = 0
   ): Promise<MCPClientHandle> {
     // Phase 3.5 / gate against unattended OAuth: a live OAuth
     // provider is only attached when either (a) this connect was
@@ -330,10 +446,33 @@ class MCPClientManager {
     }
     const shouldAttachOAuthProvider =
       config.transport.type !== 'stdio' && (interactive || hasCachedToken);
+    // F9: create the per-connect AbortController BEFORE building the OAuth
+    // provider, so the background loopback listener it starts can be tied to
+    // this connect's lifetime and aborted by `teardownHandle` / `disconnect`.
+    // (This used to be declared further down — now a single declaration.)
+    const abortController = new AbortController();
+    // FIX 4: register this handshake's controller immediately so a concurrent
+    // `disconnect()` can cancel it even before the connecting placeholder
+    // reaches the `handles` map (the stale-replace window).
+    this.connectControllers.set(serverName, abortController);
     // The provider is async because it allocates a loopback port
     // for the OAuth callback.
     const provider = shouldAttachOAuthProvider
-      ? await buildOAuthProvider(config, { interactive })
+      ? await buildOAuthProvider(config, {
+          interactive,
+          flow: {
+            // The listener outlives the HTTP request that started the flow (F9).
+            // `onCode` runs the token exchange + reconnect in the background;
+            // `onFailure` only annotates a handle still awaiting auth.
+            signal: abortController.signal,
+            onCode: (code) => {
+              void this.completeAuthorization(serverName, code);
+            },
+            onFailure: (message) => {
+              this.markAuthorizationFlowFailed(serverName, message);
+            },
+          },
+        })
       : undefined;
     // Phase 2: build the SDK transport from the config. The transport
     // is built BEFORE the client so a malformed URL or invalid header
@@ -346,6 +485,13 @@ class MCPClientManager {
     // a no-op for servers that don't support live tool updates. When
     // a notification arrives, the SDK re-fetches the tool list and
     // hands us the new array via `onChanged`.
+    // F12: identity holder for THIS connect attempt. The callbacks below
+    // resolve their target through it rather than through
+    // `this.handles.get(serverName)` alone, so a late callback from a client
+    // that has since been REPLACED cannot clobber the healthy new handle.
+    // Assigned at each handle creation (placeholder, connected, failed).
+    const liveHandle: { current: MCPClientHandle | undefined } = { current: undefined };
+
     const onToolsChanged = (err: Error | null, items: unknown): void => {
       if (err) {
         console.error(`[mcp:${serverName}] tools/list_changed failed: ${err.message}`);
@@ -357,7 +503,9 @@ class MCPClientManager {
       // patch the live handle so the next chat request sees the new
       // tool list immediately.
       const handle = this.handles.get(serverName);
-      if (!handle || handle.status !== 'connected') return;
+      // F12: a late refresh from a replaced client must not patch the new handle.
+      if (!handle || handle !== liveHandle.current) return;
+      if (handle.status !== 'connected') return;
       const newTools: MCPToolInfo[] = Array.isArray(items)
         ? items
             .map((t) => {
@@ -397,12 +545,12 @@ class MCPClientManager {
       }
     );
 
-    // Per-connect AbortController — signalled by `disconnect()` so the
-    // SDK tears down the JSON-RPC request in flight. This is the
-    // cleanest way to make `reloadMCP()` (or any in-flight abort) kill
-    // a child that has already been spawned and is currently waiting
-    // on `listTools()` / `callTool()`.
-    const abortController = new AbortController();
+    // NOTE: the per-connect AbortController is created ABOVE, before the OAuth
+    // provider is built (F9), so the background loopback listener it starts
+    // shares this connect's lifetime. It is signalled by `disconnect()` /
+    // `teardownHandle` to unwind any in-flight JSON-RPC request — the cleanest
+    // way to make `reloadMCP()` (or any in-flight abort) kill a child that has
+    // already spawned and is waiting on `listTools()` / `callTool()`.
 
     // The MCP SDK `Client` exposes only `onerror`/`onclose` property
     // callbacks (see `@modelcontextprotocol/sdk/shared/protocol`), not
@@ -410,24 +558,32 @@ class MCPClientManager {
     // eslint-disable-next-line unicorn/prefer-add-event-listener
     client.onerror = (err) => {
       const description = describeError(err);
-      const handle = this.handles.get(serverName);
-      if (handle) {
-        handle.status = 'error';
-        handle.lastError = description;
-      }
       // Route server-side stderr-ish errors to the locopilot stderr
       // so they show up in the dev-server log without crashing anything.
       console.error(`[mcp:${serverName}] client error: ${description}`);
-      emitMCPEvent({ kind: 'state', serverName });
+      // F12: ignore a late error from a client that has already been replaced.
+      const handle = this.handles.get(serverName);
+      if (!handle || handle !== liveHandle.current) return;
+      handle.status = 'error';
+      handle.lastError = description;
+      emitMCPEvent({
+        kind: 'state',
+        serverName,
+        status: handle.status,
+        lastError: handle.lastError,
+      });
     };
 
     // eslint-disable-next-line unicorn/prefer-add-event-listener
     client.onclose = () => {
+      // F12: a late close from a replaced client must not downgrade the new
+      // handle; and an `error` handle is the more specific state, so never
+      // overwrite it with `disconnected`.
       const handle = this.handles.get(serverName);
-      if (handle && handle.status !== 'error') {
-        handle.status = 'disconnected';
-      }
-      emitMCPEvent({ kind: 'state', serverName });
+      if (!handle || handle !== liveHandle.current) return;
+      if (handle.status === 'error') return;
+      handle.status = 'disconnected';
+      emitMCPEvent({ kind: 'state', serverName, status: handle.status });
     };
 
     // Install the connecting placeholder so `disconnect()` /
@@ -474,9 +630,12 @@ class MCPClientManager {
     // that mutates during the connecting phase, we keep a single
     // union type here for type safety.
     this.handles.set(serverName, placeholder as unknown as MCPClientHandle);
+    // F12: this placeholder is the handle the callbacks should target until it
+    // is replaced by the connected (or failed) handle.
+    liveHandle.current = placeholder as unknown as MCPClientHandle;
     // Notify the SSE channel that a 'connecting' placeholder now
     // exists so the UI can show the "Connecting..." pill.
-    emitMCPEvent({ kind: 'state', serverName });
+    emitMCPEvent({ kind: 'state', serverName, status: 'connecting' });
 
     // Pass the AbortSignal into client.connect() so the SDK
     // tears down the handshake cleanly if the user aborts /
@@ -512,8 +671,10 @@ class MCPClientManager {
       // DO NOT close the transport here — `finishAuthAndRetry`
       // will need it to perform the token exchange. Closing
       // it would make the retry path unreachable.
-      const isAuthRequired =
-        err instanceof UnauthorizedError || extractHttpStatusCode(err) === 401;
+      const isAuthRequired = err instanceof UnauthorizedError || extractHttpStatusCode(err) === 401;
+      // F7: continue the backoff sequence from the handle this connect is
+      // replacing (0 for a first-ever attempt).
+      const failureCount = previousFailureCount + 1;
       const failed: MCPClientHandle = {
         name: serverName,
         config,
@@ -534,35 +695,42 @@ class MCPClientManager {
         lastError: isAuthRequired
           ? `OAuth required: open the chat or click "Authenticate" in the MCP panel to grant access. (Underlying SDK error: ${message}. If the URL was printed but no callback arrived, the flow timed out after 5 minutes \u2014 re-run /mcp auth <server> to try again.)`
           : message,
+        // F5: retain the transport + controller so teardown can reach them —
+        // aborting the background OAuth listener (F9), terminating the HTTP
+        // session (F22) and tree-killing the stdio child (F6).
+        transport,
+        abortController,
+        // F7: record the failure so an implicit retry backs off.
+        failureCount,
+        nextRetryAt: computeNextRetryAt(failureCount),
       };
-      // failed handle so `finishAuthAndRetry` can call
-      // `transport.finishAuth(code)`. For other failures
-      // we drop the transport reference so any future
-      // `disconnect` knows there's nothing extra to close.
-      if (isAuthRequired) {
-        (failed as unknown as { transport: typeof transport }).transport = transport;
-      } else {
-        // Non-auth failures: tear down the child if the
-        // SDK didn't already (the AbortSignal should have
-        // done this, but be defensive).
-        try {
-          await transport.close();
-        } catch {
-          /* ignore */
-        }
+      if (!isAuthRequired) {
+        // Non-auth failures: reap the client/child now. The AbortSignal usually
+        // already tore it down, but be defensive — and route it through
+        // `teardownHandle` so the stdio GRANDCHILD is tree-killed (F6) even
+        // when the direct `cmd.exe` child is already gone.
+        await this.teardownHandle(serverName, failed);
       }
       // Only overwrite the placeholder with a failed handle if
       // nobody else has already replaced it (e.g. disconnect()
       // ran and cleared the entry).
       if (this.handles.get(serverName) === (placeholder as unknown as MCPClientHandle)) {
         this.handles.set(serverName, failed);
+        // F12: retarget the callbacks at the failed handle.
+        liveHandle.current = failed;
       }
       // Always emit a state change so the UI reflects the
       // new pill. For auth_required we ALSO emit the
       // dedicated event with the auth URL hint; the
       // regular `state` event keeps the existing UI in
-      // sync without a special case.
-      emitMCPEvent({ kind: 'state', serverName });
+      // sync without a special case. F7: the post-transition
+      // status/`lastError` let the bus drop a repeat frame.
+      emitMCPEvent({
+        kind: 'state',
+        serverName,
+        status: failed.status,
+        lastError: failed.lastError,
+      });
       if (isAuthRequired) {
         emitMCPEvent({ kind: 'auth-required', serverName });
       }
@@ -581,8 +749,18 @@ class MCPClientManager {
       throw new MCPConnectionError(message, serverName);
     };
 
+    // F11: resolve the per-server request timeout ONCE (the config's
+    // `timeoutSeconds`, default 60s) so it applies to BOTH the `initialize`
+    // handshake and the `tools/list` call. Previously neither passed a
+    // `timeout`, so the SDK's hard 60s default applied even when the config
+    // said `timeoutSeconds: 5`.
+    const requestTimeoutMs = this.getTimeoutMs(serverName);
+
     try {
-      await client.connect(transport as unknown as Transport, { signal: abortController.signal });
+      await client.connect(transport as unknown as Transport, {
+        signal: abortController.signal,
+        timeout: requestTimeoutMs,
+      });
 
       if (abortController.signal.aborted) {
         // disconnect() won the race — close everything and bail.
@@ -602,7 +780,10 @@ class MCPClientManager {
         );
       }
 
-      const listResult = await client.listTools(undefined, { signal: abortController.signal });
+      const listResult = await client.listTools(undefined, {
+        signal: abortController.signal,
+        timeout: requestTimeoutMs,
+      });
       const tools: MCPToolInfo[] = listResult.tools.map((t) => ({
         name: t.name,
         description: t.description,
@@ -619,10 +800,21 @@ class MCPClientManager {
         status: 'connected',
         tools,
         lastConnectedAt: Date.now(),
+        // F5: retain the transport + controller so `teardownHandle` can close
+        // the client, terminate the HTTP session (F22) and tree-kill the stdio
+        // child (F6). The connected handle used to drop them, so the
+        // stale-handle and non-fatal-error paths could never reach the child.
+        transport,
+        abortController,
+        // F7: a successful connect clears the backoff.
+        failureCount: 0,
+        nextRetryAt: undefined,
       };
       this.handles.set(serverName, handle);
+      // F12: retarget the callbacks at the connected handle.
+      liveHandle.current = handle;
       placeholder.setHandle(handle);
-      emitMCPEvent({ kind: 'state', serverName });
+      emitMCPEvent({ kind: 'state', serverName, status: handle.status });
       return handle;
     } catch (err) {
       if (err instanceof MCPConnectionError) {
@@ -631,6 +823,19 @@ class MCPClientManager {
         // itself) — rethrow as-is rather than re-running the 401
         // classification or closing the transport a second time.
         throw err;
+      }
+      // FIX 3: the signal was aborted by `teardownHandle` (F5 stale-replace)
+      // or by `disconnect()`. Both paths have already removed the handle and
+      // emitted `disconnected`, so surfacing the SDK's abort rejection as a
+      // second `error` state would flash a bogus Error pill for a server the
+      // user just disconnected and re-trigger the very SSE refetch churn F7
+      // exists to remove. Report the cancellation without re-running
+      // `teardownHandle` and without emitting any event.
+      if (abortController.signal.aborted) {
+        throw new MCPConnectionError(
+          `MCP server "${serverName}" connection was cancelled`,
+          serverName
+        );
       }
       return handleConnectionFailure(err);
     }
@@ -651,15 +856,119 @@ class MCPClientManager {
   }
 
   /**
+   * Test-only: wipe all live handles and in-flight connects and reset the
+   * in-memory root config. Does NOT close live clients — tests use this to
+   * isolate cases between runs; `closeAll()` is the production teardown path.
+   */
+  __resetForTests(): void {
+    this.handles.clear();
+    this.inFlight.clear();
+    this.connectControllers.clear();
+    this.rootConfig = { mcpServers: {} };
+  }
+
+  /**
+   * F5: tear down one handle's client + transport exactly once. Shared by
+   * `connect()`'s stale-handle path (`replaceStaleHandleThenConnect`) and
+   * `disconnect()`.
+   *
+   * Order matters:
+   *  1. Detach the callbacks FIRST — no-op functions, NOT `undefined` (the SDK
+   *     would invoke them on close, and `exactOptionalPropertyTypes` forbids
+   *     assigning `undefined` to `onerror?: ...`). This stops a late `onclose`
+   *     from a dying client mutating the handle `connect()` is about to install.
+   *  2. Abort the controller so any in-flight JSON-RPC call (and the background
+   *     OAuth loopback listener) unwinds.
+   *  3. `terminateSession()` BEFORE `transport.close()` (F22): the HTTP DELETE
+   *     needs the live `mcp-session-id`. A 405 ("server does not support
+   *     session termination") is spec-legal and must not throw — we log and
+   *     swallow every failure.
+   *  4. Tree-kill the stdio child BEFORE `transport.close()` (F6): the SDK
+   *     clears its `_process` handle on close, so `get pid()` returns null
+   *     afterwards and the parent-pid chain taskkill needs is gone.
+   *  5. Close the transport, then the client (each isolated).
+   */
+  private async teardownHandle(serverName: string, handle: MCPClientHandle): Promise<void> {
+    const client = handle.client;
+    const transport = handle.transport;
+
+    // FIX 4: if this teardown owns the registered in-flight connect controller,
+    // drop it now — the handshake it guarded is being torn down.
+    const ownsConnectController =
+      handle.abortController !== undefined &&
+      this.connectControllers.get(serverName) === handle.abortController;
+    if (ownsConnectController) {
+      this.connectControllers.delete(serverName);
+    }
+
+    // 1. Detach callbacks FIRST so nothing re-enters while we tear down.
+    if (client) {
+      // eslint-disable-next-line unicorn/prefer-add-event-listener
+      client.onerror = () => {
+        /* detached during teardown */
+      };
+      // eslint-disable-next-line unicorn/prefer-add-event-listener
+      client.onclose = () => {
+        /* detached during teardown */
+      };
+    }
+
+    // 2. Abort any in-flight work tied to this handle.
+    handle.abortController?.abort();
+
+    // 3. Terminate the streamable-HTTP session (duck-typed: only that
+    //    transport has `terminateSession`), errors logged + swallowed.
+    if (transport) {
+      const terminate = (transport as { terminateSession?: () => Promise<void> }).terminateSession;
+      if (typeof terminate === 'function') {
+        try {
+          await terminate.call(transport);
+        } catch (err) {
+          console.error(`[mcp:${serverName}] terminateSession failed: ${describeError(err)}`);
+        }
+      }
+    }
+
+    // 4. Tree-kill the stdio child (and its grandchild) before the SDK drops
+    //    the pid. `killProcessTreeByPid` is a no-op for a non-integer pid.
+    const childPid = (transport as { pid?: number | null } | undefined)?.pid;
+    if (typeof childPid === 'number') {
+      killProcessTreeByPid(childPid);
+    }
+
+    // 5. Close transport then client.
+    if (transport) {
+      try {
+        await transport.close();
+      } catch (err) {
+        console.error(`[mcp:${serverName}] error closing transport: ${describeError(err)}`);
+      }
+    }
+    if (client) {
+      try {
+        await client.close();
+      } catch (err) {
+        console.error(`[mcp:${serverName}] error closing client: ${describeError(err)}`);
+      }
+    }
+
+    // FIX 4: ensure the registered controller for the handshake we just tore
+    // down is gone by the end of teardown (it may have been re-added while we
+    // awaited the transport/client close).
+    if (ownsConnectController) {
+      this.connectControllers.delete(serverName);
+    }
+  }
+
+  /**
    * Disconnect and remove a single server. Idempotent. Safe to call
    * while a connect is in flight: we abort the in-flight connect
-   * and await its settlement before closing the transport, so the
+   * and await its settlement before tearing the handle down, so the
    * child process is always reaped exactly once.
    */
   async disconnect(serverName: string): Promise<void> {
     // 1. Capture the in-flight promise (if any) so we can await it
-    //    inside the try/finally and guarantee the transport gets
-    //    closed even if the connect resolves concurrently.
+    //    and guarantee teardown happens after the connect settles.
     const inFlight = this.inFlight.get(serverName);
 
     // 2. Look up the current handle. It may be a connecting
@@ -668,16 +977,34 @@ class MCPClientManager {
     if (!handle && !inFlight) return;
     this.handles.delete(serverName);
     // After delete() the map has no entry for this name; the SSE
-    // consumer will re-render and see the server as removed.
-    emitMCPEvent({ kind: 'state', serverName });
+    // consumer will re-render and see the server as removed. F7: report the
+    // post-transition status so the bus can dedupe.
+    emitMCPEvent({ kind: 'state', serverName, status: 'disconnected' });
 
-    // 3. Signal the AbortController so any in-flight SDK call
-    //    (handshake or listTools) rejects cleanly. Do this BEFORE
-    //    closing the transport so the SDK has a chance to unwind.
-    if (handle && handle.status === 'connecting') {
-      const placeholder = handle as unknown as ConnectingHandle;
+    // 3. Signal the AbortController BEFORE awaiting the in-flight connect
+    //    (F9). A `connecting` handshake owns a controller to unwind the
+    //    handshake; an `auth_required` handle owns one to stop the background
+    //    OAuth loopback listener. This MUST precede `await inFlight`.
+    if (
+      handle !== undefined &&
+      (handle.status === 'connecting' || handle.status === 'auth_required')
+    ) {
       try {
-        placeholder.abortController.abort();
+        handle.abortController?.abort();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // 3b. FIX 4: also abort the controller registered for an in-flight connect
+    // that has no handle in the map yet (the stale-replace window: `connect()`
+    // deleted the old handle and is awaiting teardown before installing the
+    // placeholder). Without this, `disconnect()` would await the handshake for
+    // up to the full request timeout instead of cancelling it promptly.
+    const connectController = this.connectControllers.get(serverName);
+    if (connectController !== undefined && !connectController.signal.aborted) {
+      try {
+        connectController.abort();
       } catch {
         /* ignore */
       }
@@ -694,29 +1021,17 @@ class MCPClientManager {
       }
     }
 
-    // 5. Close the transport and client. Re-read the handle from
-    //    the map because the connect task may have replaced it
-    //    with a fully-connected entry before our abort landed.
+    // 5. Re-read the map: the connect task may have replaced the entry with a
+    //    fully-connected (or failed) handle before our abort landed. Tear down
+    //    exactly one — and drop it from the map if the connect re-populated it
+    //    after our delete, so `get()` never reports a dead client.
     const latest = this.handles.get(serverName);
-    const transport =
-      (latest && (latest as unknown as ConnectingHandle).transport) ||
-      (handle && (handle as unknown as ConnectingHandle).transport);
-    try {
-      if (transport) {
-        await transport.close();
-      }
-    } catch (err) {
-      console.error(`[mcp:${serverName}] error closing transport: ${(err as Error).message}`);
+    const toTeardown = latest ?? handle;
+    if (toTeardown === undefined) return;
+    if (latest !== undefined && this.handles.get(serverName) === latest) {
+      this.handles.delete(serverName);
     }
-    try {
-      if (latest && latest.client) {
-        await latest.client.close();
-      } else if (handle && handle.status !== 'connecting' && handle.client) {
-        await handle.client.close();
-      }
-    } catch (err) {
-      console.error(`[mcp:${serverName}] error closing client: ${(err as Error).message}`);
-    }
+    await this.teardownHandle(serverName, toTeardown);
   }
 
   /**
@@ -729,43 +1044,29 @@ class MCPClientManager {
   }
 
   /**
-   * Phase 3.5: re-authenticate a server with OAuth 2.1 + PKCE.
+   * Phase 3.5 / F9: re-authenticate a server with OAuth 2.1 + PKCE.
    *
-   * The flow:
-   *   1) Wipe the saved token / client-info state for the server
-   *      so the SDK starts from a clean slate.
-   *   2) Tear down any existing handle (with the AbortSignal
-   *      synchronisation handled inside `disconnect`).
-   *   3) If a code is already pending in the loopback-listener
-   *      global stash (i.e. the user has just completed the
-   *      consent flow and the browser has hit the loopback
-   *      listener while the prior `redirectToAuthorization`
-   *      call was still resolving), consume it and call
-   *      `transport.finishAuth(code)` to perform the token
-   *      exchange. Otherwise drop into step 4.
-   *   4) Call `connect()` again. The SDK will see no tokens,
-   *      build an authorization URL, call our provider's
-   *      `redirectToAuthorization` (which prints the URL and
-   *      starts the loopback listener), and throw
-   *      `UnauthorizedError`. The catch in `openConnection`
-   *      flips the handle to `auth_required` and emits the
-   *      `auth-required` event.
+   * NON-BLOCKING as of F9. The flow:
+   *   1) Wipe the saved token / client-info state for the server so the SDK
+   *      starts from a clean slate.
+   *   2) Tear down any existing handle (aborting any in-flight connect and the
+   *      previous background OAuth listener).
+   *   3) Call `connect({ interactive: true })`. The SDK builds an authorization
+   *      URL, calls our provider's `redirectToAuthorization` (which prints the
+   *      URL, emits `auth-required` and starts the loopback listener in the
+   *      BACKGROUND), then throws `UnauthorizedError`. `openConnection` maps
+   *      that to `auth_required`.
+   *   4) Return the peeked authorization URL (if known) instead of blocking for
+   *      up to 5 minutes. The background listener owns completion: when the
+   *      browser hits it, `OAuthFlowHooks.onCode` calls `completeAuthorization`,
+   *      which runs `finishAuthAndRetry`.
    *
-   * Bug #12 fix: `disconnect()` is called first so any
-   * in-flight connect (e.g. a chat request that triggered
-   * the auth flow) is settled before we start a new one. The
-   * shared `inFlight` promise is cleared inside `disconnect`
-   * so the next `connect()` doesn't reuse it.
+   * We deliberately do NOT consume a pending authorization code here any more:
+   * doing so could steal a code from a live background flow.
    *
-   * Bug #4 fix: errors from `connect()` that are NOT
-   * `auth_required` (e.g. server crashed mid-handshake) are
-   * recorded on the handle's `lastError` and a `state` event
-   * is emitted, so the UI sees the real reason instead of
-   * the misleading "needs auth" pill.
-   *
-   * Bug #15 fix: the error message in the catch now points
-   * the user at the dev-server log (where the auth URL was
-   * printed) and the `/mcp auth <server>` retry path.
+   * Bug #4 fix: a non-`auth_required` failure (bad URL, TLS error, crash) is
+   * recorded on the handle's `lastError` with a `state` event so the UI sees
+   * the real reason instead of a misleading "needs auth" pill.
    */
   async reauthenticate(serverName: string): Promise<{ authUrl?: string | undefined }> {
     const config = this.rootConfig.mcpServers[serverName];
@@ -775,8 +1076,7 @@ class MCPClientManager {
     if (config.oauth === undefined) {
       // No explicit "oauth" block — `buildOAuthProvider` falls
       // back to an empty one so DCR + auth still works. This call
-      // is always `interactive: true` (see `connect()` below), so
-      // it's safe to let it drive DCR here.
+      // is always `interactive: true`, so it's safe to let it drive DCR here.
       console.warn(
         `[mcp-oauth:${serverName}] No explicit "oauth" block in mcp.json — ` +
           `using an empty OAuth config for DCR on this authenticate attempt. ` +
@@ -784,66 +1084,86 @@ class MCPClientManager {
           `to the server's config.`
       );
     }
-    // Check for a code already captured by the loopback
-    // listener (from a prior `redirectToAuthorization`
-    // call). If present, do the token exchange against the
-    // current transport (still alive in the failed
-    // `auth_required` handle) and reconnect.
-    const pendingCode = consumeAuthorizationCode(serverName);
-    if (pendingCode !== undefined) {
-      const result = await this.finishAuthAndRetry(serverName, pendingCode);
-      if (result.ok && result.connected) {
-        return {};
-      }
-      // Token exchange failed — fall through to the
-      // fresh-flow path below so the user can retry.
-      // (We don't clear the handle here; the next
-      // `connect()` will overwrite it.)
-    }
     // Drop any cached state so the SDK starts from scratch.
     await clearOAuthState(serverName);
-    // Tear down any existing handle. `disconnect` is
-    // idempotent so this is safe even when nothing is
-    // open. Bug #12: this also awaits any in-flight
+    // Tear down any existing handle (idempotent) and await any in-flight
     // connect from a parallel caller.
     await this.disconnect(serverName);
-    // The next `connect()` will throw on the SDK's 401; we
-    // catch and branch on the actual cause. `interactive: true`
-    // is what actually allows the SDK to print the auth URL,
-    // launch the browser, and start the loopback listener — see
-    // `openConnection` and `LocopilotOAuthProvider.redirectToAuthorization`.
+    // F9: `interactive: true` is what lets `redirectToAuthorization` launch the
+    // browser and start the loopback listener. Because that now returns
+    // immediately, `connect()` rejects with `auth_required` instead of blocking.
     try {
       await this.connect(serverName, { interactive: true });
     } catch (err) {
-      const isAuthRequired =
+      if (
         err instanceof MCPConnectionError &&
-        this.handles.get(serverName)?.status === 'auth_required';
-      if (isAuthRequired) {
-        // Expected for the first handshake; the handle
-        // is now in `auth_required` and the URL has
-        // been printed / emitted. The chat UI can
-        // render the click-to-authenticate button.
-        return {};
+        this.handles.get(serverName)?.status === 'auth_required'
+      ) {
+        // Expected for the first handshake: the background listener owns
+        // completion, so hand the UI the URL we stashed for it.
+        return { authUrl: peekAuthorizationUrl(serverName) };
       }
-      // Bug #4: a non-auth failure (e.g. server crashed,
-      // bad URL, TLS error) was silently being collapsed
-      // into a misleading "needs auth" pill. Update the
-      // handle's `lastError` with the actual cause and
-      // re-emit a `state` event so the UI shows the
-      // truthful error.
+      // Bug #4: a non-auth failure was silently being collapsed into a
+      // misleading "needs auth" pill. Record the actual cause and re-emit a
+      // `state` event so the UI shows the truthful error.
       const message = describeError(err);
       const handle = this.handles.get(serverName);
       if (handle !== undefined) {
         handle.lastError = `OAuth flow did not complete. Check the dev-server log for the auth URL and complete the flow in your browser. If the URL doesn't appear, run /mcp auth ${serverName} again. (Underlying error: ${message})`;
         handle.status = 'error';
-        emitMCPEvent({ kind: 'state', serverName });
+        emitMCPEvent({
+          kind: 'state',
+          serverName,
+          status: handle.status,
+          lastError: handle.lastError,
+        });
       }
       return {};
     }
-    // Connected (likely the user had a previous valid
-    // token cached that just needed a refresh). Nothing
-    // more to do.
+    // Connected (likely a previous valid token just needed a refresh).
     return {};
+  }
+
+  /**
+   * F9: the background OAuth loopback listener captured an authorization code.
+   * Run the SDK's token exchange and reconnect. Called from `OAuthFlowHooks`
+   * `onCode`, i.e. AFTER the HTTP request that started the flow has returned —
+   * so failures cannot be thrown to a caller; they are recorded on the handle
+   * and pushed out as a `state` event.
+   */
+  private async completeAuthorization(serverName: string, code: string): Promise<void> {
+    const result = await this.finishAuthAndRetry(serverName, code);
+    if (!result.ok) {
+      const handle = this.handles.get(serverName);
+      if (handle !== undefined) {
+        handle.status = 'error';
+        handle.lastError = `OAuth flow did not complete: ${result.reason ?? 'unknown error'}`;
+        emitMCPEvent({
+          kind: 'state',
+          serverName,
+          status: handle.status,
+          lastError: handle.lastError,
+        });
+      }
+    }
+  }
+
+  /**
+   * F9: the background OAuth loopback listener ended WITHOUT a code (timeout,
+   * abort, port busy, IdP error). Only annotate a handle still waiting for
+   * auth — a flow that has since been superseded (or a manual retry that has
+   * already connected) must not be clobbered.
+   */
+  private markAuthorizationFlowFailed(serverName: string, message: string): void {
+    const handle = this.handles.get(serverName);
+    if (handle === undefined || handle.status !== 'auth_required') return;
+    handle.lastError = `OAuth flow did not complete: ${message}`;
+    emitMCPEvent({
+      kind: 'state',
+      serverName,
+      status: handle.status,
+      lastError: handle.lastError,
+    });
   }
 
   /**
@@ -852,13 +1172,12 @@ class MCPClientManager {
    * transport.
    *
    * Called by:
-   * - The loopback HTTP listener (via the
-   *   `consumeAuthorizationCode` global stash) — when the
-   *   user completes the consent flow in their browser.
+   * - `completeAuthorization` (F9), which the background OAuth
+   *   loopback listener invokes through `OAuthFlowHooks.onCode`
+   *   when the user completes the consent flow in their browser.
    * - The `/api/mcp/auth` POST route — when the user pastes
    *   the code manually (serverless / port-collision
    *   fallback).
-   * - `reauthenticate`, when a code is already pending.
    *
    * Bug #16 fix: the SDK's `transport.finishAuth(code)` does
    * the token exchange (via `auth()` with `authorizationCode`
@@ -938,14 +1257,52 @@ class MCPClientManager {
   }
 }
 
-const manager = new MCPClientManager();
+/**
+ * F1: process-global manager state.
+ *
+ * Pinned on `globalThis` (like `mcp/events.ts` / `mcp/configWatcher.ts` /
+ * `mcp/oauthProvider.ts`) because Next.js dev-mode HMR re-evaluates this
+ * module on every edit. A module-level `const manager` created a NEW manager
+ * each edit, orphaning the previous one's live stdio children and re-registering
+ * the signal handlers on top of the old ones. `shutdownPromise` makes shutdown
+ * idempotent / re-entrant — concurrent SIGTERM + beforeExit (or a manual
+ * `shutdownMCP()` racing a signal) all await the SAME `closeAll()` instead of
+ * firing it twice.
+ */
+interface MCPClientManagerState {
+  manager: MCPClientManager;
+  shutdownRegistered: boolean;
+  shutdownPromise: Promise<void> | null;
+}
 
-let shutdownRegistered = false;
-function ensureShutdownHandlers(): void {
-  if (shutdownRegistered) return;
-  shutdownRegistered = true;
+const GLOBAL_KEY = '__mcpClientManager';
+
+function getManagerState(): MCPClientManagerState {
+  const g = globalThis as unknown as Record<string, unknown>;
+  let state = g[GLOBAL_KEY] as MCPClientManagerState | undefined;
+  if (!state) {
+    state = { manager: new MCPClientManager(), shutdownRegistered: false, shutdownPromise: null };
+    g[GLOBAL_KEY] = state;
+  }
+  return state;
+}
+
+/**
+ * Idempotent, re-entrant shutdown: the first caller starts `closeAll()` and
+ * every later caller awaits that same promise.
+ */
+function shutdownClientManager(state: MCPClientManagerState): Promise<void> {
+  state.shutdownPromise ??= state.manager.closeAll().catch((err: unknown) => {
+    console.error(`[mcp] shutdown closeAll failed: ${describeError(err)}`);
+  });
+  return state.shutdownPromise;
+}
+
+function ensureShutdownHandlers(state: MCPClientManagerState): void {
+  if (state.shutdownRegistered) return;
+  state.shutdownRegistered = true;
   const handler = (): void => {
-    void manager.closeAll();
+    void shutdownClientManager(state);
   };
   process.once('SIGTERM', handler);
   process.once('SIGINT', handler);
@@ -953,12 +1310,15 @@ function ensureShutdownHandlers(): void {
 }
 
 /**
- * Public accessor for the module-level singleton. Tests can call
+ * Public accessor for the process-global singleton. Pinned on `globalThis` so
+ * Next.js dev-mode HMR reuses the SAME manager instead of orphaning live
+ * children and stacking duplicate signal handlers (F1). Tests can call
  * `getClientManager().__resetForTests()` to wipe state.
  */
 export function getClientManager(): MCPClientManager {
-  ensureShutdownHandlers();
-  return manager;
+  const state = getManagerState();
+  ensureShutdownHandlers(state);
+  return state.manager;
 }
 
 export type { MCPClientManager };

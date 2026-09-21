@@ -411,7 +411,7 @@ export function useSlashCommands({
             } | null = null;
             let errorMessage: string | null = null;
 
-             while (true) {
+            while (true) {
               const { done, value } = await reader.read();
               if (done) break;
               const event = value.event || 'message';
@@ -505,7 +505,7 @@ export function useSlashCommands({
                 // Ignore — the stream may already be closed.
               }
             }
-             if (abortControllersRef.current.get(COMPACTION_ABORT_KEY) === abortController) {
+            if (abortControllersRef.current.get(COMPACTION_ABORT_KEY) === abortController) {
               abortControllersRef.current.delete(COMPACTION_ABORT_KEY);
             }
             isCompactingRef.current = false;
@@ -517,7 +517,8 @@ export function useSlashCommands({
               tps: null,
               ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
             });
-          }          return;
+          }
+          return;
         }
 
         case 'title': {
@@ -714,6 +715,7 @@ export function useSlashCommands({
                 ok?: boolean;
                 error?: string;
                 connected?: boolean;
+                authUrl?: string;
               };
               if (!response.ok || data.ok !== true) {
                 throw new Error(data.error ?? `HTTP ${response.status}`);
@@ -721,10 +723,14 @@ export function useSlashCommands({
               if (data.connected === true) {
                 addSystem(`✅ MCP server "${target}" authenticated and connected.`);
               } else {
+                // F9: the auth flow now runs in the background and the route
+                // returns the authorization URL, so show it inline instead of
+                // sending the user hunting through the dev-server stderr.
+                const authUrlLine = data.authUrl
+                  ? `Open this URL to approve access:\n${data.authUrl}\n`
+                  : '';
                 addSystem(
-                  `🔐 MCP server "${target}" requires authorization.\n` +
-                    `Open the URL printed in the locopilot dev-server stderr in your browser, then come back here. The connection will retry automatically once you approve.\n` +
-                    `(You can also paste the captured "code" parameter back via: /mcp auth-code)`
+                  `🔐 MCP server "${target}" requires authorization.\n${authUrlLine}The connection will retry automatically once you approve.`
                 );
               }
             } catch (err) {
@@ -739,7 +745,10 @@ export function useSlashCommands({
             return;
           }
           try {
-            const response = await fetch('/api/mcp', { method: 'GET' });
+            // F7: eager connect is now opt-in server-side, so the
+            // discovery path must ask for it explicitly — otherwise a fresh
+            // process would render every server with an empty tool list.
+            const response = await fetch('/api/mcp?eager=1', { method: 'GET' });
             if (!response.ok) {
               throw new Error(await readErrorMessage(response));
             }

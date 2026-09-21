@@ -64,10 +64,28 @@ export const DANGEROUS_ENV_KEYS: ReadonlySet<string> = new Set([
   'PERL5LIB',
 ]);
 
-export function isDangerousEnvKey(key: string): boolean {
-  if (DANGEROUS_ENV_KEYS.has(key)) return true;
+/**
+ * Returns `true` when `key` names an environment variable that must never
+ * be overridden via `mcp.json`.
+ *
+ * F15: the comparison is case-insensitive on Windows. Windows env var
+ * names are case-insensitive, so `env: {"Path": "C:\\evil"}` used to
+ * bypass the `PATH` guard and get merged over the SDK's inherited PATH.
+ * We upper-case the candidate on win32 so `Path`/`path` hit the same
+ * guard as `PATH`. On POSIX names are case-sensitive, so `Path` there is
+ * a distinct, harmless variable and stays allowed.
+ *
+ * The optional `platform` parameter exists purely so a test can exercise
+ * both branches without mutating `process.platform`.
+ */
+export function isDangerousEnvKey(
+  key: string,
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  const candidate = platform === 'win32' ? key.toUpperCase() : key;
+  if (DANGEROUS_ENV_KEYS.has(candidate)) return true;
   // bash function exports are exposed as `BASH_FUNC_name%%`. We refuse
   // the whole namespace rather than try to enumerate every name.
-  if (key.startsWith('BASH_FUNC_') && key.endsWith('%%')) return true;
+  if (candidate.startsWith('BASH_FUNC_') && candidate.endsWith('%%')) return true;
   return false;
 }

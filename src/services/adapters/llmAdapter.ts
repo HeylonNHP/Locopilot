@@ -58,6 +58,10 @@ export interface ToolDefinition {
       type: 'object';
       properties: Record<string, unknown>;
       required?: string[];
+      // F3: MCP tool schemas are handed to the model verbatim, so every
+      // extra JSON-Schema keyword the server sent ($defs, definitions,
+      // $ref, additionalProperties, $schema, title, …) must survive here.
+      [schemaKeyword: string]: unknown;
     };
   };
 }

@@ -28,6 +28,19 @@ export const MCP_TOOL_NAMESPACE_PREFIX = 'mcp__';
 export const MCP_TOOL_NAMESPACE_SEPARATOR = '__';
 
 /**
+ * Canonical MCP name grammar — the single source of truth for `mcp_call`
+ * validation and the `search_mcp_tools` validator. The three call sites
+ * previously kept drifting copies, one of which omitted the dash — see F2.
+ * The MCP spec allows letters, digits, underscore, hyphen and dot in tool names.
+ */
+export const MCP_SERVER_NAME_REGEX = /^[\w-]+$/i;
+export const MCP_TOOL_NAME_REGEX = /^[\w.-]+$/;
+// Deliberately no `i` flag: this preserves the existing (stricter)
+// `search_mcp_tools` namespace-validator behaviour — the server segment
+// must be lowercase and the whole name must start with a lowercase `mcp__`.
+export const MCP_NAMESPACED_NAME_REGEX = /^mcp__[\d_a-z-]+__[\w.-]+$/;
+
+/**
  * Server names that would shadow a native Locopilot tool if a user
  * defined an MCP server with the same name (e.g. `mcp__run_command__`
  * would be indistinguishable from the `run_command` entry in the
@@ -68,6 +81,25 @@ export function parseMCPToolName(namespacedName: string): ParsedMCPToolName | nu
   return { serverName, toolName };
 }
 
+type ToolDefinitionParameters = ToolDefinition['function']['parameters'];
+
+/**
+ * Normalise an MCP `inputSchema` for the model's tool list while preserving
+ * every JSON-Schema keyword the server sent — see F3. We used to rebuild the
+ * schema from `properties`+`required` only, which broke any server using
+ * `$ref`→`$defs`. A schema-less tool keeps the old empty-object behaviour and
+ * we always ensure `properties` exists (some providers require it), while the
+ * server's own values win.
+ */
+function withObjectDefaults(inputSchema: MCPToolInfo['inputSchema']): ToolDefinitionParameters {
+  const schema = inputSchema as Record<string, unknown>;
+  if (!schema || Object.keys(schema).length === 0) {
+    return { type: 'object', properties: {}, required: [] };
+  }
+  // `type` last so the literal is not reported as "specified more than once".
+  return { properties: {}, ...schema, type: 'object' } as ToolDefinitionParameters;
+}
+
 /**
  * Convert a single MCP tool descriptor to the Ollama tool schema shape.
  *
@@ -87,13 +119,7 @@ export function mcpToolToOllamaTool(serverName: string, tool: MCPToolInfo): Tool
     function: {
       name: buildNamespacedName(serverName, tool.name),
       description,
-      parameters: {
-        type: 'object',
-        properties: (tool.inputSchema.properties ?? {}) as Record<string, unknown>,
-        ...(tool.inputSchema.required && tool.inputSchema.required.length > 0
-          ? { required: tool.inputSchema.required }
-          : {}),
-      },
+      parameters: withObjectDefaults(tool.inputSchema),
     },
   };
 }
@@ -339,11 +365,11 @@ export async function dispatchMCPToolCall(
       options.signal ? { signal: options.signal } : {}
     )
     .then((value): RaceResult => ({ kind: 'ok', value: value as CallToolResult }));
-  const result: RaceResult = await Promise.race([
+  const result: RaceResult = await raceCallAgainstAbortAndTimeout(
     callPromise,
-    abortAfter(options.signal).then((): RaceResult => ({ kind: 'aborted' })),
-    timeoutAfter(timeoutMs).then((): RaceResult => ({ kind: 'timeout' })),
-  ]);
+    options.signal,
+    timeoutMs
+  );
 
   if (result.kind === 'aborted') {
     return {
@@ -371,21 +397,55 @@ interface OkResult {
 }
 type RaceResult = AbortedResult | TimeoutResult | OkResult;
 
-function abortAfter(signal: AbortSignal | undefined): Promise<AbortedResult> {
-  if (!signal)
-    return new Promise<AbortedResult>(() => {
-      /* never resolves */
-    });
-  if (signal.aborted) return Promise.resolve({ kind: 'aborted' });
-  return new Promise<AbortedResult>((resolve) => {
-    signal.addEventListener('abort', () => resolve({ kind: 'aborted' }), { once: true });
+/**
+ * Race a call against the parent AbortSignal and a hard timeout while
+ * releasing both resources in EVERY outcome — see F20. The old
+ * `abortAfter` leaked a listener on the long-lived request signal and the
+ * old `timeoutAfter` left its timer pending after the call returned.
+ *
+ * Semantics are unchanged: no signal → the abort leg never resolves;
+ * already-aborted → immediate 'aborted'; timer → 'timeout'; a rejecting
+ * `call` still rejects this promise.
+ */
+async function raceCallAgainstAbortAndTimeout(
+  call: Promise<RaceResult>,
+  signal: AbortSignal | undefined,
+  timeoutMs: number
+): Promise<RaceResult> {
+  let onAbort: (() => void) | undefined;
+  const abortPromise: Promise<RaceResult> = signal?.aborted
+    ? Promise.resolve({ kind: 'aborted' })
+    : signal
+      ? new Promise<RaceResult>((resolve) => {
+          onAbort = () => resolve({ kind: 'aborted' });
+          signal.addEventListener('abort', onAbort, { once: true });
+        })
+      : new Promise<RaceResult>(() => {
+          /* no signal → abort leg never wins (unchanged semantics) */
+        });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<RaceResult>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs);
   });
+
+  try {
+    return await Promise.race([call, abortPromise, timeoutPromise]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+  }
 }
 
-function timeoutAfter(ms: number): Promise<TimeoutResult> {
-  return new Promise<TimeoutResult>((resolve) => {
-    setTimeout(() => resolve({ kind: 'timeout' }), ms);
-  });
+/**
+ * JSON.stringify that never throws (BigInt / circular / non-serialisable).
+ */
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return '(structured output is not JSON-serialisable)';
+  }
 }
 
 /**
@@ -398,25 +458,14 @@ function formatMCPResult(
   serverName: string,
   toolName: string
 ): ToolCallResult {
-  // The SDK types the callTool return as a discriminated union of two
-  // shapes: the conventional { content: [...], isError?: boolean } form
-  // and a structured-content { toolResult: unknown } form. We use a
-  // runtime presence check (the SDK's narrower conditional type doesn't
-  // survive the Promise.race wrapper).
-  if (!('content' in result)) {
-    const toolResult = (result as { toolResult?: unknown }).toolResult;
-    const text =
-      toolResult === undefined
-        ? '(empty structured result)'
-        : typeof toolResult === 'string'
-          ? toolResult
-          : JSON.stringify(toolResult, null, 2);
-    return { content: text };
-  }
-  // The conventional path — narrow through a local type to keep the
-  // callTool result's union from contaminating downstream loops.
+  // Narrow through a local type to keep the callTool result's union from
+  // contaminating downstream loops. The installed SDK's `CallToolResultSchema`
+  // always declares `content` (defaulting to `[]`), so the old
+  // `if (!('content' in result))` branch was dead code — the real structured
+  // field is `structuredContent`, not the legacy `toolResult` (F4).
   const conventional = result as {
     isError?: boolean;
+    structuredContent?: Record<string, unknown>;
     content: Array<
       | { type: 'text'; text: string }
       | { type: 'image'; data: string; mimeType: string }
@@ -432,7 +481,7 @@ function formatMCPResult(
   // The SDK returns `content` as a union of content-block shapes.
   // We narrow with typeof/type discriminators and use 'in' for blocks
   // that share the same shape variants.
-  for (const block of conventional.content) {
+  for (const block of conventional.content ?? []) {
     if (block.type === 'text') {
       textBlocks.push(block.text);
       continue;
@@ -465,6 +514,17 @@ function formatMCPResult(
     }
     // Unknown block — surface as a marker so the model can adapt.
     textBlocks.push(`[unknown MCP content block]`);
+  }
+
+  // Append structured output under an explicit label, de-duplicated against
+  // an identical text block — SEP-1624 guards against forwarding the same
+  // payload twice (F4).
+  const structured = conventional.structuredContent;
+  if (structured !== undefined) {
+    const serialized = safeStringify(structured);
+    if (!textBlocks.includes(serialized)) {
+      textBlocks.push(`[structured output]\n${serialized}`);
+    }
   }
 
   const joined = textBlocks.join('\n').trim();

@@ -54,12 +54,7 @@ import {
   SSE_CONTENT_TYPE,
   TPS_STATUS_MIN_INTERVAL_MS,
 } from '@/constants';
-import {
-  getMCPToolCount,
-  getMergedMCPToolDefinitions,
-  getMergedMCPToolDefinitionsForSearch,
-  parseMCPToolName,
-} from '@/mcp';
+import { getMCPToolsForRequest, parseMCPToolName } from '@/mcp';
 import { recordDiscoveredCap, resolveEffectiveNumCtx } from '@/services/capResolver';
 import { createSystemPrompt } from '@/services/chatSession';
 import {
@@ -1199,16 +1194,19 @@ export async function POST(req: NextRequest): Promise<Response> {
         type AnyTool = (typeof TOOLS)[number] | ToolDefinition;
         let mergedTools: AnyTool[];
         try {
-          const totalMCPToolCount = await getMCPToolCount();
-          const enableSearch =
-            config?.mcpToolSearch === true || totalMCPToolCount > MCP_TOOL_SEARCH_THRESHOLD;
-          if (enableSearch) {
-            const mcpStubs = await getMergedMCPToolDefinitionsForSearch();
-            mergedTools = [...TOOLS, ...mcpStubs];
-          } else {
-            const mcpToolDefs = await getMergedMCPToolDefinitions();
-            mergedTools = [...TOOLS, ...mcpToolDefs];
-          }
+          // F7(e): ONE eager connect + ONE stub build per turn via the
+          // single facade entry point. Previously this called
+          // `getMCPToolCount()` and then `getMergedMCPToolDefinitions*()`
+          // separately — each eagerly re-connected every server and
+          // rebuilt the stub list, i.e. two full connect pipelines per
+          // turn. `forceSearch` mirrors `config.mcpToolSearch === true`;
+          // otherwise search kicks in above the threshold, exactly as
+          // before.
+          const { definitions } = await getMCPToolsForRequest({
+            searchThreshold: MCP_TOOL_SEARCH_THRESHOLD,
+            forceSearch: config?.mcpToolSearch === true,
+          });
+          mergedTools = [...TOOLS, ...definitions];
         } catch {
           // MCP tool discovery is best-effort: fall back to native tools only.
           mergedTools = [...TOOLS];

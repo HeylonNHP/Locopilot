@@ -39,11 +39,19 @@ export default function MCPTab() {
   const inFlightAuthsRef = useRef<Set<string>>(new Set());
   const [, setInFlightAuthsVersion] = useState(0);
 
-  const fetchServers = useCallback(async () => {
+  const fetchServers = useCallback(async (opts: { eager?: boolean; force?: boolean } = {}) => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('/api/mcp');
+      // F7: only ask the API to dial when we explicitly mean to
+      // (first-load discovery / explicit retry). A passive refetch
+      // must stay side-effect free so a broken server can't be
+      // re-dialled on every SSE frame.
+      const params = new URLSearchParams();
+      if (opts.eager) params.set('eager', '1');
+      if (opts.force) params.set('force', '1');
+      const query = params.toString();
+      const res = await fetch(query ? `/api/mcp?${query}` : '/api/mcp');
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -69,15 +77,36 @@ export default function MCPTab() {
   }, []);
 
   useEffect(() => {
-    fetchServers();
+    // F7: the first load opts into eager discovery so the initial
+    // listing has live tool counts; every later passive refetch does
+    // not, so the opt-in default on the API is safe.
+    void fetchServers({ eager: true });
     fetchConfigPath();
   }, [fetchServers, fetchConfigPath]);
 
+  // F7: self-healing nudge. Server-side backoff turns an in-window
+  // connect into a cheap no-op, so scheduling ONE non-forced eager
+  // refetch while the panel is idle lets a genuinely-down server
+  // recover without re-creating the SSE spin. Skipped for
+  // `auth_required` (that needs the user's Authenticate click).
+  useEffect(() => {
+    const needsNudge = servers.some((s) => s.status === 'error' || s.status === 'disconnected');
+    if (!needsNudge) return;
+    const timer = setTimeout(() => {
+      void fetchServers({ eager: true });
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [servers, fetchServers]);
+
   // Push-based refresh via SSE. The backend publishes every MCP
   // state transition, tool-list change, and mcp.json rewrite on
-  // `/api/mcp/events`; we just call the existing `fetchServers()`
-  // (debounced) on every frame. The 5s `setInterval` it replaces
-  // is gone — no more polling.
+  // `/api/mcp/events`.
+  //
+  // F7: the initial `snapshot` frame already carries the full listing,
+  // so we apply it directly with NO follow-up GET. Only the smaller
+  // transition frames (`state`/`tools`/`config`) trigger the debounced
+  // refetch. Refetching on every frame — including the snapshot — was
+  // half of the `connect → SSE → GET /api/mcp → connect` loop.
   //
   // Same `togglingRef` pause applies: while a `PUT /api/mcp` is in
   // flight we don't want the SSE-triggered refresh to clobber the
@@ -93,6 +122,21 @@ export default function MCPTab() {
         debounceTimer = null;
         void fetchServers();
       }, DEBOUNCE_MS);
+    };
+
+    const handleState = (event: MessageEvent<string>): void => {
+      let payload: { kind?: string; entries?: MCPStatusEntry[] } | null = null;
+      try {
+        payload = JSON.parse(event.data) as { kind?: string; entries?: MCPStatusEntry[] };
+      } catch {
+        // Malformed frame — fall through to a refetch.
+      }
+      if (payload?.kind === 'snapshot' && Array.isArray(payload.entries)) {
+        if (togglingRef.current) return;
+        setServers(payload.entries);
+        return;
+      }
+      scheduleFetch();
     };
 
     // Manual reconnect logic. EventSource auto-reconnects only for
@@ -112,7 +156,7 @@ export default function MCPTab() {
     const open = (): void => {
       if (disposed) return;
       source = new EventSource('/api/mcp/events');
-      source.addEventListener('mcp-state', scheduleFetch);
+      source.addEventListener('mcp-state', handleState);
       source.addEventListener('open', () => {
         // Successful (re)connect — reset backoff.
         backoffMs = 1000;
@@ -151,7 +195,7 @@ export default function MCPTab() {
         reconnectTimer = null;
       }
       if (source) {
-        source.removeEventListener('mcp-state', scheduleFetch);
+        source.removeEventListener('mcp-state', handleState);
         if (handleError !== null) {
           source.removeEventListener('error', handleError);
         }
@@ -282,7 +326,10 @@ export default function MCPTab() {
       ) : error ? (
         <div className="skills-panel-error" style={{ margin: '12px' }}>
           <span className="skills-panel-error-text">{error}</span>
-          <button className="skills-panel-error-retry" onClick={fetchServers}>
+          <button
+            className="skills-panel-error-retry"
+            onClick={() => void fetchServers({ eager: true, force: true })}
+          >
             Retry
           </button>
         </div>

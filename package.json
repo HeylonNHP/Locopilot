@@ -11,6 +11,7 @@
     "postinstall": "node scripts/copy-wasm.mjs",
     "prebuild": "node scripts/copy-wasm.mjs",
     "test": "npx tsx scripts/test-run-command.mjs",
+    "test:mcp-config": "npx tsx scripts/test-mcp-config.mjs",
     "test:diagnostics": "npx tsx scripts/test-diagnostic-logging.mjs",
     "test:provider-persistence": "npx tsx scripts/test-provider-persistence.mjs",
     "test:subagent-shared-summaries": "npx tsx scripts/test-subagent-shared-summaries.mjs",

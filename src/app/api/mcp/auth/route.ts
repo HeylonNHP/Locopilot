@@ -27,6 +27,7 @@
 
 import { type NextRequest, NextResponse } from 'next/server';
 
+import { guardSameOriginMutation } from '@/app/api/mcp/originGuard';
 import { getClientManager, loadMCPConfig, reauthenticateMCPServer } from '@/mcp';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,14 @@ interface AuthBody {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // F16: reject cross-site / CORS-simple POSTs FIRST. This route both
+  // WIPES stored tokens and opens a browser tab, so any web page the
+  // user visits could otherwise trigger it. There is no cookie/session
+  // auth in this local single-user app, so a CSRF token would protect
+  // nothing extra — the same-origin guard is the real control.
+  const guard = guardSameOriginMutation(request);
+  if (guard !== null) return guard;
+
   let body: AuthBody;
   try {
     body = (await request.json()) as AuthBody;

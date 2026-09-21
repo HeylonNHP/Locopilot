@@ -1,11 +1,16 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import os from 'node:os';
 
 import type { ToolSchema } from '@/tools/toolSchema';
 
-import { PROCESS_REGISTRY_TTL_MS, RUN_COMMAND_OUTPUT_MAX_BYTES, RUN_COMMAND_TIMEOUT_MS } from '@/constants';
+import {
+  PROCESS_REGISTRY_TTL_MS,
+  RUN_COMMAND_OUTPUT_MAX_BYTES,
+  RUN_COMMAND_TIMEOUT_MS,
+} from '@/constants';
 import { BoundedOutput } from '@/tools/boundedOutput';
+import { killProcessTree } from '@/tools/processTree';
 import { sanitize } from '@/tools/textSanitizer';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import {
@@ -238,51 +243,6 @@ function buildOutput(entry: ProcessEntry, finished: boolean, processId: number |
     );
   }
   return parts.join('\n');
-}
-
-function killProcessTree(child: ChildProcess): void {
-  const pid = child.pid;
-  if (!pid) return;
-
-  if (isWindows) {
-    const taskkillResult = spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], {
-      stdio: 'ignore',
-    });
-    if (taskkillResult.error || taskkillResult.status !== 0) {
-      // taskkill may fail on some Windows environments or when the process tree
-      // is already gone. Fall back to a direct child kill attempt.
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        /* already dead */
-      }
-
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* already dead */
-      }
-    }
-    return;
-  }
-
-  try {
-    process.kill(-pid, 'SIGTERM');
-  } catch {
-    /* best-effort group termination failed */
-  }
-
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch {
-    /* best-effort group escalation failed */
-  }
-
-  try {
-    child.kill('SIGKILL');
-  } catch {
-    /* already dead */
-  }
 }
 
 export async function runCommand(

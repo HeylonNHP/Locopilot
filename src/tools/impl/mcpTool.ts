@@ -27,13 +27,11 @@ import {
   type DispatchOptions,
   getMCPServerConfig,
   matchesAutoApprovePattern,
+  MCP_SERVER_NAME_REGEX,
+  MCP_TOOL_NAME_REGEX,
   MCP_TOOL_NAMESPACE_PREFIX,
-  MCP_TOOL_NAMESPACE_SEPARATOR,
   parseMCPToolName,
 } from '@/mcp';
-
-const SERVER_NAME_REGEX = /^[\w-]+$/i;
-const TOOL_NAME_REGEX = /^[\w.]+$/;
 
 function validateServerName(name: string): string | null {
   if (typeof name !== 'string') {
@@ -43,7 +41,7 @@ function validateServerName(name: string): string | null {
   if (trimmed.length === 0 || trimmed.length > 64) {
     return '[Error: mcp_call: "server" must be 1-64 characters long]';
   }
-  if (!SERVER_NAME_REGEX.test(trimmed)) {
+  if (!MCP_SERVER_NAME_REGEX.test(trimmed)) {
     return '[Error: mcp_call: "server" must be kebab-case (letters, digits, underscore, dash only)]';
   }
   if (trimmed.startsWith('.') || trimmed.startsWith('-') || trimmed.includes('..')) {
@@ -52,7 +50,14 @@ function validateServerName(name: string): string | null {
   return null;
 }
 
-function validateToolName(name: string): string | null {
+interface ValidateToolNameOptions {
+  alreadyNamespaced?: boolean;
+}
+
+function validateToolName(
+  name: string,
+  { alreadyNamespaced = false }: ValidateToolNameOptions = {}
+): string | null {
   if (typeof name !== 'string') {
     return '[Error: mcp_call: "tool" is required and must be a string]';
   }
@@ -60,17 +65,18 @@ function validateToolName(name: string): string | null {
   if (trimmed.length === 0 || trimmed.length > 200) {
     return '[Error: mcp_call: "tool" must be 1-200 characters long]';
   }
-  if (!TOOL_NAME_REGEX.test(trimmed)) {
+  if (!MCP_TOOL_NAME_REGEX.test(trimmed)) {
     return '[Error: mcp_call: "tool" must be a valid MCP tool name (letters, digits, underscore, dot, dash)]';
   }
-  // Guard against accidental name injection: reject anything that
-  // contains the namespace separator (the model should pass the
-  // bare tool name, not the full `mcp__<server>__<tool>` form).
-  if (trimmed.includes(MCP_TOOL_NAMESPACE_SEPARATOR)) {
-    return `[Error: mcp_call: "tool" must not contain "${MCP_TOOL_NAMESPACE_SEPARATOR}". Pass the bare tool name (e.g. "list_issues"), not the full namespace.]`;
-  }
-  if (trimmed.startsWith(MCP_TOOL_NAMESPACE_PREFIX)) {
-    return `[Error: mcp_call: "tool" must not start with "${MCP_TOOL_NAMESPACE_PREFIX}". Pass the bare tool name and the server name separately.]`;
+  // FIX 5: only reject the actual mistake — a full `mcp__<server>__<tool>` name
+  // passed where a bare tool name is expected. A real server tool may
+  // legitimately be named `list__issues`, and this tool's own description
+  // promises the explicit `mcp_call({server, tool})` form works, so we no longer
+  // blanket-reject any name containing the `__` separator. This is only needed
+  // on the explicit path — the parsed dispatch path
+  // (`tryRunNamespacedMCPCall`) already unwrapped the namespace.
+  if (!alreadyNamespaced && trimmed.startsWith(MCP_TOOL_NAMESPACE_PREFIX)) {
+    return `[Error: mcp_call: "tool" must not start with "${MCP_TOOL_NAMESPACE_PREFIX}". Pass the bare tool name (e.g. "list_issues") and the server name separately, not the full namespace.]`;
   }
   return null;
 }
@@ -134,11 +140,12 @@ export function getToolPrompt(): string {
 export async function runMCPCall(
   args: ToolCallArguments,
   context?: RequestContext,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: ValidateToolNameOptions = {}
 ): Promise<ToolCallResult> {
   const serverErr = validateServerName(args.server as string);
   if (serverErr) return { content: serverErr };
-  const toolErr = validateToolName(args.tool as string);
+  const toolErr = validateToolName(args.tool as string, options);
   if (toolErr) return { content: toolErr };
   const argsErr = validateArguments(args.arguments);
   if (argsErr) return { content: argsErr };
@@ -283,6 +290,7 @@ export async function tryRunNamespacedMCPCall(
       arguments: (args ?? {}) as Record<string, unknown>,
     },
     context,
-    signal
+    signal,
+    { alreadyNamespaced: true }
   );
 }
