@@ -225,7 +225,7 @@ let counter = 0;
 window.runContrastTest = async function (source, themeVars, applyFix) {
   mermaid.initialize({
     startOnLoad: false,
-    securityLevel: 'loose',
+    securityLevel: 'strict',
     theme: 'default',
     themeVariables: themeVars,
     fontFamily: 'inherit',

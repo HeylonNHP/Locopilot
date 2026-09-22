@@ -29,7 +29,7 @@ const html = `<!DOCTYPE html>
       const out = [];
       for (const { name, source } of ${JSON.stringify(cases)}) {
         try {
-          mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'default' });
+          mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' });
           const result = await mermaid.render('m-' + name, source);
           out.push({ name, threw: false, svgStart: result.svg.slice(0, 200), hasErrorText: result.svg.includes('Syntax error in text') });
         } catch (e) {
@@ -81,6 +81,8 @@ async function main() {
   server.close();
 }
 
-try { await main(); } catch (err) {
+try {
+  await main();
+} catch (err) {
   console.error(err);
 }

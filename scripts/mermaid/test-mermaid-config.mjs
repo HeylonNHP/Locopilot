@@ -56,14 +56,14 @@ const html = `<!DOCTYPE html>
       
       // Test 2: parse with client config
       try {
-        await mermaid.parse(source, { themeVariables: themeVars, securityLevel: 'loose' });
+        await mermaid.parse(source, { themeVariables: themeVars, securityLevel: 'strict' });
         log.push('parse client: OK');
       } catch (e) {
         log.push('parse client: ' + e.message);
       }
       
       // Test 3: render with client config
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'default', themeVariables: themeVars, fontFamily: 'inherit' });
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default', themeVariables: themeVars, fontFamily: 'inherit' });
       try {
         const { svg } = await mermaid.render('m-1', source);
         log.push('render client: OK, svg length=' + svg.length);
@@ -72,7 +72,7 @@ const html = `<!DOCTYPE html>
       }
       
       // Test 4: render with minimal config
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'default' });
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' });
       try {
         const { svg } = await mermaid.render('m-2', source);
         log.push('render minimal: OK, svg length=' + svg.length);
@@ -113,11 +113,16 @@ async function main() {
   await fs.writeFile(filePath, html);
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
-  await page.goto(`file://${  filePath}`);
+  await page.goto(`file://${filePath}`);
   await page.waitForFunction(() => typeof globalThis.runTest === 'function');
   const logs = await page.evaluate(async (src) => globalThis.runTest(src), diagram);
   console.log(logs.join('\n'));
   await browser.close();
 }
 
-try { await main(); } catch (err) { console.error(err); throw err; }
+try {
+  await main();
+} catch (err) {
+  console.error(err);
+  throw err;
+}

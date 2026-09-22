@@ -75,10 +75,21 @@ async function ensureInitialised(theme: ResolvedTheme): Promise<Mermaid> {
 
   mermaidEngine.initialize({
     startOnLoad: false,
-    // `loose` lets diagrams include clickable links and basic HTML in node
-    // labels. We still sanitize the *source* before render via escaping, and
-    // render as SVG so user input cannot become executable JS.
-    securityLevel: 'loose',
+    // `strict` (mermaid's default) is the ONLY level that runs mermaid's own
+    // final DOMPurify pass over the serialised SVG — `loose` skips it. Under
+    // `loose` a ```mermaid fence was therefore an arbitrary-JS sink: the
+    // anchor emitted for `click B href "javascript:..."` remained in the DOM
+    // and executed on a real user click, and `click ... call fn()` bound a
+    // live handler.
+    //
+    // `strict` still preserves `https://` links (mermaid routes those through
+    // its own `sanitizeUrl`) and we already render labels as SVG text
+    // (`htmlLabels: false` below), so no diagram capability is lost. The one
+    // thing given up is the `click ... call fn()` callback form, which is
+    // `loose`-only by design in mermaid and which we never advertised to the
+    // model. Use `antiscript` instead only if HTML inside labels is ever
+    // required — it allows HTML tags while still running the final pass.
+    securityLevel: 'strict',
     theme: mermaidTheme,
     themeVariables: collectThemeVariables(),
     fontFamily: 'inherit',

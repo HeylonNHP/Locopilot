@@ -48,7 +48,7 @@ const html = `<!DOCTYPE html>
         code.textContent = source;
         pre.append(code);
         document.getElementById('root').append(pre);
-        mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'default', themeVariables: { background: '#fff', primaryColor: '#00a8e8', primaryTextColor: '#000', primaryBorderColor: '#00a8e8', secondaryColor: '#f0f0f0', tertiaryColor: '#f0f0f0', textColor: '#000', noteTextColor: '#000', noteBkgColor: '#f0f0f0', lineColor: '#666', fontFamily: 'sans-serif' }, fontFamily: 'inherit' });
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default', themeVariables: { background: '#fff', primaryColor: '#00a8e8', primaryTextColor: '#000', primaryBorderColor: '#00a8e8', secondaryColor: '#f0f0f0', tertiaryColor: '#f0f0f0', textColor: '#000', noteTextColor: '#000', noteBkgColor: '#f0f0f0', lineColor: '#666', fontFamily: 'sans-serif' }, fontFamily: 'inherit' });
         try {
           const { svg } = await mermaid.render('m-' + name, source);
           out.push({ name, ok: true, svgLen: svg.length, hasErrorText: svg.includes('Syntax error in text') });
@@ -101,6 +101,8 @@ async function main() {
   server.close();
 }
 
-try { await main(); } catch (err) {
+try {
+  await main();
+} catch (err) {
   console.error(err);
 }

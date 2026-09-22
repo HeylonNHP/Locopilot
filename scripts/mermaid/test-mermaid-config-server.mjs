@@ -55,13 +55,13 @@ const html = `<!DOCTYPE html>
       }
       
       try {
-        await mermaid.parse(source, { themeVariables: themeVars, securityLevel: 'loose' });
+        await mermaid.parse(source, { themeVariables: themeVars, securityLevel: 'strict' });
         log.push('parse client: OK');
       } catch (e) {
         log.push('parse client: ' + e.message);
       }
       
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'default', themeVariables: themeVars, fontFamily: 'inherit' });
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default', themeVariables: themeVars, fontFamily: 'inherit' });
       try {
         const { svg } = await mermaid.render('m-1', source);
         log.push('render client: OK, svg length=' + svg.length);
@@ -69,7 +69,7 @@ const html = `<!DOCTYPE html>
         log.push('render client: ' + e.message);
       }
       
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'default' });
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' });
       try {
         const { svg } = await mermaid.render('m-2', source);
         log.push('render minimal: OK, svg length=' + svg.length);

@@ -25,7 +25,7 @@ const html = `<!DOCTYPE html>
       pre.append(code);
       document.getElementById('target').append(pre);
 
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'default' });
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' });
       try {
         await mermaid.render('pollution-test', code.textContent);
       } catch (e) {
@@ -79,6 +79,8 @@ async function main() {
   server.close();
 }
 
-try { await main(); } catch (err) {
+try {
+  await main();
+} catch (err) {
   console.error(err);
 }

@@ -18,6 +18,7 @@
     "test:subagent-shared-summaries": "npx tsx scripts/test-subagent-shared-summaries.mjs",
     "test:subagent-output": "npx tsx scripts/test-subagent-output.mjs",
     "test:mermaid-contrast": "node scripts/mermaid/test-mermaid-contrast.mjs",
+    "test:mermaid-security": "node scripts/mermaid/test-mermaid-security.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
