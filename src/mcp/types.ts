@@ -91,9 +91,11 @@ export interface MCPOAuthConfig {
   clientSecret?: string | undefined;
   /**
    * SEP-991 / CIMD: a public HTTPS URL the authorization server fetches to
-   * identify this client. Required for authorization servers that advertise
-   * `client_id_metadata_document_supported: true` but reject RFC 7591 Dynamic
-   * Client Registration (e.g. Atlassian's MCP server).
+   * identify this client. Only needed for authorization servers that advertise
+   * `client_id_metadata_document_supported: true` AND require CIMD. NOT needed
+   * for Atlassian's MCP server, which accepts RFC 7591 Dynamic Client
+   * Registration (it just requires `client_name`; see `buildOAuthClientName`
+   * in `oauthDiagnostics.ts`).
    *
    * MUST be https with a non-root path (the SDK enforces this). The document is
    * fetched by the authorization server over the public internet, so it cannot be

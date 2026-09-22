@@ -75,6 +75,29 @@ export function providerClientMetadataUrl(oauth: {
   return oauth.clientMetadataUrl;
 }
 
+// --- Dynamic Client Registration client identity ---
+
+/**
+ * The `client_name` Locopilot advertises in its RFC 7591 Dynamic Client
+ * Registration request (and would advertise in a CIMD document, if we ever
+ * hosted one).
+ *
+ * Why this exists: Atlassian's authorization server (auth.atlassian.com)
+ * REQUIRES `client_name` and rejects the DCR request with HTTP 400 when it is
+ * absent. The MCP SDK's `OAuthClientMetadataSchema` marks `client_name`
+ * optional, so the SDK happily omits it - which is precisely what Locopilot
+ * did, and why it could never authenticate. Mirrors Claude Code's
+ * `Claude Code (<serverName>)` convention, so the name shown on an
+ * authorization server's consent screen identifies both the app and the
+ * specific server entry.
+ *
+ * Pure and dependency-free so the offline regression suite can pin it.
+ */
+export function buildOAuthClientName(serverName: string): string {
+  const trimmed = serverName.trim();
+  return trimmed.length > 0 ? `Locopilot (${trimmed})` : 'Locopilot';
+}
+
 // --- Failure classification ---
 
 /**
@@ -193,9 +216,9 @@ export function classifyMCPOAuthFailure(
     };
   }
 
-  // 3. Registration-looking failures. The AS either rejects DCR while
-  //    advertising CIMD (the Atlassian case), advertises neither, or the
-  //    error itself names client registration.
+  // 3. Registration-looking failures. The AS rejects client registration
+  //    (DCR or CIMD), advertises neither, or the error itself names client
+  //    registration.
   //
   //    `authUrlStashed` is the disambiguator. `discovery.clientIdMetadataDocumentSupported`
   //    describes the SERVER, not the failure, so on its own it would label
@@ -227,8 +250,8 @@ export function classifyMCPOAuthFailure(
         keepTransport: false,
         kind: 'cimd_unusable',
         userMessage:
-          'oauth.clientMetadataUrl is set but the server did not accept it and rejected Dynamic Client ' +
-          'Registration. Verify the client-metadata document is publicly reachable over HTTPS.',
+          'oauth.clientMetadataUrl is set but this server did not use it, and Dynamic Client Registration ' +
+          'failed. Verify the document is public HTTPS (non-root path), or set oauth.clientId.',
       };
     }
     return {
@@ -236,8 +259,8 @@ export function classifyMCPOAuthFailure(
       keepTransport: false,
       kind: 'registration_rejected',
       userMessage:
-        'Server rejects Dynamic Client Registration and requires a pre-registered client. ' +
-        'Set oauth.clientMetadataUrl (public HTTPS client-metadata document) or oauth.clientId in mcp.json.',
+        'The server rejected Dynamic Client Registration. Set oauth.clientId (and oauth.clientSecret) ' +
+        'in mcp.json; alternatively oauth.clientMetadataUrl for a CIMD-only server.',
     };
   }
 

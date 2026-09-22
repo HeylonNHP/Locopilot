@@ -175,12 +175,17 @@ in `src/mcp/oauthDiagnostics.ts`):
 
 - `configured` — a pre-registered `oauth.clientId` (plus `oauth.clientSecret`
   when the server requires one) always wins.
-- `cimd` — SEP-991 Client ID Metadata Documents. Set `oauth.clientMetadataUrl`
-  to a **public HTTPS URL with a non-root pathname**; the authorization server
-  fetches that document to identify Locopilot. `configLoader` validates the
-  shape eagerly. This is the branch Atlassian's MCP server needs — it
-  advertises `client_id_metadata_document_supported: true` and rejects DCR.
-- `dcr` — RFC 7591 Dynamic Client Registration, the SDK's fallback.
+- `cimd` — SEP-991 Client ID Metadata Documents, only for authorization
+  servers that genuinely require them (NOT Atlassian). Set
+  `oauth.clientMetadataUrl` to a **public HTTPS URL with a non-root
+  pathname**; the authorization server fetches that document to identify
+  Locopilot. `configLoader` validates the shape eagerly.
+- `dcr` — RFC 7591 Dynamic Client Registration, the SDK's fallback. Locopilot
+  ALWAYS sends `client_name` via `buildOAuthClientName(serverName)`, because
+  some servers (Atlassian) reject DCR with HTTP 400 when it is absent. This is
+  how the `atlassian` server actually authenticates: plain DCR, the same
+  mechanism Claude Code uses, despite Atlassian also advertising
+  `client_id_metadata_document_supported: true`.
 - `unavailable` — neither CIMD nor DCR; the user must supply `oauth.clientId`.
 
 `classifyMCPOAuthFailure` (same module) labels a failed connect as a

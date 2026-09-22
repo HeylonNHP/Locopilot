@@ -22,8 +22,12 @@ import { auth } from '@modelcontextprotocol/sdk/client/auth.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const { classifyMCPOAuthFailure, providerClientMetadataUrl, resolveClientRegistrationStrategy } =
-  await import('../src/mcp/oauthDiagnostics.ts');
+const {
+  buildOAuthClientName,
+  classifyMCPOAuthFailure,
+  providerClientMetadataUrl,
+  resolveClientRegistrationStrategy,
+} = await import('../src/mcp/oauthDiagnostics.ts');
 const { parseMCPConfig } = await import('../src/mcp/configLoader.ts');
 
 let pass = 0;
@@ -208,6 +212,21 @@ check("resolveClientRegistrationStrategy -> 'unavailable' when neither is availa
   );
 });
 
+console.log('D1 - buildOAuthClientName (DCR client identity)');
+
+check("buildOAuthClientName('atlassian') -> 'Locopilot (atlassian)'", () => {
+  assert.equal(buildOAuthClientName('atlassian'), 'Locopilot (atlassian)');
+});
+check("buildOAuthClientName('  atlassian  ') trims -> 'Locopilot (atlassian)'", () => {
+  assert.equal(buildOAuthClientName('  atlassian  '), 'Locopilot (atlassian)');
+});
+check("buildOAuthClientName('') falls back to 'Locopilot'", () => {
+  assert.equal(buildOAuthClientName(''), 'Locopilot');
+});
+check("buildOAuthClientName('   ') (whitespace only) falls back to 'Locopilot'", () => {
+  assert.equal(buildOAuthClientName('   '), 'Locopilot');
+});
+
 console.log('D1 — SEP-991 URL-based client_id through the SDK (offline fetch stub)');
 
 const AUTH_SERVER = 'https://auth.example.com/VCeDk8ZHncY';
@@ -384,6 +403,12 @@ check('MCPTab.tsx reads authUrl from the POST response', () => {
 });
 check('oauthProvider.ts exposes clearAuthorizationUrl', () => {
   assert.equal(oauthProviderSource.includes('clearAuthorizationUrl'), true);
+});
+check('oauthProvider.ts sends client_name in the DCR client metadata', () => {
+  assert.equal(
+    oauthProviderSource.includes('client_name: buildOAuthClientName(this.serverName)'),
+    true
+  );
 });
 
 // ── Section 5 — D4: diagnostics source assertions ─────────────────────

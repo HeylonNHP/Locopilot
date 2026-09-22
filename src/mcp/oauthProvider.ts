@@ -63,7 +63,7 @@ import type {
 } from './types';
 
 import { emitMCPEvent } from './events';
-import { providerClientMetadataUrl } from './oauthDiagnostics';
+import { buildOAuthClientName, providerClientMetadataUrl } from './oauthDiagnostics';
 import { clearOAuthState, loadOAuthState, saveOAuthState } from './oauthTokenStore';
 
 // --- Public factory ---
@@ -422,8 +422,13 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     // `z.url()` which only accepts strings). We always expose
     // exactly our loopback redirect; supporting multiple
     // redirects would be a future-feature.
+    //
+    // `client_name` is included even though the SDK marks it optional: some
+    // authorization servers (Atlassian) require it and reject the DCR request
+    // with HTTP 400 when it is absent. See `buildOAuthClientName`.
     const metadata: OAuthClientMetadata = {
       redirect_uris: [this.redirectUrl],
+      client_name: buildOAuthClientName(this.serverName),
     };
     // Confidential client: secret_basic is the most widely supported
     // method. The SDK's `selectClientAuthMethod` will downgrade to `none`

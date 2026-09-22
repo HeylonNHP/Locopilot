@@ -726,7 +726,7 @@ class MCPClientManager {
       const isAuthRequired = classification.isAuthProblem;
       // D4: leave an on-disk breadcrumb for the underlying cause. The
       // MCP/OAuth path previously logged only via `console.*`, so a field
-      // failure like the Atlassian DCR rejection left NO trace in
+      // failure like a rejected client registration left NO trace in
       // `logs/locopilot-debug.log`.
       debugLog.diagnostic({
         layer: 'mcp',
