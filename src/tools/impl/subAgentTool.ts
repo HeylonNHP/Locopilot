@@ -332,6 +332,58 @@ export function makeAgentSink(baseSink: ToolOutputSink, id: string): ToolOutputS
   };
 }
 
+/**
+ * Rebuild a sub-agent's history around a compaction result.
+ *
+ * `compactHistory` deliberately removes every `system` message — its own comment
+ * says the system prompt "is injected on-the-fly by the caller". The main chat
+ * route honours that contract (it re-prepends its preserved system message, and
+ * throws if there isn't one), but this path did not: the compacted history was
+ * spliced straight over the sub-agent's array, so index 0 became the assistant
+ * summary and the agent ran the whole rest of its life with NO system prompt —
+ * losing its role, the "return one concise self-contained summary" contract, the
+ * citation directive and the shared time-interpretation rule. A sub-agent has
+ * exactly one system message, so capturing it and putting it back is enough.
+ *
+ * The compactor is injected so the capture → compact → rebuild flow is one
+ * testable unit: `autoCompactSubAgentIfNeeded` passes `compactHistory`, and the
+ * regression suite passes a stub, which is the only way to exercise this history
+ * rewriting without an LLM.
+ *
+ * Result shape: `[system?, orchestratorPrompt, ...compacted]`. Any copy of the
+ * orchestrator prompt that survived compaction is removed first, so the task
+ * appears exactly once; no other message is replaced or dropped.
+ */
+export async function applySubAgentCompaction(
+  messages: ChatMessage[],
+  orchestratorPrompt: ChatMessage,
+  compact: (
+    history: ChatMessage[]
+  ) => Promise<{ newMessages: ChatMessage[]; newTokenCount: number }>
+): Promise<{ messages: ChatMessage[]; newTokenCount: number }> {
+  // Capture the system prompt BEFORE the history is replaced, because every
+  // system message is about to be dropped by the compactor.
+  const systemMessage = messages[0]?.role === 'system' ? messages[0] : undefined;
+
+  const result = await compact(messages);
+
+  const isOrchestratorPrompt = (message: ChatMessage): boolean =>
+    message === orchestratorPrompt ||
+    (message.role === 'user' && message.content === orchestratorPrompt.content);
+
+  // Exactly one system message, and it must be first.
+  const rest = result.newMessages.filter(
+    (message) => message.role !== 'system' && !isOrchestratorPrompt(message)
+  );
+
+  return {
+    messages: systemMessage
+      ? [systemMessage, orchestratorPrompt, ...rest]
+      : [orchestratorPrompt, ...rest],
+    newTokenCount: result.newTokenCount,
+  };
+}
+
 async function autoCompactSubAgentIfNeeded(
   messages: ChatMessage[],
   config: SubAgentConfig,
@@ -416,34 +468,38 @@ async function autoCompactSubAgentIfNeeded(
         baseUrl: config.baseUrl,
       });
     const compactionNumCtx = config.compactionNumCtx ?? config.numCtx;
-    const result = await compactHistory(
-      compactionContext,
-      config.compactionModel,
+    const { messages: rebuiltMessages, newTokenCount } = await applySubAgentCompaction(
       messages,
-      compactionNumCtx,
-      undefined,
-      1,
-      2,
-      undefined,
-      signal,
-      undefined,
-      // Live compaction speed — the route forwards reportTps to the client,
-      // so the t/s badge keeps updating while the sub-agent compacts.
-      (tps: number) => {
-        output.reportTps?.(tps);
+      orchestratorPrompt,
+      async (history) => {
+        const compactionResult = await compactHistory(
+          compactionContext,
+          config.compactionModel,
+          history,
+          compactionNumCtx,
+          undefined,
+          1,
+          2,
+          undefined,
+          signal,
+          undefined,
+          // Live compaction speed — the route forwards reportTps to the client,
+          // so the t/s badge keeps updating while the sub-agent compacts.
+          (tps: number) => {
+            output.reportTps?.(tps);
+          }
+        );
+        return {
+          newMessages: compactionResult.newMessages,
+          newTokenCount: compactionResult.stats.newTokenCount,
+        };
       }
     );
 
-    // After compaction, ensure the original orchestrator prompt is at position 1.
-    // The compaction may have preserved/summarized it, but we want the EXACT
-    // original prompt so the sub-agent doesn't lose its instructions.
-    if (result.newMessages.length > 1 && result.newMessages[1]!.role === 'user') {
-      result.newMessages[1] = orchestratorPrompt;
-    } else {
-      result.newMessages.splice(1, 0, orchestratorPrompt);
-    }
-
-    messages.splice(0, messages.length, ...result.newMessages);
+    // The rebuilt history leads with the system prompt, then the verbatim
+    // orchestrator prompt (the agent's task, which compaction may have
+    // summarised away), then whatever compaction kept.
+    messages.splice(0, messages.length, ...rebuiltMessages);
     // Prefixed with SYNTHETIC_NUDGE_MARKER so the compaction pipeline's
     // latest-user-message anchor never latches onto this notice. Carries the
     // cumulative compaction count so the model can adapt when it repeatedly
@@ -460,10 +516,10 @@ async function autoCompactSubAgentIfNeeded(
         `since this sub-agent started.${adaptiveSuffix}${SYNTHETIC_NUDGE_END}`,
     });
 
-    if (result.stats.newTokenCount > config.numCtx) {
+    if (newTokenCount > config.numCtx) {
       agentOutput.writeLine(
         `⚠ Compaction reduced context but history is still over the model limit ` +
-          `(${result.stats.newTokenCount}/${config.numCtx} tokens). The next turn may fail.`
+          `(${newTokenCount}/${config.numCtx} tokens). The next turn may fail.`
       );
     }
 

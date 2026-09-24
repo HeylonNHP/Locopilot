@@ -18,6 +18,7 @@
     "test:subagent-shared-summaries": "npx tsx scripts/test-subagent-shared-summaries.mjs",
     "test:prompt-cache-stability": "npx tsx scripts/test-prompt-cache-stability.mjs",
     "test:subagent-output": "npx tsx scripts/test-subagent-output.mjs",
+    "test:subagent-compaction-history": "npx tsx scripts/test-subagent-compaction-history.mjs",
     "test:mermaid-contrast": "node scripts/mermaid/test-mermaid-contrast.mjs",
     "test:mermaid-security": "node scripts/mermaid/test-mermaid-security.mjs",
     "test:bind-host": "node scripts/test-bind-host.mjs",
