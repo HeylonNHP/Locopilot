@@ -31,6 +31,24 @@ PowerShell:
 $env:YOLO="true"; npm start
 ```
 
+### Server host and port
+
+By default the server listens on **all interfaces** (`0.0.0.0`, so it is
+reachable from your LAN) — this matches how `npm run dev` and `npm start` have
+always behaved. To pin the port, set `PORT` in `.env` (default `3000`; if it is
+busy the next free port is used automatically).
+
+To restrict the bind address — for example on a shared or managed machine — set
+`LOCOPILOT_HOST` in `.env`:
+
+```bash
+LOCOPILOT_HOST=127.0.0.1   # loopback only (IPv4)
+LOCOPILOT_HOST=::1         # loopback only (IPv6)
+```
+
+Leaving `LOCOPILOT_HOST` unset (or empty) keeps the unrestricted default. IPv6
+addresses must be unbracketed.
+
 ## What it does
 
 | Feature                    | What you get                                                                                                 |

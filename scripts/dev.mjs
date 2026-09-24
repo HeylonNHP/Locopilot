@@ -2,8 +2,9 @@
 /**
  * Dev server launcher — resolves the port, then starts Next.js.
  *
- * Reads $PORT (default 3000). If the preferred port is busy, scans
- * upward for the first free port. Passes the resolved port to Next.js.
+ * Reads $PORT (default 3000) and the optional $LOCOPILOT_HOST bind host.
+ * If the preferred port is busy, scans upward for the first free port.
+ * Passes the resolved port (and host, when set) to Next.js.
  *
  * Usage:  node scripts/dev.mjs
  */
@@ -14,32 +15,39 @@ import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { describeBindHost, parseBindHost } from './bindHost.mjs';
+
 const { dirname, join } = path;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
 /**
- * Load PORT from .env so the wrapper sees it before Next.js starts.
- * Next.js loads .env internally, but by then we've already resolved
- * the port — so we read it ourselves here.
+ * Load a single KEY=value line from .env so the wrapper sees it before
+ * Next.js starts. Next.js loads .env internally, but by then we've already
+ * resolved the port and bind host — so we read them ourselves here.
+ *
+ * A real process.env value wins. The check is per key, so setting PORT in the
+ * environment does not stop LOCOPILOT_HOST from being read from .env.
  */
-function loadEnvPort() {
-  if (process.env.PORT) return; // explicit env var wins
+function loadEnvVar(key) {
+  if (process.env[key]) return; // explicit env var wins
   const envPath = join(ROOT, '.env');
   if (!existsSync(envPath)) return;
+  const prefix = `${key}=`;
   const lines = readFileSync(envPath, 'utf8').split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith('PORT=')) {
-      const val = trimmed.slice(5).replaceAll(/^["']|["']$/g, '');
-      if (val) process.env.PORT = val;
+    if (trimmed.startsWith(prefix)) {
+      const val = trimmed.slice(prefix.length).replaceAll(/^["']|["']$/g, '');
+      if (val) process.env[key] = val;
       return;
     }
   }
 }
 
-loadEnvPort();
+loadEnvVar('PORT');
+loadEnvVar('LOCOPILOT_HOST');
 const PREFERRED = Number(process.env.PORT) || 3000;
 const MAX_ATTEMPTS = 100;
 
@@ -68,6 +76,20 @@ async function resolvePort() {
   process.exit(1);
 }
 
+/**
+ * Resolve the optional LOCOPILOT_HOST override. Returns the host, or null to
+ * keep Next.js's default bind (0.0.0.0, all interfaces). Fails fast on a
+ * malformed value rather than silently binding wider than intended.
+ */
+function resolveBindHost() {
+  try {
+    return parseBindHost(process.env.LOCOPILOT_HOST);
+  } catch (err) {
+    console.error(`✗ ${err.message}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   // 1. Validate config.json (rejects legacy single-provider shape)
   const { validateConfig } = await import(pathToFileURL(join(__dirname, 'validateConfig.mjs')));
@@ -78,15 +100,18 @@ async function main() {
   // 2. Copy WASM
   await import(pathToFileURL(join(__dirname, 'copy-wasm.mjs')));
 
-  // 3. Resolve port
+  // 3. Resolve port and optional bind host
   const port = await resolvePort();
-  console.log(`Starting server on port ${port}...`);
+  const host = resolveBindHost();
+  console.log(`Starting server on port ${port} (bind host: ${describeBindHost(host)})...`);
 
   // 4. Start Next.js
   // shell:false (the default) — we spawn `node` with a fixed module path and
   // no interpolation, so no shell is needed. Using `shell: true` here would
   // trip DEP0190 (args concatenated, not escaped) and adds unnecessary risk.
-  const next = spawn('node', ['node_modules/next/dist/bin/next', 'dev', '-p', String(port)], {
+  const nextArgs = ['node_modules/next/dist/bin/next', 'dev', '-p', String(port)];
+  if (host) nextArgs.push('-H', host);
+  const next = spawn('node', nextArgs, {
     cwd: join(__dirname, '..'),
     stdio: 'inherit',
   });
