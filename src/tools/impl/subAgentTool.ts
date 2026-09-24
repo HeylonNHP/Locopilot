@@ -2,6 +2,7 @@ import type { ToolSchema } from '@/tools/tools';
 
 import { debugLog } from '@/app/lib/debugLogger';
 import { buildNamespacedName, parseMCPToolName } from '@/mcp';
+import { formatPromptDate, formatPromptDateTime } from '@/services/promptDate';
 import { discoverSkills, getEnabledSkills, loadSkillState } from '@/services/skillManager';
 import {
   filterGrantedMCPTools,
@@ -212,21 +213,27 @@ export function adoptDiscoveredContextLimit(config: SubAgentConfig, cap: number)
   config.onContextLimitDiscovered?.(cap);
 }
 
-function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): string {
-  const dateTimeStr = new Date().toLocaleString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    timeZoneName: 'short',
-  });
+/**
+ * Builds the sub-agent system prompt.
+ *
+ * The date is deliberately day-resolution only (see `formatPromptDate`) so this
+ * prompt is byte-stable and reusable across the sub-agents in a batch and
+ * across batches. The precise time-of-day is NOT here - it is injected per
+ * agent into the task message by `buildSubAgentUserMessage`, which keeps the
+ * shared system prompt free of per-agent variation while still grounding each
+ * sub-agent in the real wall clock. `now` is injectable for tests; callers
+ * should omit it.
+ */
+export function buildSubAgentSystemPrompt(
+  skillInfo?: string,
+  citeSources?: boolean,
+  now: Date = new Date()
+): string {
+  const dateStr = formatPromptDate(now);
 
   let prompt =
     'You are a focused sub-agent running inside Locopilot.\n' +
-    `Current date and time: ${dateTimeStr}\n\n` +
+    `Current date: ${dateStr}\n\n` +
     'You are isolated from the parent conversation. The parent agent will provide all required context in the user message.\n' +
     'Use the available tools when they materially help complete the task.\n' +
     'Work autonomously until the task is complete.\n' +
@@ -254,6 +261,36 @@ function buildSubAgentSystemPrompt(skillInfo?: string, citeSources?: boolean): s
   }
 
   return prompt;
+}
+
+/**
+ * Builds the sub-agent's user-role (task) message.
+ *
+ * Sub-agents do real work - research in particular - and the parent agent often
+ * does not tell them the current date or time, so they are grounded here
+ * instead of being left to assume.
+ *
+ * The wall-clock header is captured ONCE per sub-agent and then treated as
+ * fixed for that agent's entire lifetime. That is what makes it
+ * cache-safe: the agent's own tool-call loop re-sends the identical prefix on
+ * every iteration, so a stamp that never changes costs nothing. It lives in
+ * this task message rather than the system prompt for a second cache reason:
+ * the task message is already unique per agent because it carries the agent's
+ * own prompt, so a precise timestamp here is free, while the shared system
+ * prompt stays byte-identical across every agent in a batch and across
+ * batches. `autoCompactSubAgentIfNeeded` force-restores this exact message at
+ * index 1 after a compaction, so the header also survives compaction
+ * unchanged.
+ *
+ * The header is placed first so the agent is grounded in time before it reads
+ * either the sibling summaries or its own task. `now` is injectable for tests.
+ */
+export function buildSubAgentUserMessage(
+  agentPrompt: string,
+  priorBlock: string,
+  now: Date = new Date()
+): string {
+  return `Current date and time: ${formatPromptDateTime(now)}\n\n${priorBlock}${agentPrompt}`;
 }
 
 // Exported for the network-free sub-agent output regression checks.
@@ -837,17 +874,28 @@ async function runSingleAgent(
     workingDirectoryScope: agentScope,
   };
 
+  // Wall-clock instant this sub-agent started. Captured once and reused for the
+  // agent's time grounding, its day-resolution system prompt and the
+  // elapsed-time telemetry below, so all three agree on the same instant.
+  const agentStartDate = new Date();
+
   // Compose the user-role message. If `share_summaries` is in effect and
   // earlier sub-agents in this call have finished, their summaries are
   // prepended under a `## Prior sub-agent results` header so the current
   // agent can build on sibling work. The agent's own prompt remains
-  // authoritative and comes last.
+  // authoritative and comes last. A wall-clock header is prepended ahead of
+  // both so the agent is grounded in the current date and time (see
+  // buildSubAgentUserMessage for why it lives here rather than in the system
+  // prompt).
   const priorBlock =
     priorResults && priorResults.length > 0 ? formatPriorResultsBlock(priorResults) : '';
-  const orcPromptContent = `${priorBlock}${agent.prompt}`;
+  const orcPromptContent = buildSubAgentUserMessage(agent.prompt, priorBlock, agentStartDate);
   const orcPrompt: ChatMessage = { role: 'user', content: orcPromptContent };
   const messages: ChatMessage[] = [
-    { role: 'system', content: buildSubAgentSystemPrompt(skillSummary, context?.citeSources) },
+    {
+      role: 'system',
+      content: buildSubAgentSystemPrompt(skillSummary, context?.citeSources, agentStartDate),
+    },
     orcPrompt,
   ];
 
@@ -861,7 +909,7 @@ async function runSingleAgent(
   // the sub-agent's loop without re-prompting. The set is local to
   // this sub-agent and never mutates the parent's per-turn ledger.
   const subAgentMcpApprovals = new Set<string>(config.mcpApprovals ?? context?.mcpApprovals ?? []);
-  const agentStartedAt = Date.now();
+  const agentStartedAt = agentStartDate.getTime();
   debugLog.diagnostic({
     layer: 'subagent',
     phase: 'request_start',

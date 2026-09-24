@@ -116,7 +116,7 @@ import {
   LiveThroughputMeter,
   TurnThroughputAggregator,
 } from '@/services/tokenThroughput';
-import { buildUserMessageStamp } from '@/services/userMessageStamp';
+import { maybeInjectPromptTimestamp } from '@/services/userMessageStamp';
 import { recordDiscoveredNonVision } from '@/services/visionCache';
 import { filterGrantedMCPTools, isAutoApprovedMCPTarget } from '@/tools/impl/mcpTool';
 import { enterRequestScope } from '@/tools/impl/runCommandTool';
@@ -232,31 +232,6 @@ function mergeClientMessages(
       );
     }),
   ];
-}
-
-/**
- * Build the LLM-bound copy of a user message. When the promptTimestamps
- * toggle is on and the message carries a createdAt, prepend a
- * `[Sent YYYY-MM-DD HH:MM]` header so the LLM can reason about elapsed
- * time. The `createdAt` field itself is stripped from the result so it
- * does not leak into the LLM payload as an unknown JSON key. Returns the
- * message unchanged when the toggle is off, the role is not user, or no
- * createdAt is available.
- */
-function maybeInjectPromptTimestamp(
-  message: ChatMessage,
-  promptTimestampsEnabled: boolean
-): ChatMessage {
-  if (!promptTimestampsEnabled) return message;
-  if (message.role !== 'user') return message;
-  if (typeof message.createdAt !== 'string') return message;
-
-  const stamp = buildUserMessageStamp(new Date(message.createdAt));
-  if (message.content.startsWith(stamp)) return message;
-
-  const { createdAt: _createdAt, ...rest } = message;
-  void _createdAt;
-  return { ...rest, content: `${stamp}\n${message.content}` };
 }
 
 export async function POST(req: NextRequest): Promise<Response> {

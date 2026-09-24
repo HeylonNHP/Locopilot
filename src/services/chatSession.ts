@@ -9,6 +9,7 @@
 
 import { getToolSystemPrompt } from '@/tools/tools';
 
+import { formatPromptDate } from './promptDate';
 import {
   buildAlwaysApplyPrompt,
   buildAvailableSkillsSummary,
@@ -25,23 +26,19 @@ import {
  * to cite web-research sources as numbered links with a trailing Sources list.
  * The numbered SOURCES block is always present in web_search/fetch_url tool
  * results; this directive is the behavioural instruction to actually cite them.
+ *
+ * The date is deliberately day-resolution only (see `formatPromptDate`). This
+ * prompt is the most cacheable part of every request, and prompt caching only
+ * reuses an identical prefix, so a per-second clock here made the prefix
+ * unique every second. `now` is injectable for tests; callers should omit it.
  */
 export function createSystemPrompt(
   visionSupported?: boolean,
   yoloMode: boolean = false,
-  citeSources: boolean = true
+  citeSources: boolean = true,
+  now: Date = new Date()
 ): string {
-  const now = new Date();
-  const dateTimeStr = now.toLocaleString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    timeZoneName: 'short',
-  });
+  const dateStr = formatPromptDate(now);
 
   // Refresh skill cache at conversation boundaries (start / compaction)
   invalidateSkillCache();
@@ -55,7 +52,7 @@ export function createSystemPrompt(
 
   return (
     `You are Locopilot, a helpful AI assistant running inside a web application.\n` +
-    `Current date and time: ${dateTimeStr}\n` +
+    `Current date: ${dateStr}\n` +
     `${alwaysApplySection}` +
     `${citeSources ? buildCitationDirective() : ''}` +
     `\n${getToolSystemPrompt(yoloMode, visionSupported)}${availableSkillsSection}` +
@@ -79,7 +76,7 @@ function buildCitationDirective(): string {
     '- Place a numbered link ([1], [2], ...) immediately after each claim taken from the web.\n' +
     '- End your answer with a "Sources:" section listing every source you used, one per line, as:\n' +
     '  [n] Source Name — full URL\n' +
-    '- Use ONLY the real URLs that appeared in the tool results\' SOURCES block. Never invent,\n' +
+    "- Use ONLY the real URLs that appeared in the tool results' SOURCES block. Never invent,\n" +
     '  guess, or fabricate URLs, and never use result_N placeholders.\n' +
     '- If a claim did not come from a retrieved source, do not attach a citation to it.\n\n'
   );
