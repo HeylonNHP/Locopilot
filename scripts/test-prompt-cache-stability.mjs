@@ -204,7 +204,10 @@ check('states the date on the second line, with no clock', () => {
 });
 
 check('no longer emits the old per-second clock wording', () => {
-  assert.doesNotMatch(createSystemPrompt(undefined, false, true, t1), /Current date and time:/);
+  // Case-insensitive on purpose: a lower-cased "the current date and time:"
+  // would still read as a live clock, and this is the exact phrase whose
+  // reintroduction would undo the whole change.
+  assert.doesNotMatch(createSystemPrompt(undefined, false, true, t1), /current date and time:/i);
 });
 
 console.log('buildSubAgentSystemPrompt');
@@ -219,7 +222,7 @@ check('byte-identical across two builds 59 seconds apart (same day)', () => {
 check('states the date, with no clock and no old wording', () => {
   const prompt = buildSubAgentSystemPrompt(undefined, true, t1);
   assert.equal(prompt.split('\n')[1], `Current date: ${formatPromptDate(t1)}`);
-  assert.doesNotMatch(prompt, /Current date and time:/);
+  assert.doesNotMatch(prompt, /current date and time:/i);
 });
 
 // ─── (c2) sub-agent time grounding ───────────────────────────────────────────
@@ -251,20 +254,34 @@ console.log('buildSubAgentUserMessage');
 const subAgentNow = new Date(2026, 8, 24, 11, 23, 0);
 const subAgentPrompt = 'Research the current state of quantum error correction.';
 
-check('leads with a wall-clock header', () => {
+check('leads with the sub-agent start-time header', () => {
   const content = buildSubAgentUserMessage(subAgentPrompt, '', subAgentNow);
   assert.equal(
     content.split('\n')[0],
-    `Current date and time: ${formatPromptDateTime(subAgentNow)}`
+    `Sub-agent start time (fixed; does not advance): ${formatPromptDateTime(subAgentNow)}`
   );
 });
 
-check('grounds the agent in a real date and time, not an assumption', () => {
-  const content = buildSubAgentUserMessage(subAgentPrompt, '', subAgentNow);
+check('names the value as a start time and not as a live clock', () => {
+  const firstLine = buildSubAgentUserMessage(subAgentPrompt, '', subAgentNow).split('\n')[0];
   assert.match(
-    content,
-    /Current date and time: \w+day, \w+ \d{1,2}, \d{4} at \d{1,2}:\d{2} (?:AM|PM)/
+    firstLine,
+    /^Sub-agent start time \(fixed; does not advance\): \w+day, \w+ \d{1,2}, \d{4} at \d{1,2}:\d{2} (?:AM|PM)/
   );
+  // Regression guard: a value that reads as "now" is exactly the bug this
+  // wording exists to avoid, because the value is frozen at agent start.
+  assert.doesNotMatch(firstLine, /current (?:date and time|time)/i);
+});
+
+check('tells the agent the start time is fixed and how to get the true time', () => {
+  const prompt = buildSubAgentSystemPrompt(undefined, true, t1);
+  assert.match(prompt, /does not advance/);
+  assert.match(prompt, /Get-Date/);
+  assert.match(prompt, /may be earlier or later/);
+  assert.match(prompt, /say so if you had to assume/);
+  // The rule must not resurrect the live-clock phrase in the shared prompt.
+  // Case-insensitive, so a lower-cased variant cannot slip through.
+  assert.doesNotMatch(prompt, /current date and time:/i);
 });
 
 check('is byte-identical for a fixed start instant (the agent-lifetime property)', () => {
@@ -289,7 +306,7 @@ check('keeps the prior-results block and the task after the header', () => {
   );
   assert.equal(content.endsWith(subAgentPrompt), true);
   assert.equal(content.includes('## Prior results'), true);
-  const headerIndex = content.indexOf('Current date and time: ');
+  const headerIndex = content.indexOf('Sub-agent start time');
   assert.equal(headerIndex, 0);
   assert.equal(content.indexOf('## Prior results') > headerIndex, true);
 });

@@ -221,8 +221,10 @@ export function adoptDiscoveredContextLimit(config: SubAgentConfig, cap: number)
  * across batches. The precise time-of-day is NOT here - it is injected per
  * agent into the task message by `buildSubAgentUserMessage`, which keeps the
  * shared system prompt free of per-agent variation while still grounding each
- * sub-agent in the real wall clock. `now` is injectable for tests; callers
- * should omit it.
+ * sub-agent in the real wall clock. What DOES live here is the standing rule
+ * explaining how to read that per-agent header, because the rule itself is
+ * agent-invariant and is therefore amortised across every agent rather than
+ * re-billed per agent. `now` is injectable for tests; callers should omit it.
  */
 export function buildSubAgentSystemPrompt(
   skillInfo?: string,
@@ -234,6 +236,13 @@ export function buildSubAgentSystemPrompt(
   let prompt =
     'You are a focused sub-agent running inside Locopilot.\n' +
     `Current date: ${dateStr}\n\n` +
+    'Sub-agent start time: the header of your task message is the time this sub-agent started. ' +
+    'It is fixed and does not advance, so treat it as your reference point for what "today" means ' +
+    'rather than as the current moment. Timestamps you meet elsewhere (file modified times, ' +
+    'database rows, logs, `git log`, command output) come from other systems and may be earlier or ' +
+    'later than it; anything later than your start time is just elapsed time, not a contradiction. ' +
+    'If the exact current time matters, get it from the environment (`Get-Date` on PowerShell, ' +
+    '`date` elsewhere) rather than assuming it, and say so if you had to assume.\n\n' +
     'You are isolated from the parent conversation. The parent agent will provide all required context in the user message.\n' +
     'Use the available tools when they materially help complete the task.\n' +
     'Work autonomously until the task is complete.\n' +
@@ -267,8 +276,14 @@ export function buildSubAgentSystemPrompt(
  * Builds the sub-agent's user-role (task) message.
  *
  * Sub-agents do real work - research in particular - and the parent agent often
- * does not tell them the current date or time, so they are grounded here
- * instead of being left to assume.
+ * does not tell them the date or time the sub-agent started, so they are
+ * grounded here instead of being left to assume.
+ *
+ * The header deliberately names itself as the START time and says it is fixed:
+ * it is a reference point, not a live clock, so a long-running agent that sees a
+ * later file modified time, database row or log line can read that as elapsed
+ * time rather than as a contradiction. `buildSubAgentSystemPrompt` carries the
+ * matching interpretation rule.
  *
  * The wall-clock header is captured ONCE per sub-agent and then treated as
  * fixed for that agent's entire lifetime. That is what makes it
@@ -290,7 +305,7 @@ export function buildSubAgentUserMessage(
   priorBlock: string,
   now: Date = new Date()
 ): string {
-  return `Current date and time: ${formatPromptDateTime(now)}\n\n${priorBlock}${agentPrompt}`;
+  return `Sub-agent start time (fixed; does not advance): ${formatPromptDateTime(now)}\n\n${priorBlock}${agentPrompt}`;
 }
 
 // Exported for the network-free sub-agent output regression checks.
@@ -884,7 +899,7 @@ async function runSingleAgent(
   // prepended under a `## Prior sub-agent results` header so the current
   // agent can build on sibling work. The agent's own prompt remains
   // authoritative and comes last. A wall-clock header is prepended ahead of
-  // both so the agent is grounded in the current date and time (see
+  // both so the agent is grounded in the time this sub-agent started (see
   // buildSubAgentUserMessage for why it lives here rather than in the system
   // prompt).
   const priorBlock =
