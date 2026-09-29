@@ -111,7 +111,16 @@ export interface SseEventPayloadMap {
     tokenStats: SseTokenStats;
     doneReason: DoneReason;
   };
-  error: { message: string };
+  error: {
+    message: string;
+    /**
+     * Set by the `/api/compact` route so the client can tell a client-side
+     * disconnect (`client_abort` — the browser dropped the stream, and the
+     * server may well have finished the work) from a genuine LLM/pipeline
+     * failure (`llm_error`). Absent on the chat route's `error` events.
+     */
+    kind?: 'client_abort' | 'llm_error';
+  };
   write_error: { message: string };
   clear_assistant: object;
 }

@@ -1432,6 +1432,18 @@ export async function POST(req: NextRequest): Promise<Response> {
               let compactFailed = false;
               let persistedOk = true;
               let writeError: string | null = null;
+              const compactStartedAt = Date.now();
+              debugLog.diagnostic({
+                layer: 'route',
+                phase: 'compaction_start',
+                ...logCtx(activeSessionId),
+                provider: compactionLlmRequestContext.provider,
+                model: effectiveCompactionModel,
+                baseUrl: compactionLlmRequestContext.baseUrl,
+                messageCount: currentMessages.length,
+                numCtx: compactionNumCtx,
+                attempt: compactionsSinceLastPrompt + 1,
+              });
               try {
                 // The compaction runtime was resolved once, after the main
                 // request context size was known. This keeps auto-compaction,
@@ -1508,9 +1520,31 @@ export async function POST(req: NextRequest): Promise<Response> {
                     modelContextLimit,
                   });
                 }
-              } catch {
+                debugLog.diagnostic({
+                  layer: 'route',
+                  phase: 'compaction_end',
+                  ...logCtx(activeSessionId),
+                  provider: compactionLlmRequestContext.provider,
+                  model: effectiveCompactionModel,
+                  elapsedMs: Date.now() - compactStartedAt,
+                  messageCount: currentMessages.length,
+                  oldTokenCount: compactResult.stats.oldTokenCount,
+                  newTokenCount: compactResult.stats.newTokenCount,
+                  result: 'completed',
+                });
+              } catch (err) {
                 // Non-fatal — log and continue with existing messages.
                 compactFailed = true;
+                debugLog.diagnostic({
+                  layer: 'route',
+                  phase: 'compaction_end',
+                  ...logCtx(activeSessionId),
+                  provider: compactionLlmRequestContext.provider,
+                  model: effectiveCompactionModel,
+                  elapsedMs: Date.now() - compactStartedAt,
+                  result: req.signal.aborted ? 'client_aborted' : 'failed',
+                  error: err,
+                });
               }
               if (compactFailed) {
                 sendEvent('status', {

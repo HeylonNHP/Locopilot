@@ -1,8 +1,11 @@
 import { type NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 
 import type { SseEventPayloadMap } from '@/types/sse';
 
+import { debugLog } from '@/app/lib/debugLogger';
 import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
+import { SSE_KEEPALIVE_MS } from '@/constants';
 import { resolveEffectiveNumCtx } from '@/services/capResolver';
 import { compactHistory } from '@/services/compact';
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
@@ -86,6 +89,27 @@ export async function POST(request: NextRequest): Promise<Response> {
         }
       }
 
+      // A compaction run is dominated by sequential per-message LLM calls
+      // (distillation + summarisation), so the stream can sit silent for
+      // many seconds between frames — long enough for an idle-timeout proxy
+      // or the browser to drop the connection. A comment-only frame is
+      // ignored by the SSE parser but keeps the socket warm.
+      const keepaliveTimer = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': keep-alive\n\n'));
+        } catch {
+          // Client disconnected — ignore.
+        }
+      }, SSE_KEEPALIVE_MS);
+
+      const requestId = randomUUID();
+      const logCtx = (): { requestId: string; sessionId?: number } => ({
+        requestId,
+        ...(typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
+          ? { sessionId }
+          : {}),
+      });
+
       // Hoisted so the catch at 170 can use it. The inner try sets the
       // real value from the loaded config; this default is the
       // ollama-default fallback if the error fires before config loads.
@@ -95,6 +119,8 @@ export async function POST(request: NextRequest): Promise<Response> {
             ? baseUrl.trim()
             : DEFAULT_OLLAMA_BASE_URL,
       });
+      let effectiveCompactionModel = model as string;
+      let compactStartedAt: number | null = null;
       try {
         const config = await loadConfig();
         const resolved = resolveProviderRequestContext(
@@ -145,10 +171,11 @@ export async function POST(request: NextRequest): Promise<Response> {
             // requested value.
           }
         }
-        const effectiveCompactionModel = resolveCompactionModel(
+        const effectiveCompactionModelResolved = resolveCompactionModel(
           typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
           model.trim()
         );
+        effectiveCompactionModel = effectiveCompactionModelResolved;
 
         // Resolve a separate provider for the compaction LLM call ONLY when
         // the client explicitly supplied a compactionProviderId. This lets
@@ -189,6 +216,18 @@ export async function POST(request: NextRequest): Promise<Response> {
         const conversationMessages: ChatMessage[] = typedMessages.filter(
           (m): m is ChatMessage => m.role !== 'system' && m.role !== 'subagent_log'
         );
+
+        debugLog.diagnostic({
+          layer: 'route',
+          phase: 'compaction_start',
+          ...logCtx(),
+          provider: compactionLlmRequestContext.provider,
+          model: effectiveCompactionModel,
+          baseUrl: compactionLlmRequestContext.baseUrl,
+          messageCount: conversationMessages.length,
+          numCtx: compactionNumCtx,
+        });
+        compactStartedAt = Date.now();
 
         const result = await compactHistory(
           compactionLlmRequestContext,
@@ -232,6 +271,18 @@ export async function POST(request: NextRequest): Promise<Response> {
           );
         }
 
+        debugLog.diagnostic({
+          layer: 'route',
+          phase: 'compaction_end',
+          ...logCtx(),
+          provider: compactionLlmRequestContext.provider,
+          model: effectiveCompactionModel,
+          elapsedMs: Date.now() - compactStartedAt,
+          messageCount: result.newMessages.length,
+          newTokenCount: result.stats.newTokenCount,
+          result: 'completed',
+        });
+
         sendEvent('compact', {
           messages: result.newMessages,
           stats: result.stats,
@@ -241,8 +292,33 @@ export async function POST(request: NextRequest): Promise<Response> {
         const message = await getLlmApiErrorMessage(llmRequestContext, err).catch(
           () => fallbackMessage
         );
-        sendEvent('error', { message: message || fallbackMessage });
+        // Distinguish a deliberate client disconnect / dropped stream from a
+        // genuine LLM failure. `getLlmApiErrorMessage` surfaces the SDK's
+        // "Request was aborted." verbatim, which reads as a pipeline failure
+        // even though the client is simply gone (or the browser dropped the
+        // socket) — the exact confusion that produced the misleading
+        // "Compaction failed: Error in input stream" UI message.
+        const clientAborted = request.signal.aborted || /abort/i.test(message);
+        debugLog.diagnostic({
+          layer: 'route',
+          phase: 'compaction_end',
+          ...logCtx(),
+          provider: llmRequestContext.provider,
+          model: effectiveCompactionModel,
+          ...(compactStartedAt === null ? {} : { elapsedMs: Date.now() - compactStartedAt }),
+          result: clientAborted ? 'client_aborted' : 'failed',
+          error: err,
+        });
+        try {
+          sendEvent('error', {
+            message: message || fallbackMessage,
+            kind: clientAborted ? 'client_abort' : 'llm_error',
+          });
+        } catch {
+          // Controller may already be closed — ignore.
+        }
       } finally {
+        clearInterval(keepaliveTimer);
         controller.close();
       }
     },

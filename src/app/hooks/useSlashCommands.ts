@@ -6,6 +6,7 @@ import { type Dispatch, type SetStateAction, useCallback } from 'react';
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
 import { buildToolUseNudge } from '@/services/toolUseNudge';
+import { isAbortError } from '@/util/error';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
@@ -19,8 +20,42 @@ import type { StableRefs, WritableRef } from './useStableRefs';
  */
 export const COMPACTION_ABORT_KEY = Number.MIN_SAFE_INTEGER;
 
-function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === 'AbortError';
+/**
+ * A stream that dies mid-read (browser disconnect, proxy idle timeout, tab
+ * reload) surfaces as a Gecko/undici transport error rather than a clean
+ * AbortError. Treat those the same as an intentional abort: the `/compact`
+ * stream is one-way, so the client cannot know whether the server finished
+ * the work after the disconnect — and in practice it often has, since the
+ * route persists before emitting its final event.
+ */
+function isConnectionLossError(err: unknown): boolean {
+  if (isAbortError(err)) return true;
+  if (err instanceof CompactionError && err.kind === 'client_abort') return true;
+  if (err instanceof Error) {
+    const message = err.message.toLowerCase();
+    return (
+      err.name === 'TypeError' ||
+      message.includes('input stream') ||
+      message.includes('network') ||
+      message.includes('fetch') ||
+      message.includes('aborted')
+    );
+  }
+  return false;
+}
+
+/**
+ * Carries the server's own classification of a failed compaction run so the
+ * UI can distinguish a client disconnect from a real pipeline failure.
+ */
+class CompactionError extends Error {
+  readonly kind: 'client_abort' | 'llm_error' | undefined;
+
+  constructor(message: string, kind: 'client_abort' | 'llm_error' | undefined) {
+    super(message);
+    this.name = 'CompactionError';
+    this.kind = kind;
+  }
 }
 
 interface SlashCommandDeps {
@@ -410,6 +445,7 @@ export function useSlashCommands({
               stats: { oldTokenCount?: number; newTokenCount?: number };
             } | null = null;
             let errorMessage: string | null = null;
+            let errorKind: 'client_abort' | 'llm_error' | undefined;
 
             while (true) {
               const { done, value } = await reader.read();
@@ -432,12 +468,16 @@ export function useSlashCommands({
                   compactData = parsed;
                 } else if (event === 'error' && typeof parsed.message === 'string') {
                   errorMessage = parsed.message;
+                  errorKind =
+                    parsed.kind === 'client_abort' || parsed.kind === 'llm_error'
+                      ? parsed.kind
+                      : undefined;
                 }
               } catch {
                 // Ignore malformed SSE frames
               }
             }
-            if (errorMessage) throw new Error(errorMessage);
+            if (errorMessage) throw new CompactionError(errorMessage, errorKind);
             if (!compactData) throw new Error('Compaction returned an invalid response.');
 
             dispatch({
@@ -446,13 +486,23 @@ export function useSlashCommands({
               ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
             });
             if (typeof compactData.stats?.newTokenCount === 'number') {
+              // Display against the server's effective (clamped) cap rather
+              // than the raw requested numCtx: on a provider that serves a
+              // smaller window than the user configured, the requested value
+              // would show a limit the next turn can never use. Falls back to
+              // the requested value only when the server has not reported a
+              // cap on this stream.
+              const effectiveForLimit = refs.effectiveNumCtxRef.current;
               dispatch({
                 type: 'SET_TOKEN_STATS',
                 stats: {
                   promptEvalCount: compactData.stats.newTokenCount,
                   evalCount: 0,
                   totalTokens: compactData.stats.newTokenCount,
-                  tokenLimit: refs.requestedNumCtxRef.current,
+                  tokenLimit:
+                    typeof effectiveForLimit === 'number' && effectiveForLimit > 0
+                      ? effectiveForLimit
+                      : refs.requestedNumCtxRef.current,
                 },
                 ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
               });
@@ -488,8 +538,10 @@ export function useSlashCommands({
             }
             await loadSessions();
           } catch (err) {
-            if (isAbortError(err)) {
-              addSystem('Compaction cancelled.');
+            if (isConnectionLossError(err)) {
+              addSystem(
+                'Compaction stream was interrupted — the server may still have completed it. Reload the session to check before retrying.'
+              );
             } else {
               addSystem(
                 `Compaction failed: ${err instanceof Error ? err.message : 'Unknown error'}`
