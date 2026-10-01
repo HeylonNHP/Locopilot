@@ -90,6 +90,15 @@ async function ensureInitialised(theme: ResolvedTheme): Promise<Mermaid> {
     // model. Use `antiscript` instead only if HTML inside labels is ever
     // required — it allows HTML tags while still running the final pass.
     securityLevel: 'strict',
+    // Mermaid's own final fallback, on any parse/render failure, is to insert
+    // a "Syntax error in text" error diagram into the live DOM. Because the
+    // failure happens while `render()` has already appended its temporary
+    // container, that SVG is left orphaned in `document.body` — an unowned
+    // graphic floating over the chat (mermaid still throws, so it is never
+    // removed by our own cleanup). This flag suppresses that insertion; the
+    // thrown error still reaches the catch in `renderMermaidInPre`, which
+    // installs the app's own inline error panel instead.
+    suppressErrorRendering: true,
     theme: mermaidTheme,
     themeVariables: collectThemeVariables(),
     fontFamily: 'inherit',

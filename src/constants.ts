@@ -80,6 +80,14 @@ export const MEASUREMENT_CTX_FLOOR = 32_768;
 /** Default prompt-loop iteration cap before giving up; 0 = unlimited. */
 export const DEFAULT_MAX_PROMPT_LOOP_ITERATIONS = 4;
 
+/**
+ * Consecutive final responses containing an invalid ```mermaid fence that are
+ * rejected and retried with a syntax-error fix-up nudge before the response is
+ * accepted as-is (0 disables the check entirely). Separate from the
+ * empty-response cap so the two recovery streaks cannot starve each other.
+ */
+export const MAX_MERMAID_RECOVERY_ATTEMPTS = 3;
+
 // ── Tool / process lifecycle ──────────────────────────────────────────────
 
 /** Default `run_command` timeout (the legacy `DEFAULT_TIMEOUT_MS` in runCommandTool). */

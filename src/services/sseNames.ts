@@ -66,7 +66,8 @@ export type ChatPhase =
   | 'vision_unsupported'
   | 'sampling_param_unsupported'
   | 'model_switched'
-  | 'steer_applied';
+  | 'steer_applied'
+  | 'mermaid_retry';
 
 export const CHAT_PHASES: readonly ChatPhase[] = [
   'compacting',
@@ -84,6 +85,7 @@ export const CHAT_PHASES: readonly ChatPhase[] = [
   'sampling_param_unsupported',
   'model_switched',
   'steer_applied',
+  'mermaid_retry',
 ];
 
 // ── `done.doneReason` ──────────────────────────────────────────────────────

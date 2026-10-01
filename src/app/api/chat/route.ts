@@ -50,6 +50,7 @@ import {
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
   HTTP_BAD_REQUEST,
+  MAX_MERMAID_RECOVERY_ATTEMPTS,
   MCP_TOOL_SEARCH_THRESHOLD,
   SSE_CONTENT_TYPE,
   TPS_STATUS_MIN_INTERVAL_MS,
@@ -97,6 +98,12 @@ import {
   parseUnsupportedParamFromError,
   parseVisionUnsupportedFromError,
 } from '@/services/llmContextLimit';
+import {
+  buildMermaidRecoveryNudge,
+  mayContainMermaidFence,
+  MermaidRecoveryTracker,
+  validateMermaidFences,
+} from '@/services/mermaidRecovery';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { checkCompleteness } from '@/services/promptLoop';
 import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
@@ -411,6 +418,13 @@ export async function POST(req: NextRequest): Promise<Response> {
       // them (see src/services/emptyResponseRecovery.ts — the policy is
       // shared with the sub-agent loop).
       const emptyResponseRecovery = new EmptyResponseRecoveryTracker();
+      // Tracks consecutive final responses rejected because one or more of
+      // their ```mermaid fences failed to parse. Deliberately a SEPARATE
+      // tracker from `emptyResponseRecovery` so the two recovery streaks
+      // cannot starve each other (see src/services/mermaidRecovery.ts).
+      // Must live outside the `outer:` loop — declaring it inside would
+      // reset the streak on every iteration and the cap would never apply.
+      const mermaidRecovery = new MermaidRecoveryTracker();
       // How many times auto-compaction has fired since this request (i.e.
       // since the user's last real prompt) began. Each real user message
       // starts a fresh request, so this counter needs no explicit reset —
@@ -2319,6 +2333,75 @@ export async function POST(req: NextRequest): Promise<Response> {
           if (lastDoneReason === 'load' || lastDoneReason === 'unload') {
             logger.warn('chat', `Ignoring terminal chunk with done_reason=${lastDoneReason}`);
             continue outer;
+          }
+
+          // -- Mermaid validation gate -----------------------------------
+          // A ```mermaid fence the client cannot draw turns into an "Unable
+          // to render diagram" panel, so reject such a response and hand the
+          // parse errors back to the model instead of displaying it.
+          //
+          // This MUST stay above both pushes below. A no-tool-call final
+          // response is persisted only via `pendingAppends` (flushed by
+          // `flushSessionState`), so not pushing it is what keeps the
+          // rejected draft out of SQLite entirely — it exists only in the
+          // in-memory `currentMessages` as context for the retry. Moving this
+          // block after those two lines would silently persist rejected
+          // responses and show them again on reload.
+          //
+          // Guards, in order:
+          //  - `lastDoneReason !== 'length'`: a response cut off mid-fence is
+          //    incomplete, not invalid — retrying it would produce a fence
+          //    that renders.
+          //  - `hasMeaningfulAssistantContent`: a genuinely empty reply must
+          //    fall through to the empty-response recovery below, unchanged.
+          //  - `mayContainMermaidFence`: cheap string test, so ordinary turns
+          //    never pay mermaid's (one-time, ~3s) jsdom cold start.
+          //  - `mermaidRecovery.shouldRecover()`: false once the cap is hit,
+          //    which accepts the response as-is and lets the client's own
+          //    error panel render — the give-up fallback needs no new UI.
+          if (
+            lastDoneReason !== 'length' &&
+            hasMeaningfulAssistantContent(assistantMessage) &&
+            mayContainMermaidFence(content) &&
+            mermaidRecovery.shouldRecover()
+          ) {
+            const fenceErrors = await validateMermaidFences(content);
+
+            if (fenceErrors.length > 0) {
+              mermaidRecovery.recordAttempt();
+              currentMessages.push(assistantMessage, buildMermaidRecoveryNudge(fenceErrors));
+              // The fix-up nudge goes into `currentMessages` ONLY — never
+              // `pendingAppends` — so the LLM sees it on the next inference
+              // without it being persisted and re-injected as a stale
+              // directive on a later turn. The marker prefix keeps compaction
+              // from anchoring on it.
+              //
+              // No title bookkeeping is needed here: `firstContent` is
+              // declared inside the `outer:` loop, so the retry recaptures it
+              // from whichever response is finally accepted.
+              lastAuthoritativeTokens = 0;
+
+              sendEvent('status', {
+                phase: 'mermaid_retry',
+                attempt: mermaidRecovery.attemptsUsed,
+                maxRetries: MAX_MERMAID_RECOVERY_ATTEMPTS,
+              });
+              // Drop the broken response the client has already streamed.
+              // `clear_assistant` maps to REMOVE_LAST_ASSISTANT client-side;
+              // the status event above exists because this event carries no
+              // ack, so the UI can show what is happening meanwhile.
+              sendEvent('clear_assistant', {});
+
+              const mermaidFlush = await flushSessionState();
+              if (!mermaidFlush.ok) {
+                throw new Error(`Write failed: ${mermaidFlush.error}`);
+              }
+
+              continue outer;
+            }
+
+            // Every fence parsed — accept the response.
+            mermaidRecovery.reset();
           }
 
           currentMessages.push(assistantMessage);
