@@ -5,6 +5,7 @@ import { type Dispatch, type SetStateAction, useCallback } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
+import { formatSlashCommandHelp } from '@/services/slashCommands';
 import { buildToolUseNudge } from '@/services/toolUseNudge';
 import { isAbortError } from '@/util/error';
 
@@ -152,22 +153,9 @@ export function useSlashCommands({
 
       switch (command) {
         case 'help': {
-          addSystem(
-            'Available commands:\n' +
-              '/help      - Show all available commands\n' +
-              '/clear     - Clear messages\n' +
-              '/clear-images - Remove image attachments to free context\n' +
-              '/mcp       - List MCP servers, /mcp reload, or /mcp auth <server>\n' +
-              '/model [name] - Switch LLM model\n' +
-              '/compact   - Summarise conversation history\n' +
-              '/title     - Generate a title for current session\n' +
-              '/dump      - Export conversation to markdown file\n' +
-              '/sessions  - List and switch sessions\n' +
-              '/delete    - Delete a session\n' +
-              '/settings  - Open settings modal\n' +
-              '/new       - Start a fresh conversation\n' +
-              '/nudge     - Manually remind AI to use tools'
-          );
+          // Generated from the shared command table so /help cannot drift from
+          // the dispatcher or the autocomplete list.
+          addSystem(formatSlashCommandHelp());
           return;
         }
 
@@ -884,6 +872,10 @@ export function useSlashCommands({
         }
 
         default: {
+          // Unreachable from the composer: `classifySlashInput` only routes
+          // names that exist in SLASH_COMMANDS. Kept as a guard so a new
+          // command added to the table without a `case` fails loudly here
+          // instead of silently doing nothing.
           addSystem(`Unknown command: /${command}. Type /help for available commands.`);
           return;
         }

@@ -6,7 +6,9 @@ import type { VisionSupportState } from '@/services/visionCache';
 import type { LlmProvider } from '@/types/chatConfig';
 
 import { useInputHistory } from '@/app/hooks/useInputHistory';
+import { type SendHandler } from '@/app/hooks/useSendHandler';
 import { useChat } from '@/app/lib/chatStore';
+import { SLASH_COMMANDS } from '@/services/slashCommands';
 
 import './ChatInput.scss';
 
@@ -122,7 +124,13 @@ function readFileAsBase64(file: File): Promise<string> {
 }
 
 interface Props {
-  onSend: (message: string, attachments: Attachment[]) => void;
+  /**
+   * Returns `false` when the input was NOT consumed (e.g. an unknown slash
+   * command), which tells the composer to restore the text it optimistically
+   * cleared. Anything else — including a promise that resolves later — leaves
+   * the cleared composer alone.
+   */
+  onSend: SendHandler;
   disabled?: boolean;
   /**
    * The active model's vision (image-input) support, as known to
@@ -148,23 +156,6 @@ const MAX_TEXTAREA_HEIGHT = 200;
 
 const useIsomorphicLayoutEffect =
   typeof globalThis.window === 'undefined' ? useEffect : useLayoutEffect;
-
-const COMMANDS = [
-  { command: '/clear', description: 'Clear conversation' },
-  { command: '/clear-images', description: 'Remove image attachments to free context' },
-  { command: '/compact', description: 'Summarise conversation history' },
-  { command: '/ctx', description: 'Set context size' },
-  { command: '/delete', description: 'Delete a session' },
-  { command: '/dump', description: 'Export conversation to markdown' },
-  { command: '/help', description: 'Show all commands' },
-  { command: '/mcp', description: 'List MCP servers (or /mcp reload)' },
-  { command: '/model', description: 'Switch model' },
-  { command: '/new', description: 'Start fresh conversation' },
-  { command: '/nudge', description: 'Remind AI to use tools' },
-  { command: '/sessions', description: 'List sessions' },
-  { command: '/settings', description: 'Open settings' },
-  { command: '/title', description: 'Generate session title' },
-];
 
 // Some embedded runtimes (Electron/WebView2) attach a local file path to
 // dropped File objects. Declare the extension so we can read it without
@@ -390,7 +381,7 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
   }, []);
 
   const filtered = input.startsWith('/')
-    ? COMMANDS.filter((c) => c.command.toLowerCase().startsWith(input.toLowerCase()))
+    ? SLASH_COMMANDS.filter((c) => c.command.toLowerCase().startsWith(input.toLowerCase()))
     : [];
 
   useEffect(() => {
@@ -404,12 +395,32 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
 
   const handleSubmit = () => {
     const text = input.trim();
-    if ((text || attachments.length > 0) && !disabled) {
-      onSend(text, attachments);
-      setInput('');
-      setAttachments([]);
-      setShowSuggestions(false);
-    }
+    if ((!text && attachments.length === 0) || disabled) return;
+
+    // Clear optimistically, then restore if the send handler reports that
+    // nothing was consumed (an unknown slash command, for example).
+    // Clearing first — rather than waiting for the handler — means a slow or
+    // long-running command can never wipe text the user typed in the
+    // meantime.
+    const submittedText = text;
+    const submittedAttachments = attachments;
+    setInput('');
+    setAttachments([]);
+    setShowSuggestions(false);
+
+    void Promise.resolve(onSend(submittedText, submittedAttachments)).then((consumed) => {
+      if (consumed !== false) return;
+      // Nothing was sent: give the user their prompt back.
+      setInput(submittedText);
+      setAttachments(submittedAttachments);
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        const end = textarea.value.length;
+        textarea.setSelectionRange(end, end);
+      });
+    });
   };
 
   const handlePaste = useCallback(

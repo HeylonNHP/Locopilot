@@ -22,6 +22,7 @@
     "test:mermaid-contrast": "node scripts/mermaid/test-mermaid-contrast.mjs",
     "test:mermaid-security": "node scripts/mermaid/test-mermaid-security.mjs",
     "test:mermaid-recovery": "npx tsx scripts/test-mermaid-recovery.mjs",
+    "test:slash-command-routing": "npx tsx scripts/test-slash-command-routing.mjs",
     "test:bind-host": "node scripts/test-bind-host.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

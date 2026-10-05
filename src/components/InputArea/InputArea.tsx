@@ -1,7 +1,8 @@
 'use client';
 
+import { type SendHandler } from '@/app/hooks/useSendHandler';
 import { useChat } from '@/app/lib/chatStore';
-import ChatInput, { type Attachment } from '@/components/ChatInput';
+import ChatInput from '@/components/ChatInput';
 import SteerInput from '@/components/SteerInput';
 
 interface InputAreaProps {
@@ -11,7 +12,7 @@ interface InputAreaProps {
   isDeletingPrompt?: boolean;
   compactingPhases: string[];
   onStop: () => void;
-  onSend: (message: string, attachments: Attachment[]) => void;
+  onSend: SendHandler;
 }
 
 /**

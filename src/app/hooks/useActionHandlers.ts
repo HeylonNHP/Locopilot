@@ -4,8 +4,7 @@ import { type Dispatch, useCallback } from 'react';
 
 import type { ChatAction } from '@/app/lib/chatStore';
 
-import { type Attachment } from '@/components/ChatInput';
-
+import type { SendHandler } from './useSendHandler';
 import type { WritableRef } from './useStableRefs';
 
 /**
@@ -15,7 +14,7 @@ import type { WritableRef } from './useStableRefs';
 export function useActionHandlers(
   abortControllersRef: WritableRef<Map<number, AbortController>>,
   isCurrentSessionStreaming: boolean,
-  handleSend: (message: string, attachments: Attachment[]) => Promise<void>,
+  handleSend: SendHandler,
   dispatch: Dispatch<ChatAction>,
   /**
    * The session id the user is currently viewing. `handleStop` only
