@@ -1,17 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { Session } from '@/app/lib/chatStore';
 
-/** The `<link rel="icon">` attributes to render for the current conversation. */
-export interface FaviconSpec {
+const APP_TITLE = 'Locopilot';
+
+/** A `<link rel="icon">` to render for the current conversation. */
+export interface Favicon {
   href: string;
-  type: string;
+  type: 'image/png' | 'image/svg+xml';
 }
 
-/** Default icon shown when the active session has no leading emoji. */
-const DEFAULT_FAVICON: FaviconSpec = { href: '/icon.svg', type: 'image/svg+xml' };
+/** The tab chrome — title and favicon — for the active conversation. */
+export interface DocumentHead {
+  title: string;
+  favicon: Favicon;
+}
+
+/** Shown when the active session has no leading emoji. */
+const DEFAULT_FAVICON: Favicon = { href: '/icon.svg', type: 'image/svg+xml' };
 
 /** Edge length of the generated PNG. 64px is crisp enough for browser tabs. */
 const FAVICON_SIZE = 64;
@@ -91,33 +99,47 @@ function emojiToFaviconDataUrl(emoji: string): string {
   return canvas.toDataURL('image/png');
 }
 
+/** Renders an emoji to a ready-to-render favicon, falling back to the default. */
+function renderEmojiFavicon(emoji: string): Favicon {
+  const href = emojiToFaviconDataUrl(applyEmojiPresentation(emoji));
+  return href === '' ? DEFAULT_FAVICON : { href, type: 'image/png' };
+}
+
+/** Formats the tab title: "{name} — Locopilot", or a neutral fallback. */
+function resolveTitle(currentSessionId: number | null, name: string | undefined): string {
+  if (currentSessionId === null) return APP_TITLE;
+  return name ? `${name} — ${APP_TITLE}` : `Session ${currentSessionId} — ${APP_TITLE}`;
+}
+
 /**
- * Resolves the favicon for the active conversation as renderable `<link>`
- * attributes.
+ * Resolves the tab title and favicon for the active conversation.
  *
- * The result is meant to be rendered by React (which hoists `<link>` into
- * `<head>` and keeps it correct across the head re-commits Next.js performs
- * after hydration). Touching the DOM imperatively instead loses that race: the
- * framework rebuilds `<head>` and clobbers the injected node.
+ * The result is meant to be rendered by React (which hoists `<title>`/`<link>`
+ * into `<head>` and keeps them correct across the head re-commits Next.js
+ * performs after hydration). Touching the DOM imperatively instead loses that
+ * race: the framework rebuilds `<head>` and clobbers the change.
+ *
+ * The session lookup is memoized because consumers re-render on every chat-store
+ * update (i.e. every streamed token) while `sessions` can be large.
  */
-export function useFavicon(currentSessionId: number | null, sessions: Session[]): FaviconSpec {
-  const session =
-    currentSessionId === null ? undefined : sessions.find((s) => s.id === currentSessionId);
-  const emoji = extractLeadingEmoji(session?.name);
+export function useDocumentHead(
+  currentSessionId: number | null,
+  sessions: Session[]
+): DocumentHead {
+  const session = useMemo(
+    () => (currentSessionId === null ? undefined : sessions.find((s) => s.id === currentSessionId)),
+    [currentSessionId, sessions]
+  );
+  const name = session?.name?.trim();
 
-  const [favicon, setFavicon] = useState<FaviconSpec>(DEFAULT_FAVICON);
+  const emoji = useMemo(() => extractLeadingEmoji(name), [name]);
 
+  const [favicon, setFavicon] = useState<Favicon>(DEFAULT_FAVICON);
   useEffect(() => {
-    if (emoji === null) {
-      setFavicon(DEFAULT_FAVICON);
-      return;
-    }
-
     // Canvas rendering is client-only, so it must happen in an effect; the
     // initial render (and SSR) falls back to the default icon.
-    const dataUrl = emojiToFaviconDataUrl(applyEmojiPresentation(emoji));
-    setFavicon(dataUrl === '' ? DEFAULT_FAVICON : { href: dataUrl, type: 'image/png' });
+    setFavicon(emoji === null ? DEFAULT_FAVICON : renderEmojiFavicon(emoji));
   }, [emoji]);
 
-  return favicon;
+  return { title: resolveTitle(currentSessionId, name), favicon };
 }

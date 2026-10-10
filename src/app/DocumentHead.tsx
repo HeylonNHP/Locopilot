@@ -1,7 +1,6 @@
 'use client';
 
-import { resolveDocumentTitle } from './hooks/documentTitle';
-import { useFavicon } from './hooks/useFavicon';
+import { useDocumentHead } from './hooks/useDocumentHead';
 import { useChat } from './lib/chatStore';
 
 /**
@@ -18,8 +17,7 @@ import { useChat } from './lib/chatStore';
  */
 export function DocumentHead() {
   const { state } = useChat();
-  const title = resolveDocumentTitle(state.currentSessionId, state.sessions);
-  const favicon = useFavicon(state.currentSessionId, state.sessions);
+  const { title, favicon } = useDocumentHead(state.currentSessionId, state.sessions);
 
   return (
     <>

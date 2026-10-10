@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tests for conversation favicon emoji extraction (src/app/hooks/useFavicon.ts).
+ * Tests for conversation favicon emoji extraction (src/app/hooks/useDocumentHead.ts).
  *
  * Run with: npx tsx scripts/test-conversation-favicon.mjs
  *
@@ -12,7 +12,7 @@
  * `Emoji` property, so a looser `\p{Emoji}` test would wrongly match "2024").
  */
 
-import { applyEmojiPresentation, extractLeadingEmoji } from '../src/app/hooks/useFavicon.ts';
+import { applyEmojiPresentation, extractLeadingEmoji } from '../src/app/hooks/useDocumentHead.ts';
 
 let pass = 0;
 let fail = 0;
