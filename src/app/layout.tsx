@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 
+import { DocumentHead } from './DocumentHead';
 import { ChatProvider } from './lib/chatStore';
 
 import './globals.scss';
 import './styles.scss';
 
 export const metadata: Metadata = {
-  title: 'Locopilot',
   description: 'Local, Private, Safe AI Assistant',
 };
 
@@ -28,7 +28,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" data-theme={initialTheme}>
       <body>
-        <ChatProvider>{children}</ChatProvider>
+        <ChatProvider>
+          <DocumentHead />
+          {children}
+        </ChatProvider>
       </body>
     </html>
   );

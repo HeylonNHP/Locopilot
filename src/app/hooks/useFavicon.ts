@@ -1,17 +1,20 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { Session } from '@/app/lib/chatStore';
 
-/** Fallback icon shown when the active session has no leading emoji. */
-const DEFAULT_FAVICON_HREF = '/icon.svg';
+/** The `<link rel="icon">` attributes to render for the current conversation. */
+export interface FaviconSpec {
+  href: string;
+  type: string;
+}
+
+/** Default icon shown when the active session has no leading emoji. */
+const DEFAULT_FAVICON: FaviconSpec = { href: '/icon.svg', type: 'image/svg+xml' };
 
 /** Edge length of the generated PNG. 64px is crisp enough for browser tabs. */
 const FAVICON_SIZE = 64;
-
-/** Marks the <link> we own so we never clobber Next.js-managed icon tags. */
-const FAVICON_LINK_ATTR = 'data-conversation-favicon';
 
 /**
  * Matches a single grapheme cluster that is (or contains) an emoji.
@@ -69,8 +72,7 @@ export function applyEmojiPresentation(emoji: string): string {
  * Renders a single emoji to a PNG data URL via a canvas.
  *
  * The glyph is drawn with the platform emoji font, so the favicon matches the
- * artwork already shown in the sidebar. A data URL is returned (rather than an
- * object URL) so nothing has to be revoked later.
+ * artwork already shown in the sidebar.
  */
 function emojiToFaviconDataUrl(emoji: string): string {
   const canvas = document.createElement('canvas');
@@ -89,70 +91,33 @@ function emojiToFaviconDataUrl(emoji: string): string {
   return canvas.toDataURL('image/png');
 }
 
-/** Returns our injected favicon <link>, creating it if it does not exist yet. */
-function getOrCreateFaviconLink(): HTMLLinkElement {
-  const existing = document.querySelector<HTMLLinkElement>(`link[${FAVICON_LINK_ATTR}]`);
-  if (existing) return existing;
-
-  const link = document.createElement('link');
-  link.rel = 'icon';
-  link.type = 'image/png';
-  // Mirror the `sizes="any"` Next.js places on its own SVG icon. Without it our
-  // candidate lacks a size and can lose the browser's "most appropriate icon"
-  // selection to the built-in SVG.
-  link.setAttribute('sizes', 'any');
-  link.setAttribute(FAVICON_LINK_ATTR, '');
-  document.head.append(link);
-  return link;
-}
-
 /**
- * Keeps the browser favicon in sync with the active conversation.
+ * Resolves the favicon for the active conversation as renderable `<link>`
+ * attributes.
  *
- * When the session name starts with an emoji (Locopilot titles always do), that
- * emoji is rendered to a PNG and installed as the tab icon. Otherwise the app's
- * default icon is restored.
- *
- * The icon is written to a dedicated <link> we create ourselves, so we never
- * disturb the icon tag Next.js emits from `src/app/icon.svg`.
+ * The result is meant to be rendered by React (which hoists `<link>` into
+ * `<head>` and keeps it correct across the head re-commits Next.js performs
+ * after hydration). Touching the DOM imperatively instead loses that race: the
+ * framework rebuilds `<head>` and clobbers the injected node.
  */
-export function useFavicon(currentSessionId: number | null, sessions: Session[]): void {
-  // Derive the emoji outside the effect and depend on that string, so the
-  // canvas render + toDataURL only re-run when the glyph actually changes —
-  // not on every store dispatch that replaces the `sessions` array.
+export function useFavicon(currentSessionId: number | null, sessions: Session[]): FaviconSpec {
   const session =
     currentSessionId === null ? undefined : sessions.find((s) => s.id === currentSessionId);
   const emoji = extractLeadingEmoji(session?.name);
 
+  const [favicon, setFavicon] = useState<FaviconSpec>(DEFAULT_FAVICON);
+
   useEffect(() => {
-    if (typeof document === 'undefined') return;
-
-    const link = document.querySelector<HTMLLinkElement>(`link[${FAVICON_LINK_ATTR}]`);
-
     if (emoji === null) {
-      // No emoji to show: point our link back at the default icon. Setting a
-      // concrete href (rather than removing the link) guarantees the browser
-      // actually repaints the tab icon.
-      if (link && link.getAttribute('href') !== DEFAULT_FAVICON_HREF) {
-        link.setAttribute('href', DEFAULT_FAVICON_HREF);
-      }
+      setFavicon(DEFAULT_FAVICON);
       return;
     }
 
+    // Canvas rendering is client-only, so it must happen in an effect; the
+    // initial render (and SSR) falls back to the default icon.
     const dataUrl = emojiToFaviconDataUrl(applyEmojiPresentation(emoji));
-    if (dataUrl === '') return;
-
-    const target = link ?? getOrCreateFaviconLink();
-    // Skip the DOM write when nothing changed — avoids needless repaints.
-    if (target.getAttribute('href') !== dataUrl) target.setAttribute('href', dataUrl);
+    setFavicon(dataUrl === '' ? DEFAULT_FAVICON : { href: dataUrl, type: 'image/png' });
   }, [emoji]);
 
-  // Remove our injected <link> only on unmount. This lives in its own effect so
-  // the frequent re-runs above never tear the link down and recreate it.
-  useEffect(
-    () => () => {
-      document.querySelector(`link[${FAVICON_LINK_ATTR}]`)?.remove();
-    },
-    []
-  );
+  return favicon;
 }

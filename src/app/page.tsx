@@ -14,8 +14,6 @@ import { useActionHandlers } from './hooks/useActionHandlers';
 import { useApproval } from './hooks/useApproval';
 import { useChatStream } from './hooks/useChatStream';
 import { useDataLoaders } from './hooks/useDataLoaders';
-import { useDocumentTitle } from './hooks/useDocumentTitle';
-import { useFavicon } from './hooks/useFavicon';
 import { useScrollManager } from './hooks/useScrollManager';
 import { useSendHandler } from './hooks/useSendHandler';
 import { useSessionActions } from './hooks/useSessionActions';
@@ -51,10 +49,6 @@ function HomeInner() {
     currentSessionId: state.currentSessionId,
     isStreaming: isCurrentSessionStreaming,
   });
-
-  // ── Keep the browser tab title and favicon in sync with the conversation ──
-  useDocumentTitle(state.currentSessionId, state.sessions);
-  useFavicon(state.currentSessionId, state.sessions);
 
   // ── URL param: restore session from ?session=<id> on mount; keep URL in sync ──
   useSessionUrlParam({ onLoadSessionMessages: loadSessionMessages });
