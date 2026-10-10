@@ -105,6 +105,18 @@ function renderEmojiFavicon(emoji: string): Favicon {
   return href === '' ? DEFAULT_FAVICON : { href, type: 'image/png' };
 }
 
+/**
+ * Removes a leading emoji from a session name.
+ *
+ * The emoji is shown as the favicon, so repeating it in the tab title is visual
+ * duplication. Falls back to the raw name when stripping would leave nothing
+ * (e.g. an emoji-only name).
+ */
+export function withoutLeadingEmoji(name: string, emoji: string | null): string {
+  if (emoji === null) return name;
+  return name.trim().slice(emoji.length).trim() || name;
+}
+
 /** Formats the tab title: "{name} — Locopilot", or a neutral fallback. */
 function resolveTitle(currentSessionId: number | null, name: string | undefined): string {
   if (currentSessionId === null) return APP_TITLE;
@@ -113,6 +125,9 @@ function resolveTitle(currentSessionId: number | null, name: string | undefined)
 
 /**
  * Resolves the tab title and favicon for the active conversation.
+ *
+ * The leading emoji of the session name becomes the favicon and is stripped from
+ * the title, so the two do not repeat each other.
  *
  * The result is meant to be rendered by React (which hoists `<title>`/`<link>`
  * into `<head>` and keeps them correct across the head re-commits Next.js
@@ -133,6 +148,8 @@ export function useDocumentHead(
   const name = session?.name?.trim();
 
   const emoji = useMemo(() => extractLeadingEmoji(name), [name]);
+  // The leading emoji already appears as the favicon, so keep it out of the title.
+  const label = name === undefined ? undefined : withoutLeadingEmoji(name, emoji);
 
   const [favicon, setFavicon] = useState<Favicon>(DEFAULT_FAVICON);
   useEffect(() => {
@@ -141,5 +158,5 @@ export function useDocumentHead(
     setFavicon(emoji === null ? DEFAULT_FAVICON : renderEmojiFavicon(emoji));
   }, [emoji]);
 
-  return { title: resolveTitle(currentSessionId, name), favicon };
+  return { title: resolveTitle(currentSessionId, label), favicon };
 }

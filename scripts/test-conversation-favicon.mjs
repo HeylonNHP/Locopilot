@@ -12,7 +12,11 @@
  * `Emoji` property, so a looser `\p{Emoji}` test would wrongly match "2024").
  */
 
-import { applyEmojiPresentation, extractLeadingEmoji } from '../src/app/hooks/useDocumentHead.ts';
+import {
+  applyEmojiPresentation,
+  extractLeadingEmoji,
+  withoutLeadingEmoji,
+} from '../src/app/hooks/useDocumentHead.ts';
 
 let pass = 0;
 let fail = 0;
@@ -77,6 +81,27 @@ assertEq(
   '\uD83D\uDC4D\uD83C\uDFFD',
   'skin-tone sequence is untouched'
 );
+
+console.log('\nwithoutLeadingEmoji');
+
+assertEq(
+  withoutLeadingEmoji('💡 LED Specs Deep Dive', '💡'),
+  'LED Specs Deep Dive',
+  'emoji removed from title'
+);
+assertEq(
+  withoutLeadingEmoji('🦉 Owl survey notes', '🦉'),
+  'Owl survey notes',
+  'emoji + space removed'
+);
+assertEq(withoutLeadingEmoji('👨‍👩‍👧 Family trip', '👨‍👩‍👧'), 'Family trip', 'ZWJ emoji removed');
+assertEq(withoutLeadingEmoji('  1️⃣ First place', '1️⃣'), 'First place', 'keycap removed');
+assertEq(
+  withoutLeadingEmoji('No emoji here', null),
+  'No emoji here',
+  'no emoji leaves the name untouched'
+);
+assertEq(withoutLeadingEmoji('💡', '💡'), '💡', 'emoji-only name is kept as a fallback');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
