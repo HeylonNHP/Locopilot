@@ -12,7 +12,7 @@
  * `Emoji` property, so a looser `\p{Emoji}` test would wrongly match "2024").
  */
 
-import { extractLeadingEmoji } from '../src/app/hooks/useFavicon.ts';
+import { applyEmojiPresentation, extractLeadingEmoji } from '../src/app/hooks/useFavicon.ts';
 
 let pass = 0;
 let fail = 0;
@@ -44,6 +44,39 @@ assertEq(extractLeadingEmoji(''), null, 'empty string');
 assertEq(extractLeadingEmoji('   '), null, 'whitespace only');
 assertEq(extractLeadingEmoji(null), null, 'null');
 assertEq(extractLeadingEmoji(undefined), null, 'undefined');
+
+console.log('\napplyEmojiPresentation');
+
+assertEq(applyEmojiPresentation('\u2764'), '\u2764\uFE0F', 'lone text-default heart gains VS16');
+assertEq(applyEmojiPresentation('\u263A'), '\u263A\uFE0F', 'lone text-default smiley gains VS16');
+assertEq(applyEmojiPresentation('\u00A9'), '\u00A9\uFE0F', 'lone copyright sign gains VS16');
+
+assertEq(
+  applyEmojiPresentation('\u2764\uFE0F'),
+  '\u2764\uFE0F',
+  'already-colour heart is unchanged'
+);
+assertEq(
+  applyEmojiPresentation('\uD83D\uDE00'),
+  '\uD83D\uDE00',
+  'emoji-presentation glyph is unchanged'
+);
+assertEq(
+  applyEmojiPresentation('\uD83C\uDDEF\uD83C\uDD75'),
+  '\uD83C\uDDEF\uD83C\uDD75',
+  'flag sequence is untouched'
+);
+assertEq(
+  applyEmojiPresentation('\uD83D\uDC69\u200D\uD83D\uDC69\u200D\uD83D\uDC67'),
+  '\uD83D\uDC69\u200D\uD83D\uDC69\u200D\uD83D\uDC67',
+  'ZWJ family sequence is untouched'
+);
+assertEq(applyEmojiPresentation('1\uFE0F\u20E3'), '1\uFE0F\u20E3', 'keycap sequence is untouched');
+assertEq(
+  applyEmojiPresentation('\uD83D\uDC4D\uD83C\uDFFD'),
+  '\uD83D\uDC4D\uD83C\uDFFD',
+  'skin-tone sequence is untouched'
+);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

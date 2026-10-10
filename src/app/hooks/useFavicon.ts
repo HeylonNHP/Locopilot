@@ -22,6 +22,12 @@ const FAVICON_LINK_ATTR = 'data-conversation-favicon';
  */
 const EMOJI_GRAPHEME_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20E3]/u;
 
+/** True for a single pictograph, e.g. ❤ (U+2764). */
+const LONE_PICTOGRAPH_RE = /^\p{Extended_Pictographic}$/u;
+
+/** True for code points that render as colour emoji without a variation selector. */
+const EMOJI_PRESENTATION_RE = /^\p{Emoji_Presentation}$/u;
+
 /**
  * Returns the leading emoji of a session name, or null when the name does not
  * begin with one.
@@ -44,6 +50,19 @@ export function extractLeadingEmoji(name: string | null | undefined): string | n
   }
 
   return EMOJI_GRAPHEME_RE.test(firstGrapheme) ? firstGrapheme : null;
+}
+
+/**
+ * Forces colour (emoji) presentation for a lone, text-default pictograph such as
+ * ❤ (U+2764) or ☺ (U+263A), which would otherwise render as a monochrome glyph.
+ *
+ * Sequences are returned untouched: appending U+FE0F to a flag, ZWJ family,
+ * keycap or skin-tone sequence would produce a malformed/unintended sequence.
+ */
+export function applyEmojiPresentation(emoji: string): string {
+  const isLonePictograph = [...emoji].length === 1 && LONE_PICTOGRAPH_RE.test(emoji);
+  const alreadyColour = EMOJI_PRESENTATION_RE.test(emoji);
+  return isLonePictograph && !alreadyColour ? `${emoji}\uFE0F` : emoji;
 }
 
 /**
@@ -78,6 +97,10 @@ function getOrCreateFaviconLink(): HTMLLinkElement {
   const link = document.createElement('link');
   link.rel = 'icon';
   link.type = 'image/png';
+  // Mirror the `sizes="any"` Next.js places on its own SVG icon. Without it our
+  // candidate lacks a size and can lose the browser's "most appropriate icon"
+  // selection to the built-in SVG.
+  link.setAttribute('sizes', 'any');
   link.setAttribute(FAVICON_LINK_ATTR, '');
   document.head.append(link);
   return link;
@@ -94,24 +117,42 @@ function getOrCreateFaviconLink(): HTMLLinkElement {
  * disturb the icon tag Next.js emits from `src/app/icon.svg`.
  */
 export function useFavicon(currentSessionId: number | null, sessions: Session[]): void {
+  // Derive the emoji outside the effect and depend on that string, so the
+  // canvas render + toDataURL only re-run when the glyph actually changes —
+  // not on every store dispatch that replaces the `sessions` array.
+  const session =
+    currentSessionId === null ? undefined : sessions.find((s) => s.id === currentSessionId);
+  const emoji = extractLeadingEmoji(session?.name);
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
 
-    const session =
-      currentSessionId === null ? undefined : sessions.find((s) => s.id === currentSessionId);
-    const emoji = extractLeadingEmoji(session?.name);
     const link = document.querySelector<HTMLLinkElement>(`link[${FAVICON_LINK_ATTR}]`);
 
-    if (!emoji) {
+    if (emoji === null) {
       // No emoji to show: point our link back at the default icon. Setting a
       // concrete href (rather than removing the link) guarantees the browser
       // actually repaints the tab icon.
-      link?.setAttribute('href', DEFAULT_FAVICON_HREF);
+      if (link && link.getAttribute('href') !== DEFAULT_FAVICON_HREF) {
+        link.setAttribute('href', DEFAULT_FAVICON_HREF);
+      }
       return;
     }
 
-    const dataUrl = emojiToFaviconDataUrl(emoji);
-    if (!dataUrl) return;
-    (link ?? getOrCreateFaviconLink()).setAttribute('href', dataUrl);
-  }, [currentSessionId, sessions]);
+    const dataUrl = emojiToFaviconDataUrl(applyEmojiPresentation(emoji));
+    if (dataUrl === '') return;
+
+    const target = link ?? getOrCreateFaviconLink();
+    // Skip the DOM write when nothing changed — avoids needless repaints.
+    if (target.getAttribute('href') !== dataUrl) target.setAttribute('href', dataUrl);
+  }, [emoji]);
+
+  // Remove our injected <link> only on unmount. This lives in its own effect so
+  // the frequent re-runs above never tear the link down and recreate it.
+  useEffect(
+    () => () => {
+      document.querySelector(`link[${FAVICON_LINK_ATTR}]`)?.remove();
+    },
+    []
+  );
 }
