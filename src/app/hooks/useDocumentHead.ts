@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 
 import type { Session } from '@/app/lib/chatStore';
 
@@ -77,31 +77,96 @@ export function applyEmojiPresentation(emoji: string): string {
 }
 
 /**
- * Renders a single emoji to a PNG data URL via a canvas.
- *
- * The glyph is drawn with the platform emoji font, so the favicon matches the
- * artwork already shown in the sidebar.
+ * A noncharacter no font covers. Drawn with the same font and position as the
+ * real glyph, it shows what this browser paints for a missing glyph ("tofu"), so
+ * an emoji that renders identically can be rejected.
  */
-function emojiToFaviconDataUrl(emoji: string): string {
+const MISSING_GLYPH = '\u{10FFFF}';
+
+/** True when at least one pixel of an RGBA buffer is not fully transparent. */
+export function hasVisiblePixels(rgba: ArrayLike<number>): boolean {
+  for (let i = 3; i < rgba.length; i += 4) {
+    if (rgba[i] !== 0) return true;
+  }
+  return false;
+}
+
+function pixelsEqual(a: ArrayLike<number>, b: ArrayLike<number>): boolean {
+  return a.length === b.length && Array.prototype.every.call(a, (v, i) => v === b[i]);
+}
+
+/**
+ * Decides whether a rendered glyph is worth using as a favicon: it must have
+ * drawn something, and must not match the browser's missing-glyph box.
+ * `missingGlyph` is null when that reference could not be rendered, in which case
+ * only the blank check applies.
+ */
+export function isRenderableGlyph(
+  glyph: ArrayLike<number>,
+  missingGlyph: ArrayLike<number> | null
+): boolean {
+  return hasVisiblePixels(glyph) && !(missingGlyph !== null && pixelsEqual(glyph, missingGlyph));
+}
+
+/**
+ * Draws `text` to a canvas with the platform emoji font and reads the pixels
+ * back. Returns null when there is no 2D context or readback is blocked (e.g.
+ * anti-fingerprinting modes), so callers fall back to the default icon.
+ */
+function drawGlyph(text: string): { canvas: HTMLCanvasElement; rgba: Uint8ClampedArray } | null {
   const canvas = document.createElement('canvas');
   canvas.width = FAVICON_SIZE;
   canvas.height = FAVICON_SIZE;
 
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return '';
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
 
   ctx.clearRect(0, 0, FAVICON_SIZE, FAVICON_SIZE);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = `${FAVICON_SIZE * 0.82}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif`;
-  ctx.fillText(emoji, FAVICON_SIZE / 2, FAVICON_SIZE / 2 + FAVICON_SIZE * 0.04);
+  ctx.fillText(text, FAVICON_SIZE / 2, FAVICON_SIZE / 2 + FAVICON_SIZE * 0.04);
 
-  return canvas.toDataURL('image/png');
+  try {
+    return { canvas, rgba: ctx.getImageData(0, 0, FAVICON_SIZE, FAVICON_SIZE).data };
+  } catch {
+    return null;
+  }
 }
 
-/** Renders an emoji to a ready-to-render favicon, falling back to the default. */
-function renderEmojiFavicon(emoji: string): Favicon {
-  const href = emojiToFaviconDataUrl(applyEmojiPresentation(emoji));
+/** Rendered once per page; `undefined` means not yet computed. */
+let missingGlyphRgba: Uint8ClampedArray | null | undefined;
+
+function getMissingGlyphRgba(): Uint8ClampedArray | null {
+  if (missingGlyphRgba === undefined) {
+    missingGlyphRgba = drawGlyph(MISSING_GLYPH)?.rgba ?? null;
+  }
+  return missingGlyphRgba;
+}
+
+/**
+ * Renders a single emoji to a PNG data URL via a canvas, or returns '' when the
+ * browser has no usable glyph for it (blank or missing-glyph box).
+ *
+ * The glyph is drawn with the platform emoji font, so the favicon matches the
+ * artwork already shown in the sidebar.
+ */
+function emojiToFaviconDataUrl(emoji: string): string {
+  const glyph = drawGlyph(emoji);
+  if (!glyph || !isRenderableGlyph(glyph.rgba, getMissingGlyphRgba())) return '';
+  return glyph.canvas.toDataURL('image/png');
+}
+
+/**
+ * Resolves an emoji to a favicon, falling back to the default when there is no
+ * emoji or it cannot be rendered. `renderToDataUrl` is injectable for tests.
+ */
+export function resolveFavicon(
+  emoji: string | null,
+  renderToDataUrl: (emoji: string) => string = emojiToFaviconDataUrl
+): Favicon {
+  if (emoji === null) return DEFAULT_FAVICON;
+  const href = renderToDataUrl(applyEmojiPresentation(emoji));
   return href === '' ? DEFAULT_FAVICON : { href, type: 'image/png' };
 }
 
@@ -115,6 +180,17 @@ function renderEmojiFavicon(emoji: string): Favicon {
 export function withoutLeadingEmoji(name: string, emoji: string | null): string {
   if (emoji === null) return name;
   return name.trim().slice(emoji.length).trim() || name;
+}
+
+const subscribeNoop = () => () => {};
+
+/** False during SSR and hydration, true on every client render after. */
+function useIsClient(): boolean {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false
+  );
 }
 
 /** Formats the tab title: "{name} — Locopilot", or a neutral fallback. */
@@ -134,6 +210,9 @@ function resolveTitle(currentSessionId: number | null, name: string | undefined)
  * performs after hydration). Touching the DOM imperatively instead loses that
  * race: the framework rebuilds `<head>` and clobbers the change.
  *
+ * The favicon is derived during render and gated on `isClient`, so it is always
+ * in step with the current emoji and hydration still sees the default icon.
+ *
  * The session lookup is memoized because consumers re-render on every chat-store
  * update (i.e. every streamed token) while `sessions` can be large.
  */
@@ -151,12 +230,14 @@ export function useDocumentHead(
   // The leading emoji already appears as the favicon, so keep it out of the title.
   const label = name === undefined ? undefined : withoutLeadingEmoji(name, emoji);
 
-  const [favicon, setFavicon] = useState<Favicon>(DEFAULT_FAVICON);
-  useEffect(() => {
-    // Canvas rendering is client-only, so it must happen in an effect; the
-    // initial render (and SSR) falls back to the default icon.
-    setFavicon(emoji === null ? DEFAULT_FAVICON : renderEmojiFavicon(emoji));
-  }, [emoji]);
+  // Derived during render (not in an effect) so a session switch never commits a
+  // frame with the previous conversation's icon. Gated on `isClient` because the
+  // canvas is client-only and the first client render must match SSR's default.
+  const isClient = useIsClient();
+  const favicon = useMemo(
+    () => (isClient ? resolveFavicon(emoji) : DEFAULT_FAVICON),
+    [emoji, isClient]
+  );
 
   return { title: resolveTitle(currentSessionId, label), favicon };
 }

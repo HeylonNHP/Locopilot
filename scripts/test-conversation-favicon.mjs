@@ -12,9 +12,16 @@
  * `Emoji` property, so a looser `\p{Emoji}` test would wrongly match "2024").
  */
 
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+
 import {
   applyEmojiPresentation,
   extractLeadingEmoji,
+  hasVisiblePixels,
+  isRenderableGlyph,
+  resolveFavicon,
+  useDocumentHead,
   withoutLeadingEmoji,
 } from '../src/app/hooks/useDocumentHead.ts';
 
@@ -102,6 +109,75 @@ assertEq(
   'no emoji leaves the name untouched'
 );
 assertEq(withoutLeadingEmoji('💡', '💡'), '💡', 'emoji-only name is kept as a fallback');
+
+console.log('\nhasVisiblePixels');
+
+assertEq(hasVisiblePixels(new Uint8ClampedArray(16)), false, 'all-zero buffer is blank');
+assertEq(hasVisiblePixels(new Uint8ClampedArray(0)), false, 'empty buffer is blank');
+assertEq(
+  hasVisiblePixels(new Uint8ClampedArray([255, 0, 0, 0, 0, 0, 0, 0])),
+  false,
+  'RGB set but alpha 0 is blank'
+);
+assertEq(
+  hasVisiblePixels(new Uint8ClampedArray([0, 0, 0, 0, 0, 0, 0, 255])),
+  true,
+  'one opaque pixel is visible'
+);
+
+console.log('\nisRenderableGlyph');
+
+const blank = new Uint8ClampedArray(16);
+const glyphA = new Uint8ClampedArray([1, 2, 3, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+const glyphB = new Uint8ClampedArray([1, 2, 3, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9]);
+assertEq(isRenderableGlyph(blank, null), false, 'blank glyph rejected, no reference');
+assertEq(isRenderableGlyph(glyphA, null), true, 'visible glyph accepted without a reference');
+assertEq(
+  isRenderableGlyph(glyphA, new Uint8ClampedArray(glyphA)),
+  false,
+  'glyph identical to missing-glyph box rejected'
+);
+assertEq(isRenderableGlyph(glyphA, glyphB), true, 'glyph differing from reference accepted');
+assertEq(
+  isRenderableGlyph(blank, new Uint8ClampedArray(blank)),
+  false,
+  'blank glyph rejected when reference also blank'
+);
+assertEq(isRenderableGlyph(glyphA, new Uint8ClampedArray(8)), true, 'length mismatch is not equal');
+
+console.log('\nresolveFavicon');
+
+let calls = [];
+const stub = (value) => (emoji) => {
+  calls.push(emoji);
+  return value;
+};
+const none = resolveFavicon(null, stub('data:image/png;base64,AAAA'));
+assertEq(none.href, '/icon.svg', 'null emoji uses default icon');
+assertEq(none.type, 'image/svg+xml', 'null emoji uses default icon type');
+assertEq(calls.length, 0, 'null emoji never calls the renderer');
+assertEq(resolveFavicon('🚀', stub('')).href, '/icon.svg', 'empty render falls back to default');
+const ok = resolveFavicon('🚀', stub('data:image/png;base64,AAAA'));
+assertEq(ok.href, 'data:image/png;base64,AAAA', 'rendered emoji becomes the href');
+assertEq(ok.type, 'image/png', 'rendered emoji is a PNG');
+calls = [];
+resolveFavicon('❤', stub('data:x'));
+assertEq(calls[0], '❤️', 'colour presentation applied before rendering');
+calls = [];
+resolveFavicon('🚀', stub('data:x'));
+assertEq(calls[0], '🚀', 'emoji-presentation glyph passed through unchanged');
+
+console.log('\nuseDocumentHead (server render)');
+
+function Probe() {
+  const head = useDocumentHead(1, [
+    { id: 1, name: '🚀 Launch', model: 'm', created_at: '', updated_at: '' },
+  ]);
+  return createElement('p', { 'data-href': head.favicon.href }, head.title);
+}
+const html = renderToStaticMarkup(createElement(Probe));
+assertEq(html.includes('data-href="/icon.svg"'), true, 'SSR renders default icon without a DOM');
+assertEq(html.includes('>Launch — Locopilot<'), true, 'SSR title has the emoji stripped');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
