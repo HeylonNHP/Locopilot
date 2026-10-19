@@ -1,0 +1,49 @@
+@use '../../app/styles/mixins' as *;
+
+// ================================================================
+//  Component: ConfirmDialog
+//  Reuses the global .modal-overlay / .modal-title / .modal-actions /
+//  .modal-btn-reject classes from ApprovalModal.scss; only the panel and
+//  the destructive button need their own rules.
+// ================================================================
+
+.confirm-dialog {
+  // Solid glass variant, same reasoning as MermaidOverlay: the translucent
+  // --glass-panel lets the welcome screen's heading bleed through the card in
+  // the light theme. That token is ~94% opaque, so it is stacked twice (~99.6%)
+  // to read as solid while keeping the exact theme surface hue — no new tokens.
+  background:
+    linear-gradient(var(--glass-panel-solid), var(--glass-panel-solid)),
+    linear-gradient(var(--glass-panel-solid), var(--glass-panel-solid));
+  border-radius: 24px;
+  padding: 24px;
+  max-width: 440px;
+  width: 90%;
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow:
+    var(--shadow-lift),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+
+  &__message {
+    margin: 0 0 20px 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    // Long, unbroken session titles must not blow out the card width.
+    overflow-wrap: anywhere;
+  }
+
+  &__confirm {
+    @include gel-button(
+      var(--gradient-danger-0),
+      var(--gradient-danger-1),
+      var(--gradient-danger-2)
+    );
+    padding: 8px 20px;
+    font-size: 14px;
+    border: 1px solid rgba(255, 100, 100, 0.35);
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+  }
+}
