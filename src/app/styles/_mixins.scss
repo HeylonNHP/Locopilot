@@ -4,14 +4,13 @@
 
 // ── Glassmorphism panel ──────────────────────────────────────
 @mixin glass-panel(
-  $blur: 16px,
+  $blur: var(--blur-chrome),
   $saturate: 180%,
   $bg: var(--glass-white),
   $shadow: var(--shadow-soft)
 ) {
   background: $bg;
   backdrop-filter: blur($blur) saturate($saturate);
-  -webkit-backdrop-filter: blur($blur) saturate($saturate);
   border: 1px solid var(--glass-border);
   box-shadow:
     $shadow,
@@ -20,8 +19,7 @@
 
 @mixin glass-panel-heavy {
   background: var(--glass-heavy);
-  backdrop-filter: blur(20px) saturate(200%);
-  -webkit-backdrop-filter: blur(20px) saturate(200%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(200%);
   border: 1px solid var(--glass-border);
   box-shadow:
     var(--shadow-lift),
@@ -35,9 +33,13 @@
   $gradient-end: var(--gradient-primary-2)
 ) {
   position: relative;
-  border-radius: 50px;
+  border-radius: var(--radius-pill);
   border: none;
-  background: linear-gradient(180deg, $gradient-start 0%, $gradient-mid 60%, $gradient-end 100%);
+  // Two light sources: the body gradient reads as the surface, the bottom
+  // radial as reflected light. Without the bounce the gradient stays flat.
+  background:
+    radial-gradient(120% 70% at 50% 118%, var(--glass-bounce) 0%, transparent 62%),
+    linear-gradient(180deg, $gradient-start 0%, $gradient-mid 60%, $gradient-end 100%);
   color: white;
   font-weight: 600;
   cursor: pointer;
@@ -95,15 +97,14 @@
 @mixin glass-input {
   width: 100%;
   padding: 8px 12px;
-  border-radius: 12px;
+  border-radius: var(--radius-card);
   border: 1px solid var(--glass-border-soft);
   background: var(--glass-input-bg);
   color: var(--text-primary);
   font-size: 13px;
   outline: none;
   box-sizing: border-box;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  @include glass-frost(var(--blur-chip));
   transition: all 0.2s ease;
   font-family: inherit;
 
@@ -120,31 +121,40 @@
 }
 
 // ── Glass frosted backdrop ───────────────────────────────────
-@mixin glass-frost($blur: 8px) {
+@mixin glass-frost($blur: var(--blur-chrome)) {
   backdrop-filter: blur($blur);
-  -webkit-backdrop-filter: blur($blur);
 }
 
-// ── Glass bubble box (used by tool/subagent containers) ──────
-@mixin glass-bubble-box($bg: rgba(255, 255, 255, 0.25), $border-color: var(--glass-border-soft)) {
-  border-radius: 12px;
-  background: $bg;
-  border: 1px solid $border-color;
-  overflow: hidden;
-  @include glass-frost(8px);
+// ── Matte content surface ────────────────────────────────────
+// Message bodies, tool output and code are read, not navigated, so they get
+// no backdrop blur: frosting text behind monospace only costs legibility.
+// Glass stays reserved for chrome (see glass-panel). The top rim keeps the
+// surface feeling like part of the same material family.
+@mixin matte-content(
+  $fill: var(--glass-panel),
+  $radius: var(--radius-card),
+  $border: var(--glass-border-soft),
+  $shadow: 0 1px 2px rgba(var(--rgb-shadow-deep), 0.06)
+) {
+  background: $fill;
+  border: 1px solid $border;
+  border-radius: $radius;
+  box-shadow:
+    $shadow,
+    inset 0 1px 0 var(--glass-inset-highlight);
 }
 
 // ── Pill button (ghost/outline) ──────────────────────────────
 @mixin pill-btn-ghost {
   padding: 8px 12px;
-  border-radius: 50px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border-soft);
   background: rgba(255, 255, 255, 0.1);
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 13px;
   transition: all 0.2s ease;
-  @include glass-frost(4px);
+  @include glass-frost(var(--blur-chip));
 
   &:hover {
     background: rgba(255, 255, 255, 0.2);
@@ -166,7 +176,7 @@
   font-size: 14px;
   cursor: pointer;
   transition: all 0.2s ease;
-  @include glass-frost(4px);
+  @include glass-frost(var(--blur-chip));
   padding: 0;
   line-height: 1;
 

@@ -10,8 +10,7 @@
   flex-shrink: 0;
   overflow: hidden;
   background: var(--glass-panel);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(160%);
   border-left: 1px solid var(--glass-border);
   box-shadow: -4px 0 24px rgba(var(--rgb-shadow-navy), 0.08);
   transition: width 0.25s ease;
@@ -210,8 +209,7 @@
     border-radius: 12px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid var(--glass-border-soft);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
     transition:
       background 0.2s ease,
       box-shadow 0.2s ease,
@@ -339,8 +337,7 @@
       transition:
         background 0.2s ease,
         box-shadow 0.2s ease;
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(var(--blur-chip));
 
       &::before {
         content: '';
@@ -377,7 +374,7 @@
     }
 
     &-code {
-      font-family: monospace;
+      font-family: var(--font-mono);
       font-size: 11px;
       background: rgba(255, 255, 255, 0.25);
       padding: 1px 4px;
@@ -411,8 +408,7 @@
       font-size: 12px;
       cursor: pointer;
       transition: all 0.2s ease;
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(var(--blur-chip));
 
       &:hover {
         background: rgba(255, 255, 255, 0.5);
@@ -434,7 +430,7 @@
       line-height: 1.4;
 
       code {
-        font-family: monospace;
+        font-family: var(--font-mono);
         font-size: 10px;
         background: rgba(255, 255, 255, 0.25);
         padding: 1px 3px;
@@ -476,8 +472,7 @@
     gap: 8px;
     border-bottom: 1px solid var(--glass-border-soft);
     background: rgba(255, 255, 255, 0.06);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
 
     &-input {
       @include glass-input;
@@ -533,8 +528,7 @@
       cursor: pointer;
       font-size: 12px;
       transition: all 0.2s ease;
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(var(--blur-chip));
       font-family: inherit;
 
       &:hover {
@@ -571,8 +565,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
   }
 
   // ── MCP server card (MCP tab) ───────────────────────────────
@@ -581,8 +574,7 @@
     border-radius: 12px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid var(--glass-border-soft);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
     transition:
       background 0.2s ease,
       box-shadow 0.2s ease;
@@ -637,7 +629,7 @@
       font-size: 11px;
       line-height: 1.4;
       color: var(--color-text-error);
-      font-family: monospace;
+      font-family: var(--font-mono);
       background: rgba(255, 200, 200, 0.3);
       border: 1px solid rgba(220, 80, 80, 0.25);
       border-radius: 6px;

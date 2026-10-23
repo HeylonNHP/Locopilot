@@ -11,37 +11,52 @@
 html,
 body {
   height: 100%;
-  font-family:
-    'Segoe UI',
-    -apple-system,
-    BlinkMacSystemFont,
-    Roboto,
-    Oxygen,
-    Ubuntu,
-    sans-serif;
+  // Single source of truth for the UI stack (see _tokens.scss). Mermaid also
+  // reads --font-sans, so components must never declare their own stack.
+  font-family: var(--font-sans);
   background:
-    // Floating bubbles
+    // Cloud banks low in the frame — depth without literal imagery
+    radial-gradient(44% 26% at 20% 84%, var(--bg-cloud-bank) 0%, transparent 72%),
+    radial-gradient(34% 22% at 84% 92%, var(--bg-cloud-bank-soft) 0%, transparent 74%),
+    // Faint floating bubbles
     radial-gradient(circle at 15% 25%, var(--bg-bubble-1) 0%, transparent 25%),
     radial-gradient(circle at 75% 15%, var(--bg-bubble-2) 0%, transparent 20%),
     radial-gradient(circle at 55% 65%, var(--bg-bubble-3) 0%, transparent 18%),
     radial-gradient(circle at 85% 80%, var(--bg-bubble-4) 0%, transparent 22%),
     radial-gradient(circle at 35% 85%, var(--bg-bubble-5) 0%, transparent 15%),
-    // Sky to grass gradient
+    // Sky → horizon → ground. The ramp is compressed toward the top so the
+    // bright band at 52% reads as an actual horizon; it also puts the lightest
+    // pixels behind the message column, where the text sits.
     linear-gradient(
-        170deg,
+        180deg,
         var(--bg-gradient-0) 0%,
-        var(--bg-gradient-1) 15%,
-        var(--bg-gradient-2) 30%,
-        var(--bg-gradient-3) 45%,
-        var(--bg-gradient-4) 60%,
-        var(--bg-gradient-5) 75%,
-        var(--bg-gradient-6) 90%,
+        var(--bg-gradient-1) 20%,
+        var(--bg-gradient-2) 38%,
+        var(--bg-gradient-3) 52%,
+        var(--bg-gradient-4) 62%,
+        var(--bg-gradient-5) 76%,
+        var(--bg-gradient-6) 88%,
         var(--bg-gradient-7) 100%
       );
   background-attachment: fixed;
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+// ── Film grain ───────────────────────────────────────────────
+// A faint procedural noise layer keeps the large translucent surfaces from
+// reading as flat colour fields. Sits above content but below modals
+// (z-index 1000) and never intercepts pointer events.
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 171 171' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='3.74' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23grain)'/%3E%3C/svg%3E");
 }
 
 body {

@@ -34,4 +34,33 @@
   --status-danger: var(--color-danger);
   --status-error: var(--color-error);
   --status-error-light: var(--color-error-light);
+
+  // ── Shape scale ──────────────────────────────────────────────
+  // Technical surfaces stay crisper than conversational ones: rounded
+  // bubbles read friendly, rounded panels around monospace read toy.
+  --radius-chip: 6px; // inline code, badges, icon controls
+  --radius-panel: 10px; // tool output, code blocks
+  --radius-card: 12px; // cards, inputs, list rows
+  --radius-bubble: 20px; // conversation bubbles
+  --radius-overlay: 24px; // modals, full-screen overlays
+  --radius-pill: 50px; // buttons, scrollbar thumbs
+
+  // ── Frost scale ──────────────────────────────────────────────
+  // Exactly three levels of backdrop blur, so depth stays meaningful:
+  // chip = small overlays, chrome = nav shells, overlay = modals.
+  // Content surfaces get none at all (see the matte-content mixin).
+  --blur-chip: 4px;
+  --blur-chrome: 12px;
+  --blur-overlay: 24px;
+
+  // ── Typography ───────────────────────────────────────────────
+  // Segoe UI is the period-correct Vista-era face and still ships with
+  // Windows; the rest of the stack covers macOS/Linux. Components must
+  // read --font-sans / --font-mono rather than declaring their own stack.
+  --font-sans:
+    'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Oxygen, Ubuntu,
+    sans-serif;
+  --font-mono:
+    'Cascadia Code', 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo,
+    monospace;
 }

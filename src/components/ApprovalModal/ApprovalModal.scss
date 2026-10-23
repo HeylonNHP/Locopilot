@@ -9,8 +9,7 @@
     position: fixed;
     inset: 0;
     background: var(--overlay-modal);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(var(--blur-chrome));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -19,13 +18,12 @@
 
   &-content {
     background: rgba(255, 255, 255, 0.3);
-    border-radius: 24px;
+    border-radius: var(--radius-overlay);
     padding: 24px;
     max-width: 500px;
     width: 90%;
     border: 1px solid var(--glass-border);
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(var(--blur-overlay)) saturate(180%);
     box-shadow:
       var(--shadow-lift),
       inset 0 1px 0 rgba(255, 255, 255, 0.4);
@@ -39,13 +37,15 @@
   }
 
   &-command-box {
-    @include glass-bubble-box(rgba(255, 255, 255, 0.25));
+    // Matte: this is the exact command text the user is approving, so it gets
+    // the same no-blur treatment as other monospace surfaces.
+    @include matte-content(rgba(255, 255, 255, 0.25), var(--radius-card));
     margin-bottom: 16px;
   }
 
   &-command-text {
     padding: 12px;
-    font-family: monospace;
+    font-family: var(--font-mono);
     font-size: 13px;
     white-space: pre-wrap;
     max-height: 200px;
@@ -68,8 +68,7 @@
     cursor: pointer;
     font-size: 14px;
     transition: all 0.2s ease;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
 
     &:hover {
       background: rgba(255, 255, 255, 0.3);

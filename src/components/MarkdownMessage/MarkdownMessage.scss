@@ -2,6 +2,8 @@
 //  Component: MarkdownMessage
 // ================================================================
 
+@use '../../app/styles/mixins' as *;
+
 @mixin mermaid-error-panel-styles {
   padding: 0.9rem 1rem;
   border-radius: 12px;
@@ -73,7 +75,7 @@
   }
 
   .mermaid-error-source {
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.55;
     padding: 0;
@@ -104,7 +106,7 @@
     }
 
     pre {
-      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-family: var(--font-mono);
       font-size: 11px;
       white-space: pre-wrap;
       word-break: break-word;
@@ -158,22 +160,19 @@
 
   code {
     padding: 0.12rem 0.35rem;
-    border-radius: 6px;
+    border-radius: var(--radius-chip);
     background: var(--code-inline-bg);
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.94em;
     color: var(--code-inline-text);
   }
 
   pre {
     margin: 0 0 0.85rem;
-    border-radius: 12px;
-    background: var(--code-block-bg);
-    border: 1px solid var(--glass-border-soft);
+    // Matte, not frosted — code is the one place legibility must win outright.
+    @include matte-content(var(--code-block-bg), var(--radius-panel));
     overflow: hidden;
     position: relative;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
 
     code {
       display: block;
@@ -191,7 +190,7 @@
     top: 8px;
     right: 8px;
     padding: 4px 10px;
-    border-radius: 6px;
+    border-radius: var(--radius-chip);
     border: 1px solid var(--glass-border-soft);
     background: var(--code-copy-bg);
     color: var(--text-secondary);
@@ -203,8 +202,7 @@
       opacity 0.2s ease,
       background 0.2s ease,
       color 0.2s ease;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
     line-height: 1.4;
 
     &:hover {
@@ -343,7 +341,7 @@
   [data-markdown-streaming-tail] {
     white-space: pre-wrap;
     word-break: break-word;
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     padding: 8px;
     border-radius: 6px;

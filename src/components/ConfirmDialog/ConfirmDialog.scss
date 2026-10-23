@@ -15,13 +15,12 @@
   background:
     linear-gradient(var(--glass-panel-solid), var(--glass-panel-solid)),
     linear-gradient(var(--glass-panel-solid), var(--glass-panel-solid));
-  border-radius: 24px;
+  border-radius: var(--radius-overlay);
   padding: 24px;
   max-width: 440px;
   width: 90%;
   border: 1px solid var(--glass-border);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(var(--blur-overlay)) saturate(180%);
   box-shadow:
     var(--shadow-lift),
     inset 0 1px 0 rgba(255, 255, 255, 0.4);

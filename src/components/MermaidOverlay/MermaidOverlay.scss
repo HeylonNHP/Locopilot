@@ -6,8 +6,7 @@
   position: fixed;
   inset: 0;
   background: var(--overlay-modal);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(var(--blur-chrome));
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -21,15 +20,14 @@
   // SettingsModal), so the usual light-theme glass translucency (12% white)
   // let the page content behind bleed through as a distracting ghost image.
   background: var(--glass-panel-solid);
-  border-radius: 24px;
+  border-radius: var(--radius-overlay);
   width: 94vw;
   height: 90vh;
   border: 1px solid var(--glass-border);
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(var(--blur-overlay)) saturate(180%);
   box-shadow:
     var(--shadow-lift),
     inset 0 1px 0 rgba(255, 255, 255, 0.4);

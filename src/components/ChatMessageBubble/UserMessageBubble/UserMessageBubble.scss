@@ -59,8 +59,7 @@
       opacity 0.2s ease,
       background 0.2s ease,
       transform 0.2s ease;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
     z-index: 5;
 
     &:hover {

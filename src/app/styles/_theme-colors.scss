@@ -35,7 +35,7 @@ html[data-theme='frutiger-aero'] {
   --glass-heavy: rgba(255, 255, 255, 0.28);
   --glass-light: rgba(255, 255, 255, 0.08);
   --glass-panel: rgba(255, 255, 255, 0.12); // sidebar / input-area / status-bar panels
-  --glass-panel-solid: rgba(240, 248, 255, 0.94); // content-viewing overlays (e.g. mermaid) needing legibility over --glass-panel's translucency
+  --glass-panel-solid: rgba(240, 248, 255, 0.94); // overlays needing full legibility
   --glass-border: rgba(255, 255, 255, 0.45);
   --glass-border-soft: rgba(255, 255, 255, 0.25);
 
@@ -104,10 +104,12 @@ html[data-theme='frutiger-aero'] {
   --scrollbar-firefox: rgba(0, 168, 232, 0.4);
 
   // ── Bubble surface tints ────────────────────────────────────
-  --bg-tool-bubble: rgba(200, 245, 255, 0.25); // tool result
+  // Content surfaces are matte (no backdrop blur), so their fills have to
+  // carry the contrast on their own — they run denser than a frosted layer.
+  --bg-tool-bubble: rgba(226, 250, 255, 0.55); // tool result
   --bg-system-bubble: rgba(255, 245, 200, 0.3); // system message
   --border-system-bubble: rgba(255, 220, 100, 0.3);
-  --bg-subagent-bubble: rgba(220, 255, 220, 0.25); // sub-agent log
+  --bg-subagent-bubble: rgba(232, 255, 232, 0.5); // sub-agent log
   --border-subagent: rgba(113, 171, 35, 0.2);
   --border-subagent-toggle: rgba(113, 171, 35, 0.15);
 
@@ -120,6 +122,8 @@ html[data-theme='frutiger-aero'] {
   --glass-inset-highlight: rgba(255, 255, 255, 0.35);
   --glass-gloss-top: rgba(255, 255, 255, 0.5);
   --glass-gloss-mid: rgba(255, 255, 255, 0.2);
+  // Reflected light from below — the second half of a gel surface.
+  --glass-bounce: rgba(255, 255, 255, 0.45);
   --glass-input-bg: rgba(255, 255, 255, 0.35);
   --glass-input-focus: rgba(255, 255, 255, 0.5);
 
@@ -137,18 +141,22 @@ html[data-theme='frutiger-aero'] {
   // ── Code surfaces ─────────────────────────────────────────
   --code-inline-bg: rgba(0, 100, 180, 0.08);
   --code-inline-text: #005577;
-  --code-block-bg: rgba(255, 255, 255, 0.55);
+  --code-block-bg: rgba(255, 255, 255, 0.7);
   --code-block-text: #1a3a5c;
   --code-copy-bg: rgba(255, 255, 255, 0.8);
   --code-copy-hover-bg: rgba(255, 255, 255, 0.95);
   --code-copy-active-bg: rgba(0, 168, 232, 0.15);
 
-  // ── Background atmosphere bubbles ─────────────────────────
-  --bg-bubble-1: rgba(255, 255, 255, 0.35);
-  --bg-bubble-2: rgba(255, 255, 255, 0.25);
-  --bg-bubble-3: rgba(255, 255, 255, 0.2);
-  --bg-bubble-4: rgba(255, 255, 255, 0.3);
-  --bg-bubble-5: rgba(255, 255, 255, 0.15);
+  // ── Background atmosphere ─────────────────────────────────
+  // Two soft cloud banks sit low in the frame to give the flat gradient
+  // some depth; the bubbles stay faint so they read as light, not confetti.
+  --bg-cloud-bank: rgba(255, 255, 255, 0.42);
+  --bg-cloud-bank-soft: rgba(255, 255, 255, 0.28);
+  --bg-bubble-1: rgba(255, 255, 255, 0.18);
+  --bg-bubble-2: rgba(255, 255, 255, 0.14);
+  --bg-bubble-3: rgba(255, 255, 255, 0.12);
+  --bg-bubble-4: rgba(255, 255, 255, 0.16);
+  --bg-bubble-5: rgba(255, 255, 255, 0.1);
 }
 
 // ── Dark professional theme ───────────────────────────────────
@@ -181,6 +189,7 @@ html[data-theme='dark'] {
   --glass-inset-highlight: rgba(255, 255, 255, 0.07);
   --glass-gloss-top: rgba(255, 255, 255, 0.12);
   --glass-gloss-mid: rgba(255, 255, 255, 0.05);
+  --glass-bounce: rgba(255, 255, 255, 0.1);
   --glass-input-bg: rgba(255, 255, 255, 0.08);
   --glass-input-focus: rgba(255, 255, 255, 0.12);
 
@@ -243,7 +252,9 @@ html[data-theme='dark'] {
   --bg-gradient-5: #091419;
   --bg-gradient-6: #081216;
   --bg-gradient-7: #071014;
-  // Background atmosphere bubbles (subtle cyan glows on dark)
+  // Background atmosphere (subtle cyan glows on dark)
+  --bg-cloud-bank: rgba(120, 200, 255, 0.05);
+  --bg-cloud-bank-soft: rgba(120, 200, 255, 0.03);
   --bg-bubble-1: rgba(56, 189, 248, 0.04);
   --bg-bubble-2: rgba(45, 212, 191, 0.03);
   --bg-bubble-3: rgba(56, 189, 248, 0.02);
@@ -261,10 +272,10 @@ html[data-theme='dark'] {
   --scrollbar-active-2: rgba(14, 165, 233, 0.55);
   --scrollbar-firefox: rgba(56, 189, 248, 0.3);
   // Bubble surface tints
-  --bg-tool-bubble: rgba(56, 189, 248, 0.07);
+  --bg-tool-bubble: rgba(56, 189, 248, 0.1);
   --bg-system-bubble: rgba(251, 191, 36, 0.07);
   --border-system-bubble: rgba(251, 191, 36, 0.18);
-  --bg-subagent-bubble: rgba(52, 211, 153, 0.07);
+  --bg-subagent-bubble: rgba(52, 211, 153, 0.1);
   --border-subagent: rgba(52, 211, 153, 0.17);
   --border-subagent-toggle: rgba(52, 211, 153, 0.1);
   // Overlays

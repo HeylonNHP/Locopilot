@@ -11,8 +11,9 @@
   display: flex;
   gap: 16px;
   align-items: center;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  // Digits that change on every token must not shift the row around them.
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(var(--blur-chrome));
 
   &-streaming {
     color: var(--accent);
