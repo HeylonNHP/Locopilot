@@ -291,7 +291,12 @@ export interface ChatState {
    * the input if the turn ends, aborts, or errors before the ack arrives
    * (see the `STOP_STREAMING` case below).
    */
-  pendingSteerDraft: { id: string; text: string; target: 'main' | 'subagent'; agentId?: string } | null;
+  pendingSteerDraft: {
+    id: string;
+    text: string;
+    target: 'main' | 'subagent';
+    agentId?: string;
+  } | null;
   /**
    * Text a steering message send never got acknowledged for and was
    * restored for the user to see again. Consumed once by `ChatInput` on
@@ -965,29 +970,34 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // approval silently disappear the moment they approved or
       // rejected the foreground request.
       if (action.command === null) {
-        if (owningSessionId === null) {
+        // A hide must only close the modal if it resolves the request that is
+        // currently on screen. Two streams can await approval at once; before
+        // this guard, answering A cleared B's freshly-shown modal (and its
+        // session slot) instead of just A's.
+        const closesVisibleModal =
+          action.requestId === undefined ||
+          state.pendingApprovalId === null ||
+          state.pendingApprovalId === action.requestId;
+
+        const base: ChatState = closesVisibleModal ? nextState : state;
+
+        if (owningSessionId === null || owningSessionId === -1) {
           // No owning session (no current session, no requestId match).
           // Old behaviour: clear both. This is the rare case where the
           // server's `command: null` dispatch lands with no other
           // context, so the safe option is to clear the
           // not-yet-claimed session slot.
           return {
-            ...nextState,
-            newSessionState: { ...nextState.newSessionState, pendingApproval: null },
+            ...base,
+            newSessionState: { ...base.newSessionState, pendingApproval: null },
           };
         }
-        if (owningSessionId === -1) {
-          return {
-            ...nextState,
-            newSessionState: { ...nextState.newSessionState, pendingApproval: null },
-          };
-        }
-        const newMap = new Map(nextState.sessionStates);
+        const newMap = new Map(base.sessionStates);
         const sess = newMap.get(owningSessionId);
         if (sess && sess.pendingApproval !== null) {
           newMap.set(owningSessionId, { ...sess, pendingApproval: null });
         }
-        return { ...nextState, sessionStates: newMap };
+        return { ...base, sessionStates: newMap };
       }
 
       // Also persist into the owning session's state so it survives switching.

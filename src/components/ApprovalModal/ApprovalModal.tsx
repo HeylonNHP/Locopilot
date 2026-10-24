@@ -1,10 +1,21 @@
 'use client';
+
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+
 import type { ToolCallArguments } from '@/tools/tools';
+
+import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
+import { useDialogFocus } from '@/app/hooks/useDialogFocus';
 
 import './ApprovalModal.scss';
 
 interface Props {
   command: { name: string; args: ToolCallArguments; toolCallName?: string };
+  /** True while the approve/reject POST is in flight. */
+  isSubmitting?: boolean;
+  /** Server-side failure from the POST, shown inside the dialog. */
+  error?: string | null;
   onApprove: () => void;
   onReject: () => void;
 }
@@ -52,12 +63,57 @@ function formatArgs(
   return typeof args === 'string' ? args : JSON.stringify(args, null, 2);
 }
 
-export default function ApprovalModal({ command, onApprove, onReject }: Props) {
+/**
+ * Blocks the turn until the user allows or rejects a tool call. Rendered in a
+ * portal so it is never clipped by the shell's `overflow: hidden`, and behaves
+ * like a real dialog: labelled, focus-trapped, Escape/backdrop rejectable
+ * (except mid-POST), and it restores focus on close.
+ */
+export default function ApprovalModal({
+  command,
+  isSubmitting = false,
+  error = null,
+  onApprove,
+  onReject,
+}: Props) {
   const isMcpCall = command.name === 'mcp_call';
-  return (
+  const titleId = useId();
+  const rejectRef = useRef<HTMLButtonElement>(null);
+  // The dialog body lives in a portal, which has no meaning on the server.
+  // Rendering nothing until mounted keeps the component safe to place in any
+  // tree (and keeps the focus effect's target present when it runs).
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  // Escape and backdrop dismissal both reject. Guarded so an in-flight POST
+  // cannot be dismissed out from under the user (the request would still
+  // resolve server-side, but the outcome would be invisible).
+  const handleDismiss = useCallback(() => {
+    if (isSubmitting) return;
+    onReject();
+  }, [isSubmitting, onReject]);
+
+  const panelRef = useDialogFocus<HTMLDivElement>({
+    initialFocusRef: rejectRef,
+    enabled: isMounted,
+  });
+  useClickOutsideEscape(panelRef, { isOpen: isMounted, onClose: handleDismiss });
+
+  if (!isMounted) return null;
+
+  return createPortal(
     <div className="modal-overlay">
-      <div className="modal-content">
-        <h3 className="modal-title">
+      <div
+        ref={panelRef}
+        className="modal-content"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-busy={isSubmitting || undefined}
+      >
+        <h3 id={titleId} className="modal-title">
           {isMcpCall && command.toolCallName
             ? `Allow MCP tool ${command.toolCallName}?`
             : 'Allow this command to run?'}
@@ -73,15 +129,32 @@ export default function ApprovalModal({ command, onApprove, onReject }: Props) {
             </div>
           )}
         </div>
+        {error ? (
+          <div className="modal-error" role="alert">
+            {error}
+          </div>
+        ) : null}
         <div className="modal-actions">
-          <button className="modal-btn-reject" onClick={onReject}>
+          <button
+            ref={rejectRef}
+            type="button"
+            className="modal-btn-reject"
+            onClick={handleDismiss}
+            disabled={isSubmitting}
+          >
             Reject
           </button>
-          <button className="modal-btn-approve" onClick={onApprove}>
-            Allow
+          <button
+            type="button"
+            className="modal-btn-approve"
+            onClick={onApprove}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? 'Sending…' : 'Allow'}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

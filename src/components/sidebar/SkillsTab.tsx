@@ -4,6 +4,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SkillApiItem } from '@/app/api/skills/route';
 
+import { normalizeSkillName, validateSkillName } from '@/app/lib/skillName';
+
+/** How long to wait for the AI to finish writing a new skill. */
+const CREATION_TIMEOUT_MS = 120_000;
+/** Consecutive poll failures tolerated while waiting for a creation. */
+const MAX_POLL_FAILURES = 3;
+
 interface Props {
   onPromptAI: ((message: string) => void) | undefined;
 }
@@ -25,12 +32,16 @@ export default function SkillsTab({ onPromptAI }: Props) {
   const [editText, setEditText] = useState('');
 
   const togglingRef = useRef(false);
+  // Stores the NORMALISED name (see skillName.ts). The server writes the
+  // folder/frontmatter from that same normalisation, so comparing against the
+  // name as typed could never match: 'My Skill' is stored as 'my-skill' and
+  // the progress banner stayed on screen forever.
   const pendingCreationNameRef = useRef<string | null>(null);
+  const pollFailuresRef = useRef(0);
 
   const fetchSkills = useCallback(async () => {
     try {
       setLoading(true);
-      setError(null);
       const res = await fetch('/api/skills');
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -39,15 +50,29 @@ export default function SkillsTab({ onPromptAI }: Props) {
       const data = (await res.json()) as { skills: SkillApiItem[] };
       const nextSkills = data.skills ?? [];
       setSkills(nextSkills);
+      // Clear on success rather than at the start of the request, so a
+      // creation timeout message is not wiped by the next background poll.
+      pollFailuresRef.current = 0;
+      setError(null);
       if (
         pendingCreationNameRef.current &&
-        nextSkills.some((skill) => skill.name === pendingCreationNameRef.current)
+        nextSkills.some(
+          (skill) => normalizeSkillName(skill.name) === pendingCreationNameRef.current
+        )
       ) {
         pendingCreationNameRef.current = null;
         setCreating(false);
       }
     } catch (err) {
+      pollFailuresRef.current += 1;
       setError(err instanceof Error ? err.message : 'Failed to load skills');
+      // A creation can never be confirmed if the API is unreachable, so stop
+      // pretending to wait instead of spinning until the timeout.
+      if (pollFailuresRef.current >= MAX_POLL_FAILURES && pendingCreationNameRef.current) {
+        pendingCreationNameRef.current = null;
+        setCreating(false);
+        setError('Could not reach the skills API — creation status unknown.');
+      }
     } finally {
       setLoading(false);
     }
@@ -57,12 +82,29 @@ export default function SkillsTab({ onPromptAI }: Props) {
     fetchSkills();
   }, [fetchSkills]);
 
+  // Bounded wait: a creation that the model never performs (or that fails
+  // without touching the list) must not leave the banner up indefinitely.
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (!togglingRef.current) fetchSkills();
-    }, 5000);
+    if (!creating) return;
+    const timer = setTimeout(() => {
+      pendingCreationNameRef.current = null;
+      setCreating(false);
+      setError(
+        'Timed out waiting for the new skill. Check the chat for tool errors, then press Refresh.'
+      );
+    }, CREATION_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [creating]);
+
+  useEffect(() => {
+    const interval = setInterval(
+      () => {
+        if (!togglingRef.current) fetchSkills();
+      },
+      creating ? 2000 : 5000
+    );
     return () => clearInterval(interval);
-  }, [fetchSkills]);
+  }, [fetchSkills, creating]);
 
   const toggleSkill = useCallback(
     async (name: string, currentEnabled: boolean) => {
@@ -106,11 +148,19 @@ export default function SkillsTab({ onPromptAI }: Props) {
   const handleCreateSubmit = useCallback(() => {
     const trimmedName = newName.trim();
     if (!onPromptAI || !trimmedName) return;
-    pendingCreationNameRef.current = trimmedName;
+    const invalidReason = validateSkillName(trimmedName);
+    if (invalidReason) {
+      setNameError(invalidReason);
+      return;
+    }
+    // Track and request the canonical name so the prompt cannot ask for a
+    // spelling the tool would have to rewrite.
+    const skillName = normalizeSkillName(trimmedName);
+    pendingCreationNameRef.current = skillName;
     setCreating(true);
     const message = newGenerateAI
-      ? `Please create a skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.`
-      : `Please create a minimal skill named "${trimmedName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Use a simple placeholder body like "# ${trimmedName}\n\nSkill instructions go here." Use the create_skill tool.`;
+      ? `Please create a skill named "${skillName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Write detailed, specific instructions in the body. Use the create_skill tool.`
+      : `Please create a minimal skill named "${skillName}" with description "${newDescription.trim()}". The mode should be ${newMode}. Use a simple placeholder body like "# ${skillName}\n\nSkill instructions go here." Use the create_skill tool.`;
     onPromptAI(message);
     setShowCreateForm(false);
     setNewName('');
@@ -123,19 +173,7 @@ export default function SkillsTab({ onPromptAI }: Props) {
   const handleNameChange = useCallback((value: string) => {
     setNewName(value);
     const trimmed = value.trim();
-    if (trimmed.length === 0) {
-      setNameError(null);
-    } else if (trimmed.length > 64) {
-      setNameError('Name must be 64 characters or fewer');
-    } else if (/^[.-]/.test(trimmed)) {
-      setNameError('Name cannot start with . or -');
-    } else if (/[/\\]/.test(trimmed) || trimmed.includes('..')) {
-      setNameError('Name cannot contain path separators or ..');
-    } else if (trimmed.includes(String.fromCodePoint(0x0000))) {
-      setNameError('Name contains invalid characters');
-    } else {
-      setNameError(null);
-    }
+    setNameError(trimmed.length === 0 ? null : validateSkillName(trimmed));
   }, []);
 
   const startEdit = useCallback((skill: SkillApiItem) => {
@@ -252,6 +290,9 @@ export default function SkillsTab({ onPromptAI }: Props) {
         <div className="skills-panel-creating">
           <span className="skills-panel-creating-dot" />
           <span className="skills-panel-creating-text">Creating skill…</span>
+          <button type="button" className="skills-panel-creating-dismiss" onClick={resetCreateForm}>
+            Dismiss
+          </button>
         </div>
       )}
 

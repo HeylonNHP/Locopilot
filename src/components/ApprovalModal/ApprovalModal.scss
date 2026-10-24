@@ -59,9 +59,20 @@
     justify-content: flex-end;
   }
 
+  // Failure from the approve/reject POST. The dialog stays open so the user
+  // can read this and retry instead of the outcome vanishing silently.
+  &-error {
+    @include matte-content(var(--bg-error-soft), var(--radius-chip), var(--border-error-soft));
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--color-text-error);
+  }
+
   &-btn-reject {
     padding: 8px 20px;
-    border-radius: 50px;
+    border-radius: var(--radius-pill);
     border: 1px solid var(--glass-border);
     background: rgba(255, 255, 255, 0.15);
     color: var(--text-primary);
@@ -74,12 +85,21 @@
       background: rgba(255, 255, 255, 0.3);
       box-shadow: 0 2px 8px rgba(0, 80, 120, 0.1);
     }
+
+    &:disabled {
+      cursor: progress;
+      opacity: 0.6;
+    }
   }
 
   &-btn-approve {
     @include gel-button;
     padding: 8px 20px;
     font-size: 14px;
+
+    &:disabled {
+      @include gel-button-disabled;
+    }
   }
 
   &-mcp-tool-name {

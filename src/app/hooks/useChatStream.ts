@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from 'react';
 import type { SseEventPayloadMap } from '@/types/sse';
 
 import { type ChatMessage, type DoneReason, useChat } from '@/app/lib/chatStore';
+import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
 import { DEFAULT_NUM_CTX, DEFAULT_SESSION_NAME } from '@/constants';
 
@@ -139,12 +140,7 @@ export function useChatStream(
   );
 
   const handleEvent = useCallback(
-    (
-      event: string,
-      data: SseEventData,
-      requestId?: number,
-      replayTargetSessionId?: number
-    ) => {
+    (event: string, data: SseEventData, requestId?: number, replayTargetSessionId?: number) => {
       // ── session_created must ALWAYS be processed first ──────────────────
       // It syncs bufferOwnerMapRef and refs.sessionIdRef to the real
       // session ID.  If the buffer guard below intercepted it, the guard
@@ -153,13 +149,13 @@ export function useChatStream(
       // buffered and ultimately discarded by the finally block.
       if (event === 'session_created' && typeof data.sessionId === 'number') {
         const realId: number = data.sessionId;
-        if (abortControllersRef.current.has(-1)) {
-          const ctrl = abortControllersRef.current.get(-1)!;
-          abortControllersRef.current.delete(-1);
+        if (abortControllersRef.current.has(NEW_SESSION_KEY)) {
+          const ctrl = abortControllersRef.current.get(NEW_SESSION_KEY)!;
+          abortControllersRef.current.delete(NEW_SESSION_KEY);
           abortControllersRef.current.set(realId, ctrl);
           setStreamingSessions((prev) => {
             const next = new Set(prev);
-            next.delete(-1);
+            next.delete(NEW_SESSION_KEY);
             next.add(realId);
             return next;
           });
@@ -167,11 +163,11 @@ export function useChatStream(
           dispatch({ type: 'START_STREAMING', sessionId: realId });
         }
         // Migrate any buffered events from placeholder -1 to the real session ID
-        const oldBuffer = bufferedEventsRef.current.get(-1);
+        const oldBuffer = bufferedEventsRef.current.get(NEW_SESSION_KEY);
         if (oldBuffer && oldBuffer.length > 0) {
           const existing = bufferedEventsRef.current.get(realId) ?? [];
           bufferedEventsRef.current.set(realId, [...existing, ...oldBuffer]);
-          bufferedEventsRef.current.delete(-1);
+          bufferedEventsRef.current.delete(NEW_SESSION_KEY);
         }
         // Update ALL map entries set with -1 (placeholder for new sessions) to the real ID
         for (const [reqId, sessId] of bufferOwnerMapRef.current.entries()) {
@@ -204,7 +200,10 @@ export function useChatStream(
       // session, buffer it so it doesn't land in the wrong message list.
       if (requestId !== undefined) {
         const ownerSessionId = bufferOwnerMapRef.current.get(requestId);
-        if (ownerSessionId !== undefined && ownerSessionId !== (refs.sessionIdRef.current ?? -1)) {
+        if (
+          ownerSessionId !== undefined &&
+          ownerSessionId !== streamKeyFor(refs.sessionIdRef.current)
+        ) {
           if (!bufferedEventsRef.current.has(ownerSessionId)) {
             bufferedEventsRef.current.set(ownerSessionId, []);
           }
@@ -325,7 +324,7 @@ export function useChatStream(
           break;
         }
 
-         case 'subagent_chunk': {
+        case 'subagent_chunk': {
           const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
           const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
           dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: agentId } });
@@ -520,7 +519,7 @@ export function useChatStream(
             // coerces missing values to 'stop' and is the source of truth for
             // valid values; this is purely defensive.
             const reason: DoneReason = isDoneReason(data.doneReason) ? data.doneReason : 'unknown';
-             const doneOwnerSessionId =
+            const doneOwnerSessionId =
               requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
             dispatch({
               type: 'SET_DONE_REASON',
@@ -562,7 +561,7 @@ export function useChatStream(
             typeof data.message === 'string'
               ? `Failed to save message to database: ${data.message}`
               : 'Failed to save message to database: Unknown error';
-           if (targetSessionId === undefined) {
+          if (targetSessionId === undefined) {
             dispatch({ type: 'SET_ERROR', error: writeErrorMessage });
           } else {
             dispatch({ type: 'SET_ERROR', error: writeErrorMessage, targetSessionId });
@@ -581,7 +580,7 @@ export function useChatStream(
           break;
         }
 
-         default: {
+        default: {
           break;
         }
       }
@@ -591,12 +590,11 @@ export function useChatStream(
 
   /**
    * Retry a failed chat turn using the originally-stored request payload.
-   */  const retry = useCallback(async () => {
-    const sessionId = refs.sessionIdRef.current ?? -1;
+   */ const retry = useCallback(async () => {
+    const sessionId = streamKeyFor(refs.sessionIdRef.current);
     if (!retryPayloadRef.current || streamingSessions.has(sessionId)) return;
 
     const { body } = retryPayloadRef.current;
-    dispatch({ type: 'SET_ERROR', error: null });
     dispatch({ type: 'SET_CURRENT_TPS', tps: null });
     dispatch({ type: 'SET_DONE_REASON', reason: undefined });
 
@@ -651,6 +649,12 @@ export function useChatStream(
 
       if (!response.body) throw new Error('No response body stream');
 
+      // Clear the banner only once the retry has actually been accepted. If we
+      // cleared it optimistically the banner would unmount on click and its
+      // own in-flight state would never be visible (cold model loads take
+      // seconds). A failure re-dispatches SET_ERROR into the same instance.
+      dispatch({ type: 'SET_ERROR', error: null });
+
       const eventStream = response.body
         .pipeThrough(new TextDecoderStream())
         .pipeThrough(new EventSourceParserStream());
@@ -671,7 +675,7 @@ export function useChatStream(
       if (!details) {
         requestFailedMapRef.current.set(requestId, true);
         dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
-       } else if (details.name === 'AbortError') {
+      } else if (details.name === 'AbortError') {
         // User clicked Stop — the turn never completed, so the t/s read-out
         // must not keep displaying the previous turn's rate as if it
         // belonged to this one.
@@ -694,7 +698,8 @@ export function useChatStream(
         dispatch({ type: 'SET_ERROR', error: details.message });
         clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
       }
-    } finally {      const ownerId = bufferOwnerMapRef.current.get(requestId);
+    } finally {
+      const ownerId = bufferOwnerMapRef.current.get(requestId);
 
       // Only flush subagent buffers belonging to this session
       for (const [agentId, entry] of subagentBufferRef.current.entries()) {
@@ -741,7 +746,16 @@ export function useChatStream(
       }
       requestFailedMapRef.current.delete(requestId);
     }
-  }, [dispatch, handleEvent, clearTpsReadout, flushBufferedDoneFor, refs, abortControllersRef, loadSessions, streamingSessions]);
+  }, [
+    dispatch,
+    handleEvent,
+    clearTpsReadout,
+    flushBufferedDoneFor,
+    refs,
+    abortControllersRef,
+    loadSessions,
+    streamingSessions,
+  ]);
   /**
    * Call this after loading a session's messages to replay any SSE events that
    * were buffered while the user was viewing a different session.  No-op when
@@ -768,9 +782,9 @@ export function useChatStream(
     'approval_request',
   ]);
 
-   const replayBufferedEvents = useCallback(
+  const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
-      const sessionKey = targetSessionId ?? -1;
+      const sessionKey = streamKeyFor(targetSessionId);
       const buffered = bufferedEventsRef.current.get(sessionKey) ?? [];
       bufferedEventsRef.current.delete(sessionKey);
       for (const { event, data } of buffered) {
@@ -906,7 +920,7 @@ export function useChatStream(
 
   const sendChatMessage = useCallback(
     async (message: string, attachments?: Attachment[]) => {
-      const sessionId = refs.sessionIdRef.current ?? -1;
+      const sessionId = streamKeyFor(refs.sessionIdRef.current);
       if (streamingSessions.has(sessionId)) return;
 
       if (!refs.modelRef.current.trim()) {
@@ -933,6 +947,9 @@ export function useChatStream(
       dispatch({ type: 'ADD_MESSAGE', message: userMessage });
       dispatch({ type: 'SET_ERROR', error: null });
       dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+      // A new turn must not inherit the previous turn's completion reason, or
+      // a stale 'length' would flash the truncation notice over the new reply.
+      dispatch({ type: 'SET_DONE_REASON', reason: undefined });
 
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
@@ -1064,7 +1081,7 @@ export function useChatStream(
             handleEvent(value.event || 'message', { content: value.data }, requestId);
           }
         }
-       } catch (err: unknown) {
+      } catch (err: unknown) {
         const details = getStreamErrorDetails(err);
         if (!details) {
           requestFailedMapRef.current.set(requestId, true);

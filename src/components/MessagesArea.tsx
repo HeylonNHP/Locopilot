@@ -17,7 +17,7 @@ interface MessagesAreaProps {
   showScrollToLatest: boolean;
   messagesAreaRef: RefObject<HTMLDivElement | null>;
   messagesEndRef: RefObject<HTMLDivElement | null>;
-  onRetry: () => void;
+  onRetry: () => Promise<void> | void;
   onDismissError: () => void;
   onScrollToLatest: (behavior: ScrollBehavior) => void;
   onDeletePrompt?: ((messageId: number) => void) | undefined;
@@ -62,14 +62,7 @@ export function MessagesArea({
           ))
         )}
 
-        {error && (
-          <ErrorBanner
-            error={error}
-            isRetrying={isCurrentSessionStreaming}
-            onRetry={onRetry}
-            onDismiss={onDismissError}
-          />
-        )}
+        {error && <ErrorBanner error={error} onRetry={onRetry} onDismiss={onDismissError} />}
 
         <div ref={messagesEndRef} />
       </div>

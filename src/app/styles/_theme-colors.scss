@@ -62,6 +62,10 @@ html[data-theme='frutiger-aero'] {
   --bg-error-soft: rgba(255, 200, 200, 0.35);
   --border-error-soft: rgba(220, 80, 80, 0.4);
 
+  // ── Warning surfaces (truncation notice) ────────────────────
+  --bg-warning-soft: rgba(255, 245, 200, 0.45);
+  --border-warning-soft: rgba(255, 220, 100, 0.5);
+
   // ── Gel gradient stops — primary (sky / user bubble / default button) ──
   --gradient-primary-0: #33d1ff;
   --gradient-primary-1: #00a8e8;
@@ -231,6 +235,10 @@ html[data-theme='dark'] {
   // Error surfaces
   --bg-error-soft: rgba(248, 113, 113, 0.12);
   --border-error-soft: rgba(248, 113, 113, 0.28);
+
+  // Warning surfaces (truncation notice)
+  --bg-warning-soft: rgba(251, 191, 36, 0.1);
+  --border-warning-soft: rgba(251, 191, 36, 0.25);
   // Gel gradient stops
   --gradient-primary-0: #7dd3fc;
   --gradient-primary-1: #38bdf8;

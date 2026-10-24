@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { ChatMessage, LlmRequestContext, ToolDefinition } from '@/services/llm';
 import type { ReasoningEffort } from '@/types/chatConfig';
 
+import { normalizeSkillName, validateSkillName } from '@/app/lib/skillName';
 import {
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
@@ -757,7 +758,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
           return { content: '[Error: missing required argument "body"]' };
         }
 
-        const sanitizedName = args.name.trim().toLowerCase().replaceAll(/\s+/g, '-');
+        const sanitizedName = normalizeSkillName(args.name);
 
         const skillsBaseDir = await resolveCreateSkillBaseDir(args.location);
         if (skillsBaseDir === null) {
@@ -766,21 +767,9 @@ export const toolRegistry = new Map<string, IToolCommand>([
           };
         }
 
-        // Validate skill name to prevent path traversal
-        if (
-          sanitizedName.length === 0 ||
-          sanitizedName.length > 64 ||
-          /^[.-]/.test(sanitizedName)
-        ) {
-          return {
-            content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]`,
-          };
-        }
-        if (
-          sanitizedName.includes('\0') ||
-          /[/\\]/.test(sanitizedName) ||
-          sanitizedName.includes('..')
-        ) {
+        // Validate skill name to prevent path traversal. Shared with the UI so
+        // the client cannot accept a name the server will silently rewrite.
+        if (validateSkillName(args.name)) {
           return {
             content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]`,
           };

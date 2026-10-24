@@ -23,6 +23,7 @@ import { COMPACTION_ABORT_KEY, useSlashCommands } from './hooks/useSlashCommands
 import { useStableRefs } from './hooks/useStableRefs';
 import { useSyncRefs } from './hooks/useSyncRefs';
 import { useChat } from './lib/chatStore';
+import { streamKeyFor } from './lib/streamKey';
 
 /** Inner component — uses useSearchParams so must live inside Suspense. */
 function HomeInner() {
@@ -43,10 +44,12 @@ function HomeInner() {
   const refs = useStableRefs(state);
   const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
 
-  const isCurrentSessionStreaming =
-    state.currentSessionId === null
-      ? state.streamingSessions.has(-1)
-      : state.streamingSessions.has(state.currentSessionId);
+  // Derive both the "is the visible session streaming" flag and the Stop
+  // handler's key from the same helper: a brand-new chat has no id yet, so
+  // its turn is registered under NEW_SESSION_KEY.
+  const isCurrentSessionStreaming = state.streamingSessions.has(
+    streamKeyFor(state.currentSessionId)
+  );
 
   const { showScrollToLatest, scrollToLatest, messagesAreaRef, messagesEndRef } = useScrollManager({
     messages: state.messages,
@@ -67,7 +70,12 @@ function HomeInner() {
   const handleOpenSettings = useCallback(() => setShowSettings(true), []);
   const handleCloseSettings = useCallback(() => setShowSettings(false), []);
 
-  const { handleApprove, handleReject } = useApproval({
+  const {
+    handleApprove,
+    handleReject,
+    isSubmitting,
+    error: approvalError,
+  } = useApproval({
     dispatch,
     pendingApprovalId: state.pendingApprovalId,
   });
@@ -143,7 +151,10 @@ function HomeInner() {
     isCurrentSessionStreaming,
     handleSend,
     dispatch,
-    refs.sessionIdRef.current,
+    // `state`, not `refs.sessionIdRef`: the ref is updated optimistically
+    // before SET_CURRENT_SESSION commits, so reading it could target a
+    // session the UI is not showing yet.
+    state.currentSessionId,
     reservedAbortKeys.current
   );
 
@@ -188,6 +199,14 @@ function HomeInner() {
           />
 
           <div className="input-area">
+            {state.lastDoneReason === 'length' &&
+              !isCurrentSessionStreaming &&
+              state.messages.length > 0 && (
+                <div className="truncation-notice" role="status">
+                  ⚠ Response truncated — the model hit its output-token limit. The reply above may
+                  be incomplete.
+                </div>
+              )}
             <InputArea
               isStreaming={isCurrentSessionStreaming}
               isCompacting={isCompacting}
@@ -206,6 +225,8 @@ function HomeInner() {
         state.showApproval && state.pendingCommand ? (
           <ApprovalModal
             command={state.pendingCommand}
+            isSubmitting={isSubmitting}
+            error={approvalError}
             onApprove={handleApprove}
             onReject={handleReject}
           />

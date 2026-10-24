@@ -462,6 +462,30 @@
       font-size: 12px;
       color: var(--text-secondary);
     }
+
+    // Escape hatch while the (bounded) creation wait is running.
+    &-dismiss {
+      margin-left: auto;
+      padding: 2px 8px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--glass-border-soft);
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+
+      &:hover {
+        background: var(--glass-white);
+        border-color: var(--glass-border);
+        color: var(--text-primary);
+      }
+
+      &:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+    }
   }
 
   // ── Inline create form ──────────────────────────────────────
