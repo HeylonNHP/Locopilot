@@ -261,6 +261,15 @@ export function useChatStream(
         }
 
         case 'approval_request': {
+          // Identify the owning session the same way every other case does,
+          // including replays (where requestId is undefined but a target is
+          // supplied). Without this the modal is routed through the
+          // visible session and a background stream's approval would overwrite
+          // a foreground one (or vice-versa).
+          const approvalOwner =
+            requestId === undefined
+              ? (replayTargetSessionId ?? refs.sessionIdRef.current ?? undefined)
+              : bufferOwnerMapRef.current.get(requestId);
           dispatch({
             type: 'SHOW_APPROVAL',
             command: {
@@ -269,6 +278,7 @@ export function useChatStream(
               ...(typeof data.toolCallName === 'string' ? { toolCallName: data.toolCallName } : {}),
             },
             ...(data.requestId === undefined ? {} : { requestId: data.requestId }),
+            ...(approvalOwner === undefined ? {} : { targetSessionId: approvalOwner }),
           });
           break;
         }

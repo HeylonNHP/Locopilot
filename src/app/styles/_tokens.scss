@@ -45,6 +45,15 @@
   --radius-overlay: 24px; // modals, full-screen overlays
   --radius-pill: 50px; // buttons, scrollbar thumbs
 
+  // ── Layer scale ─────────────────────────────────────────────
+  // Stack order for chrome vs. overlays (replaces the ad-hoc 1000s used
+  // across ApprovalModal/SettingsModal/MermaidOverlay/selector popovers).
+  --z-base: 1;
+  --z-popover: 100;
+  --z-modal: 1000;
+  --z-overlay: 1100;
+  --z-top: 1200;
+
   // ── Frost scale ──────────────────────────────────────────────
   // Exactly three levels of backdrop blur, so depth stays meaningful:
   // chip = small overlays, chrome = nav shells, overlay = modals.

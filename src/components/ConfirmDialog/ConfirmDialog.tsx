@@ -1,8 +1,8 @@
 'use client';
-import { type ReactNode, useEffect, useId, useRef } from 'react';
+import { type ReactNode, useCallback, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
-import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
+import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 
 import './ConfirmDialog.scss';
 
@@ -28,23 +28,26 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
 }: Props) {
-  const panelRef = useRef<HTMLDivElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
 
-  // Click outside the panel (i.e. the backdrop) or Escape cancels.
-  useClickOutsideEscape(panelRef, { isOpen: true, onClose: onCancel });
-
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    cancelBtnRef.current?.focus();
-    return () => {
-      previouslyFocused?.focus?.();
-    };
-  }, []);
+  // Backdrop click cancels; Escape is handled by the global overlay stack. A
+  // real Enter on Cancel must be a no-op (focus is *there*), never a delete.
+  const handleCancel = useCallback(() => onCancel(), [onCancel]);
+  const panelRef = useModalOverlay<HTMLDivElement>({
+    onClose: handleCancel,
+    initialFocusRef: cancelBtnRef,
+    // ConfirmDialog is always mounted while open (no SSR portal guard needed:
+    // it is only ever rendered after a user interaction).
+  });
 
   return createPortal(
-    <div className="modal-overlay">
+    <div
+      className="modal-overlay"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleCancel();
+      }}
+    >
       <div
         ref={panelRef}
         className="confirm-dialog"
@@ -57,7 +60,12 @@ export default function ConfirmDialog({
         </h3>
         {message ? <p className="confirm-dialog__message">{message}</p> : null}
         <div className="modal-actions">
-          <button ref={cancelBtnRef} type="button" className="modal-btn-reject" onClick={onCancel}>
+          <button
+            ref={cancelBtnRef}
+            type="button"
+            className="modal-btn-reject"
+            onClick={handleCancel}
+          >
             {cancelLabel}
           </button>
           <button type="button" className="confirm-dialog__confirm" onClick={onConfirm}>

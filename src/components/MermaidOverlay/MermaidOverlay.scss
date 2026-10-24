@@ -5,9 +5,11 @@
 .mermaid-overlay {
   position: fixed;
   inset: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
   background: var(--overlay-modal);
   backdrop-filter: blur(var(--blur-chrome));
-  z-index: 1000;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -22,8 +24,8 @@
   background: var(--glass-panel-solid);
   border-radius: var(--radius-overlay);
   width: 94vw;
-  height: 90vh;
-  border: 1px solid var(--glass-border);
+  height: 90dvh;
+  max-height: calc(100dvh - 24px);
   overflow: hidden;
   display: flex;
   flex-direction: column;

@@ -361,6 +361,7 @@ export type ChatAction =
       type: 'SHOW_APPROVAL';
       command: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
       requestId?: string;
+      targetSessionId?: number;
     }
   | { type: 'CLEAR_MESSAGES'; targetSessionId?: number }
   | { type: 'REMOVE_LAST_ASSISTANT'; targetSessionId?: number }
@@ -944,6 +945,10 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // owning session. Falls back to `currentSessionId` for callers
       // that omit `requestId` (e.g. local test code).
       const owningSessionId = (() => {
+        // A explicitly targeted session (e.g. a foreground approval request
+        // dispatched for a background stream that was tagged on dispatch)
+        // wins over inference.
+        if (action.targetSessionId !== undefined) return action.targetSessionId;
         if (action.command === null && action.requestId !== undefined) {
           for (const [id, sess] of state.sessionStates) {
             if (sess.pendingApproval?.requestId === action.requestId) return id;

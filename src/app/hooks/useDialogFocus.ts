@@ -13,9 +13,9 @@ const FOCUSABLE_SELECTOR = [
 
 interface UseDialogFocusOptions {
   /** Element to focus on mount. Defaults to the first focusable child. */
-  initialFocusRef?: React.RefObject<HTMLElement | null>;
+  initialFocusRef?: React.RefObject<HTMLElement | null> | undefined;
   /** Element to restore focus to on unmount. Defaults to whatever had focus. */
-  returnFocusRef?: React.RefObject<HTMLElement | null>;
+  returnFocusRef?: React.RefObject<HTMLElement | null> | undefined;
   /** Keep Tab/Shift+Tab inside the panel. Defaults to true. */
   trapFocus?: boolean;
   /**

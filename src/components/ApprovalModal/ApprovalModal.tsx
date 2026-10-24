@@ -147,7 +147,7 @@ export default function ApprovalModal({
           <button
             type="button"
             className="modal-btn-approve"
-            onClick={onApprove}
+            onClick={() => void onApprove()}
             disabled={isSubmitting}
           >
             {isSubmitting ? 'Sending…' : 'Allow'}

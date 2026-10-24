@@ -1,6 +1,8 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
+import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 import { useChat } from '@/app/lib/chatStore';
 import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
@@ -50,6 +52,21 @@ export default function SettingsModal({ onClose }: Props) {
   );
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  const titleId = useId();
+  const firstFieldRef = useRef<HTMLSelectElement>(null);
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+  const handleDismiss = useCallback(() => {
+    if (!isSaving) onClose();
+  }, [isSaving, onClose]);
+  const panelRef = useModalOverlay<HTMLDivElement>({
+    onClose: handleDismiss,
+    initialFocusRef: firstFieldRef,
+    enabled: isMounted,
+  });
 
   // The legacy `state.provider` field only tracks the original single-provider
   // config and is never updated when the user picks a different provider via
@@ -280,10 +297,7 @@ export default function SettingsModal({ onClose }: Props) {
       // silently continuing to send requests to the stale provider.
       const providerChanged = mainProviderId !== state.activeProviderId;
       const compactionChanged = compactionModel !== state.compactionModel;
-      if (
-        streamingSessionId !== null &&
-        (modelChanged || providerChanged || compactionChanged)
-      ) {
+      if (streamingSessionId !== null && (modelChanged || providerChanged || compactionChanged)) {
         dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: true } });
         // providerId rides along whenever either the model or the
         // provider changed — not just modelChanged — so a pure
@@ -291,9 +305,7 @@ export default function SettingsModal({ onClose }: Props) {
         // /api/chat/switch-model already accepts providerId
         // independently of model.)
         const sendProviderId =
-          (modelChanged || providerChanged) && mainProviderId
-            ? mainProviderId
-            : undefined;
+          (modelChanged || providerChanged) && mainProviderId ? mainProviderId : undefined;
         const accepted = await requestMidTurnModelSwitch(
           streamingSessionId,
           {
@@ -324,16 +336,27 @@ export default function SettingsModal({ onClose }: Props) {
     }
   };
 
-  return (
+  if (!isMounted) return null;
+
+  return createPortal(
     <div
       className="settings-overlay"
       onClick={(e) => {
-        if (!isSaving && e.target === e.currentTarget) onClose();
+        if (!isSaving && e.target === e.currentTarget) handleDismiss();
       }}
     >
-      <div className="settings-panel">
+      <div
+        ref={panelRef}
+        className="settings-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-busy={isSaving || undefined}
+      >
         <div className="settings-scroll">
-          <h3 className="settings-heading">Settings</h3>
+          <h3 id={titleId} className="settings-heading">
+            Settings
+          </h3>
 
           {saveError && (
             <div className="settings-error" role="alert">
@@ -345,6 +368,7 @@ export default function SettingsModal({ onClose }: Props) {
             <div className="settings-row">
               <label className="settings-label">Model</label>
               <select
+                ref={firstFieldRef}
                 value={selectedMainValue}
                 onChange={(e) => handleMainModelChange(e.target.value)}
                 className="settings-input"
@@ -504,8 +528,8 @@ export default function SettingsModal({ onClose }: Props) {
               <span className="font-12 text-secondary">
                 After web research (web_search / fetch_url), the model must cite its sources as
                 numbered links with a Sources list at the end of its answer. The numbered source
-                list is always shown to the model; this toggle controls whether it is instructed
-                to cite them.
+                list is always shown to the model; this toggle controls whether it is instructed to
+                cite them.
               </span>
             </div>
           </div>
@@ -593,6 +617,7 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

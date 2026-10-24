@@ -1,9 +1,9 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TransformComponent, TransformWrapper } from 'react-zoom-pan-pinch';
 
-import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
+import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 
 import './MermaidOverlay.scss';
 
@@ -19,21 +19,12 @@ interface Props {
 // mermaid's bindFunctions do not carry over; acceptable since this overlay
 // is for viewing/panning, not diagram interaction.
 export default function MermaidOverlay({ svgMarkup, onClose, returnFocusRef }: Props) {
-  const overlayRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
-
-  // Escape-to-close only. Click-outside is handled explicitly below via
-  // handleBackdropClick, guarded to the exact backdrop target — the hook's
-  // own click-outside arm would fire on nothing (ref is the full-viewport
-  // root, so nothing is ever "outside" it) and is effectively inert here.
-  useClickOutsideEscape(overlayRef, { isOpen: true, onClose });
-
-  useEffect(() => {
-    closeBtnRef.current?.focus();
-    return () => {
-      returnFocusRef.current?.focus();
-    };
-  }, [returnFocusRef]);
+  const overlayRef = useModalOverlay<HTMLDivElement>({
+    onClose,
+    initialFocusRef: closeBtnRef,
+    returnFocusRef,
+  });
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     // Only a direct click on the backdrop closes the overlay — a pan-drag

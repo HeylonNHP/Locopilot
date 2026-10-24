@@ -8,9 +8,11 @@
   &-overlay {
     position: fixed;
     inset: 0;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
     background: var(--overlay-modal);
     backdrop-filter: blur(var(--blur-chrome));
-    z-index: 1000;
+    z-index: var(--z-modal);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -21,7 +23,7 @@
     border-radius: var(--radius-overlay);
     width: 640px;
     max-width: 90%;
-    max-height: 90vh;
+    max-height: 90dvh;
     border: 1px solid var(--glass-border);
     overflow: hidden;
     display: flex;

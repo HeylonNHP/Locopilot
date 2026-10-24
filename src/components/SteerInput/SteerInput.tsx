@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
 import { requestSteerMessage } from '@/app/lib/steerClient';
+import { NEW_SESSION_KEY } from '@/app/lib/streamKey';
 
 /**
  * Slim, always-mounted text input shown alongside the Stop button while a
@@ -78,7 +79,22 @@ export default function SteerInput() {
     }
   };
 
-  if (streamingSessionId === null) return null;
+  if (streamingSessionId === null) {
+    // A brand-new, not-yet-persisted session is still streaming (it shows
+    // up as Stop in InputArea), but steering needs a real id because
+    // /api/chat/steer rejects -1. Explain that so the missing control does
+    // not read as a broken input.
+    if (currentSessionId === null && streamingSessions.has(NEW_SESSION_KEY)) {
+      return (
+        <div className="steer-input steer-input--pending" role="status">
+          <span className="text-secondary font-12">
+            Steering becomes available after this chat is saved…
+          </span>
+        </div>
+      );
+    }
+    return null;
+  }
 
   return (
     <div className="steer-input">
