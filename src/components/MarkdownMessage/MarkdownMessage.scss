@@ -236,10 +236,15 @@
     color: var(--text-primary);
   }
 
+  // Wide tables must be able to scroll horizontally instead of breaking
+  // out of the bubble (the bubble's overflow:hidden would clip them).
   table {
     width: 100%;
     border-collapse: collapse;
     margin: 0 0 0.85rem;
+    overflow-x: auto;
+    max-width: 100%;
+    display: block;
   }
 
   th,

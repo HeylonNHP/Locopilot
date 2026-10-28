@@ -74,6 +74,7 @@ export default function SteerInput() {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.nativeEvent.isComposing) return;
       e.preventDefault();
       void handleSend();
     }

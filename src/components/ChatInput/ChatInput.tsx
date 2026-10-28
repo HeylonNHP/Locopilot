@@ -481,6 +481,7 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showSuggestions && filtered.length > 0) {
       if (e.key === 'Tab' || e.key === 'Enter') {
+        if (e.nativeEvent.isComposing) return;
         e.preventDefault();
         const suggestion = filtered[selectedIndex];
         if (suggestion) {
@@ -552,6 +553,7 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.nativeEvent.isComposing) return;
       e.preventDefault();
       handleSubmit();
     }

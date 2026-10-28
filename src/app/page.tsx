@@ -237,7 +237,7 @@ function HomeInner() {
       confirmDialog={
         pendingDeleteId === null ? null : (
           <ConfirmDialog
-            title="Delete conversation?"
+            title="Delete session?"
             message={
               `“${pendingDelete?.name || `Session ${pendingDeleteId}`}” will be permanently ` +
               'deleted. This cannot be undone.'
