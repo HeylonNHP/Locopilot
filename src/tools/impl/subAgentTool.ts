@@ -16,12 +16,12 @@ import {
  * same default-on/explicit-opt-out semantics.
  */
 export const SHARED_SUMMARIES_GUIDANCE =
-  'Shared summaries are enabled by default and are usually preferred: for dependent workflows such as research → implementation → review, omit share_summaries or set it to true so later agents can build on completed work instead of repeating it. Set share_summaries to false only when agents must remain genuinely independent, such as blind reviews, parallel alternatives, or work where prior conclusions could create anchoring or cross-contamination.';
+  'Shared summaries are enabled by default and are usually preferred: for dependent workflows such as research → implementation → review, omit share_summaries or set it to true so later agents can build on completed work instead of repeating it. The agents run in the order you list them, so list a dependency chain in that order. Set share_summaries to false only when agents must remain genuinely independent, such as blind reviews, competing alternatives, or work where prior conclusions could create anchoring or cross-contamination.';
 
 export const subAgentToolSchema: ToolSchema = {
   name: 'run_subagents',
   description:
-    "YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window. Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost: they do the heavy work in isolation and return only the final answer — often saving thousands of tokens. USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for: • ANY task involving multiple tool calls (search → read → compare → decide) • Researching topics, comparing approaches, or auditing code • File edits and code changes (isolated from your thinking context) • Any information-dense work where intermediate results would clutter your reasoning • Breaking large requests into parallel research streams. Each sub-agent runs its own full tool-calling loop and returns only the final summary. Constraints: sequential; each sees only its own prompt (include ALL context inline); sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context. By default the completed summaries of earlier sub-agents in this call are appended to later sub-agents' prompts (so they can build on each other); set `share_summaries: false` only when each sub-agent's work must be truly independent.",
+    'YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window. Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost: they do the heavy work in isolation and return only the final summary — often saving thousands of tokens. USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for: • ANY task involving multiple tool calls (search → read → compare → decide) • Researching topics, comparing approaches, or auditing code • File edits and code changes (isolated from your thinking context) • Any information-dense work where intermediate results would clutter your reasoning • Splitting a large request across several focused sub-agents, each with a narrow brief. Each sub-agent runs its own full tool-calling loop and returns only the final summary. BATCH THEM IN ONE CALL: several agents in a single run_subagents is strictly better than several separate calls — you get one combined result at the end, and the agents build on each other instead of each starting from zero. HOW A BATCH RUNS: the agents run one after another, in the order you list them, and by default each agent receives the final summaries of the agents before it. That is the point of a batch: it is a pipeline, not a queue of strangers — research → implement → review is ONE call, and each stage starts from what the previous stage already established. The trade-off is wall-clock time: a batch takes as long as the sum of its agents, so batch by dependency rather than by volume. Two or three sharply-scoped agents beat six thin ones, and a failed agent does not stop the rest (the next agent is told that work is missing). Set share_summaries: false when the agents must stay genuinely independent — blind reviews, competing alternatives, or anything where an earlier answer would bias a later one. Constraints: each sub-agent sees only its own prompt (include ALL context inline); sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context — but do not write them as if it has no siblings: unless you opt out of sharing, later agents are told what earlier ones already concluded.',
   parameters: {
     type: 'object',
     properties: {
@@ -44,7 +44,7 @@ export const subAgentToolSchema: ToolSchema = {
           required: ['id', 'prompt'],
         },
         description:
-          'One or more sub-agents to run sequentially. Each one needs a short id and a fully self-contained prompt.',
+          "One or more sub-agents, executed one after another in the order listed. Each one needs a short id and a fully self-contained prompt. List them as a dependency chain when they build on each other; the default share_summaries passes each finished agent's summary to the next.",
       },
       share_summaries: {
         type: 'boolean',
@@ -1551,6 +1551,7 @@ export function getToolPrompt(): string {
     `   ${schema.description}\n\n` +
     `   - agents[].id: ${agentProps.id?.description ?? ''}\n` +
     `   - agents[].prompt: ${agentProps.prompt?.description ?? ''}\n` +
-    `   - share_summaries: ${shareSummariesDescription}\n`
+    `   - share_summaries: ${shareSummariesDescription}\n` +
+    `   - batching: one call with several agents beats several calls — agents run in list order, later agents receive earlier summaries unless share_summaries is false`
   );
 }
