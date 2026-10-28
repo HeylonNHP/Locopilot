@@ -126,8 +126,11 @@ export default function SkillsTab({ onPromptAI }: Props) {
         const data = (await res.json()) as { skills: SkillApiItem[] };
         setSkills(data.skills ?? []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update skill');
+        // Re-fetch first (the refetch clears `error` on success), then
+        // surface the failure — otherwise a failed toggle springs back with
+        // no explanation.
         await fetchSkills();
+        setError(err instanceof Error ? err.message : 'Failed to update skill');
       } finally {
         togglingRef.current = false;
       }

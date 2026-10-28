@@ -7,6 +7,7 @@ import type { VisionSupportState } from '@/services/visionCache';
 import type { ToolCallArguments } from '@/tools/tools';
 import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
+import { randomId } from '@/app/lib/randomId';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
@@ -40,24 +41,6 @@ export interface ChatMessage {
    * promptTimestamps toggle); the toggle controls LLM visibility only.
    */
   createdAt?: string;
-}
-
-/**
- * Generate a UUID v4 string that works in all browser contexts.
- * `crypto.randomUUID()` throws in non-secure contexts (plain HTTP),
- * so we fall back to a Math.random()-based v4 UUID when needed.
- */
-function randomId(): string {
-  try {
-    return crypto.randomUUID();
-  } catch {
-    // Fallback for non-secure contexts (plain HTTP) where
-    // crypto.randomUUID() throws a TypeError.
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replaceAll(/[xy]/g, (c) => {
-      const r = Math.trunc(Math.random() * 16);
-      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-    });
-  }
 }
 
 /**

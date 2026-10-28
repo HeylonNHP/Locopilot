@@ -163,7 +163,7 @@
 
       &:hover,
       &:focus-visible {
-        color: var(--danger);
+        color: var(--status-danger);
         background: rgba(var(--rgb-danger), 0.12);
         opacity: 1;
       }

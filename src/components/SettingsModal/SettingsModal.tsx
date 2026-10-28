@@ -358,16 +358,13 @@ export default function SettingsModal({ onClose }: Props) {
             Settings
           </h3>
 
-          {saveError && (
-            <div className="settings-error" role="alert">
-              {saveError}
-            </div>
-          )}
-
           <div className="settings-grid">
             <div className="settings-row">
-              <label className="settings-label">Model</label>
+              <label className="settings-label" htmlFor="settings-model">
+                Model
+              </label>
               <select
+                id="settings-model"
                 ref={firstFieldRef}
                 value={selectedMainValue}
                 onChange={(e) => handleMainModelChange(e.target.value)}
@@ -379,8 +376,11 @@ export default function SettingsModal({ onClose }: Props) {
             </div>
 
             <div className="settings-row">
-              <label className="settings-label">Compaction Model</label>
+              <label className="settings-label" htmlFor="settings-compaction-model">
+                Compaction Model
+              </label>
               <select
+                id="settings-compaction-model"
                 value={selectedCompactionValue}
                 onChange={(e) => handleCompactionModelChange(e.target.value)}
                 className="settings-input"
@@ -393,8 +393,11 @@ export default function SettingsModal({ onClose }: Props) {
 
           <div className="settings-grid">
             <div className="settings-row">
-              <label className="settings-label">Context Size</label>
+              <label className="settings-label" htmlFor="settings-context-size">
+                Context Size
+              </label>
               <input
+                id="settings-context-size"
                 type="number"
                 value={numCtx}
                 onChange={(e) => setNumCtx(e.target.value)}
@@ -423,7 +426,7 @@ export default function SettingsModal({ onClose }: Props) {
               if (!isCapped) return <div />;
               return (
                 <div className="settings-row">
-                  <label className="settings-label">Effective Context Size</label>
+                  <span className="settings-label">Effective Context Size</span>
                   <span
                     className="settings-input text-secondary"
                     style={{ display: 'inline-flex', alignItems: 'center' }}
@@ -437,7 +440,7 @@ export default function SettingsModal({ onClose }: Props) {
 
           <div className="settings-grid">
             <div className="settings-row">
-              <label className="settings-label">Execution Mode</label>
+              <span className="settings-label">Execution Mode</span>
               <div className="flex items-center gap-12">
                 <input
                   id="yolo-toggle"
@@ -453,7 +456,7 @@ export default function SettingsModal({ onClose }: Props) {
 
             {isOllama && (
               <div className="settings-row">
-                <label className="settings-label">Thinking</label>
+                <span className="settings-label">Thinking</span>
                 <div className="flex items-center gap-12">
                   <input
                     id="thinking-toggle"
@@ -490,7 +493,7 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
 
           <div className="settings-row">
-            <label className="settings-label">Prompt Timestamps</label>
+            <span className="settings-label">Prompt Timestamps</span>
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-12">
                 <input
@@ -512,7 +515,7 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
 
           <div className="settings-row">
-            <label className="settings-label">Cite Web Sources</label>
+            <span className="settings-label">Cite Web Sources</span>
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-12">
                 <input
@@ -535,11 +538,12 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
 
           <div className="settings-row">
-            <label className="settings-label">Chat Timeout</label>
+            <span className="settings-label">Chat Timeout</span>
             <div className="flex items-center gap-12">
               <input
                 type="number"
                 min="0"
+                aria-label="Timeout hours"
                 value={chatTimeoutHours}
                 onChange={(e) => setChatTimeoutHours(e.target.value)}
                 className="settings-input"
@@ -550,6 +554,7 @@ export default function SettingsModal({ onClose }: Props) {
                 type="number"
                 min="0"
                 max="59"
+                aria-label="Timeout minutes"
                 value={chatTimeoutMinutes}
                 onChange={(e) => setChatTimeoutMinutes(e.target.value)}
                 className="settings-input"
@@ -560,6 +565,7 @@ export default function SettingsModal({ onClose }: Props) {
                 type="number"
                 min="0"
                 max="59"
+                aria-label="Timeout seconds"
                 value={chatTimeoutSeconds}
                 onChange={(e) => setChatTimeoutSeconds(e.target.value)}
                 className="settings-input"
@@ -571,8 +577,11 @@ export default function SettingsModal({ onClose }: Props) {
 
           <div className="settings-grid">
             <div className="settings-row">
-              <label className="settings-label">Web Search: Max Queries</label>
+              <label className="settings-label" htmlFor="settings-web-max-queries">
+                Web Search: Max Queries
+              </label>
               <input
+                id="settings-web-max-queries"
                 type="number"
                 value={webMaxQueries}
                 onChange={(e) => setWebMaxQueries(e.target.value)}
@@ -581,8 +590,11 @@ export default function SettingsModal({ onClose }: Props) {
             </div>
 
             <div className="settings-row">
-              <label className="settings-label">Web Search: Results Per Query</label>
+              <label className="settings-label" htmlFor="settings-web-results-per-query">
+                Web Search: Results Per Query
+              </label>
               <input
+                id="settings-web-results-per-query"
                 type="number"
                 value={webResultsPerQuery}
                 onChange={(e) => setWebResultsPerQuery(e.target.value)}
@@ -592,14 +604,23 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
 
           <div className="settings-row">
-            <label className="settings-label">Web Search: Page Char Limit (0 = unlimited)</label>
+            <label className="settings-label" htmlFor="settings-web-page-char-limit">
+              Web Search: Page Char Limit (0 = unlimited)
+            </label>
             <input
+              id="settings-web-page-char-limit"
               type="number"
               value={webPerPageCharLimit}
               onChange={(e) => setWebPerPageCharLimit(e.target.value)}
               className="settings-input"
             />
           </div>
+
+          {saveError && (
+            <div className="settings-error" role="alert">
+              {saveError}
+            </div>
+          )}
 
           <div className="settings-actions">
             <button onClick={onClose} disabled={isSaving} className="settings-btn-cancel">

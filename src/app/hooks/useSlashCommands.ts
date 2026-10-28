@@ -288,8 +288,15 @@ export function useSlashCommands({
               addSystem('Usage: /delete <session_id>');
             } else {
               try {
-                await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
-                loadSessions();
+                const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+                // fetch only rejects on network failure — a 404/500 resolves
+                // normally, so the status has to be checked or the command
+                // would report "Deleted session N." for a session that is
+                // still there.
+                if (!res.ok) {
+                  throw new Error(`HTTP ${res.status}`);
+                }
+                await loadSessions();
                 if (refs.sessionIdRef.current === id) {
                   dispatch({ type: 'CLEAR_MESSAGES' });
                   dispatch({ type: 'SET_CURRENT_SESSION', id: null });

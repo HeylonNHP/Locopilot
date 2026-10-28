@@ -152,7 +152,7 @@
   }
 
   a {
-    color: #0066cc;
+    color: var(--color-link);
     text-decoration: underline;
     text-underline-offset: 0.12em;
     font-weight: 500;
@@ -265,7 +265,7 @@
     color: var(--text-secondary);
 
     a {
-      color: #0066cc;
+      color: var(--color-link);
     }
   }
 

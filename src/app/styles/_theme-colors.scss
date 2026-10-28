@@ -28,6 +28,7 @@ html[data-theme='frutiger-aero'] {
   --color-text-white: #ffffff;
   --color-text-system: #8a7a4a; // system message bubble
   --color-text-error: #a03030; // settings / inline error text
+  --color-link: #0066cc; // markdown links (needs a dark-mode override)
 
   // ── Glass surface layers ────────────────────────────────────
   // White-overlay tints; override all in dark themes.
@@ -181,6 +182,7 @@ html[data-theme='dark'] {
   --color-text-white: #ffffff;
   --color-text-system: #c4ae6e;
   --color-text-error: #f87171;
+  --color-link: #7dd3fc;
   // Glass surfaces
   --glass-white: rgba(255, 255, 255, 0.07);
   --glass-heavy: rgba(255, 255, 255, 0.12);

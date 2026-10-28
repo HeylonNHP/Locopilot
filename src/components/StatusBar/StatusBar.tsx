@@ -143,7 +143,10 @@ export default function StatusBar() {
   // default like DEFAULT_NUM_CTX here — using the requested value
   // means the percentage is at most 100% even before the server
   // speaks, which is the right display behaviour.
-  const tokenLimit = tokenStats?.tokenLimit ?? effectiveNumCtx ?? requestedNumCtx;
+  // `||` rather than `??`: the server uses 0 as its "no limit reported yet"
+  // sentinel, and `??` only falls through on null/undefined — so a 0 won the
+  // race and the bar rendered "0/0 tokens (0%)" in the warning colour.
+  const tokenLimit = tokenStats?.tokenLimit || effectiveNumCtx || requestedNumCtx;
 
   const pct = tokenLimit > 0 ? Math.round((totalTokens / tokenLimit) * 100) : 0;
 

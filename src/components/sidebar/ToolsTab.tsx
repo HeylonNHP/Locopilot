@@ -51,11 +51,14 @@ export default function ToolsTab() {
   const fetchTools = useCallback(async () => {
     try {
       setLoading(true);
-      setError(null);
       const res = await fetch('/api/tools');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { tools: ToolApiItem[] };
       setTools(data.tools ?? []);
+      // Clear on success rather than at the start of the request: clearing it
+      // up-front wiped the error a failed toggle had just set, because the
+      // toggle's recovery path re-fetches.
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load tools');
     } finally {
@@ -84,8 +87,10 @@ export default function ToolsTab() {
         const data = (await res.json()) as { tools: ToolApiItem[] };
         setTools(data.tools ?? []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update tool');
+        // Re-fetch first (the refetch clears `error`), then surface the
+        // failure — otherwise the switch springs back with no explanation.
         await fetchTools();
+        setError(err instanceof Error ? err.message : 'Failed to update tool');
       }
     },
     [fetchTools]

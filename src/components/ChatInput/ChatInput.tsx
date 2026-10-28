@@ -8,6 +8,7 @@ import type { LlmProvider } from '@/types/chatConfig';
 import { useInputHistory } from '@/app/hooks/useInputHistory';
 import { type SendHandler } from '@/app/hooks/useSendHandler';
 import { useChat } from '@/app/lib/chatStore';
+import { randomId } from '@/app/lib/randomId';
 import { SLASH_COMMANDS } from '@/services/slashCommands';
 
 import './ChatInput.scss';
@@ -258,7 +259,9 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
 
     const next: Attachment[] = [];
     for (const file of accepted) {
-      const id = crypto.randomUUID();
+      // randomId (not crypto.randomUUID directly): the latter is undefined
+      // on plain HTTP, which is how the app is reached over the LAN.
+      const id = randomId();
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       const isImage = file.type.startsWith('image/');
 
@@ -312,19 +315,26 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
     const textarea = textareaRef.current;
     if (!textarea) return;
 
-    const nextHeight = Math.min(
-      Math.max(textarea.scrollHeight, MIN_TEXTAREA_HEIGHT),
-      MAX_TEXTAREA_HEIGHT
-    );
+    // Measure the CONTENT height. A textarea's scrollHeight is
+    // max(clientHeight, contentHeight), so with the box already clamped to
+    // its 200 px maximum the content can never read as smaller — the
+    // composer would only ever grow, and deleting the text left a tall
+    // empty box with the first line clipped. Releasing the height first
+    // (in the same synchronous task, so nothing paints in between) gives
+    // the true content height.
+    textarea.style.height = 'auto';
+    const contentHeight = textarea.scrollHeight;
+
+    const nextHeight = Math.min(Math.max(contentHeight, MIN_TEXTAREA_HEIGHT), MAX_TEXTAREA_HEIGHT);
     const nextHeightPx = `${nextHeight}px`;
 
-    // Guard: skip DOM mutation if already at target height.
-    // Prevents a feedback loop when the ResizeObserver fires in
-    // response to our own height change.
-    if (textarea.style.height === nextHeightPx) return;
-
+    // No "skip if unchanged" guard here: the height has to be written back
+    // unconditionally, because the measurement above released it to 'auto'.
+    // That is safe with the ResizeObserver below — the observer is notified
+    // of the *final* size at delivery time, which is stable, so it settles
+    // after at most one extra round instead of oscillating.
     textarea.style.height = nextHeightPx;
-    textarea.style.overflowY = textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden';
+    textarea.style.overflowY = contentHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden';
   }, []);
 
   useIsomorphicLayoutEffect(() => {

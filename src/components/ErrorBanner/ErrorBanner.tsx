@@ -25,10 +25,18 @@ export function ErrorBanner({ error, onRetry, onDismiss }: ErrorBannerProps) {
     void Promise.resolve(onRetry()).finally(() => setIsRetrying(false));
   };
 
+  // The banner is handed the real, specific error ("Connection lost. The
+  // stream was interrupted…", "Please select a model first"). Showing a
+  // generic "Something went wrong." hid that behind a Details toggle, so the
+  // headline now carries the first line of the error and the full text stays
+  // in the expandable details.
+  const headline = (error.split('\n')[0] ?? '').trim() || 'Something went wrong.';
+  const displayHeadline = headline.length > 160 ? `${headline.slice(0, 159)}…` : headline;
+
   return (
     <div className="error-banner" role="alert" aria-atomic="true" aria-busy={isRetrying}>
       <div className="error-header">
-        <span className="error-message">Something went wrong.</span>
+        <span className="error-message">{displayHeadline}</span>
         <button
           type="button"
           className="error-details-toggle"
