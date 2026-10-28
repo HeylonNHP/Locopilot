@@ -1,5 +1,5 @@
 // ================================================================
-//  Locopilot globals.scss — reset, tokens, shared abstractions
+//  Locopilot globals.scss — reset, tokens, animations
 //  Loaded in root layout
 // ================================================================
 
@@ -7,4 +7,3 @@
 @use 'styles/theme-colors';
 @use 'styles/tokens';
 @use 'styles/animations';
-@use 'styles/shared';

@@ -28,6 +28,8 @@ html[data-theme='frutiger-aero'] {
   --color-text-white: #ffffff;
   --color-text-system: #8a7a4a; // system message bubble
   --color-text-error: #a03030; // settings / inline error text
+  --color-text-warning: #b87900; // squish closer to #eab308... kept for legibility
+  --color-purple: #a855f7; // MCP transport/auth status badge
   --color-link: #0066cc; // markdown links (needs a dark-mode override)
 
   // ── Glass surface layers ────────────────────────────────────
@@ -49,6 +51,7 @@ html[data-theme='frutiger-aero'] {
   --rgb-shadow-mid: 0, 100, 160; // softer hover shadows
   --rgb-danger: 220, 60, 60; // danger button hover shadow
   --rgb-success: 60, 160, 60; // success button hover shadow
+  --rgb-purple: 168, 85, 247; // skills / mcp auth-required badge channel
 
   // ── Status colours ──────────────────────────────────────────
   --color-success: #22c55e;
@@ -182,6 +185,8 @@ html[data-theme='dark'] {
   --color-text-white: #ffffff;
   --color-text-system: #c4ae6e;
   --color-text-error: #f87171;
+  --color-text-warning: #fbbf24;
+  --color-purple: #c084fc;
   --color-link: #7dd3fc;
   // Glass surfaces
   --glass-white: rgba(255, 255, 255, 0.07);
@@ -226,6 +231,7 @@ html[data-theme='dark'] {
   --rgb-shadow-mid: 0, 15, 45;
   --rgb-danger: 248, 113, 113;
   --rgb-success: 52, 211, 153;
+  --rgb-purple: 192, 132, 252; // same, dark
   // Status
   --color-success: #34d399;
   --color-warning: #fbbf24;

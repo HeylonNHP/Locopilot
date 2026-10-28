@@ -22,8 +22,13 @@
   --text-primary: var(--color-text-primary);
   --text-secondary: var(--color-text-secondary);
   --text-white: var(--color-text-white);
+
+  // Muted/grey supporting text (used with a fallback today).
+  --text-muted: var(--text-secondary);
   --accent: var(--color-sky-core);
   --accent-hover: var(--color-sky-bright);
+  // Foreground colour placed on top of accent (gel) surfaces.
+  --text-on-accent: var(--color-text-white);
   --accent-green: var(--color-grass);
   --shadow-soft: 0 8px 32px rgba(var(--rgb-shadow-deep), 0.12);
   --shadow-lift: 0 12px 40px rgba(var(--rgb-shadow-navy), 0.18);

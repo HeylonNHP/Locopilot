@@ -141,6 +141,12 @@
     &:hover .chat-input-attachment-remove {
       opacity: 1;
     }
+
+    &:focus-within .chat-input-attachment-remove {
+      opacity: 1;
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
   }
 
   // File / PDF chip
@@ -223,14 +229,14 @@
     left: 0;
     right: 0;
     background: var(--bg-suggestions);
-    border: 1px solid rgba(255, 255, 255, 0.72);
+    border: 1px solid var(--glass-border);
     border-radius: var(--radius-card);
     z-index: 10;
     overflow: hidden;
     backdrop-filter: blur(var(--blur-overlay)) saturate(180%);
     box-shadow:
       0 16px 40px rgba(var(--rgb-shadow-navy), 0.18),
-      inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      inset 0 1px 0 var(--glass-inset-highlight);
   }
 
   &-suggestion-item {
@@ -319,7 +325,7 @@
   border-radius: 6px;
   background: rgba(255, 184, 0, 0.12);
   border: 1px solid rgba(255, 184, 0, 0.35);
-  color: #b87900;
+  color: var(--color-text-warning);
   margin-top: 6px;
 }
 
@@ -330,6 +336,6 @@
   border-radius: 6px;
   background: rgba(120, 120, 120, 0.08);
   border: 1px solid rgba(120, 120, 120, 0.2);
-  color: #666;
+  color: var(--text-secondary);
   margin-top: 6px;
 }
