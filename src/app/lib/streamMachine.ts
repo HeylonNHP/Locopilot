@@ -69,12 +69,18 @@ export function beginRequest(
 
 /**
  * Finish a turn. Returns the session key it owned so the caller can release
- * the session and drop whatever was buffered for it.
+ * the session and drop whatever was buffered for it, and whether the turn
+ * failed.
+ *
+ * The failure flag lives on the request record, so it disappears with the
+ * record. Callers that need it must read it from here — reading it back out
+ * of the state afterwards always says "did not fail", which silently
+ * discards the turn's retry payload.
  */
 export function endRequest(
   state: StreamState,
   requestId: number
-): { state: StreamState; sessionKey: number | undefined } {
+): { state: StreamState; sessionKey: number | undefined; failed: boolean } {
   const request = state.requests.get(requestId);
   const requests = new Map(state.requests);
   requests.delete(requestId);
@@ -82,7 +88,11 @@ export function endRequest(
   if (request && owners.get(request.sessionKey) === requestId) {
     owners.delete(request.sessionKey);
   }
-  return { state: { ...state, requests, owners }, sessionKey: request?.sessionKey };
+  return {
+    state: { ...state, requests, owners },
+    sessionKey: request?.sessionKey,
+    failed: isRequestFailed(state, requestId),
+  };
 }
 
 /** Record that a turn failed, so its retry payload is preserved. */

@@ -97,6 +97,29 @@ check('marking an unknown turn as failed changes nothing', () => {
   assert.equal(isRequestFailed(markRequestFailed(state, 42), 42), false);
 });
 
+check('ending a turn reports whether it failed', () => {
+  let state = beginRequest(createStreamState(), 1, 7);
+  state = markRequestFailed(state, 1);
+  assert.equal(endRequest(state, 1).failed, true);
+});
+
+check('ending a turn that did not fail reports no failure', () => {
+  const state = beginRequest(createStreamState(), 1, 7);
+  assert.equal(endRequest(state, 1).failed, false);
+});
+
+check('the failure flag is gone from the state once the turn is ended', () => {
+  // The trap this pins: the flag lives on the request record, so reading it
+  // back out of the state after the turn has ended always says "did not
+  // fail" — which is how a failed turn lost its retry payload and left the
+  // Retry button doing nothing. The flag has to be taken from `endRequest`.
+  let state = beginRequest(createStreamState(), 1, 7);
+  state = markRequestFailed(state, 1);
+  const { state: after, failed } = endRequest(state, 1);
+  assert.equal(failed, true);
+  assert.equal(isRequestFailed(after, 1), false);
+});
+
 // ── buffering ──────────────────────────────────────────────────────────────
 check('events are held per session', () => {
   let state = createStreamState();

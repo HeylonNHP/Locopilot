@@ -13,7 +13,6 @@ import {
   discardBufferedEvents,
   endRequest,
   findBufferedDone,
-  isRequestFailed,
   markRequestFailed,
   migrateSessionKey,
   ownerOf,
@@ -364,15 +363,23 @@ export function useChatStream(
         flushBufferedDoneFor(ownerId);
 
         streamStateRef.current = discardBufferedEvents(streamStateRef.current, ownerId);
-        streamStateRef.current = endRequest(streamStateRef.current, requestId).state;
       }
+      // The failure flag lives on the request record, so it has to be read
+      // while the record still exists. Reading it afterwards always says
+      // "did not fail", which would throw the turn's retry payload away and
+      // leave the Retry button doing nothing.
+      const { state: afterEnd, failed: requestFailed } = endRequest(
+        streamStateRef.current,
+        requestId
+      );
+      streamStateRef.current = afterEnd;
       // Clear the live value scoped to the OWNER (unscoped fallback when the
       // owner is unknown) — never wipe a different session's badge.
       clearTpsReadout(ownerId);
       loadSessions();
       // Delayed refresh to pick up auto-generated title from background task
       setTimeout(() => loadSessions(), 2000);
-      if (!isRequestFailed(streamStateRef.current, requestId)) {
+      if (!requestFailed) {
         retryPayloadRef.current = null;
       }
     }
@@ -706,13 +713,21 @@ export function useChatStream(
           flushBufferedDoneFor(ownerId);
 
           streamStateRef.current = discardBufferedEvents(streamStateRef.current, ownerId);
-          streamStateRef.current = endRequest(streamStateRef.current, requestId).state;
         }
+        // The failure flag lives on the request record, so it has to be read
+        // while the record still exists. Reading it afterwards always says
+        // "did not fail", which would throw the turn's retry payload away and
+        // leave the Retry button doing nothing.
+        const { state: afterEnd, failed: requestFailed } = endRequest(
+          streamStateRef.current,
+          requestId
+        );
+        streamStateRef.current = afterEnd;
         // Clear the live value scoped to the OWNER (unscoped fallback when
         // the owner is unknown) — never wipe a different session's badge.
         clearTpsReadout(ownerId);
         loadSessions();
-        if (!isRequestFailed(streamStateRef.current, requestId)) {
+        if (!requestFailed) {
           retryPayloadRef.current = null;
         }
       }
