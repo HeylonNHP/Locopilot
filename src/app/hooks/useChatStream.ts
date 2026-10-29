@@ -1,9 +1,9 @@
 'use client';
 
-import { EventSourceParserStream } from 'eventsource-parser/stream';
 import { useCallback, useRef, useState } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
+import { streamChatTurn } from '@/app/lib/chatTurn';
 import { frameOwner, isDoneReason, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
 import {
@@ -38,16 +38,6 @@ interface StreamErrorDetails {
 
 function getStreamErrorDetails(err: unknown): StreamErrorDetails | null {
   return err instanceof Error ? { name: err.name, message: err.message } : null;
-}
-
-/** Coerce an unknown parsed JSON value into the shared SSE payload union.
- *  Non-object values are wrapped as a chunk/thinking payload so malformed
- *  frames still have a defined shape. */
-function toSseEventData(value: unknown): SseEventData {
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    return value as SseEventData;
-  }
-  return { content: String(value) } as SseEventData;
 }
 
 /**
@@ -300,67 +290,17 @@ export function useChatStream(
     streamStateRef.current = beginRequest(streamStateRef.current, requestId, sessionId);
 
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await streamChatTurn({
         body,
         signal: abortController.signal,
+        onEvent: (event, data) => handleEvent(event, data, requestId),
       });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        let parsedError: Record<string, unknown> | null = null;
-        try {
-          parsedError = JSON.parse(errorText) as Record<string, unknown>;
-        } catch {
-          const dataLines: string[] = [];
-          for (const line of errorText.split('\n')) {
-            if (line.startsWith('data:')) {
-              dataLines.push(line.slice(5).trim());
-            }
-          }
-          if (dataLines.length > 0) {
-            try {
-              parsedError = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-        if (parsedError) {
-          const msg = parsedError.message ?? parsedError.error;
-          if (typeof msg === 'string' && msg.length > 0) {
-            throw new Error(`HTTP ${response.status}: ${msg}`);
-          }
-        }
-        throw new Error(
-          `HTTP ${response.status}: ${errorText.length > 200 ? `${errorText.slice(0, 200)}...` : errorText}`
-        );
-      }
-
-      if (!response.body) throw new Error('No response body stream');
 
       // Clear the banner only once the retry has actually been accepted. If we
       // cleared it optimistically the banner would unmount on click and its
       // own in-flight state would never be visible (cold model loads take
       // seconds). A failure re-dispatches SET_ERROR into the same instance.
       dispatch({ type: 'SET_ERROR', error: null });
-
-      const eventStream = response.body
-        .pipeThrough(new TextDecoderStream())
-        .pipeThrough(new EventSourceParserStream());
-
-      const reader = eventStream.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        try {
-          const parsed = toSseEventData(JSON.parse(value.data));
-          handleEvent(value.event || 'message', parsed, requestId);
-        } catch {
-          handleEvent(value.event || 'message', { content: value.data }, requestId);
-        }
-      }
     } catch (err: unknown) {
       const details = getStreamErrorDetails(err);
       if (!details) {
@@ -696,80 +636,11 @@ export function useChatStream(
       retryPayloadRef.current = { body: JSON.stringify(bodyObj) };
 
       try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        await streamChatTurn({
           body: retryPayloadRef.current!.body,
           signal: abortController.signal,
+          onEvent: (event, data) => handleEvent(event, data, requestId),
         });
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => 'Unknown error');
-
-          let parsedError: Record<string, unknown> | null = null;
-          try {
-            parsedError = JSON.parse(errorText) as Record<string, unknown>;
-          } catch {
-            // Not plain JSON — try SSE format
-          }
-
-          if (!parsedError) {
-            const dataLines: string[] = [];
-            for (const line of errorText.split('\n')) {
-              if (line.startsWith('data:')) {
-                dataLines.push(line.slice(5).trim());
-              }
-            }
-            if (dataLines.length > 0) {
-              try {
-                const sseData = dataLines.join('\n');
-                parsedError = JSON.parse(sseData) as Record<string, unknown>;
-              } catch {
-                // Invalid JSON in SSE data — fall through
-              }
-            }
-          }
-
-          if (parsedError) {
-            const msg =
-              parsedError.message ??
-              parsedError.error ??
-              parsedError.status ??
-              parsedError.detail ??
-              parsedError.title;
-            if (typeof msg === 'string' && msg.length > 0) {
-              throw new Error(`HTTP ${response.status}: ${msg}`);
-            }
-            const values = Object.values(parsedError).filter(
-              (v): v is string => typeof v === 'string'
-            );
-            if (values.length > 0) {
-              throw new Error(`HTTP ${response.status}: ${values[0]}`);
-            }
-          }
-
-          const truncated = errorText.length > 200 ? `${errorText.slice(0, 200)}...` : errorText;
-          throw new Error(`HTTP ${response.status}: ${truncated}`);
-        }
-
-        if (!response.body) throw new Error('No response body stream');
-
-        const eventStream = response.body
-          .pipeThrough(new TextDecoderStream())
-          .pipeThrough(new EventSourceParserStream());
-
-        const reader = eventStream.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          try {
-            const parsed = toSseEventData(JSON.parse(value.data));
-            handleEvent(value.event || 'message', parsed, requestId);
-          } catch {
-            handleEvent(value.event || 'message', { content: value.data }, requestId);
-          }
-        }
       } catch (err: unknown) {
         const details = getStreamErrorDetails(err);
         if (!details) {
