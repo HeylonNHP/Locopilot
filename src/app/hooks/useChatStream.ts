@@ -4,7 +4,7 @@ import { EventSourceParserStream } from 'eventsource-parser/stream';
 import { useCallback, useRef, useState } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
-import { isDoneReason, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
+import { frameOwner, isDoneReason, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
 import {
   beginRequest,
@@ -179,10 +179,19 @@ export function useChatStream(
         return;
       }
 
+      // The server stamps every frame with the session the turn belongs to,
+      // so that is where the owner comes from. The client's own record of
+      // which session a turn belongs to is only the fallback, for frames that
+      // arrive before the server has created the session.
+      const frameSessionId = data.sessionId;
+
       // If this event belongs to a stream whose session is NOT the visible
       // session, buffer it so it doesn't land in the wrong message list.
       if (requestId !== undefined) {
-        const ownerSessionId = ownerOf(streamStateRef.current, requestId);
+        const ownerSessionId = frameOwner(
+          frameSessionId,
+          ownerOf(streamStateRef.current, requestId)
+        );
         if (
           ownerSessionId !== undefined &&
           ownerSessionId !== streamKeyFor(refs.sessionIdRef.current)
@@ -204,7 +213,7 @@ export function useChatStream(
       const ownerSessionId =
         requestId === undefined
           ? (refs.sessionIdRef.current ?? undefined)
-          : ownerOf(streamStateRef.current, requestId);
+          : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId));
       const targetSessionId = ownerSessionId === undefined ? undefined : ownerSessionId;
 
       // Routing an event into store actions is a pure function, so it can be
@@ -215,14 +224,19 @@ export function useChatStream(
         approvalOwner:
           requestId === undefined
             ? (replayTargetSessionId ?? refs.sessionIdRef.current ?? undefined)
-            : ownerOf(streamStateRef.current, requestId),
+            : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId)),
         compactOwner:
-          requestId === undefined ? undefined : ownerOf(streamStateRef.current, requestId),
-        doneOwner: requestId === undefined ? undefined : ownerOf(streamStateRef.current, requestId),
+          requestId === undefined
+            ? undefined
+            : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId)),
+        doneOwner:
+          requestId === undefined
+            ? undefined
+            : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId)),
         subagentOwner:
           requestId === undefined
             ? replayTargetSessionId
-            : ownerOf(streamStateRef.current, requestId),
+            : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId)),
         requestedNumCtx: refs.requestedNumCtxRef.current,
         pendingSteerDraft: refs.pendingSteerDraftRef.current,
       });

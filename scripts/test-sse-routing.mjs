@@ -17,7 +17,7 @@
 
 import assert from 'node:assert/strict';
 
-import { routeSseEvent } from '../src/app/lib/sseRouting.ts';
+import { frameOwner, routeSseEvent } from '../src/app/lib/sseRouting.ts';
 
 let pass = 0;
 let fail = 0;
@@ -346,6 +346,20 @@ check('write_error prefixes the message and marks the turn failed', () => {
 
 check('an unknown event produces no actions', () => {
   assert.deepEqual(actionsFor('something_else', { content: 'x' }), []);
+});
+
+// ── frame ownership ────────────────────────────────────────────────────────
+check("the server's session id wins over the client's record", () => {
+  assert.equal(frameOwner(7, 3), 7);
+});
+
+check('a frame without a session id falls back to the client record', () => {
+  assert.equal(frameOwner(null, 3), 3);
+  assert.equal(frameOwner(undefined, 3), 3);
+});
+
+check('a frame without a session id and without a fallback has no owner', () => {
+  assert.equal(frameOwner(null, undefined), undefined);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

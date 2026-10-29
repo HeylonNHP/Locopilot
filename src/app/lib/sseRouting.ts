@@ -28,8 +28,23 @@ type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) exten
   ? I
   : never;
 
+/**
+ * The identity the server stamps on every frame.
+ *
+ * `sessionId` is the session the turn belongs to, which is null until the
+ * server has created one for a brand-new chat.
+ */
+export interface SseFrameEnvelope {
+  /** The turn that produced the frame. */
+  streamId?: string;
+  /** The session the frame belongs to. */
+  sessionId?: number | null;
+  /** Frame counter within the turn. */
+  seq?: number;
+}
+
 /** Parsed SSE event payload — the permissive bag shape the wire delivers. */
-export type SseEventData = Partial<UnionToIntersection<SseEventPayload>>;
+export type SseEventData = Partial<UnionToIntersection<SseEventPayload>> & SseFrameEnvelope;
 
 const DONE_REASONS = ['stop', 'length', 'load', 'unload', 'unknown'] as const;
 
@@ -77,6 +92,21 @@ const trace = (label: string, data?: Record<string, unknown>) => {
     console.warn(`[trace] ${label}`, data ?? {});
   }
 };
+
+/**
+ * The session a frame belongs to.
+ *
+ * The server stamps every frame with the session its turn belongs to, so
+ * that answer wins. The client's own record of which session a turn belongs
+ * to is the fallback, used only for frames that arrive before the server
+ * has created the session.
+ */
+export function frameOwner(
+  frameSessionId: number | null | undefined,
+  fallback: number | undefined
+): number | undefined {
+  return typeof frameSessionId === 'number' ? frameSessionId : fallback;
+}
 
 /**
  * Route one SSE event into store actions.
