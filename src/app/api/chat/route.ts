@@ -366,13 +366,24 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   // ── SSE streaming setup ───────────────────────────────────────────
 
+  // Identity stamped on every SSE frame of this turn. `streamId` is the
+  // per-request correlation id; `sessionId` starts as the session the client
+  // asked for and is filled in when a brand-new chat is assigned one.
+  const frameIdentity = {
+    streamId: requestId,
+    sessionId: parsedSessionId ?? null,
+  };
+
   const stream = new ReadableStream({
     async start(controller): Promise<void> {
       // Create a per-request process registry so concurrent requests
       // cannot see each other's running commands.
       enterRequestScope();
 
-      const { sendEvent, startKeepalive, stopKeepalive } = createSseStream(controller);
+      const { sendEvent, startKeepalive, stopKeepalive } = createSseStream(
+        controller,
+        () => frameIdentity
+      );
       debugLog.diagnostic({
         layer: 'route',
         phase: 'request_start',
@@ -787,6 +798,8 @@ export async function POST(req: NextRequest): Promise<Response> {
       try {
         if (!activeSessionId) {
           activeSessionId = createSession(DEFAULT_SESSION_NAME, model as string);
+          // From here on every frame names the session the turn belongs to.
+          frameIdentity.sessionId = activeSessionId;
           sendEvent('session_created', { sessionId: activeSessionId });
         }
         // Accept mid-turn model switches for this session from now until the
@@ -2768,6 +2781,9 @@ export async function POST(req: NextRequest): Promise<Response> {
       'Content-Type': SSE_CONTENT_TYPE,
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
+      // The id of this turn, so the client can correlate its own logs with
+      // the server's without reading the first frame.
+      'X-Stream-Id': requestId,
     },
   });
 }

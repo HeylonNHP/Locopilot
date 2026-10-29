@@ -27,8 +27,8 @@ function check(label, fn) {
     fn();
     console.log(`  PASS  ${label}`);
     pass += 1;
-  } catch (error) {
-    console.error(`  FAIL  ${label}\n        ${error.message.split('\n').join('\n        ')}`);
+  } catch (err) {
+    console.error(`  FAIL  ${label}\n        ${err.message.split('\n').join('\n        ')}`);
     fail += 1;
   }
 }
