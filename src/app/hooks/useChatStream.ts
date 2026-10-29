@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
-import { streamChatTurn } from '@/app/lib/chatTurn';
+import { retryBodyForSession, streamChatTurn } from '@/app/lib/chatTurn';
 import { isReplayableEvent } from '@/app/lib/sseEvents';
 import { frameOwner, isDoneReason, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
@@ -155,6 +155,16 @@ export function useChatStream(
           }
         }
         refs.sessionIdRef.current = realId;
+        // The stored retry payload has to point at the session this turn was
+        // saved to. It was sent without a session id — the server assigned
+        // one just now — so a retry would otherwise make the server create a
+        // second session for the same chat, and the client would end up
+        // looking at one session while the turn belonged to another.
+        if (retryPayloadRef.current) {
+          retryPayloadRef.current = {
+            body: retryBodyForSession(retryPayloadRef.current.body, realId),
+          };
+        }
         dispatch({ type: 'SET_CURRENT_SESSION', id: realId });
         dispatch({
           type: 'ADD_SESSION',

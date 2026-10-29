@@ -80,6 +80,37 @@ export function errorMessageFromResponse(status: number, bodyText: string): stri
 }
 
 /**
+ * Point a stored request body at the session its turn was saved to.
+ *
+ * The first message of a brand-new chat is sent without a session id — the
+ * server assigns one and reports it back in the `session_created` frame. A
+ * retry of that turn would otherwise be sent without an id as well, and the
+ * server would create a *second* session for the same chat: the client would
+ * be looking at one session while the turn belonged to another, the Stop
+ * button would have nothing to stop, and the turn's transcript would be
+ * loaded into the wrong session.
+ *
+ * A body that already names a session is returned unchanged, and a body that
+ * is not JSON is returned untouched.
+ */
+export function retryBodyForSession(body: string, sessionId: number): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return body;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return body;
+  }
+  const payload = parsed as Record<string, unknown>;
+  if (payload.sessionId !== null && payload.sessionId !== undefined) {
+    return body;
+  }
+  return JSON.stringify({ ...payload, sessionId });
+}
+
+/**
  * Post a chat turn and hand every SSE frame to `onEvent`.
  *
  * Rejects with a readable message when the request itself fails; the frames

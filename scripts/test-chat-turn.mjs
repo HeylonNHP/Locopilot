@@ -16,7 +16,11 @@
 
 import assert from 'node:assert/strict';
 
-import { errorMessageFromResponse, toSseEventData } from '../src/app/lib/chatTurn.ts';
+import {
+  errorMessageFromResponse,
+  retryBodyForSession,
+  toSseEventData,
+} from '../src/app/lib/chatTurn.ts';
 
 let pass = 0;
 let fail = 0;
@@ -101,6 +105,35 @@ check('an object frame is passed through', () => {
 
 check('an array frame becomes a chunk', () => {
   assert.deepEqual(toSseEventData([1, 2]), { content: '1,2' });
+});
+
+// ── the retry payload's session ────────────────────────────────────────────
+check('a body without a session is pointed at the session the turn was saved to', () => {
+  const body = retryBodyForSession(JSON.stringify({ messages: [], sessionId: null }), 42);
+  assert.equal(JSON.parse(body).sessionId, 42);
+});
+
+check('a body with no session field at all is given one', () => {
+  const body = retryBodyForSession(JSON.stringify({ messages: [] }), 42);
+  assert.equal(JSON.parse(body).sessionId, 42);
+});
+
+check('the rest of the body is preserved', () => {
+  const original = { messages: [{ role: 'user', content: 'hi' }], model: 'm', sessionId: null };
+  const body = retryBodyForSession(JSON.stringify(original), 42);
+  assert.deepEqual(JSON.parse(body).messages, original.messages);
+  assert.equal(JSON.parse(body).model, 'm');
+});
+
+check('a body that already names a session is left alone', () => {
+  const original = JSON.stringify({ messages: [], sessionId: 7 });
+  assert.equal(retryBodyForSession(original, 42), original);
+});
+
+check('a body that is not JSON is returned untouched', () => {
+  assert.equal(retryBodyForSession('not json at all', 42), 'not json at all');
+  assert.equal(retryBodyForSession('[1,2,3]', 42), '[1,2,3]');
+  assert.equal(retryBodyForSession('"a string"', 42), '"a string"');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
