@@ -89,6 +89,8 @@ export async function streamChatTurn(options: {
   body: string;
   signal: AbortSignal;
   onEvent: (event: string, data: SseEventData) => void;
+  /** Called once the request has been accepted, before the frames arrive. */
+  onAccepted?: () => void;
 }): Promise<void> {
   const response = await fetch('/api/chat', {
     method: 'POST',
@@ -103,6 +105,8 @@ export async function streamChatTurn(options: {
   }
 
   if (!response.body) throw new Error('No response body stream');
+
+  options.onAccepted?.();
 
   const eventStream = response.body
     .pipeThrough(new TextDecoderStream())

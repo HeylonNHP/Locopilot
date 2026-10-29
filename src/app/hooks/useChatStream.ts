@@ -294,13 +294,12 @@ export function useChatStream(
         body,
         signal: abortController.signal,
         onEvent: (event, data) => handleEvent(event, data, requestId),
+        // Clear the banner only once the retry has actually been accepted. If we
+        // cleared it optimistically the banner would unmount on click and its
+        // own in-flight state would never be visible (cold model loads take
+        // seconds). A failure re-dispatches SET_ERROR into the same instance.
+        onAccepted: () => dispatch({ type: 'SET_ERROR', error: null }),
       });
-
-      // Clear the banner only once the retry has actually been accepted. If we
-      // cleared it optimistically the banner would unmount on click and its
-      // own in-flight state would never be visible (cold model loads take
-      // seconds). A failure re-dispatches SET_ERROR into the same instance.
-      dispatch({ type: 'SET_ERROR', error: null });
     } catch (err: unknown) {
       const details = getStreamErrorDetails(err);
       if (!details) {
