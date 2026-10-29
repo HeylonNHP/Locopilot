@@ -3,12 +3,11 @@
 import { EventSourceParserStream } from 'eventsource-parser/stream';
 import { useCallback, useRef, useState } from 'react';
 
-import type { SseEventPayloadMap } from '@/types/sse';
-
-import { type ChatMessage, type DoneReason, useChat } from '@/app/lib/chatStore';
+import { type ChatMessage, useChat } from '@/app/lib/chatStore';
+import { isDoneReason, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
-import { DEFAULT_NUM_CTX, DEFAULT_SESSION_NAME } from '@/constants';
+import { DEFAULT_SESSION_NAME } from '@/constants';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
@@ -18,11 +17,6 @@ const trace = (label: string, data?: Record<string, unknown>) => {
   }
 };
 
-const DONE_REASONS = ['stop', 'length', 'load', 'unload', 'unknown'] as const;
-function isDoneReason(s: string): s is DoneReason {
-  return (DONE_REASONS as readonly string[]).includes(s);
-}
-
 interface StreamErrorDetails {
   name: string;
   message: string;
@@ -31,18 +25,6 @@ interface StreamErrorDetails {
 function getStreamErrorDetails(err: unknown): StreamErrorDetails | null {
   return err instanceof Error ? { name: err.name, message: err.message } : null;
 }
-
-/** Parsed SSE event payload. Defined as a union of the shared contract in
- *  src/types/sse.ts so the producer and consumer stay in sync. */
-type SseEventPayload = SseEventPayloadMap[keyof SseEventPayloadMap];
-
-type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (
-  k: infer I
-) => void
-  ? I
-  : never;
-
-type SseEventData = Partial<UnionToIntersection<SseEventPayload>>;
 
 /** Coerce an unknown parsed JSON value into the shared SSE payload union.
  *  Non-object values are wrapped as a chunk/thinking payload so malformed
@@ -227,372 +209,61 @@ export function useChatStream(
           : bufferOwnerMapRef.current.get(requestId);
       const targetSessionId = ownerSessionId === undefined ? undefined : ownerSessionId;
 
-      switch (event) {
-        case 'thinking': {
+      // Routing an event into store actions is a pure function, so it can be
+      // characterised by tests (scripts/test-sse-routing.mjs). This callback
+      // keeps only the parts that need the ownership maps and the timers.
+      const outcome = routeSseEvent(event, data, {
+        targetSessionId,
+        approvalOwner:
+          requestId === undefined
+            ? (replayTargetSessionId ?? refs.sessionIdRef.current ?? undefined)
+            : bufferOwnerMapRef.current.get(requestId),
+        compactOwner:
+          requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId),
+        doneOwner: requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId),
+        subagentOwner:
+          requestId === undefined
+            ? replayTargetSessionId
+            : bufferOwnerMapRef.current.get(requestId),
+        requestedNumCtx: refs.requestedNumCtxRef.current,
+        pendingSteerDraft: refs.pendingSteerDraftRef.current,
+      });
+
+      if (outcome.markFailed && requestId !== undefined) {
+        requestFailedMapRef.current.set(requestId, true);
+      }
+
+      for (const action of outcome.actions) {
+        dispatch(action);
+      }
+
+      if (outcome.subagentChunk) {
+        const { agentId, text, owner } = outcome.subagentChunk;
+        const buffer = subagentBufferRef.current.get(agentId);
+        if (buffer) {
+          buffer.text += text;
+          if (buffer.timer) clearTimeout(buffer.timer);
+        } else {
+          subagentBufferRef.current.set(agentId, {
+            text,
+            timer: null,
+            ...(owner === undefined ? {} : { sessionId: owner }),
+          });
+        }
+        const entry = subagentBufferRef.current.get(agentId)!;
+        entry.timer = setTimeout(() => {
           dispatch({
-            type: 'APPLY_ASSISTANT_DELTA',
-            ...(typeof data.content === 'string' ? { thinking: data.content } : {}),
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
+            type: 'SUBAGENT_CHUNK',
+            agentId,
+            text: entry.text,
+            ...(owner === undefined ? {} : { targetSessionId: owner }),
           });
-          break;
-        }
+          subagentBufferRef.current.delete(agentId);
+        }, 50);
+      }
 
-        case 'chunk': {
-          dispatch({
-            type: 'APPLY_ASSISTANT_DELTA',
-            ...(typeof data.content === 'string' ? { content: data.content } : {}),
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          break;
-        }
-
-        case 'tool_call': {
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'tool',
-              content: `🔧 **${data.name ?? ''}**\n\`\`\`json\n${JSON.stringify(data.arguments, null, 2)}\n\`\`\``,
-              ...(data.name === undefined ? {} : { name: data.name }),
-            },
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          trace('tool_call event', { name: data.name, hasToolCallId: false });
-          break;
-        }
-
-        case 'approval_request': {
-          // Identify the owning session the same way every other case does,
-          // including replays (where requestId is undefined but a target is
-          // supplied). Without this the modal is routed through the
-          // visible session and a background stream's approval would overwrite
-          // a foreground one (or vice-versa).
-          const approvalOwner =
-            requestId === undefined
-              ? (replayTargetSessionId ?? refs.sessionIdRef.current ?? undefined)
-              : bufferOwnerMapRef.current.get(requestId);
-          dispatch({
-            type: 'SHOW_APPROVAL',
-            command: {
-              name: data.toolName ?? data.name ?? '',
-              args: data.args ?? {},
-              ...(typeof data.toolCallName === 'string' ? { toolCallName: data.toolCallName } : {}),
-            },
-            ...(data.requestId === undefined ? {} : { requestId: data.requestId }),
-            ...(approvalOwner === undefined ? {} : { targetSessionId: approvalOwner }),
-          });
-          break;
-        }
-
-        case 'tool_result': {
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'tool',
-              content: `✅ **${data.name ?? ''}** (${data.duration ?? 0}ms)\n\n\`\`\`\n${data.result ?? ''}\n\`\`\``,
-              ...(data.name === undefined ? {} : { name: data.name }),
-              ...(data.toolCallId === undefined ? {} : { tool_call_id: data.toolCallId }),
-            },
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          // The run_subagents batch this result closes out is no longer
-          // running anything — clear the steer-target toggle's "sub-agent
-          // is active" signal. Sub-agents run sequentially, so there is
-          // never more than one to disambiguate.
-          if (data.name === 'run_subagents') {
-            dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: null } });
-          }
-          trace('tool_result event', {
-            name: data.name,
-            toolCallId: data.toolCallId,
-            contentLength: (data.result ?? '').length,
-          });
-          break;
-        }
-
-        case 'tool_progress': {
-          dispatch({
-            type: 'APPEND_TOOL_PROGRESS',
-            ...(data.name === undefined ? {} : { name: data.name }),
-            content: data.message ?? data.content ?? String(data),
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          trace('tool_progress event', {
-            name: data.name,
-            contentPreview: (data.message ?? '').slice(0, 80),
-          });
-          break;
-        }
-        case 'subagent_output': {
-          const outputAgentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
-          dispatch({
-            type: 'SUBAGENT_OUTPUT',
-            agentId: outputAgentId,
-            message: typeof data.message === 'string' ? data.message : String(data.message ?? ''),
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: outputAgentId } });
-          break;
-        }
-
-        case 'subagent_chunk': {
-          const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
-          const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
-          dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: agentId } });
-          // `requestId` is undefined on the replay path (when the user
-          // navigates back to a session whose events were buffered
-          // while another session was visible). Without a requestId we
-          // can't look up the owner via `bufferOwnerMapRef`, so fall
-          // back to `replayTargetSessionId` (set by
-          // `replayBufferedEvents`). This is what stops orphan
-          // `subagentBufferRef` entries (sessionId === undefined) from
-          // being flushed against an unrelated session in `finally`.
-          // `session_created` will later migrate any -1 placeholder
-          // entries to the real session id, so the buffer stays
-          // consistent across the new-session handoff.
-          const ownerSessionId =
-            requestId === undefined
-              ? replayTargetSessionId
-              : bufferOwnerMapRef.current.get(requestId);
-          const buffer = subagentBufferRef.current.get(agentId);
-          if (buffer) {
-            buffer.text += text;
-            if (buffer.timer) clearTimeout(buffer.timer);
-          } else {
-            subagentBufferRef.current.set(agentId, {
-              text,
-              timer: null,
-              ...(ownerSessionId === undefined ? {} : { sessionId: ownerSessionId }),
-            });
-          }
-          const entry = subagentBufferRef.current.get(agentId)!;
-          entry.timer = setTimeout(() => {
-            dispatch({
-              type: 'SUBAGENT_CHUNK',
-              agentId,
-              text: entry.text,
-              ...(ownerSessionId === undefined ? {} : { targetSessionId: ownerSessionId }),
-            });
-            subagentBufferRef.current.delete(agentId);
-          }, 50);
-          break;
-        }
-
-        case 'status': {
-          if (data.tokensUsed !== undefined && data.tokensUsed !== null) {
-            dispatch({
-              type: 'SET_TOKEN_STATS',
-              stats: {
-                totalTokens: data.tokensUsed,
-                tokenLimit: data.tokenLimit ?? 0,
-                promptEvalCount: 0,
-                evalCount: data.tokensUsed,
-                isEstimated: data.isEstimated ?? false,
-                // The server reports the model's runtime cap on every
-                // status event. Thread it through so the Settings
-                // modal can decide whether to show the "capped by
-                // model limit" row without conflating it with the
-                // client's default-effective value before any server
-                // response has arrived.
-                modelContextLimit: data.modelContextLimit ?? null,
-              },
-              ...(targetSessionId === undefined ? {} : { targetSessionId }),
-            });
-          }
-          if (data.tps !== undefined) {
-            dispatch({
-              type: 'SET_CURRENT_TPS',
-              tps: data.tps,
-              ...(targetSessionId === undefined ? {} : { targetSessionId }),
-            });
-          }
-          // The server emits a `vision_unsupported` status phase when
-          // a 400 indicates the active model rejected image input. The
-          // server has already folded the discovery into its
-          // per-(baseUrl, modelName) vision cache, so the client only
-          // needs to update its own display state for the warning UI.
-          // Any other phase is left alone — visionState is initialized
-          // to 'unknown' and updated only on this signal.
-          if (data.phase === 'vision_unsupported') {
-            dispatch({ type: 'SET_VISION_STATE', state: 'unsupported' });
-          }
-          // The running turn has taken a requested model switch on board.
-          // The server re-resolved vision support for the new model, so the
-          // previous model's verdict no longer applies — reset it to
-          // 'unknown' and let the next 400-driven discovery speak.
-          if (data.phase === 'model_switched') {
-            dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
-            dispatch({ type: 'SET_VISION_STATE', state: 'unknown' });
-          }
-          // The server has spliced a queued steering message into the
-          // conversation. Only now — not when the send was first accepted
-          // — do we echo it into the transcript and release the held
-          // draft, matching on `steerId` so a stale ack from an earlier
-          // draft (e.g. after a fast-follow second steer) can't clear the
-          // wrong one.
-          if (data.phase === 'steer_applied') {
-            const draft = refs.pendingSteerDraftRef.current;
-            if (draft && draft.id === data.steerId) {
-              dispatch({
-                type: 'ADD_MESSAGE',
-                message: { role: 'user', content: draft.text },
-                ...(targetSessionId === undefined ? {} : { targetSessionId }),
-              });
-              dispatch({ type: 'SET_CONFIG', config: { pendingSteerDraft: null } });
-            }
-          }
-          break;
-        }
-
-        case 'compact_progress': {
-          if (typeof data.message === 'string') {
-            dispatch({
-              type: 'COMPACT_PROGRESS',
-              message: data.message,
-              ...(targetSessionId === undefined ? {} : { targetSessionId }),
-            });
-          }
-          break;
-        }
-
-        case 'compact': {
-          // Clear stale compaction phases so the streaming indicator
-          // switches back to "Streaming..." once compaction finishes
-          // and the model resumes generating.
-          dispatch({
-            type: 'CLEAR_COMPACT_PROGRESS',
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-
-          // Guard SET_MESSAGES and SET_TOKEN_STATS with the owning session so a
-          // compaction that completes after the user has switched sessions cannot
-          // overwrite the newly-viewed session's message list or token stats.
-          const compactOwner =
-            requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
-          if (Array.isArray(data.messages)) {
-            dispatch({
-              type: 'SET_MESSAGES',
-              messages: data.messages,
-              ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
-            });
-          }
-          if (typeof data.stats?.newTokenCount === 'number') {
-            dispatch({
-              type: 'SET_TOKEN_STATS',
-              stats: {
-                promptEvalCount: data.stats.newTokenCount,
-                evalCount: 0,
-                totalTokens: data.stats.newTokenCount,
-                tokenLimit: data.tokenLimit ?? refs.requestedNumCtxRef.current ?? DEFAULT_NUM_CTX,
-              },
-              ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
-            });
-          } else {
-            dispatch({
-              type: 'CLEAR_TOKEN_STATS',
-              ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
-            });
-          }
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'system',
-              content: `⚡ Conversation auto-compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`,
-            },
-            ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
-          });
-          break;
-        }
-
-        case 'done': {
-          // Do NOT call SET_CURRENT_SESSION here. If the user switched sessions
-          // while a stream was running, dispatching SET_CURRENT_SESSION(A) would
-          // forcibly snap the UI back to session A against the user's will.
-          // session_created already handles new-session ID assignment; for
-          // existing sessions this dispatch was always a redundant no-op at best.
-          // This event is in DELTA_EVENTS so it is buffered when the user is away
-          // and replayed (applying the final tokenStats) when they return.
-          if (data.tokenStats) {
-            dispatch({
-              type: 'SET_TOKEN_STATS',
-              stats: data.tokenStats,
-              ...(targetSessionId === undefined ? {} : { targetSessionId }),
-            });
-          }
-          const doneToolCalls = (data as { tool_calls?: Array<{ id?: string }> }).tool_calls;
-          trace('done event', {
-            hasToolCalls: !!doneToolCalls?.length,
-            toolCallCount: doneToolCalls?.length ?? 0,
-            toolCallIds: doneToolCalls?.map((tc) => tc.id),
-          });
-          if (typeof data.doneReason === 'string') {
-            // Normalize the server-side value to our DoneReason union. The server
-            // coerces missing values to 'stop' and is the source of truth for
-            // valid values; this is purely defensive.
-            const reason: DoneReason = isDoneReason(data.doneReason) ? data.doneReason : 'unknown';
-            const doneOwnerSessionId =
-              requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
-            dispatch({
-              type: 'SET_DONE_REASON',
-              reason,
-              ...(doneOwnerSessionId === undefined ? {} : { targetSessionId: doneOwnerSessionId }),
-            });
-          }
-          // The live rough estimate is superseded by the authoritative
-          // tokenStats just applied. Clear it scoped to the owning session —
-          // an unscoped clear would wipe the VISIBLE session's badge when a
-          // background stream's buffer is replayed on switch-back.
-          clearTpsReadout(targetSessionId);
-          break;
-        }
-        case 'error': {
-          // LLM / network failure during streaming. Mark the request
-          // as failed (so the user's `retryPayloadRef` is preserved)
-          // and surface the message to the owning session.
-          if (requestId !== undefined) requestFailedMapRef.current.set(requestId, true);
-          const errorMessage = typeof data.message === 'string' ? data.message : 'Unknown error';
-          if (targetSessionId === undefined) {
-            dispatch({ type: 'SET_ERROR', error: errorMessage });
-          } else {
-            dispatch({ type: 'SET_ERROR', error: errorMessage, targetSessionId });
-          }
-          // An errored turn has no t/s of its own — clear both the live
-          // value and any previous turn's end-of-turn rate (the store merge
-          // would otherwise keep displaying the old rate).
-          clearTpsReadout(targetSessionId);
-          break;
-        }
-        case 'write_error': {
-          // Persistence failure for a session-messages write. Surface the
-          // message to the user; the DB and the LLM-observed in-memory
-          // state have diverged. Marking the request as failed prevents
-          // `retryPayloadRef` from being cleared so the user can retry.
-          if (requestId !== undefined) requestFailedMapRef.current.set(requestId, true);
-          const writeErrorMessage =
-            typeof data.message === 'string'
-              ? `Failed to save message to database: ${data.message}`
-              : 'Failed to save message to database: Unknown error';
-          if (targetSessionId === undefined) {
-            dispatch({ type: 'SET_ERROR', error: writeErrorMessage });
-          } else {
-            dispatch({ type: 'SET_ERROR', error: writeErrorMessage, targetSessionId });
-          }
-          // A persistence failure is still a failed turn as far as the t/s
-          // read-out is concerned — clear both the live value and any stale
-          // end-of-turn rate.
-          clearTpsReadout(targetSessionId);
-          break;
-        }
-        case 'clear_assistant': {
-          dispatch({
-            type: 'REMOVE_LAST_ASSISTANT',
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          break;
-        }
-
-        default: {
-          break;
-        }
+      if (outcome.clearTps) {
+        clearTpsReadout(targetSessionId);
       }
     },
     [dispatch, clearTpsReadout]
