@@ -332,6 +332,32 @@ check('error marks the turn failed and clears the live rate', () => {
   assert.equal(outcome.clearTps, true);
 });
 
+check('an error whose session is gone is not marked as failed', () => {
+  // There is nothing to retry into — the session was deleted — so the turn
+  // must not keep its retry payload.
+  const outcome = routeSseEvent(
+    'error',
+    {
+      message: 'Session not found. It may have been deleted in another tab.',
+      sessionMissing: true,
+    },
+    { targetSessionId: 7 }
+  );
+  assert.equal(outcome.markFailed, false);
+  assert.deepEqual(outcome.actions, [
+    {
+      type: 'SET_ERROR',
+      error: 'Session not found. It may have been deleted in another tab.',
+      targetSessionId: 7,
+    },
+  ]);
+});
+
+check('an ordinary error still marks the turn as failed', () => {
+  const outcome = routeSseEvent('error', { message: 'boom' }, { targetSessionId: 7 });
+  assert.equal(outcome.markFailed, true);
+});
+
 check('write_error prefixes the message and marks the turn failed', () => {
   const outcome = routeSseEvent('write_error', { message: 'disk full' }, { targetSessionId: 7 });
   assert.deepEqual(outcome.actions, [

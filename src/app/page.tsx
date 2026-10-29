@@ -60,7 +60,7 @@ function HomeInner() {
   // ── URL param: restore session from ?session=<id> on mount; keep URL in sync ──
   useSessionUrlParam({ onLoadSessionMessages: loadSessionMessages });
 
-  const { sendChatMessage, retry, replayBufferedEvents } = useChatStream(
+  const { sendChatMessage, retry, replayBufferedEvents, canRetry } = useChatStream(
     refs,
     abortControllersRef,
     loadSessions,
@@ -191,7 +191,7 @@ function HomeInner() {
             showScrollToLatest={showScrollToLatest}
             messagesAreaRef={messagesAreaRef}
             messagesEndRef={messagesEndRef}
-            onRetry={retry}
+            onRetry={canRetry ? retry : undefined}
             onDismissError={() => dispatch({ type: 'SET_ERROR', error: null })}
             onScrollToLatest={scrollToLatest}
             onDeletePrompt={handleDeletePromptCallback}

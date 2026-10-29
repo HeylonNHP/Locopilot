@@ -58,6 +58,11 @@ export function useChatStream(
   // wrong session's message list.  Switching back replays the buffer on top
   // of the freshly-loaded DB messages so live output resumes seamlessly.
   const [streamingSessions, setStreamingSessions] = useState<Set<number>>(new Set());
+  // Whether the turn that failed can be retried at all. There is a stored
+  // retry payload while a turn is in flight and after it fails, but a turn
+  // whose session has been deleted cannot be retried into anything — the
+  // banner must not offer a Retry that fails the same way.
+  const [canRetry, setCanRetry] = useState(false);
   const nextRequestIdRef = useRef(0);
   // The ownership rules (which turn belongs to which session, what is held
   // while the user is away, which turns failed) live in `streamMachine.ts`
@@ -393,6 +398,7 @@ export function useChatStream(
       setTimeout(() => loadSessions(), 2000);
       if (!requestFailed) {
         retryPayloadRef.current = null;
+        setCanRetry(false);
       }
     }
   }, [
@@ -647,6 +653,7 @@ export function useChatStream(
         maxPromptLoopIterations: refs.maxPromptLoopIterationsRef.current,
       };
       retryPayloadRef.current = { body: JSON.stringify(bodyObj) };
+      setCanRetry(true);
 
       try {
         await streamChatTurn({
@@ -736,6 +743,7 @@ export function useChatStream(
         loadSessions();
         if (!requestFailed) {
           retryPayloadRef.current = null;
+          setCanRetry(false);
         }
       }
     },
@@ -751,5 +759,5 @@ export function useChatStream(
       streamingSessions,
     ]
   );
-  return { sendChatMessage, retry, handleEvent, replayBufferedEvents };
+  return { sendChatMessage, retry, handleEvent, replayBufferedEvents, canRetry };
 }

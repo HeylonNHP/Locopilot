@@ -6,8 +6,13 @@ import './ErrorBanner.scss';
 
 interface ErrorBannerProps {
   error: string;
-  /** Returns a promise so the banner can show its own in-flight state. */
-  onRetry: () => Promise<void> | void;
+  /**
+   * Returns a promise so the banner can show its own in-flight state.
+   * Optional: when it is absent there is nothing to retry (the turn's
+   * session was deleted, for instance), so the banner offers no Retry
+   * button rather than one that fails the same way every time.
+   */
+  onRetry?: (() => Promise<void> | void) | undefined;
   onDismiss: () => void;
 }
 
@@ -20,7 +25,7 @@ export function ErrorBanner({ error, onRetry, onDismiss }: ErrorBannerProps) {
   const detailsId = useId();
 
   const handleRetry = () => {
-    if (isRetrying) return;
+    if (isRetrying || !onRetry) return;
     setIsRetrying(true);
     void Promise.resolve(onRetry()).finally(() => setIsRetrying(false));
   };
@@ -53,14 +58,16 @@ export function ErrorBanner({ error, onRetry, onDismiss }: ErrorBannerProps) {
         </pre>
       )}
       <div className="error-actions">
-        <button
-          type="button"
-          onClick={handleRetry}
-          className="error-retry-btn"
-          aria-disabled={isRetrying}
-        >
-          {isRetrying ? 'Retrying…' : 'Retry'}
-        </button>
+        {onRetry && (
+          <button
+            type="button"
+            onClick={handleRetry}
+            className="error-retry-btn"
+            aria-disabled={isRetrying}
+          >
+            {isRetrying ? 'Retrying…' : 'Retry'}
+          </button>
+        )}
         <button type="button" onClick={onDismiss} className="error-dismiss-btn">
           Dismiss
         </button>

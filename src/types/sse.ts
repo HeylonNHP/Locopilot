@@ -120,6 +120,13 @@ export interface SseEventPayloadMap {
      * failure (`llm_error`). Absent on the chat route's `error` events.
      */
     kind?: 'client_abort' | 'llm_error';
+    /**
+     * Set when the turn could not start because the session it belongs to no
+     * longer exists (deleted in another tab). Retrying cannot help — there
+     * is no session left to retry into — so the client drops the retry
+     * payload instead of offering a Retry that fails the same way.
+     */
+    sessionMissing?: boolean;
   };
   write_error: { message: string };
   clear_assistant: object;

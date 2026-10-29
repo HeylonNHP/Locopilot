@@ -704,6 +704,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       if (activeSessionId !== undefined && !sessionExists(activeSessionId)) {
         sendEvent('error', {
           message: 'Session not found. It may have been deleted in another tab.',
+          sessionMissing: true,
         });
         controller.close();
         return;

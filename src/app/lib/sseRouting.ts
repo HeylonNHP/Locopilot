@@ -430,7 +430,11 @@ export function routeSseEvent(
       // An errored turn has no t/s of its own — clear both the live
       // value and any previous turn's end-of-turn rate (the store merge
       // would otherwise keep displaying the old rate).
-      return { actions, markFailed: true, clearTps: true };
+      //
+      // A turn whose session no longer exists is the exception: retrying
+      // would fail exactly the same way, so the turn is not marked as
+      // failed and its retry payload is dropped.
+      return { actions, markFailed: !data.sessionMissing, clearTps: true };
     }
 
     case 'write_error': {

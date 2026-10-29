@@ -17,7 +17,7 @@ interface MessagesAreaProps {
   showScrollToLatest: boolean;
   messagesAreaRef: RefObject<HTMLDivElement | null>;
   messagesEndRef: RefObject<HTMLDivElement | null>;
-  onRetry: () => Promise<void> | void;
+  onRetry?: (() => Promise<void> | void) | undefined;
   onDismissError: () => void;
   onScrollToLatest: (behavior: ScrollBehavior) => void;
   onDeletePrompt?: ((messageId: number) => void) | undefined;
