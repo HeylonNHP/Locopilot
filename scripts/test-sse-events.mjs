@@ -92,6 +92,15 @@ check('an unknown event is ignored rather than replayed', () => {
   assert.equal(isReplayableEvent('something_new'), false);
 });
 
+check('an inherited property name is not an event', () => {
+  // `in` walks the prototype chain, so 'toString' or 'constructor' would
+  // resolve to a function instead of 'unknown'.
+  for (const name of ['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__']) {
+    assert.equal(classifySseEvent(name), 'unknown', `${name} must not classify`);
+    assert.equal(isReplayableEvent(name), false);
+  }
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) {
   process.exitCode = 1;

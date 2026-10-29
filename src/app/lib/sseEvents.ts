@@ -51,7 +51,10 @@ export const SSE_EVENT_CLASSES = {
  * something it should not.
  */
 export function classifySseEvent(event: string): SseEventClass | 'unknown' {
-  if (event in SSE_EVENT_CLASSES) {
+  // `Object.hasOwn`, not `in`: `in` walks the prototype chain, so
+  // 'toString' or 'constructor' would resolve to a function and break the
+  // declared return type.
+  if (Object.hasOwn(SSE_EVENT_CLASSES, event)) {
     return SSE_EVENT_CLASSES[event as SseEventName];
   }
   return 'unknown';

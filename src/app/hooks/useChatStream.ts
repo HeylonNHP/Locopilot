@@ -126,11 +126,11 @@ export function useChatStream(
   const handleEvent = useCallback(
     (event: string, data: SseEventData, requestId?: number, replayTargetSessionId?: number) => {
       // ── session_created must ALWAYS be processed first ──────────────────
-      // It syncs bufferOwnerMapRef and refs.sessionIdRef to the real
-      // session ID.  If the buffer guard below intercepted it, the guard
-      // would see size 0 (no active streams), buffer session_created, and
-      // the sync would never happen — causing ALL subsequent chunks to be
-      // buffered and ultimately discarded by the finally block.
+      // It moves the turn from the placeholder key to the real session id,
+      // in every registry at once: the abort controller, the streaming set,
+      // the ownership map and the visible session. If the buffer guard below
+      // intercepted it, the turn would stay filed under the placeholder and
+      // every later chunk would be buffered and ultimately discarded.
       if (event === 'session_created' && typeof data.sessionId === 'number') {
         const realId: number = data.sessionId;
         if (abortControllersRef.current.has(NEW_SESSION_KEY)) {
@@ -202,8 +202,9 @@ export function useChatStream(
       }
 
       // ── Compute the owning session id for every dispatch ──────────────
-      // The owning session is the request's `bufferOwnerMapRef` entry if
-      // known, otherwise the currently-visible session. The reducer's
+      // The owning session is the turn's session if the server named it,
+      // otherwise the client's record of it, otherwise the currently-visible
+      // session. The reducer's
       // `targetSessionId` guard then routes the action to the correct
       // session slot when two streams are live. Passing `targetSessionId`
       // on every dispatch (instead of relying on a no-target default
