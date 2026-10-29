@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { streamChatTurn } from '@/app/lib/chatTurn';
+import { isReplayableEvent } from '@/app/lib/sseEvents';
 import { frameOwner, isDoneReason, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
 import {
@@ -398,26 +399,21 @@ export function useChatStream(
    * were buffered while the user was viewing a different session.  No-op when
    * no stream is active or the target session doesn't own the active stream.
    */
-  // Events to replay when the user switches back to a buffered session.
-  // Includes:
+  // Which events are replayed when the user switches back to a buffered
+  // session is decided by `sseEvents.ts`, where every event the server can
+  // send is classified — so a new event cannot silently fall out of the
+  // replay set.
+  //
+  // Replayed:
   //   - Incremental content deltas (chunk, thinking, tool_progress, …)
   //   - done: applies the final authoritative token stats for the session
   //   - approval_request: re-surfaces the approval modal on return so the user
   //     can still approve/reject a pending run_command (the server waits up to
   //     120 s; if already timed out the POST to /api/approve is a harmless no-op)
-  // Excludes tool_call / tool_result / subagent_output / compact because those
-  // messages are flushed to SQLite mid-stream (Phase 2) and are reloaded from
-  // DB on session switch — replaying them here would create duplicates.
-  const DELTA_EVENTS = new Set([
-    'chunk',
-    'thinking',
-    'tool_progress',
-    'subagent_chunk',
-    'status',
-    'compact_progress',
-    'done',
-    'approval_request',
-  ]);
+  // Not replayed (tool_call / tool_result / subagent_output / compact): those
+  // messages are flushed to SQLite mid-stream and are reloaded from the
+  // database on a session switch — replaying them here would create
+  // duplicates.
 
   const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
@@ -425,7 +421,7 @@ export function useChatStream(
       const { state, events: buffered } = takeBufferedEvents(streamStateRef.current, sessionKey);
       streamStateRef.current = state;
       for (const { event, data } of buffered) {
-        if (DELTA_EVENTS.has(event)) {
+        if (isReplayableEvent(event)) {
           // Pass `sessionKey` as `replayTargetSessionId` so the
           // `subagent_chunk` case can attribute its buffer entry to
           // the right session. Without this, replayed subagent chunks

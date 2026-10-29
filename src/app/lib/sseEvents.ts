@@ -1,4 +1,4 @@
-import type { SseEventPayloadMap } from '@/types/sse';
+import type { SseEventName } from '@/services/sseNames';
 
 /**
  * What the client does with an SSE event when the user has navigated away
@@ -21,10 +21,10 @@ export type SseEventClass = 'replayable' | 'persisted' | 'meta';
 /**
  * The classification of every event the server can send.
  *
- * `satisfies` makes this exhaustive: adding an event to
- * `SseEventPayloadMap` without classifying it here is a compile error, and a
- * misspelled key is rejected too. The previous implementation was a plain
- * `Set` of event names, so a new event silently fell into "not replayed".
+ * `satisfies` makes this exhaustive: adding an event to the payload map
+ * without classifying it here is a compile error, and a misspelled key is
+ * rejected too. The previous implementation was a plain `Set` of event
+ * names, so a new event silently fell into "not replayed".
  */
 export const SSE_EVENT_CLASSES = {
   session_created: 'meta',
@@ -43,10 +43,7 @@ export const SSE_EVENT_CLASSES = {
   error: 'meta',
   write_error: 'meta',
   clear_assistant: 'meta',
-} satisfies Record<keyof SseEventPayloadMap, SseEventClass>;
-
-/** The name of an event the server can send. */
-export type SseEventName = keyof typeof SSE_EVENT_CLASSES;
+} satisfies Record<SseEventName, SseEventClass>;
 
 /**
  * Classify an event name. Unknown names are ignored rather than guessed at,
