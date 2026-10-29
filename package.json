@@ -26,6 +26,7 @@
     "test:slash-command-routing": "npx tsx scripts/test-slash-command-routing.mjs",
     "test:sse-routing": "npx tsx scripts/test-sse-routing.mjs",
     "test:sse-frame-identity": "npx tsx scripts/test-sse-frame-identity.mjs",
+    "test:stream-machine": "npx tsx scripts/test-stream-machine.mjs",
     "test:bind-host": "node scripts/test-bind-host.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

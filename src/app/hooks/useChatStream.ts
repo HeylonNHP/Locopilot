@@ -6,6 +6,20 @@ import { useCallback, useRef, useState } from 'react';
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { isDoneReason, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
+import {
+  beginRequest,
+  bufferEvent,
+  createStreamState,
+  discardBufferedEvents,
+  endRequest,
+  findBufferedDone,
+  isRequestFailed,
+  markRequestFailed,
+  migrateSessionKey,
+  ownerOf,
+  type StreamState,
+  takeBufferedEvents,
+} from '@/app/lib/streamMachine';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
 import { DEFAULT_SESSION_NAME } from '@/constants';
 
@@ -55,15 +69,15 @@ export function useChatStream(
   // of the freshly-loaded DB messages so live output resumes seamlessly.
   const [streamingSessions, setStreamingSessions] = useState<Set<number>>(new Set());
   const nextRequestIdRef = useRef(0);
-  const bufferOwnerMapRef = useRef<Map<number, number>>(new Map());
-  const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: SseEventData }>>>(
-    new Map()
-  );
+  // The ownership rules (which turn belongs to which session, what is held
+  // while the user is away, which turns failed) live in `streamMachine.ts`
+  // as pure functions over one state object.
+  const streamStateRef = useRef<StreamState>(createStreamState());
   const subagentBufferRef = useRef<
     Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null; sessionId?: number }>
   >(new Map());
   const retryPayloadRef = useRef<{ body: string } | null>(null);
-  const requestFailedMapRef = useRef<Map<number, boolean>>(new Map());
+
   // --------------------------------------------------------------------------
 
   /**
@@ -100,9 +114,7 @@ export function useChatStream(
    */
   const flushBufferedDoneFor = useCallback(
     (sessionId: number): boolean => {
-      const buffered = bufferedEventsRef.current.get(sessionId);
-      if (!buffered) return false;
-      const doneEntry = [...buffered].reverse().find(({ event }) => event === 'done');
+      const doneEntry = findBufferedDone(streamStateRef.current, sessionId);
       if (!doneEntry) return false;
       const data = doneEntry.data as SseEventData;
       if (data.tokenStats) {
@@ -144,19 +156,8 @@ export function useChatStream(
           dispatch({ type: 'STOP_STREAMING', sessionId: -1 });
           dispatch({ type: 'START_STREAMING', sessionId: realId });
         }
-        // Migrate any buffered events from placeholder -1 to the real session ID
-        const oldBuffer = bufferedEventsRef.current.get(NEW_SESSION_KEY);
-        if (oldBuffer && oldBuffer.length > 0) {
-          const existing = bufferedEventsRef.current.get(realId) ?? [];
-          bufferedEventsRef.current.set(realId, [...existing, ...oldBuffer]);
-          bufferedEventsRef.current.delete(NEW_SESSION_KEY);
-        }
-        // Update ALL map entries set with -1 (placeholder for new sessions) to the real ID
-        for (const [reqId, sessId] of bufferOwnerMapRef.current.entries()) {
-          if (sessId === -1) {
-            bufferOwnerMapRef.current.set(reqId, realId);
-          }
-        }
+        // Move every structure keyed by the placeholder over to the real id.
+        streamStateRef.current = migrateSessionKey(streamStateRef.current, realId);
         // Migrate subagent buffer entries from placeholder -1 to the real session ID
         for (const [_agentId, entry] of subagentBufferRef.current.entries()) {
           if (entry.sessionId === -1 || entry.sessionId === undefined) {
@@ -181,15 +182,12 @@ export function useChatStream(
       // If this event belongs to a stream whose session is NOT the visible
       // session, buffer it so it doesn't land in the wrong message list.
       if (requestId !== undefined) {
-        const ownerSessionId = bufferOwnerMapRef.current.get(requestId);
+        const ownerSessionId = ownerOf(streamStateRef.current, requestId);
         if (
           ownerSessionId !== undefined &&
           ownerSessionId !== streamKeyFor(refs.sessionIdRef.current)
         ) {
-          if (!bufferedEventsRef.current.has(ownerSessionId)) {
-            bufferedEventsRef.current.set(ownerSessionId, []);
-          }
-          bufferedEventsRef.current.get(ownerSessionId)!.push({ event, data });
+          streamStateRef.current = bufferEvent(streamStateRef.current, ownerSessionId, event, data);
           return;
         }
       }
@@ -206,7 +204,7 @@ export function useChatStream(
       const ownerSessionId =
         requestId === undefined
           ? (refs.sessionIdRef.current ?? undefined)
-          : bufferOwnerMapRef.current.get(requestId);
+          : ownerOf(streamStateRef.current, requestId);
       const targetSessionId = ownerSessionId === undefined ? undefined : ownerSessionId;
 
       // Routing an event into store actions is a pure function, so it can be
@@ -217,20 +215,20 @@ export function useChatStream(
         approvalOwner:
           requestId === undefined
             ? (replayTargetSessionId ?? refs.sessionIdRef.current ?? undefined)
-            : bufferOwnerMapRef.current.get(requestId),
+            : ownerOf(streamStateRef.current, requestId),
         compactOwner:
-          requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId),
-        doneOwner: requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId),
+          requestId === undefined ? undefined : ownerOf(streamStateRef.current, requestId),
+        doneOwner: requestId === undefined ? undefined : ownerOf(streamStateRef.current, requestId),
         subagentOwner:
           requestId === undefined
             ? replayTargetSessionId
-            : bufferOwnerMapRef.current.get(requestId),
+            : ownerOf(streamStateRef.current, requestId),
         requestedNumCtx: refs.requestedNumCtxRef.current,
         pendingSteerDraft: refs.pendingSteerDraftRef.current,
       });
 
       if (outcome.markFailed && requestId !== undefined) {
-        requestFailedMapRef.current.set(requestId, true);
+        streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
       }
 
       for (const action of outcome.actions) {
@@ -285,9 +283,7 @@ export function useChatStream(
     dispatch({ type: 'START_STREAMING', sessionId });
 
     const requestId = nextRequestIdRef.current++;
-    bufferOwnerMapRef.current.set(requestId, sessionId);
-    bufferedEventsRef.current.delete(sessionId);
-    requestFailedMapRef.current.set(requestId, false);
+    streamStateRef.current = beginRequest(streamStateRef.current, requestId, sessionId);
 
     try {
       const response = await fetch('/api/chat', {
@@ -354,33 +350,33 @@ export function useChatStream(
     } catch (err: unknown) {
       const details = getStreamErrorDetails(err);
       if (!details) {
-        requestFailedMapRef.current.set(requestId, true);
+        streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
         dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
       } else if (details.name === 'AbortError') {
         // User clicked Stop — the turn never completed, so the t/s read-out
         // must not keep displaying the previous turn's rate as if it
         // belonged to this one.
-        clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+        clearTpsReadout(ownerOf(streamStateRef.current, requestId));
       } else if (
         details.message.includes('input stream') ||
         details.message.includes('network') ||
         details.message.includes('fetch') ||
         details.name === 'TypeError'
       ) {
-        requestFailedMapRef.current.set(requestId, true);
+        streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
         dispatch({
           type: 'SET_ERROR',
           error:
             'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
         });
-        clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+        clearTpsReadout(ownerOf(streamStateRef.current, requestId));
       } else {
-        requestFailedMapRef.current.set(requestId, true);
+        streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
         dispatch({ type: 'SET_ERROR', error: details.message });
-        clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+        clearTpsReadout(ownerOf(streamStateRef.current, requestId));
       }
     } finally {
-      const ownerId = bufferOwnerMapRef.current.get(requestId);
+      const ownerId = ownerOf(streamStateRef.current, requestId);
 
       // Only flush subagent buffers belonging to this session
       for (const [agentId, entry] of subagentBufferRef.current.entries()) {
@@ -413,8 +409,9 @@ export function useChatStream(
         // discarded, otherwise the slot would keep displaying a frozen
         // live estimate after the user switches back.
         flushBufferedDoneFor(ownerId);
-        bufferOwnerMapRef.current.delete(requestId);
-        bufferedEventsRef.current.delete(ownerId);
+
+        streamStateRef.current = discardBufferedEvents(streamStateRef.current, ownerId);
+        streamStateRef.current = endRequest(streamStateRef.current, requestId).state;
       }
       // Clear the live value scoped to the OWNER (unscoped fallback when the
       // owner is unknown) — never wipe a different session's badge.
@@ -422,10 +419,9 @@ export function useChatStream(
       loadSessions();
       // Delayed refresh to pick up auto-generated title from background task
       setTimeout(() => loadSessions(), 2000);
-      if (!requestFailedMapRef.current.get(requestId)) {
+      if (!isRequestFailed(streamStateRef.current, requestId)) {
         retryPayloadRef.current = null;
       }
-      requestFailedMapRef.current.delete(requestId);
     }
   }, [
     dispatch,
@@ -466,8 +462,8 @@ export function useChatStream(
   const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
       const sessionKey = streamKeyFor(targetSessionId);
-      const buffered = bufferedEventsRef.current.get(sessionKey) ?? [];
-      bufferedEventsRef.current.delete(sessionKey);
+      const { state, events: buffered } = takeBufferedEvents(streamStateRef.current, sessionKey);
+      streamStateRef.current = state;
       for (const { event, data } of buffered) {
         if (DELTA_EVENTS.has(event)) {
           // Pass `sessionKey` as `replayTargetSessionId` so the
@@ -640,8 +636,7 @@ export function useChatStream(
       // Record which session owns this stream so events can be buffered when
       // the user navigates away and replayed when they switch back.
       const requestId = nextRequestIdRef.current++;
-      bufferOwnerMapRef.current.set(requestId, sessionId);
-      bufferedEventsRef.current.delete(sessionId);
+      streamStateRef.current = beginRequest(streamStateRef.current, requestId, sessionId);
 
       const allMessages = [...currentMessages, userMessage];
       const filteredMessages = allMessages.filter((m) => {
@@ -685,7 +680,6 @@ export function useChatStream(
         maxPromptLoopIterations: refs.maxPromptLoopIterationsRef.current,
       };
       retryPayloadRef.current = { body: JSON.stringify(bodyObj) };
-      requestFailedMapRef.current.set(requestId, false);
 
       try {
         const response = await fetch('/api/chat', {
@@ -765,34 +759,34 @@ export function useChatStream(
       } catch (err: unknown) {
         const details = getStreamErrorDetails(err);
         if (!details) {
-          requestFailedMapRef.current.set(requestId, true);
+          streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
           dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
-          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+          clearTpsReadout(ownerOf(streamStateRef.current, requestId));
         } else if (details.name === 'AbortError') {
           // User clicked Stop — the turn never completed, so the t/s
           // read-out must not keep displaying the previous turn's rate as
           // if it belonged to this one.
-          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+          clearTpsReadout(ownerOf(streamStateRef.current, requestId));
         } else if (
           details.message.includes('input stream') ||
           details.message.includes('network') ||
           details.message.includes('fetch') ||
           details.name === 'TypeError'
         ) {
-          requestFailedMapRef.current.set(requestId, true);
+          streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
           dispatch({
             type: 'SET_ERROR',
             error:
               'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
           });
-          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+          clearTpsReadout(ownerOf(streamStateRef.current, requestId));
         } else {
-          requestFailedMapRef.current.set(requestId, true);
+          streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
           dispatch({ type: 'SET_ERROR', error: details.message });
-          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+          clearTpsReadout(ownerOf(streamStateRef.current, requestId));
         }
       } finally {
-        const ownerId = bufferOwnerMapRef.current.get(requestId);
+        const ownerId = ownerOf(streamStateRef.current, requestId);
 
         // Only flush subagent buffers belonging to this session
         for (const [agentId, entry] of subagentBufferRef.current.entries()) {
@@ -826,17 +820,17 @@ export function useChatStream(
           // discarded, otherwise the slot would keep displaying a frozen
           // live estimate after the user switches back.
           flushBufferedDoneFor(ownerId);
-          bufferOwnerMapRef.current.delete(requestId);
-          bufferedEventsRef.current.delete(ownerId);
+
+          streamStateRef.current = discardBufferedEvents(streamStateRef.current, ownerId);
+          streamStateRef.current = endRequest(streamStateRef.current, requestId).state;
         }
         // Clear the live value scoped to the OWNER (unscoped fallback when
         // the owner is unknown) — never wipe a different session's badge.
         clearTpsReadout(ownerId);
         loadSessions();
-        if (!requestFailedMapRef.current.get(requestId)) {
+        if (!isRequestFailed(streamStateRef.current, requestId)) {
           retryPayloadRef.current = null;
         }
-        requestFailedMapRef.current.delete(requestId);
       }
     },
     [
