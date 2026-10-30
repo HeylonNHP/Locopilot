@@ -411,7 +411,9 @@ export function useChatStream(
     if (!retryPayloadRef.current || state.streamingSessions.has(sessionId)) return;
 
     const { body } = retryPayloadRef.current;
-    dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+    // The previous turn's rate described that turn — retire it (see the
+    // note in sendChatMessage).
+    clearTokenRates();
     dispatch({ type: 'SET_DONE_REASON', reason: undefined });
 
     const abortController = new AbortController();
@@ -657,7 +659,11 @@ export function useChatStream(
 
       dispatch({ type: 'ADD_MESSAGE', message: userMessage });
       dispatch({ type: 'SET_ERROR', error: null });
-      dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+      // The previous turn's rate described THAT turn. It stays on screen
+      // between turns, but a new turn starting must retire it — otherwise
+      // the badge shows the last reply's rate as if it were live, for the
+      // whole prompt-processing phase.
+      clearTokenRates();
       // A new turn must not inherit the previous turn's completion reason, or
       // a stale 'length' would flash the truncation notice over the new reply.
       dispatch({ type: 'SET_DONE_REASON', reason: undefined });

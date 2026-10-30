@@ -1220,7 +1220,18 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const nextSet = new Set(state.streamingSessions);
       nextSet.delete(action.fromSessionId);
       nextSet.add(action.toSessionId);
-      return { ...state, streamingSessions: nextSet };
+      // The compaction phases of the session being renamed away are cleared,
+      // exactly as stopping that session would have cleared them: the
+      // "Compacting conversation…" notice must not outlive the turn it
+      // belonged to.
+      const isVisibleSession =
+        (state.currentSessionId === null && action.fromSessionId === -1) ||
+        state.currentSessionId === action.fromSessionId;
+      return {
+        ...state,
+        streamingSessions: nextSet,
+        ...(isVisibleSession ? { compactingPhases: [] } : {}),
+      };
     }
     case 'STOP_STREAMING': {
       const nextSet = new Set(state.streamingSessions);

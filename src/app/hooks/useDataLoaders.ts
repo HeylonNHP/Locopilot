@@ -57,15 +57,17 @@ export function useDataLoaders(refs: StableRefs) {
   /**
    * The token limit already known for a session.
    *
-   * The server reports the model's real ceiling (the requested size clamped
-   * to it) on every turn. A reload must not replace that with the user's
-   * REQUESTED size: the badge's denominator and the 75 %/90 % thresholds
-   * would then be computed against a limit the model does not have.
+   * The server resolves the effective size (the requested size clamped to
+   * the model's ceiling) and reports it on every turn. A reload must not
+   * replace that with the user's REQUESTED size: the badge's denominator
+   * and the 75 %/90 % thresholds would then be computed against a limit the
+   * model does not have.
    *
-   * The model's ceiling is the durable half of that number, so it is
-   * preferred: the effective limit is re-derived from it and the CURRENT
-   * requested size, which means changing the context size in Settings is
-   * reflected immediately instead of leaving the old limit on screen.
+   * Only server-resolved values are used. The client must not apply the
+   * clamp itself (`src/services/capResolver.ts`): a limit derived here from
+   * the CURRENT requested size could contradict the turn that actually ran
+   * — if the user lowers the context size while a turn is streaming, the
+   * denominator would drop below the token count that turn produced.
    */
   const knownTokenLimit = useCallback((sessionId: number): number | undefined => {
     const current = stateRef.current;
@@ -73,12 +75,14 @@ export function useDataLoaders(refs: StableRefs) {
       sessionId === current.currentSessionId
         ? current.tokenStats
         : current.sessionStates.get(sessionId)?.tokenStats;
-    const cap = stats?.modelContextLimit;
-    if (typeof cap === 'number' && cap > 0) {
-      return Math.min(refs.requestedNumCtxRef.current ?? cap, cap);
-    }
     const limit = stats?.tokenLimit;
-    return typeof limit === 'number' && limit > 0 ? limit : undefined;
+    if (typeof limit === 'number' && limit > 0) {
+      return limit;
+    }
+    // The server's effective size for the current model, which survives a
+    // session switch (the top-level token stats do not).
+    const effective = current.effectiveNumCtx;
+    return typeof effective === 'number' && effective > 0 ? effective : undefined;
   }, []);
 
   const loadSessionMessages = useCallback(
