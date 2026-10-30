@@ -29,7 +29,11 @@ interface UseSessionActionsOptions {
   dispatch: Dispatch<SessionAction>;
   sessionIdRef: WritableRef<number | null>;
   loadSessions: (query?: string) => Promise<void>;
-  loadSessionMessages: (id: number, allowEmptyWhileStreaming?: boolean) => Promise<void>;
+  loadSessionMessages: (
+    id: number,
+    allowEmptyWhileStreaming?: boolean,
+    options?: { keepCurrentSession?: boolean }
+  ) => Promise<void>;
   replayBufferedEvents: (id: number) => void;
   model: string;
 }
@@ -153,7 +157,11 @@ export function useSessionActions({
 
         // Only update the UI if we're still viewing the same session.
         if (sessionIdRef.current === targetSessionId) {
-          await loadSessionMessages(targetSessionId, true);
+          // The reload must not change the view: the user may have moved to
+          // another session while the delete was in flight, and the caller
+          // has already decided this refresh is only for the session that
+          // was being read.
+          await loadSessionMessages(targetSessionId, true, { keepCurrentSession: true });
           dispatch({ type: 'CLEAR_TOKEN_STATS', targetSessionId });
         }
       } catch (err) {

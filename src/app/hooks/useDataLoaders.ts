@@ -15,6 +15,10 @@ import type { StableRefs } from './useStableRefs';
 export function useDataLoaders(refs: StableRefs) {
   const { state, dispatch } = useChat();
   const sessionLoadRequestIdRef = useRef(0);
+  // View-neutral refreshes (the end-of-turn reload) get their own
+  // "latest wins" token. Sharing the session-load token with them would let
+  // a background refresh discard the user's own in-flight session switch.
+  const backgroundLoadRequestIdRef = useRef(0);
   const sessionSearchRequestIdRef = useRef(0);
 
   const loadSessions = useCallback(
@@ -50,13 +54,26 @@ export function useDataLoaders(refs: StableRefs) {
       allowEmptyWhileStreaming = false,
       options?: { keepCurrentSession?: boolean }
     ) => {
-      const requestId = sessionLoadRequestIdRef.current + 1;
-      sessionLoadRequestIdRef.current = requestId;
+      const background = options?.keepCurrentSession === true;
+      const requestId = background
+        ? backgroundLoadRequestIdRef.current + 1
+        : sessionLoadRequestIdRef.current + 1;
+      if (background) {
+        backgroundLoadRequestIdRef.current = requestId;
+      } else {
+        sessionLoadRequestIdRef.current = requestId;
+      }
+      // The token this load is checked against. A view-neutral refresh has
+      // its own, so it can neither discard the user's in-flight session
+      // switch nor be discarded by it.
+      const latestRequestId = () =>
+        background ? backgroundLoadRequestIdRef.current : sessionLoadRequestIdRef.current;
 
       try {
         const res = await fetch(`/api/sessions/${sessionId}`);
-        // Stale check: another load has been requested since this one started.
-        if (sessionLoadRequestIdRef.current !== requestId) return;
+        // Stale check: another load of the same kind has been requested
+        // since this one started.
+        if (latestRequestId() !== requestId) return;
 
         if (!res.ok) {
           // Session was deleted (e.g. in another tab). Only clear if the
@@ -64,7 +81,11 @@ export function useDataLoaders(refs: StableRefs) {
           // caller's earlier click on session B will have updated
           // refs.sessionIdRef.current, so this guard prevents the A 404
           // from clobbering B's state.
-          if (res.status === 404 && refs.sessionIdRef.current === sessionId) {
+          //
+          // A view-neutral refresh never changes the view: it is a
+          // background reconciliation, and clearing the session the user is
+          // reading (and the error banner with it) is the caller's call.
+          if (!background && res.status === 404 && refs.sessionIdRef.current === sessionId) {
             refs.sessionIdRef.current = null;
             dispatch({ type: 'SET_CURRENT_SESSION', id: null });
             dispatch({ type: 'CLEAR_MESSAGES' });
@@ -72,7 +93,7 @@ export function useDataLoaders(refs: StableRefs) {
           return;
         }
         const data = await res.json();
-        if (sessionLoadRequestIdRef.current !== requestId) return;
+        if (latestRequestId() !== requestId) return;
 
         // Commit the session change now that we have data. The caller
         // typically already dispatched SET_CURRENT_SESSION optimistically,
