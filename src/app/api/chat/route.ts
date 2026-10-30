@@ -2657,7 +2657,9 @@ export async function POST(req: NextRequest): Promise<Response> {
               modelContextLimit,
               promptTps: tpsSnapshot.promptTps,
               evalTps: tpsSnapshot.evalTps,
-              ...(tpsSnapshot.evalTpsEstimated ? { evalTpsEstimated: true } : {}),
+              // Always sent, so the client's merge cannot keep a previous
+              // turn's "estimated" tag on a rate that was measured.
+              evalTpsEstimated: tpsSnapshot.evalTpsEstimated,
             },
             doneReason: lastDoneReason && lastDoneReason !== 'unknown' ? lastDoneReason : 'stop',
           });

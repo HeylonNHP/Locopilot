@@ -358,6 +358,21 @@ check('an ordinary error still marks the turn as failed', () => {
   assert.equal(outcome.markFailed, true);
 });
 
+check('a done event keeps the end-of-turn rates', () => {
+  // The server's authoritative rates arrive with `done`; only the live
+  // read-out is cleared, so the numbers survive the turn.
+  const outcome = routeSseEvent('done', { doneReason: 'stop' }, { targetSessionId: 7 });
+  assert.equal(outcome.clearTps, true);
+  assert.equal(outcome.clearRates, undefined);
+});
+
+check('an error clears the end-of-turn rates as well', () => {
+  // A failed turn must not leave the previous turn's rate on screen.
+  const outcome = routeSseEvent('error', { message: 'boom' }, { targetSessionId: 7 });
+  assert.equal(outcome.clearTps, true);
+  assert.equal(outcome.clearRates, true);
+});
+
 check('write_error prefixes the message and marks the turn failed', () => {
   const outcome = routeSseEvent('write_error', { message: 'disk full' }, { targetSessionId: 7 });
   assert.deepEqual(outcome.actions, [

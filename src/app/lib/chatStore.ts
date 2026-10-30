@@ -361,6 +361,7 @@ export type ChatAction =
   | { type: 'CLEAR_COMPACT_PROGRESS'; targetSessionId?: number }
   | { type: 'START_STREAMING'; sessionId: number }
   | { type: 'STOP_STREAMING'; sessionId: number }
+  | { type: 'RENAME_STREAMING'; fromSessionId: number; toSessionId: number }
   | { type: 'SAVE_INPUT_DRAFT'; draft: string }
   | { type: 'SET_HISTORY_INDEX'; index: number | null }
   | { type: 'CLEAR_HISTORY_NAVIGATION' }
@@ -446,13 +447,18 @@ function applyToSession(
   };
 }
 
-function chatReducer(state: ChatState, action: ChatAction): ChatState {
+/**
+ * The one reducer for the chat store. Exported so the per-session
+ * routing rules (which session a targeted action lands in) can be tested
+ * directly, without a browser.
+ */
+export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SET_MESSAGES': {
       const messages = action.messages.filter((m: ChatMessage) => m.role !== 'system').map(withId);
       if (
         !action.allowEmptyWhileStreaming &&
-        action.messages.length === 0 &&
+        messages.length === 0 &&
         action.targetSessionId !== undefined &&
         state.streamingSessions.has(action.targetSessionId)
       ) {
@@ -462,6 +468,16 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         action.targetSessionId !== undefined &&
         action.targetSessionId !== state.currentSessionId
       ) {
+        if (action.targetSessionId === -1) {
+          // The placeholder transcript is the visible one only while no
+          // session is selected. `newSessionState` is a mirror that the
+          // next session switch overwrites, so writing into it would leak
+          // this copy into whatever chat is started later.
+          if (state.currentSessionId === null) {
+            return { ...state, messages };
+          }
+          return state;
+        }
         // The session this belongs to is not the one on screen: write the
         // copy into that session's slot instead of dropping it. The visible
         // session is left untouched, which is what the old guard protected
@@ -1195,6 +1211,17 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         streamingSessions: new Set(state.streamingSessions).add(action.sessionId),
       };
     }
+    case 'RENAME_STREAMING': {
+      // Move a streaming session from one id to another in one step. The
+      // placeholder (-1) becomes the real id when the server creates the
+      // session; doing that with a STOP followed by a START leaves the set
+      // momentarily empty, and an empty set clears the steer-target toggle,
+      // the pending model switch and the held steer draft.
+      const nextSet = new Set(state.streamingSessions);
+      nextSet.delete(action.fromSessionId);
+      nextSet.add(action.toSessionId);
+      return { ...state, streamingSessions: nextSet };
+    }
     case 'STOP_STREAMING': {
       const nextSet = new Set(state.streamingSessions);
       nextSet.delete(action.sessionId);
@@ -1245,7 +1272,8 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
   }
 }
 
-const initialState: ChatState = {
+/** The store's starting state. Exported for the reducer tests. */
+export const initialState: ChatState = {
   messages: [],
   sessions: [],
   currentSessionId: null,

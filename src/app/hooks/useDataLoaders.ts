@@ -20,9 +20,11 @@ export function useDataLoaders(refs: StableRefs) {
   stateRef.current = state;
   const sessionLoadRequestIdRef = useRef(0);
   // View-neutral refreshes (the end-of-turn reload) get their own
-  // "latest wins" token. Sharing the session-load token with them would let
-  // a background refresh discard the user's own in-flight session switch.
-  const backgroundLoadRequestIdRef = useRef(0);
+  // "latest wins" token, per session. Sharing the session-load token with
+  // them would let a background refresh discard the user's own in-flight
+  // session switch, and a single shared token would let two background
+  // refreshes discard each other.
+  const backgroundLoadRequestIdRef = useRef(new Map<number, number>());
   const sessionSearchRequestIdRef = useRef(0);
 
   const loadSessions = useCallback(
@@ -59,6 +61,11 @@ export function useDataLoaders(refs: StableRefs) {
    * to it) on every turn. A reload must not replace that with the user's
    * REQUESTED size: the badge's denominator and the 75 %/90 % thresholds
    * would then be computed against a limit the model does not have.
+   *
+   * The model's ceiling is the durable half of that number, so it is
+   * preferred: the effective limit is re-derived from it and the CURRENT
+   * requested size, which means changing the context size in Settings is
+   * reflected immediately instead of leaving the old limit on screen.
    */
   const knownTokenLimit = useCallback((sessionId: number): number | undefined => {
     const current = stateRef.current;
@@ -66,6 +73,10 @@ export function useDataLoaders(refs: StableRefs) {
       sessionId === current.currentSessionId
         ? current.tokenStats
         : current.sessionStates.get(sessionId)?.tokenStats;
+    const cap = stats?.modelContextLimit;
+    if (typeof cap === 'number' && cap > 0) {
+      return Math.min(refs.requestedNumCtxRef.current ?? cap, cap);
+    }
     const limit = stats?.tokenLimit;
     return typeof limit === 'number' && limit > 0 ? limit : undefined;
   }, []);
@@ -78,18 +89,21 @@ export function useDataLoaders(refs: StableRefs) {
     ) => {
       const background = options?.keepCurrentSession === true;
       const requestId = background
-        ? backgroundLoadRequestIdRef.current + 1
+        ? (backgroundLoadRequestIdRef.current.get(sessionId) ?? 0) + 1
         : sessionLoadRequestIdRef.current + 1;
       if (background) {
-        backgroundLoadRequestIdRef.current = requestId;
+        backgroundLoadRequestIdRef.current.set(sessionId, requestId);
       } else {
         sessionLoadRequestIdRef.current = requestId;
       }
       // The token this load is checked against. A view-neutral refresh has
-      // its own, so it can neither discard the user's in-flight session
-      // switch nor be discarded by it.
+      // its own, per session, so it can neither discard the user's in-flight
+      // session switch nor be discarded by it, and two background refreshes
+      // of different sessions do not invalidate each other.
       const latestRequestId = () =>
-        background ? backgroundLoadRequestIdRef.current : sessionLoadRequestIdRef.current;
+        background
+          ? backgroundLoadRequestIdRef.current.get(sessionId)
+          : sessionLoadRequestIdRef.current;
 
       try {
         const res = await fetch(`/api/sessions/${sessionId}`);

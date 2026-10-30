@@ -163,9 +163,11 @@ export function useChatStream(
           abortControllersRef.current.delete(NEW_SESSION_KEY);
           abortControllersRef.current.set(realId, ctrl);
           // The store's streaming set is the single record of which
-          // sessions are streaming; these two dispatches maintain it.
-          dispatch({ type: 'STOP_STREAMING', sessionId: -1 });
-          dispatch({ type: 'START_STREAMING', sessionId: realId });
+          // sessions are streaming. The rename is one step: a STOP followed
+          // by a START would leave the set momentarily empty, and an empty
+          // set clears the steer-target toggle, the pending model switch
+          // and the held steer draft.
+          dispatch({ type: 'RENAME_STREAMING', fromSessionId: -1, toSessionId: realId });
         }
         // Move every structure keyed by the placeholder over to the real id.
         streamStateRef.current = migrateSessionKey(streamStateRef.current, realId);
@@ -296,11 +298,11 @@ export function useChatStream(
         }, 50);
       }
 
-      if (outcome.clearTps) {
-        clearTpsReadout(targetSessionId);
-      }
       if (outcome.clearRates) {
+        // Clears the live read-out as well.
         clearTokenRates(targetSessionId);
+      } else if (outcome.clearTps) {
+        clearTpsReadout(targetSessionId);
       }
     },
     [dispatch, clearTokenRates, clearTpsReadout]
