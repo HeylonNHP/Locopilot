@@ -48,7 +48,11 @@ export function useChatStream(
   refs: StableRefs,
   abortControllersRef: WritableRef<Map<number, AbortController>>,
   loadSessions: () => Promise<void>,
-  loadSessionMessages: (id: number, allowEmptyWhileStreaming?: boolean) => Promise<void>
+  loadSessionMessages: (
+    id: number,
+    allowEmptyWhileStreaming?: boolean,
+    options?: { keepCurrentSession?: boolean }
+  ) => Promise<void>
 ) {
   const { dispatch } = useChat();
 
@@ -288,6 +292,100 @@ export function useChatStream(
   );
 
   /**
+   * Finish a turn: release everything the turn held, reconcile the
+   * transcript with the database, and refresh the session list.
+   *
+   * Sending a message and retrying a failed one used to end with two copies
+   * of this block, and they had drifted: the send path reloaded the
+   * transcript and the retry path did not, and the retry path refreshed the
+   * title and the send path did not. The drift was not harmless — a retry
+   * whose previous attempt had failed left the two attempts' partial
+   * replies merged into a single bubble, and a retry of a turn that never
+   * reached the server showed the answer with no question above it.
+   *
+   * Both drivers call this, so the two cannot drift apart again.
+   */
+  const finishTurn = useCallback(
+    async (requestId: number) => {
+      const ownerId = ownerOf(streamStateRef.current, requestId);
+
+      // Flush the sub-agent text that is still coalescing, against the
+      // session that owns it.
+      for (const [agentId, entry] of subagentBufferRef.current.entries()) {
+        if (entry.sessionId === ownerId || entry.sessionId === undefined) {
+          if (entry.timer) clearTimeout(entry.timer);
+          // Flush against the owning session so a background stream's
+          // pending sub-agent bubble is not appended to the visible
+          // session when the request lifecycle ends.
+          dispatch({
+            type: 'SUBAGENT_CHUNK',
+            agentId,
+            text: entry.text,
+            ...(ownerId === undefined ? {} : { targetSessionId: ownerId }),
+          });
+          subagentBufferRef.current.delete(agentId);
+        }
+      }
+
+      if (ownerId !== undefined) {
+        abortControllersRef.current.delete(ownerId);
+        // The database is the source of truth at the end of a turn: the
+        // server persists the messages it accepted, while the client's copy
+        // carries optimistic ids that the delete endpoint cannot use.
+        // Reloading also gives the next attempt a clean slate instead of
+        // appending to the failed attempt's bubble.
+        //
+        // The reload must not switch the view — the user may have moved to
+        // another session while this turn was running.
+        await loadSessionMessages(ownerId, true, { keepCurrentSession: true });
+        setStreamingSessions((prev) => {
+          const next = new Set(prev);
+          next.delete(ownerId);
+          return next;
+        });
+        dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
+        // Apply a terminal `done` that was buffered while this stream's
+        // owner was a background session: its tokenStats (including the
+        // final t/s) must reach the owner slot before the buffer is
+        // discarded, otherwise the slot would keep displaying a frozen
+        // live estimate after the user switches back.
+        flushBufferedDoneFor(ownerId);
+        streamStateRef.current = discardBufferedEvents(streamStateRef.current, ownerId);
+      }
+
+      // The failure flag lives on the request record, so it has to be read
+      // while the record still exists. Reading it afterwards always says
+      // "did not fail", which would throw the turn's retry payload away and
+      // leave the Retry button doing nothing.
+      const { state: afterEnd, failed: requestFailed } = endRequest(
+        streamStateRef.current,
+        requestId
+      );
+      streamStateRef.current = afterEnd;
+
+      // Clear the live value scoped to the OWNER (unscoped fallback when the
+      // owner is unknown) — never wipe a different session's badge.
+      clearTpsReadout(ownerId);
+      loadSessions();
+      // The server titles a new chat once its first turn ends; give it a
+      // moment to arrive before refreshing the list again.
+      setTimeout(() => loadSessions(), 2000);
+      if (!requestFailed) {
+        retryPayloadRef.current = null;
+        setCanRetry(false);
+      }
+    },
+    [
+      dispatch,
+      abortControllersRef,
+      clearTpsReadout,
+      flushBufferedDoneFor,
+      loadSessionMessages,
+      loadSessions,
+    ]
+  );
+
+  /**
    * Retry a failed chat turn using the originally-stored request payload.
    */ const retry = useCallback(async () => {
     const sessionId = streamKeyFor(refs.sessionIdRef.current);
@@ -345,70 +443,15 @@ export function useChatStream(
         clearTpsReadout(ownerOf(streamStateRef.current, requestId));
       }
     } finally {
-      const ownerId = ownerOf(streamStateRef.current, requestId);
-
-      // Only flush subagent buffers belonging to this session
-      for (const [agentId, entry] of subagentBufferRef.current.entries()) {
-        if (entry.sessionId === ownerId || entry.sessionId === undefined) {
-          if (entry.timer) clearTimeout(entry.timer);
-          // Flush against the owning session so a background stream's
-          // pending sub-agent bubble is not appended to the visible
-          // session when the request lifecycle ends.
-          dispatch({
-            type: 'SUBAGENT_CHUNK',
-            agentId,
-            text: entry.text,
-            ...(ownerId === undefined ? {} : { targetSessionId: ownerId }),
-          });
-          subagentBufferRef.current.delete(agentId);
-        }
-      }
-
-      if (ownerId !== undefined) {
-        abortControllersRef.current.delete(ownerId);
-        setStreamingSessions((prev) => {
-          const next = new Set(prev);
-          next.delete(ownerId);
-          return next;
-        });
-        dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
-        // Apply a terminal `done` that was buffered while this stream's
-        // owner was a background session: its tokenStats (including the
-        // final t/s) must reach the owner slot before the buffer is
-        // discarded, otherwise the slot would keep displaying a frozen
-        // live estimate after the user switches back.
-        flushBufferedDoneFor(ownerId);
-
-        streamStateRef.current = discardBufferedEvents(streamStateRef.current, ownerId);
-      }
-      // The failure flag lives on the request record, so it has to be read
-      // while the record still exists. Reading it afterwards always says
-      // "did not fail", which would throw the turn's retry payload away and
-      // leave the Retry button doing nothing.
-      const { state: afterEnd, failed: requestFailed } = endRequest(
-        streamStateRef.current,
-        requestId
-      );
-      streamStateRef.current = afterEnd;
-      // Clear the live value scoped to the OWNER (unscoped fallback when the
-      // owner is unknown) — never wipe a different session's badge.
-      clearTpsReadout(ownerId);
-      loadSessions();
-      // Delayed refresh to pick up auto-generated title from background task
-      setTimeout(() => loadSessions(), 2000);
-      if (!requestFailed) {
-        retryPayloadRef.current = null;
-        setCanRetry(false);
-      }
+      await finishTurn(requestId);
     }
   }, [
     dispatch,
     handleEvent,
     clearTpsReadout,
-    flushBufferedDoneFor,
+    finishTurn,
     refs,
     abortControllersRef,
-    loadSessions,
     streamingSessions,
   ]);
   /**
@@ -691,71 +734,16 @@ export function useChatStream(
           clearTpsReadout(ownerOf(streamStateRef.current, requestId));
         }
       } finally {
-        const ownerId = ownerOf(streamStateRef.current, requestId);
-
-        // Only flush subagent buffers belonging to this session
-        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
-          if (entry.sessionId === ownerId || entry.sessionId === undefined) {
-            if (entry.timer) clearTimeout(entry.timer);
-            // Flush against the owning session so a background stream's
-            // pending sub-agent bubble is not appended to the visible
-            // session when the request lifecycle ends.
-            dispatch({
-              type: 'SUBAGENT_CHUNK',
-              agentId,
-              text: entry.text,
-              ...(ownerId === undefined ? {} : { targetSessionId: ownerId }),
-            });
-            subagentBufferRef.current.delete(agentId);
-          }
-        }
-
-        if (ownerId !== undefined) {
-          abortControllersRef.current.delete(ownerId);
-          await loadSessionMessages(ownerId, true);
-          setStreamingSessions((prev) => {
-            const next = new Set(prev);
-            next.delete(ownerId);
-            return next;
-          });
-          dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
-          // Apply a terminal `done` that was buffered while this stream's
-          // owner was a background session: its tokenStats (including the
-          // final t/s) must reach the owner slot before the buffer is
-          // discarded, otherwise the slot would keep displaying a frozen
-          // live estimate after the user switches back.
-          flushBufferedDoneFor(ownerId);
-
-          streamStateRef.current = discardBufferedEvents(streamStateRef.current, ownerId);
-        }
-        // The failure flag lives on the request record, so it has to be read
-        // while the record still exists. Reading it afterwards always says
-        // "did not fail", which would throw the turn's retry payload away and
-        // leave the Retry button doing nothing.
-        const { state: afterEnd, failed: requestFailed } = endRequest(
-          streamStateRef.current,
-          requestId
-        );
-        streamStateRef.current = afterEnd;
-        // Clear the live value scoped to the OWNER (unscoped fallback when
-        // the owner is unknown) — never wipe a different session's badge.
-        clearTpsReadout(ownerId);
-        loadSessions();
-        if (!requestFailed) {
-          retryPayloadRef.current = null;
-          setCanRetry(false);
-        }
+        await finishTurn(requestId);
       }
     },
     [
       dispatch,
       handleEvent,
       clearTpsReadout,
-      flushBufferedDoneFor,
+      finishTurn,
       refs,
       abortControllersRef,
-      loadSessions,
-      loadSessionMessages,
       streamingSessions,
     ]
   );

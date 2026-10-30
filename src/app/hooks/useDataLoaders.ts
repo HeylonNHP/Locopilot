@@ -45,7 +45,11 @@ export function useDataLoaders(refs: StableRefs) {
   // refs.sessionIdRef.current to sessionId so guard checks see the right
   // value during the in-flight request.
   const loadSessionMessages = useCallback(
-    async (sessionId: number, allowEmptyWhileStreaming = false) => {
+    async (
+      sessionId: number,
+      allowEmptyWhileStreaming = false,
+      options?: { keepCurrentSession?: boolean }
+    ) => {
       const requestId = sessionLoadRequestIdRef.current + 1;
       sessionLoadRequestIdRef.current = requestId;
 
@@ -73,7 +77,10 @@ export function useDataLoaders(refs: StableRefs) {
         // Commit the session change now that we have data. The caller
         // typically already dispatched SET_CURRENT_SESSION optimistically,
         // so this is usually a no-op; the guard avoids a redundant dispatch.
-        if (refs.sessionIdRef.current !== sessionId) {
+        //
+        // `keepCurrentSession` skips it entirely: reloading a session that
+        // finished in the background must not pull the user back to it.
+        if (!options?.keepCurrentSession && refs.sessionIdRef.current !== sessionId) {
           refs.sessionIdRef.current = sessionId;
           dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
         }
