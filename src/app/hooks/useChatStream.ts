@@ -54,14 +54,13 @@ export function useChatStream(
     options?: { keepCurrentSession?: boolean }
   ) => Promise<void>
 ) {
-  const { dispatch } = useChat();
+  const { state, dispatch } = useChat();
 
   // --- Background-stream buffering ------------------------------------------
   // When the user switches to a different session while a stream is active,
   // events are buffered instead of dispatched so they don't bleed into the
   // wrong session's message list.  Switching back replays the buffer on top
   // of the freshly-loaded DB messages so live output resumes seamlessly.
-  const [streamingSessions, setStreamingSessions] = useState<Set<number>>(new Set());
   // Whether the turn that failed can be retried at all. There is a stored
   // retry payload while a turn is in flight and after it fails, but a turn
   // whose session has been deleted cannot be retried into anything — the
@@ -80,11 +79,13 @@ export function useChatStream(
   // --------------------------------------------------------------------------
 
   /**
-   * Clear a session's t/s read-out: both the live badge value and the
-   * end-of-turn rate fields inside tokenStats. Used on error/abort paths —
-   * without the tokenStats clear, the PREVIOUS turn's evalTps would keep
-   * displaying as if it belonged to the aborted/errored turn (the store's
-   * SET_TOKEN_STATS merge preserves tps fields that a payload omits).
+   * Clear a session's live t/s read-out — the number the status bar shows
+   * while a turn is running.
+   *
+   * The end-of-turn rates inside `tokenStats` are deliberately NOT touched
+   * here: they are delivered once, on the `done` event, and they are the
+   * numbers the user wants to see afterwards. A turn that ends successfully
+   * must not have them wiped a moment after they arrive.
    */
   const clearTpsReadout = useCallback(
     (targetSessionId?: number) => {
@@ -93,13 +94,28 @@ export function useChatStream(
         tps: null,
         ...(targetSessionId === undefined ? {} : { targetSessionId }),
       });
+    },
+    [dispatch]
+  );
+
+  /**
+   * Clear the live read-out AND the end-of-turn rate fields.
+   *
+   * Used on error and abort paths: the store's SET_TOKEN_STATS merge
+   * preserves rate fields that a payload omits, so without this the
+   * PREVIOUS turn's evalTps would keep displaying as if it belonged to the
+   * aborted or errored turn.
+   */
+  const clearTokenRates = useCallback(
+    (targetSessionId?: number) => {
+      clearTpsReadout(targetSessionId);
       dispatch({
         type: 'SET_TOKEN_STATS',
         stats: { evalTps: null, promptTps: null, evalTpsEstimated: false },
         ...(targetSessionId === undefined ? {} : { targetSessionId }),
       });
     },
-    [dispatch]
+    [clearTpsReadout, dispatch]
   );
 
   /**
@@ -146,12 +162,8 @@ export function useChatStream(
           const ctrl = abortControllersRef.current.get(NEW_SESSION_KEY)!;
           abortControllersRef.current.delete(NEW_SESSION_KEY);
           abortControllersRef.current.set(realId, ctrl);
-          setStreamingSessions((prev) => {
-            const next = new Set(prev);
-            next.delete(NEW_SESSION_KEY);
-            next.add(realId);
-            return next;
-          });
+          // The store's streaming set is the single record of which
+          // sessions are streaming; these two dispatches maintain it.
           dispatch({ type: 'STOP_STREAMING', sessionId: -1 });
           dispatch({ type: 'START_STREAMING', sessionId: realId });
         }
@@ -287,8 +299,11 @@ export function useChatStream(
       if (outcome.clearTps) {
         clearTpsReadout(targetSessionId);
       }
+      if (outcome.clearRates) {
+        clearTokenRates(targetSessionId);
+      }
     },
-    [dispatch, clearTpsReadout]
+    [dispatch, clearTokenRates, clearTpsReadout]
   );
 
   /**
@@ -338,11 +353,6 @@ export function useChatStream(
         // The reload must not switch the view — the user may have moved to
         // another session while this turn was running.
         await loadSessionMessages(ownerId, true, { keepCurrentSession: true });
-        setStreamingSessions((prev) => {
-          const next = new Set(prev);
-          next.delete(ownerId);
-          return next;
-        });
         dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
         // Apply a terminal `done` that was buffered while this stream's
         // owner was a background session: its tokenStats (including the
@@ -364,8 +374,14 @@ export function useChatStream(
       streamStateRef.current = afterEnd;
 
       // Clear the live value scoped to the OWNER (unscoped fallback when the
-      // owner is unknown) — never wipe a different session's badge.
-      clearTpsReadout(ownerId);
+      // owner is unknown) — never wipe a different session's badge. A turn
+      // that failed also drops the stale end-of-turn rates; a turn that
+      // succeeded keeps the ones the server just delivered.
+      if (requestFailed) {
+        clearTokenRates(ownerId);
+      } else {
+        clearTpsReadout(ownerId);
+      }
       loadSessions();
       // The server titles a new chat once its first turn ends; give it a
       // moment to arrive before refreshing the list again.
@@ -378,6 +394,7 @@ export function useChatStream(
     [
       dispatch,
       abortControllersRef,
+      clearTokenRates,
       clearTpsReadout,
       flushBufferedDoneFor,
       loadSessionMessages,
@@ -389,7 +406,7 @@ export function useChatStream(
    * Retry a failed chat turn using the originally-stored request payload.
    */ const retry = useCallback(async () => {
     const sessionId = streamKeyFor(refs.sessionIdRef.current);
-    if (!retryPayloadRef.current || streamingSessions.has(sessionId)) return;
+    if (!retryPayloadRef.current || state.streamingSessions.has(sessionId)) return;
 
     const { body } = retryPayloadRef.current;
     dispatch({ type: 'SET_CURRENT_TPS', tps: null });
@@ -397,7 +414,6 @@ export function useChatStream(
 
     const abortController = new AbortController();
     abortControllersRef.current.set(sessionId, abortController);
-    setStreamingSessions((prev) => new Set(prev).add(sessionId));
     dispatch({ type: 'START_STREAMING', sessionId });
 
     const requestId = nextRequestIdRef.current++;
@@ -423,7 +439,7 @@ export function useChatStream(
         // User clicked Stop — the turn never completed, so the t/s read-out
         // must not keep displaying the previous turn's rate as if it
         // belonged to this one.
-        clearTpsReadout(ownerOf(streamStateRef.current, requestId));
+        clearTokenRates(ownerOf(streamStateRef.current, requestId));
       } else if (
         details.message.includes('input stream') ||
         details.message.includes('network') ||
@@ -436,11 +452,11 @@ export function useChatStream(
           error:
             'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
         });
-        clearTpsReadout(ownerOf(streamStateRef.current, requestId));
+        clearTokenRates(ownerOf(streamStateRef.current, requestId));
       } else {
         streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
         dispatch({ type: 'SET_ERROR', error: details.message });
-        clearTpsReadout(ownerOf(streamStateRef.current, requestId));
+        clearTokenRates(ownerOf(streamStateRef.current, requestId));
       }
     } finally {
       await finishTurn(requestId);
@@ -448,11 +464,11 @@ export function useChatStream(
   }, [
     dispatch,
     handleEvent,
-    clearTpsReadout,
+    clearTokenRates,
     finishTurn,
     refs,
     abortControllersRef,
-    streamingSessions,
+    state.streamingSessions,
   ]);
   /**
    * Call this after loading a session's messages to replay any SSE events that
@@ -614,7 +630,7 @@ export function useChatStream(
   const sendChatMessage = useCallback(
     async (message: string, attachments?: Attachment[]) => {
       const sessionId = streamKeyFor(refs.sessionIdRef.current);
-      if (streamingSessions.has(sessionId)) return;
+      if (state.streamingSessions.has(sessionId)) return;
 
       if (!refs.modelRef.current.trim()) {
         dispatch({ type: 'SET_ERROR', error: 'Please select a model first' });
@@ -646,7 +662,6 @@ export function useChatStream(
 
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
-      setStreamingSessions((prev) => new Set(prev).add(sessionId));
       dispatch({ type: 'START_STREAMING', sessionId });
 
       // Record which session owns this stream so events can be buffered when
@@ -709,12 +724,12 @@ export function useChatStream(
         if (!details) {
           streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
           dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
-          clearTpsReadout(ownerOf(streamStateRef.current, requestId));
+          clearTokenRates(ownerOf(streamStateRef.current, requestId));
         } else if (details.name === 'AbortError') {
           // User clicked Stop — the turn never completed, so the t/s
           // read-out must not keep displaying the previous turn's rate as
           // if it belonged to this one.
-          clearTpsReadout(ownerOf(streamStateRef.current, requestId));
+          clearTokenRates(ownerOf(streamStateRef.current, requestId));
         } else if (
           details.message.includes('input stream') ||
           details.message.includes('network') ||
@@ -727,11 +742,11 @@ export function useChatStream(
             error:
               'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
           });
-          clearTpsReadout(ownerOf(streamStateRef.current, requestId));
+          clearTokenRates(ownerOf(streamStateRef.current, requestId));
         } else {
           streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
           dispatch({ type: 'SET_ERROR', error: details.message });
-          clearTpsReadout(ownerOf(streamStateRef.current, requestId));
+          clearTokenRates(ownerOf(streamStateRef.current, requestId));
         }
       } finally {
         await finishTurn(requestId);
@@ -740,11 +755,11 @@ export function useChatStream(
     [
       dispatch,
       handleEvent,
-      clearTpsReadout,
+      clearTokenRates,
       finishTurn,
       refs,
       abortControllersRef,
-      streamingSessions,
+      state.streamingSessions,
     ]
   );
   return { sendChatMessage, retry, handleEvent, replayBufferedEvents, canRetry };

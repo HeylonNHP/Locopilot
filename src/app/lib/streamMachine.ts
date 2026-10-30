@@ -31,10 +31,14 @@ export interface StreamRequest {
 
 /** Everything the client knows about its live turns. */
 export interface StreamState {
-  /** Live turns, by request id. */
+  /**
+   * Live turns, by request id.
+   *
+   * This is the only ownership record: a turn's session is read from here
+   * (`ownerOf`), so there is no second map to keep in step. The set of
+   * streaming sessions lives in the store, which is what the UI reads.
+   */
   requests: Map<number, StreamRequest>;
-  /** The live turn that owns each session key. */
-  owners: Map<number, number>;
   /** Events held while the user was looking at another session. */
   buffers: Map<number, BufferedEvent[]>;
 }
@@ -42,7 +46,6 @@ export interface StreamState {
 export function createStreamState(): StreamState {
   return {
     requests: new Map(),
-    owners: new Map(),
     buffers: new Map(),
   };
 }
@@ -60,11 +63,9 @@ export function beginRequest(
 ): StreamState {
   const requests = new Map(state.requests);
   requests.set(requestId, { requestId, sessionKey, failed: false });
-  const owners = new Map(state.owners);
-  owners.set(sessionKey, requestId);
   const buffers = new Map(state.buffers);
   buffers.delete(sessionKey);
-  return { requests, owners, buffers };
+  return { requests, buffers };
 }
 
 /**
@@ -84,12 +85,8 @@ export function endRequest(
   const request = state.requests.get(requestId);
   const requests = new Map(state.requests);
   requests.delete(requestId);
-  const owners = new Map(state.owners);
-  if (request && owners.get(request.sessionKey) === requestId) {
-    owners.delete(request.sessionKey);
-  }
   return {
-    state: { ...state, requests, owners },
+    state: { ...state, requests },
     sessionKey: request?.sessionKey,
     failed: isRequestFailed(state, requestId),
   };
@@ -136,18 +133,13 @@ export function migrateSessionKey(state: StreamState, sessionId: number): Stream
     );
   }
 
-  const owners = new Map<number, number>();
-  for (const [sessionKey, requestId] of state.owners) {
-    owners.set(sessionKey === -1 ? sessionId : sessionKey, requestId);
-  }
-
   const buffers = new Map<number, BufferedEvent[]>();
   for (const [sessionKey, events] of state.buffers) {
     const key = sessionKey === -1 ? sessionId : sessionKey;
     buffers.set(key, [...(buffers.get(key) ?? []), ...events]);
   }
 
-  return { requests, owners, buffers };
+  return { requests, buffers };
 }
 
 /**

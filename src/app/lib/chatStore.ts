@@ -449,15 +449,7 @@ function applyToSession(
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SET_MESSAGES': {
-      // Ignore the dispatch if it was meant for a different session.
-      // This prevents stale async responses from loadSessionMessages
-      // from overwriting the currently-viewed session's messages.
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
-        return state;
-      }
+      const messages = action.messages.filter((m: ChatMessage) => m.role !== 'system').map(withId);
       if (
         !action.allowEmptyWhileStreaming &&
         action.messages.length === 0 &&
@@ -466,9 +458,24 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       ) {
         return state;
       }
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        // The session this belongs to is not the one on screen: write the
+        // copy into that session's slot instead of dropping it. The visible
+        // session is left untouched, which is what the old guard protected
+        // against — but the copy itself was lost, so a turn that finished in
+        // the background never reconciled its transcript.
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          messages,
+        }));
+        return nextState;
+      }
       return {
         ...state,
-        messages: action.messages.filter((m: ChatMessage) => m.role !== 'system').map(withId),
+        messages,
       };
     }
     case 'SAVE_INPUT_DRAFT': {

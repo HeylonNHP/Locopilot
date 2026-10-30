@@ -203,7 +203,9 @@ check('the migration is idempotent', () => {
   state = migrateSessionKey(state, 7);
   state = migrateSessionKey(state, 7);
   assert.equal(ownerOf(state, 1), 7);
-  assert.equal(state.owners.size, 1);
+  // One request, one buffer — the migration must not duplicate either.
+  assert.equal(state.requests.size, 1);
+  assert.equal(state.buffers.size, 0);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

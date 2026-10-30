@@ -83,8 +83,14 @@ export interface SseRouteOutcome {
   subagentChunk?: { agentId: string; text: string; owner?: number };
   /** The turn failed, so its retry payload must be preserved. */
   markFailed?: boolean;
-  /** The t/s read-out for the routed owner must be cleared. */
+  /** The live t/s read-out for the routed owner must be cleared. */
   clearTps?: boolean;
+  /**
+   * The end-of-turn rate fields must be cleared as well — for a turn that
+   * failed, the previous turn's rates must not keep displaying as if they
+   * belonged to it.
+   */
+  clearRates?: boolean;
 }
 
 const trace = (label: string, data?: Record<string, unknown>) => {
@@ -414,6 +420,10 @@ export function routeSseEvent(
       // tokenStats just applied. Clear it scoped to the owning session —
       // an unscoped clear would wipe the VISIBLE session's badge when a
       // background stream's buffer is replayed on switch-back.
+      //
+      // Only the live read-out is cleared: the end-of-turn rates in
+      // `tokenStats` were just delivered by the server and are the numbers
+      // the user wants to see.
       return { actions, clearTps: true };
     }
 
@@ -434,7 +444,12 @@ export function routeSseEvent(
       // A turn whose session no longer exists is the exception: retrying
       // would fail exactly the same way, so the turn is not marked as
       // failed and its retry payload is dropped.
-      return { actions, markFailed: !data.sessionMissing, clearTps: true };
+      return {
+        actions,
+        markFailed: !data.sessionMissing,
+        clearTps: true,
+        clearRates: true,
+      };
     }
 
     case 'write_error': {
@@ -454,7 +469,7 @@ export function routeSseEvent(
       // A persistence failure is still a failed turn as far as the t/s
       // read-out is concerned — clear both the live value and any stale
       // end-of-turn rate.
-      return { actions, markFailed: true, clearTps: true };
+      return { actions, markFailed: true, clearTps: true, clearRates: true };
     }
 
     case 'clear_assistant': {

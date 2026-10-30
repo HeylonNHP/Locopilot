@@ -14,6 +14,10 @@ import type { StableRefs } from './useStableRefs';
  */
 export function useDataLoaders(refs: StableRefs) {
   const { state, dispatch } = useChat();
+  // The loader's identity must stay stable (it is in dependency arrays), so
+  // it reads the store through a ref rather than closing over `state`.
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const sessionLoadRequestIdRef = useRef(0);
   // View-neutral refreshes (the end-of-turn reload) get their own
   // "latest wins" token. Sharing the session-load token with them would let
@@ -48,6 +52,24 @@ export function useDataLoaders(refs: StableRefs) {
   // useSessionUrlParam) is expected to have already optimistically updated
   // refs.sessionIdRef.current to sessionId so guard checks see the right
   // value during the in-flight request.
+  /**
+   * The token limit already known for a session.
+   *
+   * The server reports the model's real ceiling (the requested size clamped
+   * to it) on every turn. A reload must not replace that with the user's
+   * REQUESTED size: the badge's denominator and the 75 %/90 % thresholds
+   * would then be computed against a limit the model does not have.
+   */
+  const knownTokenLimit = useCallback((sessionId: number): number | undefined => {
+    const current = stateRef.current;
+    const stats =
+      sessionId === current.currentSessionId
+        ? current.tokenStats
+        : current.sessionStates.get(sessionId)?.tokenStats;
+    const limit = stats?.tokenLimit;
+    return typeof limit === 'number' && limit > 0 ? limit : undefined;
+  }, []);
+
   const loadSessionMessages = useCallback(
     async (
       sessionId: number,
@@ -147,7 +169,7 @@ export function useDataLoaders(refs: StableRefs) {
           // the user's requested value as the tokenLimit. The
           // chat route's `resolveEffectiveNumCtx` will re-resolve the
           // real cap on the next request and emit it via SSE.
-          const tokenLimit = refs.requestedNumCtxRef.current;
+          const tokenLimit = knownTokenLimit(sessionId) ?? refs.requestedNumCtxRef.current;
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
@@ -160,7 +182,7 @@ export function useDataLoaders(refs: StableRefs) {
             targetSessionId: sessionId,
           });
         } else if (hasSessionStats) {
-          const tokenLimit = refs.requestedNumCtxRef.current;
+          const tokenLimit = knownTokenLimit(sessionId) ?? refs.requestedNumCtxRef.current;
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
@@ -179,7 +201,7 @@ export function useDataLoaders(refs: StableRefs) {
               promptEvalCount: 0,
               evalCount: data.estimatedTokens,
               totalTokens: data.estimatedTokens,
-              tokenLimit: refs.requestedNumCtxRef.current,
+              tokenLimit: knownTokenLimit(sessionId) ?? refs.requestedNumCtxRef.current,
               isEstimated: true,
             },
             targetSessionId: sessionId,
@@ -191,7 +213,7 @@ export function useDataLoaders(refs: StableRefs) {
         // Silently ignore
       }
     },
-    [dispatch]
+    [dispatch, knownTokenLimit]
   );
 
   // Called only on mount — no stability guarantee needed. Populates the
