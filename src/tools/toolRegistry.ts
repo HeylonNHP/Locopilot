@@ -168,6 +168,15 @@ export interface SubAgentConfig {
    * Inherited from the parent session's setting.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * `Config.redactSecrets`, inherited from the parent session.
+   *
+   * It decides whether the secrets in the tool arguments AND the tool
+   * results are redacted out of the sub-agent's compaction summaries — the
+   * same switch the main session's compaction honours, so a sub-agent cannot
+   * quietly apply a different policy to the same conversation.
+   */
+  redactSecrets?: boolean;
   tools: ToolDefinition[];
   /**
    * Sub-agent-local approval ledger for `mcp_call`. The chat route

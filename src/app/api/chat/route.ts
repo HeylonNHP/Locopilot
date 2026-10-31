@@ -901,6 +901,10 @@ export async function POST(req: NextRequest): Promise<Response> {
               compactionModel: effectiveCompactionModel,
               compactionLlmRequestContext,
               compactionNumCtx,
+              // The sub-agent inherits the parent's redaction setting, so its
+              // compaction summaries are redacted exactly like the main
+              // session's.
+              redactSecrets: config?.redactSecrets ?? true,
               ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
               tools: TOOLS.filter(
                 (tool) =>
@@ -1497,7 +1501,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                   // Live compaction speed for the t/s badge.
                   (tps: number) => {
                     sendEvent('status', { phase: 'compacting', tps });
-                  }
+                  },
+                  // The user's redaction setting: with it OFF the summariser
+                  // sees the raw tool arguments and tool results, with it ON
+                  // both are redacted.
+                  config?.redactSecrets ?? true
                 );
                 // Replace server-side history with the compacted result.
                 const preservedSystemMessage = currentMessages[0];

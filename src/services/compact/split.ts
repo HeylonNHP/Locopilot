@@ -274,11 +274,19 @@ export function splitHistoryForCompaction(
  * next message would overflow but is a tool response, it is folded into the
  * current chunk so assistant + tool-response blocks always stay together (even
  * if that slightly exceeds the nominal budget).
+ *
+ * @param estimateMessageTokens - How many tokens a single message contributes.
+ *                               Defaults to the raw message estimate. The
+ *                               map-reduce path overrides it with the size of
+ *                               the SERIALISED message, because that is what
+ *                               the summariser actually receives.
  */
 export function splitHistoryIntoChunks(
   messages: ChatMessage[],
   safeInputBudget: number,
-  model: string
+  model: string,
+  estimateMessageTokens: (message: ChatMessage) => number = (message) =>
+    countMessageTokens(message, model)
 ): ChatMessage[][] {
   const chunks: ChatMessage[][] = [];
   if (messages.length === 0) {
@@ -292,7 +300,7 @@ export function splitHistoryIntoChunks(
     if (!message) {
       continue;
     }
-    const messageTokens = countMessageTokens(message, model);
+    const messageTokens = estimateMessageTokens(message);
     const wouldOverflow = chunk.length > 0 && chunkTokens + messageTokens > safeInputBudget;
     const isTool = message.role === 'tool';
 

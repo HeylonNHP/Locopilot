@@ -250,7 +250,12 @@ export async function POST(request: NextRequest): Promise<Response> {
           // Live compaction speed for the t/s badge.
           (tps: number) => {
             sendEvent('status', { phase: 'compacting', tps });
-          }
+          },
+          // The user's redaction setting, read from the stored config (the
+          // same source the compaction provider is resolved from): with it
+          // OFF the summariser sees the raw tool arguments and tool results,
+          // with it ON both are redacted.
+          config?.redactSecrets ?? true
         );
 
         const parsedSessionId =

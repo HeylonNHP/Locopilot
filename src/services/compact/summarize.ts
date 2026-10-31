@@ -14,9 +14,10 @@ import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
 import { type ChatMessage, type LlmRequestContext, sendLlmChatStream } from '@/services/llm';
 import { LiveThroughputMeter } from '@/services/tokenThroughput';
 
-import type { SummaryBudget } from './types';
+import type { SummaryBudget, ToolNameMap } from './types';
 
 import { SUMMARY_NUM_PREDICT_BUFFER_RATIO } from './constants';
+import { serializeHistoryForSummaryText, type SerializeHistoryOptions } from './serialize';
 
 interface BuildCompactSystemPromptParams {
   targetSummaryTokens: number;
@@ -100,6 +101,73 @@ interface SummariseChunkParams {
   reasoningEffort?: ReasoningEffort;
   /** Optional live t/s reporter so the UI can show compaction speed. */
   onTps?: (tps: number) => void;
+  /**
+   * Tool-call id → tool name, built from the FULL conversation. Threaded
+   * through so a tool result that outlived its assistant row still renders
+   * with the name of the tool that produced it.
+   */
+  toolNames?: ToolNameMap;
+  /**
+   * Whether secrets are redacted out of the projected arguments AND the tool
+   * results. Defaults to true — the same default as `Config.redactSecrets`.
+   */
+  redactSecrets?: boolean;
+  /**
+   * The cap for the text of one tool result. Defaults to the serialiser's own
+   * default (8000 characters).
+   */
+  maxToolResultChars?: number;
+}
+
+/** The request the summariser receives for one chunk of history. */
+export interface SummarisationInput {
+  /** The exact messages handed to the model. */
+  messages: ChatMessage[];
+  /** The serialised history text — also the source of the empty-response retry. */
+  historyText: string;
+}
+
+/**
+ * Builds the summarisation request for a chunk of history.
+ *
+ * The history is rendered with the tool-aware serialiser, so the model sees
+ * the ACTION (which command was run, which file was written) next to the
+ * OUTPUT (the tool result) instead of a flat list of role/content pairs that
+ * silently dropped every tool call.
+ *
+ * The `options` carry the three policies the serialiser needs: the tool-name
+ * map, the redaction switch and the cap for a tool result.
+ *
+ * Exported so the exact request can be inspected without issuing a model
+ * call — the compaction pipeline has no other seam for that.
+ */
+export function buildSummarisationInput(
+  historyMessages: ChatMessage[],
+  budget: SummaryBudget,
+  preservedRecentTokens: number,
+  numCtx: number,
+  options?: SerializeHistoryOptions
+): SummarisationInput {
+  const historyText = serializeHistoryForSummaryText(historyMessages, options);
+
+  const messages: ChatMessage[] = [
+    {
+      role: 'system',
+      content: buildCompactSystemPrompt({
+        targetSummaryTokens: budget.targetSummaryTokens,
+        minSummaryTokens: budget.minSummaryTokens,
+        maxSummaryTokens: budget.maxSummaryTokens,
+        preservedRecentTokens,
+        numCtx,
+      }),
+    },
+    {
+      role: 'user',
+      content: `Please summarise the following conversation history:\n\n${historyText}`,
+    },
+  ];
+
+  return { messages, historyText };
 }
 
 /**
@@ -119,30 +187,26 @@ export async function summariseChunk(params: SummariseChunkParams): Promise<stri
     signal,
     reasoningEffort,
     onTps,
+    toolNames,
+    redactSecrets,
+    maxToolResultChars,
   } = params;
 
-  const historyText = historyMessages
-    .map((m) => `[${m.role.toUpperCase()}]: ${m.content ?? ''}`)
-    .join('\n\n');
+  // The summariser sees the tool-aware serialisation of the history: the
+  // action (which command ran, which file was edited) next to the output.
+  const { messages: summarisationMessages, historyText } = buildSummarisationInput(
+    historyMessages,
+    budget,
+    preservedRecentTokens,
+    numCtx,
+    {
+      ...(toolNames ? { toolNames } : {}),
+      redactSecrets: redactSecrets ?? true,
+      ...(maxToolResultChars === undefined ? {} : { maxToolResultChars }),
+    }
+  );
 
   const prefix = label ? `${label} — ` : '';
-
-  const summarisationMessages: ChatMessage[] = [
-    {
-      role: 'system',
-      content: buildCompactSystemPrompt({
-        targetSummaryTokens: budget.targetSummaryTokens,
-        minSummaryTokens: budget.minSummaryTokens,
-        maxSummaryTokens: budget.maxSummaryTokens,
-        preservedRecentTokens,
-        numCtx,
-      }),
-    },
-    {
-      role: 'user',
-      content: `Please summarise the following conversation history:\n\n${historyText}`,
-    },
-  ];
 
   const forwardProgress = (message: string): void => onProgress?.(`${prefix}${message}`);
 

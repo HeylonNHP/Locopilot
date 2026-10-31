@@ -487,7 +487,11 @@ async function autoCompactSubAgentIfNeeded(
           // so the t/s badge keeps updating while the sub-agent compacts.
           (tps: number) => {
             output.reportTps?.(tps);
-          }
+          },
+          // The sub-agent inherits the parent's redaction setting, so its
+          // compaction summaries are redacted exactly like the main
+          // session's.
+          config.redactSecrets ?? true
         );
         return {
           newMessages: compactionResult.newMessages,

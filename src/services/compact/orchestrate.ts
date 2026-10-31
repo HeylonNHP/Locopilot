@@ -18,6 +18,7 @@ import { COMPACT_ACCEPTANCE_HEADROOM, MIN_SUMMARISE_TOKENS, SUMMARY_PREAMBLE } f
 import { distillToolMessages } from './distill';
 import { measureConversationTokens } from './measure';
 import { produceConversationSummary } from './reduce';
+import { buildToolNameMap } from './serialize';
 import { findLatestUserMessageIndex, splitHistoryForCompaction } from './split';
 
 /**
@@ -45,6 +46,10 @@ import { findLatestUserMessageIndex, splitHistoryForCompaction } from './split';
  *                          stream, so the UI can show compaction speed. Not
  *                          wired to the token-measurement call (it generates
  *                          at most one token, so it has no meaningful rate).
+ * @param redactSecrets  - Whether secrets are redacted out of the tool
+ *                          arguments AND the tool results that reach the
+ *                          summariser. Defaults to true — the same default as
+ *                          `Config.redactSecrets`, which the callers pass in.
  */
 export async function compactHistory(
   ctx: LlmRequestContext,
@@ -57,7 +62,8 @@ export async function compactHistory(
   onStats?: (stats: CompactStats) => void,
   signal?: AbortSignal,
   reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void
+  onTps?: (tps: number) => void,
+  redactSecrets: boolean = true
 ): Promise<CompactResult> {
   const oldTokenCount = await measureConversationTokens(
     ctx,
@@ -75,6 +81,14 @@ export async function compactHistory(
   if (historyMessages.length === 0) {
     throw new Error('Cannot compact: conversation has no content beyond the system prompt.');
   }
+
+  // Tool-call id → tool name, built from the FULL conversation (system rows
+  // included: they never carry tool calls, so this is a superset of the
+  // summarised slice). A tool result can outlive the assistant row that issued
+  // it — the history split may bisect an assistant+tool block — so the name
+  // has to be resolvable even when the owning assistant is not part of the
+  // summarised slice.
+  const toolNames = buildToolNameMap(messages);
 
   // ── Guard against degenerate empty-summary crash ─────────────────────────
   // Subagents (and any short-history code path) can reach this point with
@@ -170,7 +184,9 @@ export async function compactHistory(
     onProgress,
     signal,
     reasoningEffort,
-    onTps
+    onTps,
+    toolNames,
+    redactSecrets
   );
 
   // Rebuild the message history: a single assistant message holds the preamble
@@ -221,7 +237,8 @@ export async function compactHistory(
       onStats,
       signal,
       reasoningEffort,
-      onTps
+      onTps,
+      redactSecrets
     );
     // Report stats relative to the original pre-compaction history.
     return {
