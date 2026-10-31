@@ -57,7 +57,7 @@ try {
   const PATTERNS = [
     {
       label: 'an Authorization header',
-      secret: 'ey' + 'jhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop',
+      secret: 'ey' + 'jhbGciOiJIUzI1NiJ9' + '.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
       text: 'Authorization: Bearer ey' + 'jhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop',
     },
     {
@@ -67,33 +67,33 @@ try {
     },
     {
       label: 'a JSON web token',
-      secret: 'ey' + 'jhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop',
+      secret: 'ey' + 'jhbGciOiJIUzI1NiJ9' + '.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
       text: 'the token was ey' + 'jhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop and then',
     },
     {
       label: 'an sk- key',
-      secret: 'sk' + '-abcdefghijklmnopqrstuvwxyz0123456789',
-      text: 'OPENAI_API_KEY=sk' + '-abcdefghijklmnopqrstuvwxyz0123456789',
+      secret: 'sk-' + 'abcdefghijklmnopqrstuvwxyz' + '0123456789',
+      text: 'OPENAI_API_KEY=' + 'sk-' + 'abcdefghijklmnopqrstuvwxyz' + '0123456789',
     },
     {
       label: 'a Slack bot token',
-      secret: 'xox' + 'b-123456789012-1234567890123-abcdefghijklmnopqrstuvwx',
-      text: 'slack said xox' + 'b-123456789012-1234567890123-abcdefghijklmnopqrstuvwx',
+      secret: 'xo' + 'xb-123456789012-1234567890123' + '-abcdefghijklmnopqrstuvwx',
+      text: 'slack said xo' + 'xb-123456789012-1234567890123-abcdefghijklmnopqrstuvwx',
     },
     {
       label: 'a GitHub personal token',
-      secret: 'ghp' + '_abcdefghijklmnopqrstuvwxyz0123456789',
-      text: 'git push with ghp' + '_abcdefghijklmnopqrstuvwxyz0123456789',
+      secret: 'gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789',
+      text: 'git push with gh' + 'p_abcdefghijklmnopqrstuvwxyz0123456789',
     },
     {
       label: 'a GitHub fine-grained token',
-      secret: 'github' + '_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz1234567890',
+      secret: 'github_' + 'pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz1234567890',
       text: 'git push with github' + '_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz1234567890',
     },
     {
       label: 'a GitLab token',
-      secret: 'glpat-abcdefghijklmnopqrst',
-      text: 'gitlab wants glpat-abcdefghijklmnopqrst',
+      secret: 'gl' + 'pat-abcdefghijklmnopqrst',
+      text: 'gitlab wants gl' + 'pat-abcdefghijklmnopqrst',
     },
     {
       label: 'a secret in a query string',
