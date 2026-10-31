@@ -22,7 +22,6 @@ import {
   type OutputScope,
   runOutputDirectory,
 } from '@/tools/runCommandOutputStore';
-import { sanitize } from '@/tools/textSanitizer';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import {
   getAgentWorkingDirectory,
@@ -49,7 +48,7 @@ const SPOOL_LIMITS: SpoolLimits = {
 
 export const runCommandToolSchema: ToolSchema = {
   name: 'run_command',
-  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns the captured stdout/stderr. A large stream is kept in full in a file and the result shows a lossy excerpt of it, together with the path of that file: read the file with read_file(path, start_line, end_line) instead of running the command again. The byte and line counts describe the WHOLE output, not the excerpt, and the exit code is the command's own status — it says nothing about how much output was captured. Secrets in the output are replaced with [REDACTED]. The full-output file can be switched off with LOCOPILOT_RUN_OUTPUT_SPILL=0, which brings back the older bounded capture.`,
+  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns the captured stdout/stderr. A large output is kept in a file: the result shows an excerpt of it and the line range to read with read_file(path, start_line, end_line).`,
   parameters: {
     type: 'object',
     properties: {
@@ -75,7 +74,7 @@ export const runCommandToolSchema: ToolSchema = {
 export const checkProcessOutputToolSchema: ToolSchema = {
   name: 'check_process_output',
   description:
-    "Returns the current captured stdout/stderr of a command that was previously started with run_command and is still running (or has since completed). A large stream is kept in full in a file and the result shows a lossy excerpt of it, together with the path of that file: read the file with read_file(path, start_line, end_line) rather than re-running the command. The byte and line counts describe the WHOLE output, not the excerpt. Also reports whether the process has finished and its exit code, which is the command's own status and says nothing about how much output was captured. Secrets in the output are replaced with [REDACTED].",
+    'Returns the current captured stdout/stderr of a command that was previously started with run_command and is still running (or has since completed). Also reports whether the process has finished and its exit code.',
   parameters: {
     type: 'object',
     properties: {
@@ -254,8 +253,8 @@ function appendWorkingDirectoryProbe(
 
 /**
  * Describes one captured stream: how big the FULL stream was, where the
- * artifact that holds it lives, and — when the preview is lossy — how the
- * model reads what the preview left out.
+ * artifact that holds it lives, and — when the excerpt is lossy — which
+ * lines of the artifact the excerpt left out.
  *
  * The counts come from the artifact on disk, not from the in-memory
  * capture, so they describe the file the model is about to open.
@@ -264,14 +263,43 @@ function describeStream(label: string, spool: OutputSpool, spillEnabled: boolean
   const stats = spool.stats();
   if (spillEnabled && stats.spoolPath && stats.totalBytes > 0) {
     const artifact = describeOutputFile(stats.spoolPath);
+    if (artifact.bytes === 0) {
+      // The artifact is missing or empty. A path the model cannot open is
+      // worse than no path at all, so the marker says that the file is not
+      // available instead of pointing at a file that is not there — and it
+      // never prints a line range that `read_file` would reject.
+      return [
+        `${label}: [${stats.totalBytes} bytes were captured but the output file is not available]`,
+      ];
+    }
     const lines = [
-      `${label}: [${artifact.bytes} bytes, ${artifact.lines} lines] full output: ${stats.spoolPath}`,
+      `${label}: [${artifact.bytes} bytes, ${artifact.lines} lines] redacted output: ${stats.spoolPath}`,
     ];
     if (stats.truncated) {
-      lines.push(
-        `${label}: [the excerpt above is lossy — ${stats.omittedBytes} bytes are not shown; ` +
-          `read the rest with read_file(path="${stats.spoolPath}", start_line=1, end_line=${artifact.lines})]`
-      );
+      // The range the excerpt left out, in the line numbering of the file.
+      // The counts are clamped to the file: the artifact can be shorter than
+      // the stream when the spool cap stopped the write.
+      const first = Math.min(stats.headEndLine + 1, artifact.lines);
+      const last = Math.min(stats.tailStartLine - 1, artifact.lines);
+      if (first <= last) {
+        lines.push(
+          `${label}: [the excerpt above is lossy — ${stats.omittedBytes} bytes are not shown; ` +
+            `read lines ${first}-${last} with read_file(path="${stats.spoolPath}", ` +
+            `start_line=${first}, end_line=${last})]`
+        );
+      } else {
+        lines.push(
+          `${label}: [the excerpt above is lossy — ${stats.omittedBytes} bytes are not shown; ` +
+            `they are in the file]`
+        );
+      }
+      if (stats.headLineTruncated) {
+        lines.push(
+          `${label}: [the first line of the excerpt is cut short — the file holds it whole]`
+        );
+      }
+    } else {
+      lines.push(`${label}: [the excerpt above is the whole output]`);
     }
     if (stats.spoolTruncated) {
       lines.push(
@@ -289,17 +317,19 @@ function describeStream(label: string, spool: OutputSpool, spillEnabled: boolean
 
 function buildOutput(entry: ProcessEntry, finished: boolean, processId: number | null): string {
   const parts: string[] = [];
+  // The capture redacts the secrets and strips the terminal control
+  // sequences on the way in, so the text the model sees is the text that is
+  // on the disk — the preview is a view of the artifact, not a second
+  // rendering of the stream.
   const stdout = entry.stdout.text();
   const stderr = entry.stderr.text();
-  const sanitizedStdout = sanitize(stdout);
-  const sanitizedStderr = sanitize(stderr);
   const elapsedMs = Math.max(0, Date.now() - entry.startedAt.getTime());
   const elapsedSeconds = (elapsedMs / 1000).toFixed(2);
 
-  if (sanitizedStdout) parts.push(`stdout:\n${sanitizedStdout}`);
+  if (stdout) parts.push(`stdout:\n${stdout}`);
   const stdoutMarker = describeStream('stdout', entry.stdout, entry.spillEnabled);
   parts.push(...stdoutMarker);
-  if (sanitizedStderr) parts.push(`stderr:\n${sanitizedStderr}`);
+  if (stderr) parts.push(`stderr:\n${stderr}`);
   const stderrMarker = describeStream('stderr', entry.stderr, entry.spillEnabled);
   parts.push(...stderrMarker);
   if (parts.length === 0) parts.push('(no output)');
@@ -425,27 +455,43 @@ export async function runCommand(
   store.registry.set(processId, entry);
 
   const config = getShellConfig(effectiveShell);
+
+  // The abort handler has to be registered BEFORE the spawn. `spawn` installs
+  // Node's own abort listener, and that listener emits the child's 'error'
+  // event SYNCHRONOUSLY: our 'error' handler finalizes the command, and
+  // finalizing removes this handler — a listener removed while the 'abort'
+  // event is being dispatched never runs. A handler registered after the
+  // spawn would therefore never fire and the process group would survive
+  // the abort, leaving the command's children running with the stdout pipe
+  // still open.
+  let spawned: ChildProcess | null = null;
+  const abortHandler = (): void => {
+    entry.aborted = true;
+    // The whole process GROUP has to die. The child is spawned detached on
+    // POSIX, so its pid is the process-group leader and the negative-pid
+    // group kill inside `killProcessTree` reaches every descendant. A
+    // plain `child.kill()` would leave the command's own children
+    // running, holding the pipe open and writing into the artifact after
+    // the tool has already answered.
+    if (spawned) killProcessTree(spawned);
+  };
+  if (signal) {
+    signal.addEventListener('abort', abortHandler, { once: true });
+  }
+
   const child = spawn(config.bin, config.args, {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: !isWindows,
     cwd: workingDirectory,
     signal,
   });
+  spawned = child;
   entry.process = child;
 
-  let abortHandler: (() => void) | undefined;
-  if (signal) {
-    abortHandler = () => {
-      entry.aborted = true;
-      // The whole process GROUP has to die. The child is spawned detached on
-      // POSIX, so its pid is the process-group leader and the negative-pid
-      // group kill inside `killProcessTree` reaches every descendant. A
-      // plain `child.kill()` would leave the command's own children
-      // running, holding the pipe open and writing into the artifact after
-      // the tool has already answered.
-      killProcessTree(child);
-    };
-    signal.addEventListener('abort', abortHandler, { once: true });
+  if (signal?.aborted) {
+    // The signal was already aborted when the command started, so the
+    // 'abort' event has fired and the handler above will never run.
+    abortHandler();
   }
 
   child.stdout?.on('data', (chunk: Buffer) => {
@@ -486,15 +532,17 @@ export async function runCommand(
         const currentStore = requestProcessState.getStore();
         currentStore?.registry.delete(processId);
       }
-      const finalOutput = result || buildOutput(entry, true, null);
       // The artifact has to be complete on disk before the model is pointed
-      // at it, and the file handles have to be closed exactly once. Both
-      // calls are idempotent, so a finalizer that runs twice (the abort
-      // path and the close path can both fire) is harmless.
+      // at it, and the counts in the marker are read FROM the artifact — so
+      // the capture is finished BEFORE the output is built. The file handles
+      // have to be closed exactly once; both calls are idempotent, so a
+      // finalizer that runs twice (the abort path and the close path can
+      // both fire) is harmless.
       entry.stdout.finish();
       entry.stderr.finish();
       entry.stdout.dispose();
       entry.stderr.dispose();
+      const finalOutput = result || buildOutput(entry, true, null);
       resolve(finalOutput);
     };
 
@@ -573,6 +621,11 @@ export async function runCommand(
         // everything it produced before it was killed, and the exit code is
         // not the command's verdict.
         entry.aborted = true;
+        // The group is killed here as well as in the abort handler, because
+        // the two run in an order nobody controls: Node's own abort
+        // listener emits this 'error' event synchronously, and the abort
+        // handler may never be reached at all. Killing twice is harmless.
+        killProcessTree(child);
         onProgress?.('run_command: aborted.');
         finalize(-1);
         return;
@@ -709,12 +762,11 @@ export function getToolPrompt(isYolo: boolean): string {
   return (
     `${cmdLine}\n   ${cmdDesc}\n${paramRows(runCommandToolSchema.parameters.properties)}\n\n` +
     `${checkLine}\n   ${checkDesc}\n${paramRows(checkProcessOutputToolSchema.parameters.properties)}\n\n` +
-    `Output handling: a command that prints a lot keeps its whole output in a file under the\n` +
-    `temporary directory; the result shows an excerpt of it (the head and the tail) and the path\n` +
-    `of the file. The byte and line counts describe the whole file, not the excerpt. Read the rest\n` +
-    `with read_file(path, start_line, end_line) — never run the command again just to see output\n` +
-    `you could have read from the file. The exit code is the command's own status and is\n` +
-    `independent of how much output was captured. Secrets in the output are replaced with\n` +
-    `[REDACTED], so a redacted value has to come from the user, not from the output.\n`
+    `Output handling: a large output is kept in a file under the temporary directory; the result\n` +
+    `shows an excerpt of it (the head and the tail), the path of the file and the line range that\n` +
+    `the excerpt left out. The byte and line counts describe the whole file, not the excerpt, and\n` +
+    `the exit code is the command's own status — it says nothing about how much output was\n` +
+    `captured. Read the file with read_file(path, start_line, end_line) instead of running the\n` +
+    `command again. Secrets in the output are replaced with [REDACTED].\n`
   );
 }

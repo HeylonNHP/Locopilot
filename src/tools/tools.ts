@@ -208,8 +208,6 @@ export function getToolSystemPrompt(yoloMode: boolean, visionSupported?: boolean
     `- Do NOT only print a shell snippet/code block when the task requires execution.\n` +
     `- If run_command returns a process_id, periodically call check_process_output until completion. ` +
     `Use poll_interval_seconds to slow down polling when the command is likely to run for a long time.\n` +
-    `- If run_command reports a path to the full output, read that file with read_file (in line ranges) ` +
-    `instead of running the command again — the command may be slow, expensive or destructive to repeat.\n` +
     `- The default shell on this machine is '${defaultShell()}'. Always use commands appropriate for that shell.\n` +
     `- If a command exits with a non-zero exit code, read the stderr carefully, correct the command, and try again.\n` +
     `  Do NOT give up or tell the user it failed after a single attempt — diagnose and retry with a fixed command.\n` +

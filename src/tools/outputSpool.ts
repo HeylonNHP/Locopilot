@@ -46,6 +46,21 @@ export interface SpoolStats {
   spoolPath: string | null;
   /** True when the spool file stopped short of the whole stream. */
   spoolTruncated: boolean;
+  /**
+   * The line number of the LAST line the excerpt shows at the head, in the
+   * line numbering of the artifact. Zero when the excerpt has no head.
+   */
+  headEndLine: number;
+  /**
+   * The line number of the FIRST line the excerpt shows at the tail, in the
+   * line numbering of the artifact. Zero when the excerpt has no tail.
+   */
+  tailStartLine: number;
+  /**
+   * True when the last line of the head was cut short because it did not fit
+   * into the head budget — the artifact holds that line whole.
+   */
+  headLineTruncated: boolean;
 }
 
 /**
@@ -70,8 +85,10 @@ export function isRunOutputSpillEnabled(): boolean {
  * every byte of the stream on disk next to a bounded preview for the model.
  *
  * With the spill disabled the capture degrades to the historical bounded
- * behaviour byte for byte, so switching the flag off changes nothing that is
- * already in production.
+ * behaviour, but it is NOT byte-identical to it: the redaction is
+ * unconditional. Redacting is a security property of the capture, not a
+ * feature of the spool, so the switch only decides whether the bytes are
+ * ALSO written to a file.
  */
 export class OutputSpool {
   private readonly limits: SpoolLimits;
@@ -84,6 +101,27 @@ export class OutputSpool {
   private headBytes = 0;
   private tailBytes = 0;
   private headClosed = false;
+  /**
+   * The number of lines the head holds. It is the line number of the last
+   * line the excerpt shows at the head, in the numbering of the artifact.
+   */
+  private headLineCount = 0;
+  /**
+   * The number of lines the artifact holds so far. The tail holds the last
+   * of them, so the first line of the tail is this count minus the number
+   * of lines the tail holds, plus one.
+   */
+  private artifactLines = 0;
+  /**
+   * The line number of the first line the tail holds, in the numbering of
+   * the artifact. Zero while the tail is empty.
+   */
+  private tailFirstLine = 0;
+  /**
+   * True when the last line of the head was cut short because it did not fit
+   * into the head budget — the artifact holds that line whole.
+   */
+  private headLineTruncated = false;
   private pending = '';
   private inlineText = '';
   private inlineBytes = 0;
@@ -124,8 +162,13 @@ export class OutputSpool {
     if (options.enabled) {
       const target = path.join(options.directory, options.name);
       try {
-        mkdirSync(options.directory, { recursive: true });
-        fd = openSync(target, 'w');
+        // The artifact holds command output — source code, logs, secrets the
+        // redactor did not recognise — so it must be private to its owner
+        // from the moment it exists, not only once something describes it.
+        // An empty stream is never described, and it would otherwise stay
+        // world-readable until the next sweep.
+        mkdirSync(options.directory, { recursive: true, mode: 0o700 });
+        fd = openSync(target, 'w', 0o600);
         spoolPath = target;
       } catch {
         // A spool that cannot be created must not cost the model its output:
@@ -146,22 +189,29 @@ export class OutputSpool {
     if (this.finished || this.disposed) return;
     this.totalBytes += chunk.length;
     this.countNewlines(chunk);
+    // The redaction is unconditional: it is a security property of the
+    // capture, not a feature of the spill. The switch only decides whether
+    // the redacted bytes are ALSO written to a file — with the spill off
+    // they still never reach the model or the disk unredacted.
+    const safe = this.redactor.append(chunk);
     if (this.legacy) {
-      this.legacy.append(chunk);
+      this.legacy.append(safe);
       return;
     }
-    this.consume(chunk);
+    this.writeSpool(safe);
+    this.consumeText(this.decoder.write(safe));
   }
 
   finish(): void {
     if (this.finished) return;
     this.finished = true;
+    // The last line of a stream that did not end with a newline is
+    // committed here, redacted like every other line.
+    const rest = this.redactor.flush();
     if (this.legacy) {
+      this.legacy.append(rest);
       this.legacy.finish();
     } else {
-      // The last line of a stream that did not end with a newline is
-      // committed here, redacted like every other line.
-      const rest = this.redactor.flush();
       this.writeSpool(rest);
       this.consumeText(this.decoder.write(rest));
       this.consumeText(this.decoder.end());
@@ -243,6 +293,11 @@ export class OutputSpool {
         omittedBytes: Math.max(0, this.totalBytes - kept),
         spoolPath: this.spoolPath,
         spoolTruncated: this.spoolTruncated,
+        // The bounded capture cuts on characters, not on lines, so it has
+        // no line range to offer.
+        headEndLine: 0,
+        tailStartLine: 0,
+        headLineTruncated: false,
       };
     }
     return {
@@ -252,12 +307,20 @@ export class OutputSpool {
       omittedBytes: this.droppedBytes,
       spoolPath: this.spoolPath,
       spoolTruncated: this.spoolTruncated,
+      headEndLine: this.headLineCount,
+      tailStartLine: this.tailFirstLine,
+      headLineTruncated: this.headLineTruncated,
     };
   }
 
   /**
    * Replaces the preview with the given text. The spool file keeps the raw
    * bytes, so this only rewrites what the model sees.
+   *
+   * WHY the line counters survive: the omitted range is a property of the
+   * STREAM (the middle that never fit into the excerpt), not of the
+   * excerpt's layout, and the text that replaces the excerpt still leaves
+   * the same middle out.
    */
   replaceText(text: string): void {
     if (this.legacy) {
@@ -325,20 +388,13 @@ export class OutputSpool {
   }
 
   /**
-   * Redacts one chunk of the stream, writes the redacted bytes to the
-   * artifact and feeds the preview.
+   * Feeds the redacted bytes of the stream to the preview.
    *
-   * WHY the redaction happens here and only here: the artifact and the
-   * preview are two views of ONE stream. Redacting once, before the bytes
-   * are split into the two, is what keeps the two views from disagreeing —
-   * and what keeps a raw secret from reaching the disk.
+   * WHY the redaction happens before this and only here: the artifact and
+   * the preview are two views of ONE stream. Redacting once, before the
+   * bytes are split into the two, is what keeps the two views from
+   * disagreeing — and what keeps a raw secret from reaching the disk.
    */
-  private consume(chunk: Buffer): void {
-    const safe = this.redactor.append(chunk);
-    this.writeSpool(safe);
-    this.consumeText(this.decoder.write(safe));
-  }
-
   private consumeText(decoded: string): void {
     if (decoded.length === 0) return;
     if (!this.inlineOverflow) {
@@ -399,6 +455,8 @@ export class OutputSpool {
       if (this.headBytes + lineBytes <= this.limits.headMaxBytes) {
         this.headLines.push(line);
         this.headBytes += lineBytes;
+        this.headLineCount += 1;
+        this.artifactLines += 1;
         return;
       }
       if (this.headLines.length === 0) {
@@ -410,6 +468,11 @@ export class OutputSpool {
         this.headBytes = Buffer.byteLength(slice, 'utf8');
         this.droppedBytes += lineBytes - this.headBytes;
         this.headClosed = true;
+        this.headLineCount = 1;
+        this.artifactLines += 1;
+        // The excerpt shows a FRACTION of this line; the artifact holds it
+        // whole, so the model has to know that the two differ here.
+        this.headLineTruncated = true;
         return;
       }
       this.headClosed = true;
@@ -420,6 +483,7 @@ export class OutputSpool {
   private pushTail(line: string): void {
     this.tailLines.push(line);
     this.tailBytes += Buffer.byteLength(line, 'utf8');
+    this.artifactLines += 1;
     // Whole lines are dropped from the front until the tail fits its budget.
     while (this.tailBytes > this.limits.tailMaxBytes && this.tailLines.length > 1) {
       const removed = this.tailLines.shift();
@@ -434,6 +498,10 @@ export class OutputSpool {
       this.droppedBytes += this.tailBytes - Buffer.byteLength(trimmed, 'utf8');
       this.tailBytes = Buffer.byteLength(trimmed, 'utf8');
     }
+    // The tail holds the LAST lines of the artifact, so the line number of
+    // its first line is the last line number minus the number of lines it
+    // holds, plus one.
+    this.tailFirstLine = this.artifactLines - this.tailLines.length + 1;
   }
 
   private headText(): string {

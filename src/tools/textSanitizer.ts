@@ -1,18 +1,47 @@
 /**
+ * The control sequences that are removed from command output.
+ *
+ * WHY the 8-bit CSI forms are spelled out: the capture works on the RAW BYTES
+ * of the stream (the artifact has to keep the invalid UTF-8), so the
+ * stripping happens on the byte level. A CSI sequence is introduced by ESC
+ * (0x1b), by the UTF-8 encoding of U+009B (0xc2 0x9b) or by the raw 0x9b
+ * byte — and the raw byte is only a control character when it does not
+ * continue a UTF-8 sequence, which is what the look-behind checks. Without
+ * that check the third byte of a three-byte character (U+201B, for example)
+ * would be eaten and the character destroyed.
+ */
+const CONTROL_SEQUENCE = new RegExp(
+  [
+    `${String.fromCodePoint(0x1b)}[#();?[]*(?:\\d{1,4}(?:;\\d{0,4})*)?[\\d<=>A-ORZcf-nqry]`,
+    `${String.fromCodePoint(0xc2)}${String.fromCodePoint(0x9b)}[#();?[]*(?:\\d{1,4}(?:;\\d{0,4})*)?[\\d<=>A-ORZcf-nqry]`,
+    `(?<![\\u0080-\\u00f4])${String.fromCodePoint(0x9b)}[#();?[]*(?:\\d{1,4}(?:;\\d{0,4})*)?[\\d<=>A-ORZcf-nqry]`,
+  ].join('|'),
+  'g'
+);
+
+/**
+ * Removes the terminal control sequences and the carriage returns from a
+ * piece of text.
+ *
+ * WHY the carriage return goes instead of being normalised: a CR in front of
+ * a LF is the CRLF of a Windows line ending, and a CR in front of anything
+ * else is a cursor move that would overwrite text the model has already
+ * read. Dropping every CR turns both into what the model should see.
+ */
+export function stripControlSequences(text: string): string {
+  return text.replaceAll('\r', '').replaceAll(CONTROL_SEQUENCE, '');
+}
+
+/**
  * Strips terminal control sequences before command output is sent to the model.
  * Kept in a leaf module so command execution does not depend on the tool registry.
+ *
+ * The capture does this itself, in the pass that redacts (see
+ * {@link SecretRedactor}); this helper is the same rule for a piece of text
+ * that is already decoded.
  */
 export function sanitize(text: string): string {
-  return text
-    .replaceAll('\r\n', '\n')
-    .replaceAll('\r', '')
-    .replaceAll(
-      new RegExp(
-        `[${String.fromCodePoint(0x1b)}${String.fromCodePoint(0x9b)}][#();?[]*(?:\\d{1,4}(?:;\\d{0,4})*)?[\\d<=>A-ORZcf-nqry]`,
-        'g'
-      ),
-      ''
-    );
+  return stripControlSequences(text);
 }
 
 /**
@@ -183,6 +212,9 @@ function redactPrivateKeyBlocks(text: string): string {
  * The function is pure and linear: it never looks outside the text it is
  * given and it never backtracks into an exponential number of states, so a
  * single enormous line costs one pass and no more.
+ *
+ * It redacts and nothing else — the control sequences are stripped by the
+ * capture, in the same pass that redacts (see {@link SecretRedactor}).
  */
 export function redact(text: string): string {
   return applyValueRules(redactPrivateKeyBlocks(text));
@@ -202,9 +234,21 @@ export function redact(text: string): string {
  * included. The text is decoded as latin1, which maps every byte to one
  * code point, so the ASCII patterns match exactly and the bytes that are
  * not part of a secret survive untouched.
+ *
+ * WHY the pending line is kept as pieces and not as one string: a command is
+ * free to print a single enormous line, and a pending buffer that is
+ * re-scanned (and re-copied) on every append makes the capture quadratic in
+ * the length of that line — ten megabytes took 29 ms, a hundred took 2.3 s,
+ * and the server stalled for the whole of it. The pieces are appended and
+ * joined exactly once, when the line completes, so an append costs the chunk
+ * and nothing else. The rules themselves are line-local (a quoted value
+ * cannot span a newline), which is what makes the line the natural unit.
  */
 export class SecretRedactor {
-  private pending = '';
+  /** The pieces of the trailing incomplete line, in order. */
+  private pendingParts: string[] = [];
+  /** The length of the trailing incomplete line, in characters. */
+  private pendingLength = 0;
   private insidePrivateKey = false;
 
   /**
@@ -214,16 +258,22 @@ export class SecretRedactor {
    * a secret is never split across two calls.
    */
   append(chunk: Buffer): Buffer {
-    this.pending += chunk.toString('latin1');
+    const text = chunk.toString('latin1');
+    if (text.length === 0) return Buffer.alloc(0);
     let output = '';
     let start = 0;
     for (;;) {
-      const index = this.pending.indexOf('\n', start);
+      // The newline is looked for in the NEW chunk only. Scanning the whole
+      // pending buffer on every append is what made the capture quadratic.
+      const index = text.indexOf('\n', start);
       if (index === -1) break;
-      output += this.redactLine(this.pending.slice(start, index + 1), true);
+      output += this.redactLine(this.takeLine(text.slice(start, index + 1)), true);
       start = index + 1;
     }
-    this.pending = this.pending.slice(start);
+    if (start < text.length) {
+      this.pendingParts.push(text.slice(start));
+      this.pendingLength += text.length - start;
+    }
     return Buffer.from(output, 'latin1');
   }
 
@@ -236,8 +286,8 @@ export class SecretRedactor {
    * completes.
    */
   peek(): Buffer {
-    if (this.pending.length === 0) return Buffer.alloc(0);
-    return Buffer.from(this.redactLine(this.pending, false), 'latin1');
+    if (this.pendingLength === 0) return Buffer.alloc(0);
+    return Buffer.from(this.redactLine(this.pendingParts.join(''), false), 'latin1');
   }
 
   /**
@@ -247,10 +297,34 @@ export class SecretRedactor {
    * by more output.
    */
   flush(): Buffer {
-    if (this.pending.length === 0) return Buffer.alloc(0);
-    const line = this.pending;
-    this.pending = '';
+    if (this.pendingLength === 0) return Buffer.alloc(0);
+    const line = this.pendingParts.join('');
+    this.pendingParts = [];
+    this.pendingLength = 0;
     return Buffer.from(this.redactLine(line, true), 'latin1');
+  }
+
+  /**
+   * Joins the pending pieces with the tail of the line that just completed
+   * and empties the pending buffer.
+   */
+  private takeLine(tail: string): string {
+    const line = this.pendingParts.length > 0 ? `${this.pendingParts.join('')}${tail}` : tail;
+    this.pendingParts = [];
+    this.pendingLength = 0;
+    return line;
+  }
+
+  /**
+   * Redacts one line and strips its control sequences.
+   *
+   * WHY the stripping happens HERE and not on the preview: the artifact and
+   * the preview are two views of ONE stream. Stripping in the same pass
+   * that redacts is what keeps the two views from disagreeing — the file on
+   * the disk holds exactly what the model was shown.
+   */
+  private redactLine(line: string, commit: boolean): string {
+    return stripControlSequences(this.redactSecrets(line, commit));
   }
 
   /**
@@ -259,7 +333,7 @@ export class SecretRedactor {
    * `commit` is false for a preview: the state of the key-block tracker
    * must not move before the line is really finished.
    */
-  private redactLine(line: string, commit: boolean): string {
+  private redactSecrets(line: string, commit: boolean): string {
     if (this.insidePrivateKey) {
       const end = PRIVATE_KEY_END.exec(line);
       if (!end) return '';
