@@ -57,8 +57,8 @@ try {
   const PATTERNS = [
     {
       label: 'an Authorization header',
-      secret: 'ey' + 'jhbGciOiJIUzI1NiJ9' + '.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
-      text: 'Authorization: Bearer ey' + 'jhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop',
+      secret: 'ey' + 'JhbGciOiJIUzI1NiJ9' + '.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
+      text: 'Authorization: Bearer ' + 'ey' + 'JhbGciOiJIUzI1NiJ9.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
     },
     {
       label: 'a bare bearer token',
@@ -67,8 +67,8 @@ try {
     },
     {
       label: 'a JSON web token',
-      secret: 'ey' + 'jhbGciOiJIUzI1NiJ9' + '.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
-      text: 'the token was ey' + 'jhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop and then',
+      secret: 'ey' + 'JhbGciOiJIUzI1NiJ9' + '.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
+      text: 'the token was ' + 'ey' + 'JhbGciOiJIUzI1NiJ9.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop' + ' and then',
     },
     {
       label: 'an sk- key',
