@@ -79,7 +79,10 @@ export interface RequestContext {
    * `Config.citeSources`; threaded here so the web_search/fetch_url tool-result
    * reminder and the sub-agent system prompt can gate on it.
    */
+  /** `Config.citeSources`; ... */
   citeSources?: boolean;
+  /** `Config.redactSecrets` ... */
+  redactSecrets?: boolean;
   webSearch: WebSearchSettings;
   subAgent: SubAgentConfig;
   /** Tool names allowed by active always-apply skills; undefined = no restriction */
@@ -493,7 +496,8 @@ export const toolRegistry = new Map<string, IToolCommand>([
             context?.workingDirectoryScope,
             context?.yoloMode ?? false,
             signal,
-            context?.sessionId
+            context?.sessionId,
+            context?.redactSecrets ?? true
           ),
         };
       },

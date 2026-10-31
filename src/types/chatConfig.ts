@@ -189,6 +189,14 @@ export interface Config {
    * to cite (system-prompt directive + tool-result reminder).
    */
   citeSources?: boolean;
+  /**
+   * Whether secrets detected in `run_command` output are replaced with
+   * `[REDACTED]` before the output reaches the model, transcript and disk.
+   * Defaults to true. Setting false accepts raw output — known
+   * secret-bearing data leaves the machine. Terminal escape sequences are
+   * stripped either way.
+   */
+  redactSecrets?: boolean;
   webSearch?: {
     maxQueries: number;
     resultsPerQuery: number;

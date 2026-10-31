@@ -341,6 +341,32 @@ try {
       rmSync(chaosDirectory, { recursive: true, force: true });
     }
   });
+
+  // \u2500\u2500 Redaction can be disabled, but control codes still die \u2500\u2500
+  check('redaction can be disabled without losing escape-code stripping', () => {
+    const raw = 'token=sk-abcdefghijklmnopqrstuvwxyz0123456789 and \u001B[31mcolor\u001B[0m';
+    const dir2 = mkdtempSync(path.join(tmpdir(), 'locopilot-redaction-off-'));
+    try {
+      const spool = new OutputSpool({
+        limits: { inlineMaxBytes: 8 * 1024, headMaxBytes: 32 * 1024, tailMaxBytes: 8 * 1024, maxSpoolBytes: 10 * 1024 * 1024 },
+        directory: dir2,
+        name: 'raw.log',
+        enabled: true,
+        redactsSecrets: false,
+      });
+      spool.append(Buffer.from(raw));
+      spool.finish();
+      assert.ok(spool.text().includes('sk-abcdefghijklmnopqrstuvwxyz0123456789'));
+      assert.ok(!spool.text().includes('[REDACTED]'));
+      assert.ok(!spool.text().includes('\u001B[31m'));
+      const artifact = readFileSync(path.join(dir2, 'raw.log'), 'utf8');
+      assert.ok(artifact.includes('sk-abcdefghijklmnopqrstuvwxyz0123456789'));
+      assert.ok(!artifact.includes('[REDACTED]'));
+      assert.ok(!artifact.includes('\u001B[31m'));
+    } finally {
+      rmSync(dir2, { recursive: true, force: true });
+    }
+  });
 } finally {
   // The scratch directory is removed whether the checks passed or failed.
   rmSync(directory, { recursive: true, force: true });

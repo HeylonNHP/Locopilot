@@ -142,11 +142,14 @@ export class OutputSpool {
   private finished = false;
   private disposed = false;
 
+  redactsSecrets: boolean = true;
+
   constructor(options: {
     limits: SpoolLimits;
     directory: string;
     name: string;
     enabled: boolean;
+    redactsSecrets?: boolean;
     /**
      * The redaction pass every byte passes through before it reaches the
      * disk or the preview. The default is a plain redactor; a caller that
@@ -155,7 +158,8 @@ export class OutputSpool {
     redactor?: SecretRedactor | undefined;
   }) {
     this.limits = options.limits;
-    this.redactor = options.redactor ?? new SecretRedactor();
+    this.redactsSecrets = options.redactsSecrets ?? true;
+    this.redactor = options.redactor ?? new SecretRedactor(this.redactsSecrets);
 
     let spoolPath: string | null = null;
     let fd: number | null = null;

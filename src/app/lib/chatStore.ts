@@ -205,7 +205,10 @@ export interface ChatState {
    * numbered links with a trailing Sources list. Toggled in Settings. See
    * `Config.citeSources` for the persisted counterpart.
    */
+  /** `Config.citeSources` for the persisted counterpart. */
   citeSources: boolean;
+  /** `Config.redactSecrets` for the persisted counterpart. */
+  redactSecrets: boolean;
   compactionModel: string;
   /**
    * Transient: which provider the compaction model belongs to. Captured
@@ -1307,6 +1310,7 @@ export const initialState: ChatState = {
   compactionReasoningEffort: 'off',
   promptTimestamps: true,
   citeSources: true,
+  redactSecrets: true,
   compactionModel: '',
   compactionProviderId: null,
   chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,

@@ -871,6 +871,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           return {
             yoloMode: config?.yolo ?? false,
             citeSources: config?.citeSources ?? true,
+            redactSecrets: config?.redactSecrets ?? true,
             allowedTools: undefined,
             disabledMainTools: disabledMain,
             mcpApprovals: [...mcpApprovalsSet],

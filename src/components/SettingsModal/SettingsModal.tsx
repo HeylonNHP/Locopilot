@@ -27,6 +27,7 @@ export default function SettingsModal({ onClose }: Props) {
   const [reasoningEffort, setReasoningEffort] = useState(state.reasoningEffort);
   const [promptTimestamps, setPromptTimestamps] = useState(state.promptTimestamps ?? true);
   const [citeSources, setCiteSources] = useState(state.citeSources ?? true);
+  const [redactSecrets, setRedactSecrets] = useState(state.redactSecrets ?? true);
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
   // The provider that owns the selected main model / compaction model. These
   // are tracked separately so the user can run the main chat on one provider
@@ -208,6 +209,7 @@ export default function SettingsModal({ onClose }: Props) {
       reasoningEffort,
       promptTimestamps,
       citeSources,
+      redactSecrets,
       compactionModel,
       chatTimeoutMs: parsedChatTimeoutMs,
       webSearch: {
@@ -262,6 +264,7 @@ export default function SettingsModal({ onClose }: Props) {
           reasoningEffort,
           promptTimestamps,
           citeSources,
+          redactSecrets,
           compactionModel,
           // Transient: captured here so the compaction route can resolve the
           // compaction provider even when it differs from the main model's.
@@ -533,6 +536,30 @@ export default function SettingsModal({ onClose }: Props) {
                 numbered links with a Sources list at the end of its answer. The numbered source
                 list is always shown to the model; this toggle controls whether it is instructed to
                 cite them.
+              </span>
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-label">Redact Secrets in Command Output</span>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-12">
+                <input
+                  id="redact-secrets-toggle"
+                  type="checkbox"
+                  checked={redactSecrets}
+                  onChange={(e) => setRedactSecrets(e.target.checked)}
+                />
+                <label htmlFor="redact-secrets-toggle" className="font-14 text-primary">
+                  {redactSecrets ? 'On (redacted)' : 'Off (raw output)'}
+                </label>
+              </div>
+              <span className="font-12 text-secondary">
+                Command output is scanned for tokens, keys and passwords and replaced with
+                [REDACTED] before the model, the transcript or the browser see it. Turn
+                this off for verbatim output, with local models or when a false positive
+                mangles what you need. The text is also saved in this conversation's
+                history. Terminal escape codes are always stripped.
               </span>
             </div>
           </div>

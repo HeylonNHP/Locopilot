@@ -45,6 +45,7 @@ const KNOWN_TOP_KEYS: Set<string> = new Set([
   'compactionReasoningEffort',
   'promptTimestamps',
   'citeSources',
+  'redactSecrets',
   'webSearch',
   'skills',
   'tools',
@@ -279,6 +280,12 @@ function validateConfig(
       return { ok: false, error: "Invalid config: 'citeSources' must be a boolean" };
     }
     out.citeSources = input.citeSources;
+  }
+  if ('redactSecrets' in input) {
+    if (typeof input.redactSecrets !== 'boolean') {
+      return { ok: false, error: "Invalid config: 'redactSecrets' must be a boolean" };
+    }
+    out.redactSecrets = input.redactSecrets;
   }
 
   if ('mcpToolSearch' in input) {
@@ -568,6 +575,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       thinkingEnabled: true,
       promptTimestamps: true,
       citeSources: true,
+      redactSecrets: true,
       webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS },
       completionMode: 'normal',
       maxPromptLoopIterations: DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,

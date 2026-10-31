@@ -245,11 +245,17 @@ export function redact(text: string): string {
  * cannot span a newline), which is what makes the line the natural unit.
  */
 export class SecretRedactor {
+  /** Whether secrets are replaced (control characters still always stripped). */
+  private readonly redactsSecrets: boolean;
   /** The pieces of the trailing incomplete line, in order. */
   private pendingParts: string[] = [];
   /** The length of the trailing incomplete line, in characters. */
   private pendingLength = 0;
   private insidePrivateKey = false;
+
+  constructor(redactSecrets: boolean = true) {
+    this.redactsSecrets = redactSecrets;
+  }
 
   /**
    * Feeds bytes and returns the redacted bytes of every COMPLETE line.
@@ -324,6 +330,7 @@ export class SecretRedactor {
    * the disk holds exactly what the model was shown.
    */
   private redactLine(line: string, commit: boolean): string {
+    if (!this.redactsSecrets) return stripControlSequences(line);
     return stripControlSequences(this.redactSecrets(line, commit));
   }
 

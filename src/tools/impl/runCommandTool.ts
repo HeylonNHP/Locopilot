@@ -273,7 +273,7 @@ function describeStream(label: string, spool: OutputSpool, spillEnabled: boolean
       ];
     }
     const lines = [
-      `${label}: [${artifact.bytes} bytes, ${artifact.lines} lines] redacted output: ${stats.spoolPath}`,
+      `${label}: [${artifact.bytes} bytes, ${artifact.lines} lines] ${spool.redactsSecrets ? 'redacted ' : ''}output: ${stats.spoolPath}`,
     ];
     if (stats.truncated) {
       // The range the excerpt left out, in the line numbering of the file.
@@ -391,7 +391,8 @@ export async function runCommand(
   scope?: WorkingDirectoryScope,
   yoloMode: boolean = false,
   signal?: AbortSignal,
-  sessionId?: number
+  sessionId?: number,
+  redactSecrets: boolean = true
 ): Promise<string> {
   const effectiveShell = getEffectiveShell(shell, output);
   const approvedYolo = yoloMode;
@@ -439,12 +440,14 @@ export async function runCommand(
       directory: artifactDirectory,
       name: `${runId}-stdout.log`,
       enabled: spillEnabled,
+      redactsSecrets: redactSecrets,
     }),
     stderr: new OutputSpool({
       limits: SPOOL_LIMITS,
       directory: artifactDirectory,
       name: `${runId}-stderr.log`,
       enabled: spillEnabled,
+      redactsSecrets: redactSecrets,
     }),
     startedAt: new Date(),
     done: false,
