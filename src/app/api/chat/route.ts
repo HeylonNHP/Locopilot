@@ -874,6 +874,9 @@ export async function POST(req: NextRequest): Promise<Response> {
             allowedTools: undefined,
             disabledMainTools: disabledMain,
             mcpApprovals: [...mcpApprovalsSet],
+            // The session owns the artifacts of the commands this turn runs,
+            // so deleting the session can delete them with it.
+            ...(activeSessionId === undefined ? {} : { sessionId: activeSessionId }),
             model: model as string,
             numCtx: effectiveNumCtx,
             workingDirectoryScope,

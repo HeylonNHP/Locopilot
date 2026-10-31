@@ -33,6 +33,14 @@ export class BoundedOutput {
     return this.head.join('') + this.tail.join('');
   }
 
+  /**
+   * The retained head and tail as separate strings, so a caller can report
+   * where the preview was cut without re-deriving it.
+   */
+  preview(): { head: string; tail: string } {
+    return { head: this.head.join(''), tail: this.tail.join('') };
+  }
+
   replaceText(text: string): void {
     this.head.length = 0;
     this.tail.length = 0;

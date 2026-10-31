@@ -6,11 +6,22 @@ import type { ToolSchema } from '@/tools/toolSchema';
 
 import {
   PROCESS_REGISTRY_TTL_MS,
+  RUN_COMMAND_HEAD_PREVIEW_BYTES,
+  RUN_COMMAND_INLINE_MAX_BYTES,
+  RUN_COMMAND_MAX_SPOOL_BYTES,
   RUN_COMMAND_OUTPUT_MAX_BYTES,
+  RUN_COMMAND_TAIL_PREVIEW_BYTES,
   RUN_COMMAND_TIMEOUT_MS,
+  RUN_OUTPUT_SWEEP_INTERVAL_MS,
 } from '@/constants';
-import { BoundedOutput } from '@/tools/boundedOutput';
+import { isRunOutputSpillEnabled, OutputSpool, type SpoolLimits } from '@/tools/outputSpool';
 import { killProcessTree } from '@/tools/processTree';
+import {
+  cleanupStaleOutputs,
+  describeOutputFile,
+  type OutputScope,
+  runOutputDirectory,
+} from '@/tools/runCommandOutputStore';
 import { sanitize } from '@/tools/textSanitizer';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import {
@@ -24,9 +35,21 @@ const isWindows = os.platform() === 'win32';
 
 const APPROVAL_SENTENCE = 'The user will be asked to approve the command before it runs.';
 
+/**
+ * Bounds of the capture that backs a `run_command` result. The inline budget
+ * is what the model reads verbatim; the head and tail budgets are the preview
+ * that stands in for the omitted middle, which always stays on disk.
+ */
+const SPOOL_LIMITS: SpoolLimits = {
+  inlineMaxBytes: RUN_COMMAND_INLINE_MAX_BYTES,
+  headMaxBytes: RUN_COMMAND_HEAD_PREVIEW_BYTES,
+  tailMaxBytes: RUN_COMMAND_TAIL_PREVIEW_BYTES,
+  maxSpoolBytes: RUN_COMMAND_MAX_SPOOL_BYTES,
+};
+
 export const runCommandToolSchema: ToolSchema = {
   name: 'run_command',
-  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns captured stdout/stderr up to ${RUN_COMMAND_OUTPUT_MAX_BYTES} UTF-8 bytes per stream; oversized output is explicitly marked as truncated. Returns partial output plus a process_id when it is still running. Use check_process_output to poll a long-running command for progress. For complete output larger than the capture limit, redirect it to a file and use read_file in ranges.`,
+  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns the captured stdout/stderr. A large stream is kept in full in a file and the result shows a lossy excerpt of it, together with the path of that file: read the file with read_file(path, start_line, end_line) instead of running the command again. The byte and line counts describe the WHOLE output, not the excerpt, and the exit code is the command's own status — it says nothing about how much output was captured. Secrets in the output are replaced with [REDACTED]. The full-output file can be switched off with LOCOPILOT_RUN_OUTPUT_SPILL=0, which brings back the older bounded capture.`,
   parameters: {
     type: 'object',
     properties: {
@@ -52,7 +75,7 @@ export const runCommandToolSchema: ToolSchema = {
 export const checkProcessOutputToolSchema: ToolSchema = {
   name: 'check_process_output',
   description:
-    'Returns the current captured stdout/stderr of a command that was previously started with run_command and is still running (or has since completed). Very large streams are bounded and include an explicit truncation marker. Also reports whether the process has finished and its exit code.',
+    "Returns the current captured stdout/stderr of a command that was previously started with run_command and is still running (or has since completed). A large stream is kept in full in a file and the result shows a lossy excerpt of it, together with the path of that file: read the file with read_file(path, start_line, end_line) rather than re-running the command. The byte and line counts describe the WHOLE output, not the excerpt. Also reports whether the process has finished and its exit code, which is the command's own status and says nothing about how much output was captured. Secrets in the output are replaced with [REDACTED].",
   parameters: {
     type: 'object',
     properties: {
@@ -78,12 +101,36 @@ interface ProcessEntry {
   process: ChildProcess;
   command: string;
   shell: string;
-  stdout: BoundedOutput;
-  stderr: BoundedOutput;
+  stdout: OutputSpool;
+  stderr: OutputSpool;
   startedAt: Date;
   done: boolean;
   exitCode: number | null;
+  spillEnabled: boolean;
+  /** True when the command was interrupted instead of finishing on its own. */
+  aborted: boolean;
   ttlTimer?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * Timestamp of the last sweep of the artifact store.
+ *
+ * WHY a timestamp and not a flag: the sweep is housekeeping, not part of
+ * the command. A burst of commands must not turn into a burst of directory
+ * walks, but a long-lived process must still sweep again eventually — so
+ * the guard is a clock, not a boolean.
+ */
+let lastStoreSweepAt = 0;
+
+/**
+ * Sweeps the artifact store when it is due. Never throws: a store that
+ * cannot be swept is a housekeeping problem, not a command failure.
+ */
+function sweepOutputStore(): void {
+  const now = Date.now();
+  if (now - lastStoreSweepAt < RUN_OUTPUT_SWEEP_INTERVAL_MS) return;
+  lastStoreSweepAt = now;
+  cleanupStaleOutputs(now);
 }
 
 /**
@@ -205,6 +252,41 @@ function appendWorkingDirectoryProbe(
   return `${command}\n__lc_exit=$?\nprintf '%s\n' "${workdirMarker}$PWD"\nexit $__lc_exit`;
 }
 
+/**
+ * Describes one captured stream: how big the FULL stream was, where the
+ * artifact that holds it lives, and — when the preview is lossy — how the
+ * model reads what the preview left out.
+ *
+ * The counts come from the artifact on disk, not from the in-memory
+ * capture, so they describe the file the model is about to open.
+ */
+function describeStream(label: string, spool: OutputSpool, spillEnabled: boolean): string[] {
+  const stats = spool.stats();
+  if (spillEnabled && stats.spoolPath && stats.totalBytes > 0) {
+    const artifact = describeOutputFile(stats.spoolPath);
+    const lines = [
+      `${label}: [${artifact.bytes} bytes, ${artifact.lines} lines] full output: ${stats.spoolPath}`,
+    ];
+    if (stats.truncated) {
+      lines.push(
+        `${label}: [the excerpt above is lossy — ${stats.omittedBytes} bytes are not shown; ` +
+          `read the rest with read_file(path="${stats.spoolPath}", start_line=1, end_line=${artifact.lines})]`
+      );
+    }
+    if (stats.spoolTruncated) {
+      lines.push(
+        `${label}: [the artifact stopped at the spool cap, so it holds less than the ` +
+          `${stats.totalBytes} bytes the stream produced]`
+      );
+    }
+    return lines;
+  }
+  if (stats.truncated) {
+    return [`${label}: [output truncated after ${RUN_COMMAND_OUTPUT_MAX_BYTES} UTF-8 bytes]`];
+  }
+  return [];
+}
+
 function buildOutput(entry: ProcessEntry, finished: boolean, processId: number | null): string {
   const parts: string[] = [];
   const stdout = entry.stdout.text();
@@ -215,30 +297,54 @@ function buildOutput(entry: ProcessEntry, finished: boolean, processId: number |
   const elapsedSeconds = (elapsedMs / 1000).toFixed(2);
 
   if (sanitizedStdout) parts.push(`stdout:\n${sanitizedStdout}`);
-  if (entry.stdout.truncated) {
-    parts.push(`stdout: [output truncated after ${RUN_COMMAND_OUTPUT_MAX_BYTES} UTF-8 bytes]`);
-  }
+  const stdoutMarker = describeStream('stdout', entry.stdout, entry.spillEnabled);
+  parts.push(...stdoutMarker);
   if (sanitizedStderr) parts.push(`stderr:\n${sanitizedStderr}`);
-  if (entry.stderr.truncated) {
-    parts.push(`stderr: [output truncated after ${RUN_COMMAND_OUTPUT_MAX_BYTES} UTF-8 bytes]`);
-  }
+  const stderrMarker = describeStream('stderr', entry.stderr, entry.spillEnabled);
+  parts.push(...stderrMarker);
   if (parts.length === 0) parts.push('(no output)');
+
+  // A failed command and a truncated capture look alike to a reader who
+  // only sees the output. The exit code is the command's own verdict; the
+  // artifact is where the missing bytes are. Say so once, explicitly.
+  if (stdoutMarker.length > 0 || stderrMarker.length > 0) {
+    parts.push(
+      "note: the exit code below is the command's own status and is independent of how much " +
+        'output was captured — a non-zero exit code means the command failed, not that the ' +
+        'output was truncated.'
+    );
+  }
 
   if (finished) {
     parts.push(`elapsed_seconds: ${elapsedSeconds}`);
-    const code = entry.exitCode ?? 'unknown';
-    if (code === 0) {
-      parts.push(`exit_code: ${code}`);
-    } else {
+    if (entry.aborted) {
       parts.push(
-        `exit_code: ${code} (COMMAND FAILED — review stderr above and try a corrected command; ` +
-          `do not repeat the same command unchanged)`
+        'status: aborted (the command was interrupted before it finished; the output above is ' +
+          'what it produced before it was killed)',
+        'exit_code: unknown (the command was aborted, so it never reported one)'
       );
+    } else {
+      const code = entry.exitCode ?? 'unknown';
+      if (code === 0) {
+        parts.push(`exit_code: ${code}`);
+      } else {
+        parts.push(
+          `exit_code: ${code} (COMMAND FAILED — review stderr above and try a corrected command; ` +
+            `do not repeat the same command unchanged)`
+        );
+      }
     }
   } else {
     parts.push(
       `elapsed_seconds: ${elapsedSeconds}`,
-      `status: still running (process_id=${processId})`,
+      `status: still running (process_id=${processId})`
+    );
+    if (entry.spillEnabled) {
+      parts.push(
+        'The output above is a partial snapshot — the command is still running and the artifact keeps growing.'
+      );
+    }
+    parts.push(
       'Use check_process_output(process_id, poll_interval_seconds?) to get updated output.'
     );
   }
@@ -254,7 +360,8 @@ export async function runCommand(
   output: ToolOutputSink = noopToolOutputSink,
   scope?: WorkingDirectoryScope,
   yoloMode: boolean = false,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  sessionId?: number
 ): Promise<string> {
   const effectiveShell = getEffectiveShell(shell, output);
   const approvedYolo = yoloMode;
@@ -279,15 +386,41 @@ export async function runCommand(
   const processId = store.nextId++;
   output.writeLine(`  Running (id=${processId})...\n`);
 
+  // The spill is on by default: without a spool file there is nowhere to
+  // recover the omitted bytes from, so the bounded capture would throw
+  // data away. `LOCOPILOT_RUN_OUTPUT_SPILL=0` brings the old bounded
+  // capture back, byte for byte.
+  const spillEnabled = isRunOutputSpillEnabled();
+  if (spillEnabled) sweepOutputStore();
+
+  // The artifact lives in the store's directory, under a directory that
+  // belongs to this session and this run only: the session's artifacts can
+  // be removed with the session, and two runs can never collide.
+  const runId = `run-${processId}-${workdirNonce}`;
+  const outputScope: OutputScope = { sessionId, runId };
+  const artifactDirectory = runOutputDirectory(outputScope);
+
   const entry: ProcessEntry = {
     process: null as unknown as ChildProcess, // assigned immediately below
     command,
     shell: effectiveShell,
-    stdout: new BoundedOutput(),
-    stderr: new BoundedOutput(),
+    stdout: new OutputSpool({
+      limits: SPOOL_LIMITS,
+      directory: artifactDirectory,
+      name: `${runId}-stdout.log`,
+      enabled: spillEnabled,
+    }),
+    stderr: new OutputSpool({
+      limits: SPOOL_LIMITS,
+      directory: artifactDirectory,
+      name: `${runId}-stderr.log`,
+      enabled: spillEnabled,
+    }),
     startedAt: new Date(),
     done: false,
     exitCode: null,
+    spillEnabled,
+    aborted: false,
   };
   store.registry.set(processId, entry);
 
@@ -303,11 +436,14 @@ export async function runCommand(
   let abortHandler: (() => void) | undefined;
   if (signal) {
     abortHandler = () => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* ignore */
-      }
+      entry.aborted = true;
+      // The whole process GROUP has to die. The child is spawned detached on
+      // POSIX, so its pid is the process-group leader and the negative-pid
+      // group kill inside `killProcessTree` reaches every descendant. A
+      // plain `child.kill()` would leave the command's own children
+      // running, holding the pipe open and writing into the artifact after
+      // the tool has already answered.
+      killProcessTree(child);
     };
     signal.addEventListener('abort', abortHandler, { once: true });
   }
@@ -350,7 +486,16 @@ export async function runCommand(
         const currentStore = requestProcessState.getStore();
         currentStore?.registry.delete(processId);
       }
-      resolve(result || buildOutput(entry, true, null));
+      const finalOutput = result || buildOutput(entry, true, null);
+      // The artifact has to be complete on disk before the model is pointed
+      // at it, and the file handles have to be closed exactly once. Both
+      // calls are idempotent, so a finalizer that runs twice (the abort
+      // path and the close path can both fire) is harmless.
+      entry.stdout.finish();
+      entry.stderr.finish();
+      entry.stdout.dispose();
+      entry.stderr.dispose();
+      resolve(finalOutput);
     };
 
     const timer = setTimeout(() => {
@@ -358,6 +503,12 @@ export async function runCommand(
       // Still running after timeout – return partial output so the LLM can check back
       onProgress?.('run_command: still running, returning partial output...');
       returnedPartial = true;
+
+      // The snapshot the model is about to see has to include the bytes
+      // that arrived without a trailing newline, and the artifact has to
+      // hold every byte the command produced so far.
+      entry.stdout.flush();
+      entry.stderr.flush();
 
       // TTL cleanup: if the LLM never polls the process again, forcibly kill
       // it and remove the registry entry after 5 minutes to prevent leaks.
@@ -368,6 +519,11 @@ export async function runCommand(
       entry.ttlTimer = setTimeout(() => {
         killProcessTree(child);
         owningStore.registry.delete(processId);
+        // The process is dead now, so the artifacts can be closed for good.
+        entry.stdout.finish();
+        entry.stderr.finish();
+        entry.stdout.dispose();
+        entry.stderr.dispose();
       }, PROCESS_REGISTRY_TTL_MS);
 
       // We don't unregister interrupt handler here because the process
@@ -378,6 +534,7 @@ export async function runCommand(
     }, timeoutMs);
 
     child.on('close', (code) => {
+      if (signal?.aborted) entry.aborted = true;
       entry.stdout.finish();
       entry.stderr.finish();
       const exitCode = code ?? 0;
@@ -411,6 +568,15 @@ export async function runCommand(
     });
 
     child.on('error', (err) => {
+      if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        // The command was interrupted, not broken: the artifact still holds
+        // everything it produced before it was killed, and the exit code is
+        // not the command's verdict.
+        entry.aborted = true;
+        onProgress?.('run_command: aborted.');
+        finalize(-1);
+        return;
+      }
       entry.stderr.append(Buffer.from(`\nSpawn error: ${err.message}`));
       onProgress?.('run_command: spawn error.');
       finalize(-1);
@@ -512,6 +678,8 @@ export async function checkProcessOutput(
     const output = buildOutput(entry, true, null);
     if (entry.ttlTimer) clearTimeout(entry.ttlTimer);
     store.registry.delete(processId);
+    entry.stdout.dispose();
+    entry.stderr.dispose();
     return output;
   }
 
@@ -540,6 +708,13 @@ export function getToolPrompt(isYolo: boolean): string {
 
   return (
     `${cmdLine}\n   ${cmdDesc}\n${paramRows(runCommandToolSchema.parameters.properties)}\n\n` +
-    `${checkLine}\n   ${checkDesc}\n${paramRows(checkProcessOutputToolSchema.parameters.properties)}\n`
+    `${checkLine}\n   ${checkDesc}\n${paramRows(checkProcessOutputToolSchema.parameters.properties)}\n\n` +
+    `Output handling: a command that prints a lot keeps its whole output in a file under the\n` +
+    `temporary directory; the result shows an excerpt of it (the head and the tail) and the path\n` +
+    `of the file. The byte and line counts describe the whole file, not the excerpt. Read the rest\n` +
+    `with read_file(path, start_line, end_line) — never run the command again just to see output\n` +
+    `you could have read from the file. The exit code is the command's own status and is\n` +
+    `independent of how much output was captured. Secrets in the output are replaced with\n` +
+    `[REDACTED], so a redacted value has to come from the user, not from the output.\n`
   );
 }

@@ -492,7 +492,8 @@ export const toolRegistry = new Map<string, IToolCommand>([
             output,
             context?.workingDirectoryScope,
             context?.yoloMode ?? false,
-            signal
+            signal,
+            context?.sessionId
           ),
         };
       },
