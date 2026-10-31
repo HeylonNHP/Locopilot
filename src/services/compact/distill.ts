@@ -18,12 +18,29 @@ import {
   TOOL_DISTILL_MAX_CHARS,
   TOOL_DISTILL_NUM_PREDICT,
   TOOL_DISTILL_SYSTEM_PROMPT,
+  TOOL_DISTILL_TRUNCATION_MARKER,
 } from './constants';
 
 function getToolMessageName(message: ChatMessage): string {
   const firstToolCall = message.tool_calls?.[0];
   const name = firstToolCall?.function?.name;
   return typeof name === 'string' && name.trim().length > 0 ? name.trim() : 'unknown_tool';
+}
+
+/**
+ * Cuts `text` to `maxChars` characters and marks the cut when there was one.
+ *
+ * The marker counts towards the limit, so the result never exceeds
+ * `maxChars`. A text that fits is returned unchanged — no marker, because a
+ * marker on an intact digest would tell the summariser that a complete
+ * digest was cut.
+ */
+function cutWithMarker(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const room = Math.max(0, maxChars - TOOL_DISTILL_TRUNCATION_MARKER.length);
+  return `${text.slice(0, room)}${TOOL_DISTILL_TRUNCATION_MARKER}`;
 }
 
 /**
@@ -148,10 +165,15 @@ export async function distillToolMessages(
     );
 
     const rawDigest = (distillResponse.message?.content ?? '').trim();
-    const digest =
-      rawDigest.length > 0
-        ? rawDigest.slice(0, TOOL_DISTILL_MAX_CHARS)
-        : message.content.slice(0, TOOL_DISTILL_MAX_CHARS);
+    // A digest that was cut is MARKED as cut. The summariser's prompt asks
+    // the model to copy names "character for character" and to report a
+    // value that was cut as cut — but a digest that simply stops mid-sentence
+    // carries no such signal, so the model cannot tell a complete sentence
+    // from a cut one and copies a truncated value as if it were whole.
+    const digest = cutWithMarker(
+      rawDigest.length > 0 ? rawDigest : message.content,
+      TOOL_DISTILL_MAX_CHARS
+    );
 
     distilledMessages.push({
       ...message,

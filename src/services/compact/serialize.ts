@@ -81,8 +81,13 @@ const TOOL_RESULT_HEAD_RATIO = 0.7;
  * The list mirrors the real tool schemas (`src/tools/tools.ts` and the
  * per-tool schema files): `process_id` belongs to `check_process_output`,
  * `skill_name` to `load_skill`, `source` to `fetch_image`, `diagram` to
- * `render_mermaid`, and `tool`/`server` to `mcp_call`. Nothing that can carry
- * a body or a credential is on it.
+ * `render_mermaid`, and `tool`/`server` to `mcp_call`. `agents` and
+ * `share_summaries` belong to `run_subagents`: without them its projection
+ * was EMPTY, so the summariser saw a tool call with no arguments at all and
+ * could record it as "called with no arguments" — a fact that is not in the
+ * history. Nothing that can carry a body or a credential is on it, and every
+ * value is capped like every other value (the `agents` array is JSON-encoded
+ * and then cut at the same 300-character cap).
  */
 const GENERIC_PROJECTED_KEYS = [
   'path',
@@ -100,6 +105,8 @@ const GENERIC_PROJECTED_KEYS = [
   'diagram',
   'tool',
   'server',
+  'agents',
+  'share_summaries',
 ] as const;
 
 /** A projected argument value: strings are capped, numbers and booleans stay exact. */

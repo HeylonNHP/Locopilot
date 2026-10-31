@@ -36,6 +36,27 @@ export function computeSafeInputBudget(numCtx: number): number {
 }
 
 /**
+ * The token budget left for the HISTORY once the instruction prompt has been
+ * paid for.
+ *
+ * WHY the floor applies to the TOTAL and not to the subtraction: a floor on
+ * the subtraction (`max(256, safe - prompt)`) DISCARDS the subtraction
+ * whenever the prompt is bigger than the budget minus 256 tokens. At a small
+ * context window the prompt was then charged NOTHING and the request could
+ * exceed the window (at a 512-token context: 996 tokens sent against a
+ * 512-token window — the provider rejects it). The prompt is part of the
+ * request, so it is always paid for; what is left is what the history may
+ * use, and it is floored at ZERO (a history allowance of zero is a pipeline
+ * that must fail loudly, not one that silently sends an over-budget request).
+ *
+ * This is the ONE place the arithmetic lives: the callers ask for the
+ * allowance and never do the subtraction themselves.
+ */
+export function computeEffectiveInputBudget(safeInputBudget: number, promptTokens: number): number {
+  return Math.max(0, safeInputBudget - promptTokens);
+}
+
+/**
  * Computes the target/min/max summary token budgets for one summarisation
  * request given the size of the source it is compressing.
  *

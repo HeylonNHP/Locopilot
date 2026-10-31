@@ -1,0 +1,16 @@
+=== FIXTURE HEADER ===
+Produced on: 2026-10-31T13:24:34.842Z (UTC)
+Produced by: LOCOPILOT_TEST_LIVE_COMPACTION=1 LOCOPILOT_TEST_LIVE_WRITE_FIXTURE=1 npx tsx scripts/test-compact-prompt.mjs
+Provider: ollama-home (ollama) — https://ollama.com
+Model: beam
+Context window used: 8192 (clamped to 8192 by the live check)
+Scripted history: the GOLDEN_HISTORY array of scripts/test-compact-prompt.mjs — a user turn about a crashing status bar, an assistant turn, a write_file call for src/services/compact/statusBar.tsx, a run_command call for npm run test:compact-prompt and the tool output carrying the TypeError.
+Note: the summary below is the model output verbatim; nothing was edited by hand.
+=== END FIXTURE HEADER ===
+Goal: Fix the status bar crash on mount.
+
+Changes: src/services/compact/statusBar.tsx was written (content length 37; content not shown).
+
+Open work: The test suite has not passed; npm run test:compact-prompt failed, so the crash remains unresolved and needs further investigation.
+
+Key data: Command run: npm run test:compact-prompt. Error: TypeError: Cannot read properties of undefined (reading 'render').

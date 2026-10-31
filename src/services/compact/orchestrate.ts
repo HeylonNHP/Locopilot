@@ -175,6 +175,19 @@ export async function compactHistory(
 
   // Generate the summary: single-shot when it fits, bounded map-reduce when the
   // older history exceeds the safe input budget.
+  //
+  // The REAL preserved-recent token count goes down with it: the summariser
+  // used to be told "0 estimated tokens" while the prompt also claimed that
+  // the summary was the only record of the older turns — a prompt that
+  // contradicts itself, and that misinforms the model about what it has to
+  // write down.
+  //
+  // The count is the RAW one: it is measured by the splitter, BEFORE the
+  // distiller has replaced the large tool outputs of the preserved window
+  // with digests, so it OVERSTATES the window. The prompt says exactly that
+  // ("the count is measured before tool outputs are distilled, so it can
+  // overstate the window") and does not claim the preserved turns are
+  // verbatim — their large tool outputs arrive as digests.
   const summary = await produceConversationSummary(
     ctx,
     model,
@@ -186,7 +199,8 @@ export async function compactHistory(
     reasoningEffort,
     onTps,
     toolNames,
-    redactSecrets
+    redactSecrets,
+    historySplit.preservedRecentTokens
   );
 
   // Rebuild the message history: a single assistant message holds the preamble

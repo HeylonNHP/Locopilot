@@ -19,7 +19,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { computeSafeInputBudget } from '../src/services/compact/budget.ts';
+import {
+  computeEffectiveInputBudget,
+  computeSafeInputBudget,
+} from '../src/services/compact/budget.ts';
 import { estimateSerializedMessageTokens } from '../src/services/compact/reduce.ts';
 import {
   buildToolNameMap,
@@ -29,11 +32,37 @@ import {
   splitHistoryForCompaction,
   splitHistoryIntoChunks,
 } from '../src/services/compact/split.ts';
-import { buildSummarisationInput } from '../src/services/compact/summarize.ts';
+import {
+  buildCompactSystemPrompt,
+  buildSummarisationInput,
+  countSummarisationPromptTokens,
+} from '../src/services/compact/summarize.ts';
 import { countMessagesTokens, countTextTokens } from '../src/services/tokenizer.ts';
 
 const MODEL = 'gpt-4o';
 const BUDGET = { targetSummaryTokens: 500, minSummaryTokens: 300, maxSummaryTokens: 800 };
+
+/**
+ * The budget the production path fits the history into.
+ *
+ * It is NOT the safe input budget: the instruction prompt is part of the
+ * request, so it is paid for out of the safe budget before the history is
+ * fitted into what is left. The chunker is given the REMAINDER, so the
+ * chunk-sizing checks below have to measure against the same number.
+ */
+const EFFECTIVE_INPUT_BUDGET = computeEffectiveInputBudget(
+  computeSafeInputBudget(8192),
+  countSummarisationPromptTokens(
+    {
+      targetSummaryTokens: BUDGET.targetSummaryTokens,
+      minSummaryTokens: BUDGET.minSummaryTokens,
+      maxSummaryTokens: BUDGET.maxSummaryTokens,
+      preservedRecentTokens: 0,
+      numCtx: 8192,
+    },
+    MODEL
+  )
+);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoFile = (...segments) => fs.readFileSync(path.join(__dirname, '..', ...segments), 'utf8');
@@ -148,17 +177,29 @@ check('a write_file body never reaches the summariser input but the path does', 
   assert.ok(!content.includes(body), 'the file body leaked into the summariser input');
 });
 
-check('the summariser system prompt is unchanged', () => {
+check('the summariser request carries the compaction prompt as its system message', () => {
+  // The prompt is NOT expected to stay byte-identical: the summariser's
+  // prompt is allowed to change shape. What must hold is that the request
+  // still carries the prompt the module builds, and that the prompt still
+  // carries the compaction identity — a request that lost it would send the
+  // model a prompt that does not say what it is for.
   const input = buildSummarisationInput([{ role: 'user', content: 'hello' }], BUDGET, 0, 8192);
   const systemMessage = input.messages.find((message) => message.role === 'system');
   assert.ok(systemMessage, 'the summarisation request has no system message');
-  assert.ok(
-    systemMessage.content.startsWith('You are a conversation summariser.'),
-    'the summariser system prompt changed'
+  assert.equal(
+    systemMessage.content,
+    buildCompactSystemPrompt({
+      targetSummaryTokens: BUDGET.targetSummaryTokens,
+      minSummaryTokens: BUDGET.minSummaryTokens,
+      maxSummaryTokens: BUDGET.maxSummaryTokens,
+      preservedRecentTokens: 0,
+      numCtx: 8192,
+    }),
+    'the system message is not the prompt buildCompactSystemPrompt builds'
   );
   assert.ok(
-    systemMessage.content.includes('Return ONLY plain summary text'),
-    'the summariser system prompt changed'
+    systemMessage.content.startsWith('You are a conversation summariser.'),
+    'the system message no longer carries the compaction identity'
   );
 });
 
@@ -279,27 +320,25 @@ console.log('chunking budget');
 
 check('the chunker splits a large history into several chunks', () => {
   const history = makeLargeHistory(100);
-  const safeInputBudget = computeSafeInputBudget(8192);
   const toolNames = buildToolNameMap(history);
-  const chunks = splitHistoryIntoChunks(history, safeInputBudget, MODEL, (message) =>
+  const chunks = splitHistoryIntoChunks(history, EFFECTIVE_INPUT_BUDGET, MODEL, (message) =>
     estimateSerializedMessageTokens(message, { toolNames }, MODEL)
   );
   assert.ok(chunks.length > 1, `expected several chunks, got ${chunks.length}`);
 });
 
-check('each chunk stays inside the safe input budget once serialised', () => {
+check('each chunk stays inside the effective input budget once serialised', () => {
   const history = makeLargeHistory(100);
-  const safeInputBudget = computeSafeInputBudget(8192);
   const toolNames = buildToolNameMap(history);
-  const chunks = splitHistoryIntoChunks(history, safeInputBudget, MODEL, (message) =>
+  const chunks = splitHistoryIntoChunks(history, EFFECTIVE_INPUT_BUDGET, MODEL, (message) =>
     estimateSerializedMessageTokens(message, { toolNames }, MODEL)
   );
   for (const chunk of chunks) {
     const serialized = serializeHistoryForSummaryText(chunk, { toolNames });
     const tokens = countTextTokens(serialized, MODEL);
     assert.ok(
-      tokens <= safeInputBudget,
-      `a chunk serialises to ${tokens} tokens, over the ${safeInputBudget} token budget`
+      tokens <= EFFECTIVE_INPUT_BUDGET,
+      `a chunk serialises to ${tokens} tokens, over the ${EFFECTIVE_INPUT_BUDGET} token budget`
     );
   }
 });
@@ -316,14 +355,16 @@ check('the chunker measures the serialised history, not the raw messages', () =>
       { role: 'tool', content: 'applied', tool_call_id: `call_${index}` }
     );
   }
-  const safeInputBudget = computeSafeInputBudget(8192);
   const toolNames = buildToolNameMap(history);
 
-  const rawChunks = splitHistoryIntoChunks(history, safeInputBudget, MODEL);
+  const rawChunks = splitHistoryIntoChunks(history, EFFECTIVE_INPUT_BUDGET, MODEL);
   assert.ok(rawChunks.length > 1, 'the raw estimate should have split this history');
 
-  const serializedChunks = splitHistoryIntoChunks(history, safeInputBudget, MODEL, (message) =>
-    estimateSerializedMessageTokens(message, { toolNames }, MODEL)
+  const serializedChunks = splitHistoryIntoChunks(
+    history,
+    EFFECTIVE_INPUT_BUDGET,
+    MODEL,
+    (message) => estimateSerializedMessageTokens(message, { toolNames }, MODEL)
   );
   assert.equal(serializedChunks.length, 1, 'the serialised history should fit in a single chunk');
 
@@ -332,8 +373,8 @@ check('the chunker measures the serialised history, not the raw messages', () =>
     MODEL
   );
   assert.ok(
-    serializedTokens <= safeInputBudget,
-    `the single chunk serialises to ${serializedTokens} tokens, over the ${safeInputBudget} budget`
+    serializedTokens <= EFFECTIVE_INPUT_BUDGET,
+    `the single chunk serialises to ${serializedTokens} tokens, over the ${EFFECTIVE_INPUT_BUDGET} budget`
   );
 });
 
@@ -349,14 +390,14 @@ check('a huge tool result does not blow the chunk budget', () => {
   ];
   const toolNames = buildToolNameMap(history);
   const options = { toolNames, maxToolResultChars };
-  const chunks = splitHistoryIntoChunks(history, safeInputBudget, MODEL, (message) =>
+  const chunks = splitHistoryIntoChunks(history, EFFECTIVE_INPUT_BUDGET, MODEL, (message) =>
     estimateSerializedMessageTokens(message, options, MODEL)
   );
   const serialized = serializeHistoryForSummaryText(chunks[0], options);
   const tokens = countTextTokens(serialized, MODEL);
   assert.ok(
-    tokens <= safeInputBudget,
-    `the chunk serialises to ${tokens} tokens, over the ${safeInputBudget} token budget`
+    tokens <= EFFECTIVE_INPUT_BUDGET,
+    `the chunk serialises to ${tokens} tokens, over the ${EFFECTIVE_INPUT_BUDGET} token budget`
   );
   assert.ok(
     serialized.includes('characters omitted'),
@@ -366,9 +407,8 @@ check('a huge tool result does not blow the chunk budget', () => {
 
 check('a chunk never starts on a tool message', () => {
   const history = makeLargeHistory(100);
-  const safeInputBudget = computeSafeInputBudget(8192);
   const toolNames = buildToolNameMap(history);
-  const chunks = splitHistoryIntoChunks(history, safeInputBudget, MODEL, (message) =>
+  const chunks = splitHistoryIntoChunks(history, EFFECTIVE_INPUT_BUDGET, MODEL, (message) =>
     estimateSerializedMessageTokens(message, { toolNames }, MODEL)
   );
   for (const chunk of chunks) {
