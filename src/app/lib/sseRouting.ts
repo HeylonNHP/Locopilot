@@ -2,6 +2,7 @@ import type { ChatAction, DoneReason } from '@/app/lib/chatStore';
 import type { SseEventPayloadMap } from '@/types/sse';
 
 import { DEFAULT_NUM_CTX } from '@/constants';
+import { formatCompactionReceipt } from '@/services/compact/receipt';
 
 /**
  * Routing of one SSE event into the store actions it produces.
@@ -355,6 +356,11 @@ export function routeSseEvent(
           ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
         });
       }
+      // The window this history now has to fit. The server sends it with the
+      // event (it is the window the NEXT turn runs with, which the client
+      // cannot derive when a provider clamps the configured value); the old
+      // fallbacks stay for a frame from an older server.
+      const tokenLimit = data.tokenLimit ?? requestedNumCtx ?? DEFAULT_NUM_CTX;
       if (typeof data.stats?.newTokenCount === 'number') {
         actions.push({
           type: 'SET_TOKEN_STATS',
@@ -362,7 +368,7 @@ export function routeSseEvent(
             promptEvalCount: data.stats.newTokenCount,
             evalCount: 0,
             totalTokens: data.stats.newTokenCount,
-            tokenLimit: data.tokenLimit ?? requestedNumCtx ?? DEFAULT_NUM_CTX,
+            tokenLimit,
           },
           ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
         });
@@ -372,14 +378,29 @@ export function routeSseEvent(
           ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
         });
       }
+      // The same receipt the manual `/compact` shows, built by the same pure
+      // formatter — the two paths used to word this event differently.
+      const receipt = formatCompactionReceipt({
+        oldTokenCount: data.stats?.oldTokenCount ?? null,
+        newTokenCount: data.stats?.newTokenCount ?? null,
+        tokenLimit,
+        automatic: true,
+      });
       actions.push({
         type: 'ADD_MESSAGE',
-        message: {
-          role: 'system',
-          content: `⚡ Conversation auto-compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`,
-        },
+        message: { role: 'system', content: receipt.text },
         ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
       });
+      // A compaction that produced a history still too large for the window is
+      // the one outcome the user has to act on, and it used to be silent here.
+      // It goes in its OWN bubble so the status line stays one line.
+      if (receipt.warning !== null) {
+        actions.push({
+          type: 'ADD_MESSAGE',
+          message: { role: 'system', content: receipt.warning },
+          ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
+        });
+      }
       break;
     }
 

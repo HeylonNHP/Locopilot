@@ -279,7 +279,7 @@ check('compact clears the phase and applies the new history to the owner', () =>
         type: 'ADD_MESSAGE',
         message: {
           role: 'system',
-          content: '⚡ Conversation auto-compacted (500 → 100 tokens)',
+          content: '⚡ Conversation auto-compacted: 500 → 100 tokens (~80% smaller).',
         },
         targetSessionId: 9,
       },
@@ -287,9 +287,49 @@ check('compact clears the phase and applies the new history to the owner', () =>
   );
 });
 
-check('compact without stats clears the token stats for the owner', () => {
+check('compact reports a result that is still over the window in a second bubble', () => {
+  // The receipt comes from one pure formatter (`formatCompactionReceipt`) on
+  // both the manual and the automatic path; this pins the automatic path's
+  // WARNING, which used to be missing entirely — a compaction that succeeded
+  // and still did not make room is the one outcome the user has to act on.
+  const actions = actionsFor(
+    'compact',
+    {
+      messages: [{ role: 'assistant', content: 'short' }],
+      stats: { oldTokenCount: 100000, newTokenCount: 90000 },
+      tokenLimit: 65536,
+    },
+    { targetSessionId: 7, compactOwner: 9 }
+  );
+  assert.deepEqual(actions.slice(-2), [
+    {
+      type: 'ADD_MESSAGE',
+      message: {
+        role: 'system',
+        content: '⚡ Conversation auto-compacted: 100,000 → 90,000 tokens (~10% smaller).',
+      },
+      targetSessionId: 9,
+    },
+    {
+      type: 'ADD_MESSAGE',
+      message: {
+        role: 'system',
+        content:
+          '⚠️ The compacted history is still over the context window (90,000 of 65,536 tokens, estimated). The next turn may fail.',
+      },
+      targetSessionId: 9,
+    },
+  ]);
+});
+
+check('compact with no stats still says something and clears the token stats', () => {
   const actions = actionsFor('compact', { messages: [] }, { targetSessionId: 7, compactOwner: 9 });
   assert.deepEqual(actions[2], { type: 'CLEAR_TOKEN_STATS', targetSessionId: 9 });
+  assert.deepEqual(actions[3], {
+    type: 'ADD_MESSAGE',
+    message: { role: 'system', content: '⚡ Conversation auto-compacted.' },
+    targetSessionId: 9,
+  });
 });
 
 // ── terminal events ─────────────────────────────────────────────────────────

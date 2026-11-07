@@ -4,7 +4,10 @@
  * Tool-output distillation for the compaction pipeline. Large tool results are
  * sent to the LLM one message at a time and replaced with a compact digest so
  * they do not dominate the summarisation input. Each distillation call is
- * individually bounded so it can never exceed the model context window.
+ * individually bounded so it can never exceed the model context window, and
+ * the NUMBER of calls is bounded too (`planDistillation` + the caller's
+ * `computeDistillCallCap`): the largest results get the budget, everything
+ * else is passed through verbatim.
  */
 
 import type { ReasoningEffort } from '@/types/chatConfig';
@@ -12,6 +15,7 @@ import type { ReasoningEffort } from '@/types/chatConfig';
 import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
 import { type ChatMessage, type LlmRequestContext, sendLlmChat } from '@/services/llm';
 import { LiveThroughputMeter } from '@/services/tokenThroughput';
+import { isAbortError } from '@/util/error';
 
 import {
   TOOL_DISTILL_CHAR_THRESHOLD,
@@ -20,7 +24,6 @@ import {
   TOOL_DISTILL_SYSTEM_PROMPT,
   TOOL_DISTILL_TRUNCATION_MARKER,
 } from './constants';
-
 function getToolMessageName(message: ChatMessage): string {
   const firstToolCall = message.tool_calls?.[0];
   const name = firstToolCall?.function?.name;
@@ -68,22 +71,129 @@ function findMatchingAssistantIndex(messages: ChatMessage[], toolIndex: number):
 }
 
 /**
+ * The result of one {@link distillToolMessages} pass.
+ *
+ * `skippedCount` is what the call cap left verbatim — it is reported so the
+ * orchestrator can say so once, in a single progress line, instead of the
+ * caller having to diff the arrays to find out. `orphanCount` and `failedCount`
+ * are the OTHER reasons a large output stayed at full size, and they are kept
+ * apart on purpose: the cap did not choose to leave an orphan (distillation
+ * cannot legally touch it) and it did not choose to leave a failed row (the
+ * call was made and did not return).
+ */
+export interface DistillResult {
+  messages: ChatMessage[];
+  /** How many messages were replaced with a digest. */
+  distilledCount: number;
+  /** How many eligible messages the call cap left verbatim. */
+  skippedCount: number;
+  /** How many oversized tool rows have no owning assistant row in this slice. */
+  orphanCount: number;
+  /** How many distillation calls threw and left their message verbatim. */
+  failedCount: number;
+}
+
+/**
+ * Chooses WHICH oversized tool outputs are worth a distillation call.
+ *
+ * Candidate = a `tool` row whose content reaches `thresholdChars` AND that has
+ * a matching assistant row in this slice. The orphan guard lives here (it used
+ * to live in the loop) so an unmatched row is neither selected nor counted as
+ * skipped: it is not something the cap chose to leave alone, it is something
+ * distillation could not legally touch.
+ *
+ * Selection is by SIZE, largest first, ties broken by position. WHY not
+ * positional (oldest first, or newest first):
+ *
+ * - Every call costs roughly the same and saves roughly `length − 2400`
+ *   characters, so a positional policy spends calls on 1.3 KB results and
+ *   leaves the 40 KB ones in place — the exact outputs that decide whether the
+ *   compacted history fits.
+ * - Never NEWEST first: distillation is lossy, and the newest results are the
+ *   ones the model is actively reasoning about.
+ *
+ * The returned indices are ascending, so the caller can rebuild the history in
+ * one pass.
+ *
+ * @param historyMessages - The slice that will be distilled.
+ * @param maxCalls        - How many model calls the caller can afford.
+ * @param thresholdChars  - Minimum content length that makes a row a candidate.
+ * @returns the selected (ascending) indices, how many candidates the cap left
+ *          behind, and how many oversized rows were orphans (not candidates at
+ *          all).
+ */
+export function planDistillation(
+  historyMessages: ChatMessage[],
+  maxCalls: number,
+  thresholdChars: number = TOOL_DISTILL_CHAR_THRESHOLD
+): { selected: number[]; skipped: number; orphans: number } {
+  const limit = Number.isFinite(maxCalls) ? Math.max(0, Math.floor(maxCalls)) : 0;
+
+  const candidates: { index: number; length: number }[] = [];
+  let orphans = 0;
+  for (let index = 0; index < historyMessages.length; index += 1) {
+    const message = historyMessages[index];
+    if (!message || message.role !== 'tool') {
+      continue;
+    }
+    const length = message.content?.length ?? 0;
+    if (length < thresholdChars) {
+      continue;
+    }
+    if (findMatchingAssistantIndex(historyMessages, index) < 0) {
+      orphans += 1;
+      continue;
+    }
+    candidates.push({ index, length });
+  }
+
+  candidates.sort((left, right) => right.length - left.length || left.index - right.index);
+
+  const selected = candidates
+    .slice(0, limit)
+    .map((candidate) => candidate.index)
+    .sort((left, right) => left - right);
+
+  return { selected, skipped: candidates.length - selected.length, orphans };
+}
+
+/**
  * Replaces large tool outputs with lossy, bounded digests produced by the LLM.
- * Each oversized tool message becomes its own bounded request, so the number of
- * requests scales with the number of large tool messages but no single request
- * grows without limit.
+ *
+ * Only the messages {@link planDistillation} selects are sent to the model —
+ * at most `maxCalls` of them, the largest first — and everything else passes
+ * through verbatim. Each call is individually bounded, so no single request
+ * can exceed the model context window.
+ *
+ * A call that FAILS does not abort the pass. One 400, timeout or dropped
+ * stream used to throw out of `compactHistory` and discard every summary the
+ * pass (and the previous chunk summaries) had already produced; with up to
+ * eight calls per pass, one bad tool output could cost the whole compaction.
+ * The message is now kept VERBATIM, counted in `failedCount`, and the pass
+ * continues — an undistilled output costs tokens, a lost compaction costs the
+ * conversation. ABORT errors are the exception and still propagate: the
+ * caller's signal is a user decision, not a failure, so it is checked first
+ * and re-thrown (see `isAbortError` in `util/error.ts`, the same convention the
+ * rest of the repo uses).
+ *
+ * @param maxCalls - How many distillation calls this pass may make.
  */
 export async function distillToolMessages(
   ctx: LlmRequestContext,
   historyMessages: ChatMessage[],
   numCtx: number,
   model: string,
+  maxCalls: number,
   onProgress?: (message: string) => void,
   signal?: AbortSignal,
   reasoningEffort?: ReasoningEffort,
   onTps?: (tps: number) => void
-): Promise<ChatMessage[]> {
+): Promise<DistillResult> {
+  const plan = planDistillation(historyMessages, maxCalls);
+  const selectedIndices = new Set(plan.selected);
   const distilledMessages: ChatMessage[] = [];
+  let distilledCount = 0;
+  let failedCount = 0;
 
   for (let index = 0; index < historyMessages.length; index += 1) {
     const message = historyMessages[index];
@@ -91,23 +201,12 @@ export async function distillToolMessages(
       continue;
     }
 
-    const shouldDistill =
-      message.role === 'tool' && (message.content?.length ?? 0) >= TOOL_DISTILL_CHAR_THRESHOLD;
-
-    if (!shouldDistill) {
+    if (!selectedIndices.has(index)) {
       distilledMessages.push(message);
       continue;
     }
 
     const matchingAssistantIndex = findMatchingAssistantIndex(historyMessages, index);
-    if (matchingAssistantIndex < 0) {
-      // The matching assistant is not in this message slice (possible if the
-      // history was split across an assistant/tool block). Preserve the tool
-      // result verbatim to avoid orphan-conversion issues.
-      distilledMessages.push(message);
-      continue;
-    }
-
     const previous = historyMessages[matchingAssistantIndex];
     const toolName = previous ? getToolMessageName(previous) : 'unknown_tool';
 
@@ -134,35 +233,47 @@ export async function distillToolMessages(
     // Live t/s meter so the UI can show generation speed while the
     // distillation requests run (same shared policy as the main loop).
     const liveMeter = new LiveThroughputMeter(model, TPS_STATUS_MIN_INTERVAL_MS);
-    const distillResponse = await sendLlmChat(
-      ctx,
-      {
-        model,
-        messages: [
-          { role: 'system', content: TOOL_DISTILL_SYSTEM_PROMPT },
-          { role: 'user', content: input },
-        ],
-        tools: [],
-        numCtx,
-        maxOutputTokens: TOOL_DISTILL_NUM_PREDICT,
-        options: {
-          temperature: 0,
+    let distillResponse: Awaited<ReturnType<typeof sendLlmChat>>;
+    try {
+      distillResponse = await sendLlmChat(
+        ctx,
+        {
+          model,
+          messages: [
+            { role: 'system', content: TOOL_DISTILL_SYSTEM_PROMPT },
+            { role: 'user', content: input },
+          ],
+          tools: [],
+          numCtx,
+          maxOutputTokens: TOOL_DISTILL_NUM_PREDICT,
+          options: {
+            temperature: 0,
+          },
+          ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
         },
-        ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-      },
-      (chunk) => {
-        if (chunk.message?.content) {
-          distilledContent += chunk.message.content;
-          liveMeter.onText(chunk.message.content);
-          liveMeter.maybeReport((tps) => onTps?.(tps));
-          onProgress?.(
-            `Distilling tool output ${index + 1}/${historyMessages.length} (${toolName})... (${distilledContent.length} chars)`
-          );
-        }
-      },
-      undefined,
-      signal
-    );
+        (chunk) => {
+          if (chunk.message?.content) {
+            distilledContent += chunk.message.content;
+            liveMeter.onText(chunk.message.content);
+            liveMeter.maybeReport((tps) => onTps?.(tps));
+            onProgress?.(
+              `Distilling tool output ${index + 1}/${historyMessages.length} (${toolName})... (${distilledContent.length} chars)`
+            );
+          }
+        },
+        undefined,
+        signal
+      );
+    } catch (err) {
+      // An abort is the caller's decision, not a failure of this call: it has
+      // to reach the route, which turns it into a `client_abort` error event.
+      if (signal?.aborted === true || isAbortError(err)) {
+        throw err;
+      }
+      failedCount += 1;
+      distilledMessages.push(message);
+      continue;
+    }
 
     const rawDigest = (distillResponse.message?.content ?? '').trim();
     // A digest that was cut is MARKED as cut. The summariser's prompt asks
@@ -179,11 +290,22 @@ export async function distillToolMessages(
       ...message,
       content: `[Distilled tool output from ${toolName}; original length ${message.content.length} chars]\n${digest}`,
     });
+    distilledCount += 1;
 
+    onProgress?.(`Distilled tool output ${distilledCount}/${plan.selected.length} (${toolName})`);
+  }
+
+  if (failedCount > 0) {
     onProgress?.(
-      `Distilled tool output ${distilledMessages.length}/${historyMessages.length} (${toolName})`
+      `${failedCount} tool distillation call(s) failed — those tool output(s) stay verbatim.`
     );
   }
 
-  return distilledMessages;
+  return {
+    messages: distilledMessages,
+    distilledCount,
+    skippedCount: plan.skipped,
+    orphanCount: plan.orphans,
+    failedCount,
+  };
 }

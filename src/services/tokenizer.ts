@@ -75,7 +75,7 @@ await initializeWasm().catch((err) => {
 // routes encoding for two different models would race on the global
 // and produce wildly-wrong (and nondeterministic, since tiktoken's
 // WASM state is not safe to interleave) token counts. The persisted
-// `last_total_tokens` and the 92% auto-compact decision both rely on
+// `last_total_tokens` and the auto-compaction trigger both rely on
 // these counts, so a wrong value here was a silent data-integrity
 // bug. We now keep one encoder per model so concurrent calls for
 // different models return the right encoder without clobbering each

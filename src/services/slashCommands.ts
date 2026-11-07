@@ -77,7 +77,8 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
     command: '/compact',
     name: 'compact',
-    description: 'Force conversation summarisation to recover context.',
+    description:
+      'Force conversation summarisation to recover context; text after the command says what to keep.',
   },
   {
     command: '/title',

@@ -68,6 +68,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  buildReductionCombineSystemPrompt,
   REDUCTION_COMBINE_SYSTEM_PROMPT,
   SUMMARY_SECTIONS,
 } from '../src/services/compact/constants.ts';
@@ -198,6 +199,50 @@ const BUILT_PROMPT = buildCompactSystemPrompt(PROMPT_PARAMS);
 
 /** The prompt under test — the built one, or a deliberately worse variant. */
 const PROMPT = MUTATION ? applyMutation(BUILT_PROMPT, MUTATION) : BUILT_PROMPT;
+
+/**
+ * The note a user might type after `/compact` — the second prompt under test.
+ *
+ * WHY it contains none of the words the prohibition lists look for: the whole
+ * point of those lists is that a FOCUSED prompt must forbid exactly what the
+ * plain one forbids. A note that itself contained "repeat" or "markdown"
+ * would make the focused run fail for the wrong reason, and a note that used
+ * the six section names would collide with the section-order checks.
+ */
+const FOCUS = 'keep the auth refactor details and the failing test output';
+
+/**
+ * The opening words of the focus paragraph.
+ *
+ * WHY it is a constant and not an inline string: the label is a SHAPE, and the
+ * shape is the thing under test (see "the focus label is not a section"). The
+ * old label opened with `WHAT MATTERS MOST (a note …):`, which is the same
+ * `Name: purpose` shape as the six section lines one blank line above it, so a
+ * model could plausibly emit it as a seventh section — and a section is what
+ * reaches the persisted summary.
+ */
+const FOCUS_LABEL = 'IMPORTANT —';
+
+/**
+ * A line that is shaped like a section heading: a capitalised name, optionally
+ * a few more capitalised words, optionally a parenthetical, then a colon.
+ *
+ * This is the shape the six section lines have (`Goal: …`), and the shape the
+ * focus label must NOT have.
+ */
+const SECTION_SHAPED_HEAD = /^[A-Z][A-Za-z]*(?: [A-Za-z]+){0,6}(?: \([^)]*\))?:\s/;
+
+/** The FOCUSED prompt as the source builds it. */
+const BUILT_FOCUSED_PROMPT = buildCompactSystemPrompt({ ...PROMPT_PARAMS, focus: FOCUS });
+
+/**
+ * The focused prompt under test. The mutation harness applies its mutation to
+ * this prompt too, so the prohibition lists below are proven to bite on the
+ * prompt the user's note actually produces — not only on the focus-free one.
+ */
+const FOCUSED_PROMPT = MUTATION
+  ? applyMutation(BUILT_FOCUSED_PROMPT, MUTATION)
+  : BUILT_FOCUSED_PROMPT;
 
 /**
  * Applies a named mutation to the prompt.
@@ -499,6 +544,72 @@ function sectionLine(text, section) {
   }
   return text.slice(index).split('\n')[0];
 }
+
+/**
+ * Wordings that must appear NOWHERE in a summariser prompt, grouped by the
+ * defect they would license.
+ *
+ * They live here — as data — because they have to be run against MORE THAN
+ * ONE prompt: the plain one and the focused one. A list inlined inside a
+ * single check can only ever police a single text, and the focused prompt is
+ * the one a user's own words are spliced into, i.e. exactly the text where a
+ * worse instruction could slip in unnoticed.
+ */
+const FORBIDDEN_GROUPS = {
+  'padding or elaborating': [
+    [/\belaborat(?:e|es|ed|ing|ion)\b/i, 'an instruction to elaborate'],
+    [/\bpad(?:ding|s|ded)?\b/i, 'an instruction to pad'],
+    [/as much as you can/i, 'an instruction to write as much as possible'],
+    [/as detailed as possible/i, 'an instruction to be as detailed as possible'],
+  ],
+  'shortening an identifier or an error message': [
+    [/may be shortened/i, 'a licence to shorten a name'],
+    [/\btruncate[ds]? the\b/i, 'a licence to truncate a name'],
+    [/\bfirst \d+ characters\b/i, 'a licence to cut a name to a length'],
+  ],
+  'material that is not in the history': [
+    [/\byou happen to know\b/i, 'an instruction to add background knowledge'],
+    [/\bfeel free\b/i, 'an invitation to add material'],
+    [/\badd (?:anything|whatever|extra|more)\b/i, 'an instruction to add material'],
+    [/\bmake up\b/i, 'an instruction to invent'],
+    [/\bfabricat(?:e|es|ed|ing|ion)\b/i, 'an instruction to fabricate'],
+    [/\bhallucinat(?:e|es|ed|ing|ion)\b/i, 'an instruction to hallucinate'],
+    [/\bplausible\b/i, 'an invitation to make a plausible guess'],
+  ],
+  'markdown syntax': [
+    [/```/, 'a fenced code block'],
+    [/\*\*[^\n*]+\*\*/, 'bold markup'],
+    [/^[\t ]*#{1,6}[\t ]/m, 'a markdown heading'],
+    [/^[\t ]*[*+-][\t ]/m, 'a markdown bullet list'],
+  ],
+  'a placeholder for an empty section': [
+    [/\bplaceholder\b/i, 'an instruction to write a placeholder'],
+    [/\bTBD\b/, 'an instruction to write a placeholder'],
+    [/\bTODO\b/, 'an instruction to write a placeholder'],
+  ],
+};
+
+/**
+ * Phrases that may appear ONLY inside a clause that forbids them.
+ *
+ * Same reasoning as {@link FORBIDDEN_GROUPS}: one list, run against every
+ * prompt under test.
+ */
+const ONLY_PROHIBITED_PHRASES = [
+  [/\brepeat(?:s|ed|ing)?\b/i, 'repeat'],
+  [/\bshorten(?:s|ed|ing)?\b/i, 'shorten'],
+  [/\bbackground knowledge\b/i, 'background knowledge'],
+  [/\binvent(?:s|ed|ing)?\b/i, 'invent'],
+  [/\bparaphras(?:e|es|ed|ing)\b/i, 'paraphrase'],
+  [/\bmarkdown\b/i, 'markdown'],
+  [/\bbullets?\b/i, 'bullets'],
+  [/\bbold\b/i, 'bold'],
+  [/\bcode fences?\b/i, 'code fences'],
+  [/\bheadings?\b/i, 'headings'],
+  [/\bnone\b|\bn\/a\b/i, 'None/N/A'],
+  [/\bthird person/i, 'third person'],
+  [/\bnarrative/i, 'narrative'],
+];
 
 console.log('the section contract');
 
@@ -865,36 +976,19 @@ check('the prompt asks for section paragraphs in plain text, without markdown', 
 console.log('the prompt must not license a worse summary');
 
 check('the prompt never asks the model to repeat, pad or elaborate beyond the history', () => {
-  assertNoneOf(PROMPT, [
-    [/\belaborat(?:e|es|ed|ing|ion)\b/i, 'an instruction to elaborate'],
-    [/\bpad(?:ding|s|ded)?\b/i, 'an instruction to pad'],
-    [/as much as you can/i, 'an instruction to write as much as possible'],
-    [/as detailed as possible/i, 'an instruction to be as detailed as possible'],
-  ]);
+  assertNoneOf(PROMPT, FORBIDDEN_GROUPS['padding or elaborating']);
   // "repeat" may appear — but only in a clause that forbids it.
   assertOnlyProhibited(PROMPT, /\brepeat(?:s|ed|ing)?\b/i, 'repeat');
 });
 
 check('the prompt never licenses shortening an identifier or an error message', () => {
-  assertNoneOf(PROMPT, [
-    [/may be shortened/i, 'a licence to shorten a name'],
-    [/\btruncate[ds]? the\b/i, 'a licence to truncate a name'],
-    [/\bfirst \d+ characters\b/i, 'a licence to cut a name to a length'],
-  ]);
+  assertNoneOf(PROMPT, FORBIDDEN_GROUPS['shortening an identifier or an error message']);
   // "shorten" itself may appear — but only in a clause that forbids it.
   assertOnlyProhibited(PROMPT, /\bshorten(?:s|ed|ing)?\b/i, 'shorten');
 });
 
 check('the prompt never asks for material that is not in the history', () => {
-  assertNoneOf(PROMPT, [
-    [/\byou happen to know\b/i, 'an instruction to add background knowledge'],
-    [/\bfeel free\b/i, 'an invitation to add material'],
-    [/\badd (?:anything|whatever|extra|more)\b/i, 'an instruction to add material'],
-    [/\bmake up\b/i, 'an instruction to invent'],
-    [/\bfabricat(?:e|es|ed|ing|ion)\b/i, 'an instruction to fabricate'],
-    [/\bhallucinat(?:e|es|ed|ing|ion)\b/i, 'an instruction to hallucinate'],
-    [/\bplausible\b/i, 'an invitation to make a plausible guess'],
-  ]);
+  assertNoneOf(PROMPT, FORBIDDEN_GROUPS['material that is not in the history']);
   // "background knowledge" may appear — but only in a clause that forbids it.
   assertOnlyProhibited(PROMPT, /\bbackground knowledge\b/i, 'background knowledge');
   assertOnlyProhibited(PROMPT, /\binvent(?:s|ed|ing)?\b/i, 'invent');
@@ -909,20 +1003,11 @@ check('the prompt never asks for markdown', () => {
   assertOnlyProhibited(PROMPT, /\bcode fences?\b/i, 'code fences');
   assertOnlyProhibited(PROMPT, /\bheadings?\b/i, 'headings');
   // And no markdown syntax may be shown to the model as an example.
-  assertNoneOf(PROMPT, [
-    [/```/, 'a fenced code block'],
-    [/\*\*[^\n*]+\*\*/, 'bold markup'],
-    [/^[\t ]*#{1,6}[\t ]/m, 'a markdown heading'],
-    [/^[\t ]*[*+-][\t ]/m, 'a markdown bullet list'],
-  ]);
+  assertNoneOf(PROMPT, FORBIDDEN_GROUPS['markdown syntax']);
 });
 
 check('the prompt never asks for a placeholder in an empty section', () => {
-  assertNoneOf(PROMPT, [
-    [/\bplaceholder\b/i, 'an instruction to write a placeholder'],
-    [/\bTBD\b/, 'an instruction to write a placeholder'],
-    [/\bTODO\b/, 'an instruction to write a placeholder'],
-  ]);
+  assertNoneOf(PROMPT, FORBIDDEN_GROUPS['a placeholder for an empty section']);
   // "None" and "N/A" may appear — but only in a clause that forbids them.
   assertOnlyProhibited(PROMPT, /\bnone\b|\bn\/a\b/i, 'None/N/A');
 });
@@ -975,6 +1060,217 @@ check('the user message carries the serialised history', () => {
   assert.ok(
     user.content.endsWith(input.historyText),
     'the request does not carry the serialised history'
+  );
+});
+
+console.log('the focus note (/compact <focus>)');
+
+check('a compaction without a focus note produces a byte-identical prompt', () => {
+  // The note is OPTIONAL, and dozens of assertions above pin the focus-free
+  // prompt. The no-focus path therefore has to add nothing at all — not a
+  // heading, not a blank line. `equal` on the whole string is the only check
+  // that can say that.
+  assert.equal(
+    buildCompactSystemPrompt({ ...PROMPT_PARAMS, focus: undefined }),
+    BUILT_PROMPT,
+    'passing focus: undefined changes the full prompt'
+  );
+  assert.ok(!BUILT_PROMPT.includes(FOCUS_LABEL), 'the focus-free prompt carries a focus block');
+  assert.equal(
+    buildRetrySystemPrompt({ ...RETRY_PARAMS, focus: undefined }),
+    buildRetrySystemPrompt(RETRY_PARAMS),
+    'passing focus: undefined changes the short prompt'
+  );
+  assert.ok(
+    !buildRetrySystemPrompt(RETRY_PARAMS).includes('What matters most to the user'),
+    'the focus-free short prompt carries a focus rule'
+  );
+  assert.equal(
+    buildReductionCombineSystemPrompt(undefined),
+    REDUCTION_COMBINE_SYSTEM_PROMPT,
+    'passing focus: undefined changes the combine prompt'
+  );
+  assert.ok(
+    !REDUCTION_COMBINE_SYSTEM_PROMPT.includes('The user left a note'),
+    'the focus-free combine prompt carries a focus sentence'
+  );
+});
+
+check('the focus note reaches the full prompt exactly once', () => {
+  assert.equal(
+    FOCUSED_PROMPT.split(FOCUS).length - 1,
+    1,
+    'the note is missing from the focused prompt or appears more than once'
+  );
+});
+
+check('the focus block sits after the section list and immediately before the rules', () => {
+  const focusIndex = FOCUSED_PROMPT.indexOf(FOCUS_LABEL);
+  const rulesIndex = FOCUSED_PROMPT.indexOf('Rules:');
+  assert.notEqual(focusIndex, -1, 'the focused prompt has no focus block');
+  assert.notEqual(rulesIndex, -1, 'the focused prompt has no Rules: line');
+  assert.ok(focusIndex < rulesIndex, 'the focus block comes AFTER the rules');
+  // After EVERY section line: a block that landed among them could be read as
+  // a seventh section of the summary the model is asked to write.
+  for (const section of EXPECTED_SECTIONS) {
+    const index = sectionLineIndex(FOCUSED_PROMPT, section);
+    assert.ok(index !== -1, `the focused prompt lost the "${section}:" line`);
+    assert.ok(index < focusIndex, `the "${section}" section line comes after the focus block`);
+  }
+  // And the block itself carries no section label, for the same reason.
+  const block = FOCUSED_PROMPT.slice(focusIndex, rulesIndex);
+  for (const section of EXPECTED_SECTIONS) {
+    assert.ok(
+      !new RegExp(`^${escapeRegExp(section)}:`, 'm').test(block),
+      `the focus block reads like the "${section}" section`
+    );
+  }
+});
+
+check('the focus block makes the note subordinate to the rules', () => {
+  const block = FOCUSED_PROMPT.slice(
+    FOCUSED_PROMPT.indexOf(FOCUS_LABEL),
+    FOCUSED_PROMPT.indexOf('\n\nRules:')
+  );
+  assert.ok(/\bnever\b/i.test(block), 'the focus block contains no "never"');
+  assert.ok(/\brules\b/i.test(block), 'the focus block never mentions the rules');
+  assertMatchesAny(
+    block,
+    [/not part of the history/i],
+    'the focus block does not say the note is not part of the history'
+  );
+  // The two things the note may never license, both stated in the block: a
+  // dropped fact, and a fact the history does not contain.
+  assertMatchesAny(
+    block,
+    [/never licences leaving out|never licenses leaving out/i],
+    'the focus block does not forbid dropping a fact the history states'
+  );
+  assertMatchesAny(
+    block,
+    [/never licences stating|never licenses stating/i],
+    'the focus block does not forbid stating a fact the history does not contain'
+  );
+  assertMatchesAny(
+    block,
+    [/write nothing about it/i],
+    'the focus block does not say what to do with a subject the history never mentions'
+  );
+});
+
+check('the focus label is not shaped like a section', () => {
+  // A seventh section is the failure mode: the prompt's own opening sentence
+  // tells the model that the summary is made of sections, each starting with
+  // the section name followed by a colon, and the focus paragraph sits one
+  // blank line below that list. A label of the same `Name: purpose` shape is
+  // therefore something the model can copy into the summary — and whatever
+  // reaches the summary is persisted as history.
+  const firstLine = FOCUSED_PROMPT.slice(FOCUSED_PROMPT.indexOf(FOCUS_LABEL)).split('\n')[0];
+  assert.ok(firstLine, 'the focused prompt has no focus line');
+  assert.ok(
+    firstLine.startsWith(FOCUS_LABEL),
+    `the focus line does not open with the label: ${JSON.stringify(firstLine.slice(0, 60))}`
+  );
+  assert.doesNotMatch(
+    firstLine,
+    SECTION_SHAPED_HEAD,
+    `the focus label is shaped like a section heading: ${JSON.stringify(firstLine.slice(0, 80))}`
+  );
+  // …and it names no section, at the start or after the label.
+  for (const section of EXPECTED_SECTIONS) {
+    assert.ok(
+      !new RegExp(`(^|[^A-Za-z])${escapeRegExp(section)}:`, 'm').test(firstLine),
+      `the focus line carries the "${section}:" section label`
+    );
+  }
+  // NON-VACUOUS: the shape test does catch the label it replaced. Without this
+  // the regex could be so loose that any wording passes.
+  assert.match(
+    'WHAT MATTERS MOST (a note from the user about this compaction, not part of the history): keep the tests',
+    SECTION_SHAPED_HEAD,
+    'the section-shape test does not even catch the old label'
+  );
+});
+
+check('the short retry prompt carries the focus note as its own rule', () => {
+  const retry = buildRetrySystemPrompt({ ...RETRY_PARAMS, focus: FOCUS });
+  assert.equal(retry.split(FOCUS).length - 1, 1, 'the note is missing from the retry or repeated');
+  const focusIndex = retry.indexOf(FOCUS);
+  assert.ok(
+    focusIndex < retry.indexOf('Return ONLY'),
+    'the focus rule comes after the output rule'
+  );
+  assert.ok(
+    /^\s*6\.\s/.test(retry.slice(retry.lastIndexOf('\n', focusIndex) + 1)),
+    `the note is not carried by rule 6: ${JSON.stringify(retry.slice(focusIndex - 60, focusIndex))}`
+  );
+  assertMatchesAny(
+    retry.slice(focusIndex),
+    [/never relax rules 1-4/i],
+    'the retry does not make the note subordinate to rules 1-4'
+  );
+});
+
+check('the combine prompt carries the focus note, or a chunked compaction dilutes it', () => {
+  const combine = buildReductionCombineSystemPrompt(FOCUS);
+  assert.equal(combine.split(FOCUS).length - 1, 1, 'the note is missing from the combine prompt');
+  const focusIndex = combine.indexOf(FOCUS);
+  assert.ok(
+    focusIndex < combine.indexOf('Return ONLY'),
+    'the note comes after the output rule of the combine prompt'
+  );
+  assertMatchesAny(
+    combine.slice(focusIndex),
+    [/never relax the rules above/i],
+    'the combine prompt does not make the note subordinate to the rules above'
+  );
+  // The merge contract survives the addition: the six sections stay named, in
+  // order, and the retention demand is still there.
+  let previous = -1;
+  for (const section of EXPECTED_SECTIONS) {
+    const index = combine.indexOf(section);
+    assert.ok(
+      index > previous,
+      `the "${section}" section is out of order in the focused combine prompt`
+    );
+    previous = index;
+  }
+  assertMatchesAny(
+    combine,
+    [/keep every decision/i],
+    'the focused combine prompt lost the retention demand'
+  );
+});
+
+check('the focused prompt forbids everything the plain one forbids', () => {
+  // The note is spliced into the prompt, so the focused prompt is where a
+  // worse instruction could hide: a user note that says "be as detailed as
+  // possible" must not become a licence the plain prompt's absence checks
+  // never look at.
+  for (const [label, wordings] of Object.entries(FORBIDDEN_GROUPS)) {
+    assertNoneOf(FOCUSED_PROMPT, wordings);
+    assert.ok(wordings.length > 0, `the "${label}" group is empty, so it checks nothing`);
+  }
+  for (const [pattern, label] of ONLY_PROHIBITED_PHRASES) {
+    assertOnlyProhibited(FOCUSED_PROMPT, pattern, label);
+  }
+});
+
+check('the focused prompt keeps the sections, the exactness rule and the injection guard', () => {
+  for (const section of EXPECTED_SECTIONS) {
+    assert.ok(
+      FOCUSED_PROMPT.includes(`${section}:`),
+      `the focused prompt lost the ${section} section`
+    );
+  }
+  assert.ok(
+    /character for character/i.test(FOCUSED_PROMPT),
+    'the focused prompt lost the exactness rule'
+  );
+  assertMatchesAny(
+    FOCUSED_PROMPT,
+    [/\bdata\b[^\n.]*\bnot instructions\b/i],
+    'the focused prompt lost the injection guard'
   );
 });
 

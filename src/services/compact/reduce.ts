@@ -23,9 +23,9 @@ import {
   computeSummaryBudget,
 } from './budget';
 import {
+  buildReductionCombineSystemPrompt,
   MAX_REDUCTION_ROUNDS,
   MIN_HISTORY_ALLOWANCE_TOKENS,
-  REDUCTION_COMBINE_SYSTEM_PROMPT,
   REDUCTION_FAN_IN,
   SUMMARY_SECTIONS,
 } from './constants';
@@ -150,6 +150,12 @@ export function planSummarisationPrompt(
       minSummaryTokens: params.minSummaryTokens,
       maxSummaryTokens: params.maxSummaryTokens,
       numCtx: params.numCtx,
+      // The focus note is part of the short prompt too (it is rule 6), so it is
+      // part of what has be measured. Measuring a focus-free prompt here
+      // understated the request by the size of the note — measured at numCtx
+      // 2048: 557 tokens without the note against 851 with it, a ~24 %
+      // overstatement of the history budget that every chunk then inherited.
+      ...(params.focus === undefined ? {} : { focus: params.focus }),
     },
     model
   );
@@ -187,6 +193,10 @@ export function planSummarisationPrompt(
  *                                `undefined` when the caller does not know;
  *                                the prompt then does not claim that the
  *                                summary is the only record of the older turns.
+ * @param focus - The user's `/compact` note about what to keep. It reaches
+ *                every prompt this function builds — the single pass, each
+ *                chunk and every reduction round — because a note that only
+ *                shaped one chunk would be diluted away by the merge.
  */
 export async function produceConversationSummary(
   ctx: LlmRequestContext,
@@ -200,7 +210,8 @@ export async function produceConversationSummary(
   onTps?: (tps: number) => void,
   toolNames?: ToolNameMap | undefined,
   redactSecrets?: boolean | undefined,
-  preservedRecentTokens?: number | undefined
+  preservedRecentTokens?: number | undefined,
+  focus?: string | undefined
 ): Promise<string> {
   const safeInputBudget = computeSafeInputBudget(numCtx);
 
@@ -240,6 +251,10 @@ export async function produceConversationSummary(
     maxSummaryTokens: singlePassBudget.maxSummaryTokens,
     ...(preservedRecentTokens === undefined ? {} : { preservedRecentTokens }),
     numCtx,
+    // Carried in the params object so the focus paragraph is charged against
+    // the safe input budget by the same measurement that charges the rest of
+    // the prompt — a prompt that grew after it was measured would overflow.
+    ...(focus === undefined ? {} : { focus }),
   };
 
   // The INSTRUCTION PROMPT is part of the request too, so it is paid for out
@@ -282,6 +297,7 @@ export async function produceConversationSummary(
       ...(toolNames ? { toolNames } : {}),
       redactSecrets: redactSecrets ?? true,
       maxToolResultChars,
+      ...(focus === undefined ? {} : { focus }),
     });
   }
 
@@ -331,6 +347,7 @@ export async function produceConversationSummary(
       ...(toolNames ? { toolNames } : {}),
       redactSecrets: redactSecrets ?? true,
       maxToolResultChars,
+      ...(focus === undefined ? {} : { focus }),
     });
     chunkSummaries.push(summary);
   }
@@ -345,7 +362,8 @@ export async function produceConversationSummary(
     onProgress,
     signal,
     reasoningEffort,
-    onTps
+    onTps,
+    focus
   );
 }
 
@@ -379,11 +397,18 @@ const REDUCTION_REQUEST_USER_PREFIX =
  * empty-response retry re-sends the same parts with the short prompt, and a
  * batch that fits with the combine prompt but not with the retry would blow
  * the window on the retry.
+ *
+ * The combine prompt is built with the SAME focus note the request will carry:
+ * the note is extra text, so measuring the focus-free prompt would understate
+ * the parts budget by exactly the size of the thing being added.
+ *
+ * @param model - the model the request goes to.
+ * @param focus - the user's `/compact` note, or `undefined`.
  */
-function countReductionRequestOverhead(model: string): number {
+function countReductionRequestOverhead(model: string, focus?: string): number {
   const combineOverhead = countMessagesTokens(
     [
-      { role: 'system', content: REDUCTION_COMBINE_SYSTEM_PROMPT },
+      { role: 'system', content: buildReductionCombineSystemPrompt(focus) },
       { role: 'user', content: REDUCTION_REQUEST_USER_PREFIX },
     ],
     model
@@ -399,6 +424,7 @@ function countReductionRequestOverhead(model: string): number {
           minSummaryTokens: 600,
           maxSummaryTokens: 1200,
           numCtx: 200000,
+          ...(focus === undefined ? {} : { focus }),
         }),
       },
       { role: 'user', content: REDUCTION_REQUEST_USER_PREFIX },
@@ -613,7 +639,8 @@ export async function reduceSummaryGroups(
   onProgress?: (message: string) => void,
   signal?: AbortSignal,
   reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void
+  onTps?: (tps: number) => void,
+  focus?: string
 ): Promise<string> {
   return reduceSummaryGroupsAtRound(
     ctx,
@@ -625,7 +652,8 @@ export async function reduceSummaryGroups(
     onProgress,
     signal,
     reasoningEffort,
-    onTps
+    onTps,
+    focus
   );
 }
 
@@ -642,7 +670,8 @@ async function reduceSummaryGroupsAtRound(
   onProgress?: (message: string) => void,
   signal?: AbortSignal,
   reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void
+  onTps?: (tps: number) => void,
+  focus?: string
 ): Promise<string> {
   if (summaries.length === 1) {
     return summaries[0]!;
@@ -652,7 +681,7 @@ async function reduceSummaryGroupsAtRound(
   // first: what is left is what the partial summaries may use.
   const partsBudget = computeEffectiveInputBudget(
     computeSafeInputBudget(numCtx),
-    countReductionRequestOverhead(model)
+    countReductionRequestOverhead(model, focus)
   );
 
   const parts: ReductionPart[] = summaries.map((text, index) => ({ number: index + 1, text }));
@@ -683,7 +712,7 @@ async function reduceSummaryGroupsAtRound(
     const batchMessages: ChatMessage[] = [
       {
         role: 'system',
-        content: REDUCTION_COMBINE_SYSTEM_PROMPT,
+        content: buildReductionCombineSystemPrompt(focus),
       },
       {
         role: 'user',
@@ -705,7 +734,8 @@ async function reduceSummaryGroupsAtRound(
       onProgress,
       signal,
       reasoningEffort,
-      onTps
+      onTps,
+      focus
     );
     batchSummaries.push(combined);
   }
@@ -720,6 +750,7 @@ async function reduceSummaryGroupsAtRound(
     onProgress,
     signal,
     reasoningEffort,
-    onTps
+    onTps,
+    focus
   );
 }

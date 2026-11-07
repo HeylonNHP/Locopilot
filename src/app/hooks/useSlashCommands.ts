@@ -5,6 +5,8 @@ import { type Dispatch, type SetStateAction, useCallback } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
+import { COMPACT_FOCUS_MAX_CHARS, normaliseCompactionFocus } from '@/services/compact/focus';
+import { formatCompactionReceipt } from '@/services/compact/receipt';
 import { formatSlashCommandHelp } from '@/services/slashCommands';
 import { buildToolUseNudge } from '@/services/toolUseNudge';
 import { isAbortError } from '@/util/error';
@@ -382,6 +384,19 @@ export function useSlashCommands({
             addSystem('Select a model before running /compact.');
             return;
           }
+          // The note after `/compact` is measured against the summariser's input
+          // budget on the server, so an over-long one is refused rather than
+          // truncated — the tail is where the qualification usually is. The
+          // check runs here too, on the form the server will actually measure,
+          // so the user is told before a request is opened.
+          const focusNote = normaliseCompactionFocus(args);
+          if (focusNote !== undefined && focusNote.length > COMPACT_FOCUS_MAX_CHARS) {
+            addSystem(
+              `The note after /compact is ${focusNote.length} characters long — the limit is ` +
+                `${COMPACT_FOCUS_MAX_CHARS}. Shorten it and try again.`
+            );
+            return;
+          }
           if (currentMessages.length <= 1) {
             addSystem('Nothing to compact yet — continue the conversation and try again.');
             return;
@@ -419,6 +434,10 @@ export function useSlashCommands({
                 compactionProviderId: refs.compactionProviderIdRef.current,
                 compactionReasoningEffort: refs.compactionReasoningEffortRef.current,
                 sessionId: compactSessionId,
+                // The text after `/compact`, if any: what the summary should
+                // keep. Omitted entirely when absent so the request body (and
+                // the prompts it produces) is unchanged for a bare `/compact`.
+                ...(args ? { focus: args } : {}),
               }),
               signal: abortController.signal,
             });
@@ -438,6 +457,7 @@ export function useSlashCommands({
             let compactData: {
               messages: ChatMessage[];
               stats: { oldTokenCount?: number; newTokenCount?: number };
+              tokenLimit?: number;
             } | null = null;
             let errorMessage: string | null = null;
             let errorKind: 'client_abort' | 'llm_error' | undefined;
@@ -481,12 +501,13 @@ export function useSlashCommands({
               ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
             });
             if (typeof compactData.stats?.newTokenCount === 'number') {
-              // Display against the server's effective (clamped) cap rather
-              // than the raw requested numCtx: on a provider that serves a
-              // smaller window than the user configured, the requested value
-              // would show a limit the next turn can never use. Falls back to
-              // the requested value only when the server has not reported a
-              // cap on this stream.
+              // Display against the SERVER's window when it sent one: the
+              // receipt a few lines below prefers `compactData.tokenLimit`, and
+              // two different limits on the same screen (a badge saying 8,192
+              // and a warning saying 4,096) is a contradiction the user cannot
+              // resolve. The server value is the effective (clamped) cap the
+              // next turn will really use; the refs are only a fallback for an
+              // older server that does not report one.
               const effectiveForLimit = refs.effectiveNumCtxRef.current;
               dispatch({
                 type: 'SET_TOKEN_STATS',
@@ -495,41 +516,42 @@ export function useSlashCommands({
                   evalCount: 0,
                   totalTokens: compactData.stats.newTokenCount,
                   tokenLimit:
-                    typeof effectiveForLimit === 'number' && effectiveForLimit > 0
-                      ? effectiveForLimit
-                      : refs.requestedNumCtxRef.current,
+                    typeof compactData.tokenLimit === 'number' && compactData.tokenLimit > 0
+                      ? compactData.tokenLimit
+                      : typeof effectiveForLimit === 'number' && effectiveForLimit > 0
+                        ? effectiveForLimit
+                        : refs.requestedNumCtxRef.current,
                 },
                 ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
               });
             }
             const oldTokens = compactData.stats?.oldTokenCount;
             const newTokens = compactData.stats?.newTokenCount;
-            if (typeof oldTokens === 'number' && typeof newTokens === 'number') {
-              const saved = oldTokens - newTokens;
-              const pct = oldTokens > 0 ? ((saved / oldTokens) * 100).toFixed(1) : '0.0';
-              addSystem(
-                `⚡ **Conversation compacted:** ${oldTokens.toLocaleString()} → ${newTokens.toLocaleString()} tokens (−${saved.toLocaleString()}, ${pct}% reduction)`
-              );
-              // Compare against the server's effective cap (the
-              // value the next turn will actually use), not the
-              // user's raw requested value. If the server has not
-              // yet reported a cap, fall back to the requested
-              // value; this is a display-only check, so the worst
-              // case is a slightly conservative warning.
-              const effective = refs.effectiveNumCtxRef.current;
-              const capForWarning =
-                typeof effective === 'number' && effective > 0
-                  ? Math.min(refs.requestedNumCtxRef.current, effective)
-                  : refs.requestedNumCtxRef.current;
-              if (newTokens > capForWarning) {
-                addSystem(
-                  `⚠️ Compaction reduced the history but it is still over the current context limit (${newTokens.toLocaleString()}/${capForWarning.toLocaleString()} tokens). The next turn may fail.`
-                );
-              }
-            } else {
-              addSystem(
-                `⚡ Conversation compacted (${oldTokens ?? '?'} → ${newTokens ?? '?'} tokens)`
-              );
+            // Compare against the server's effective cap (the value the next
+            // turn will actually use), not the user's raw requested value. The
+            // server sends that window with this event; when it does not (an
+            // older server), fall back to the resolved refs. This is a
+            // display-only check, so the worst case is a slightly
+            // conservative warning.
+            const effective = refs.effectiveNumCtxRef.current;
+            const capForWarning =
+              typeof effective === 'number' && effective > 0
+                ? Math.min(refs.requestedNumCtxRef.current, effective)
+                : refs.requestedNumCtxRef.current;
+            const receipt = formatCompactionReceipt({
+              oldTokenCount: typeof oldTokens === 'number' ? oldTokens : null,
+              newTokenCount: typeof newTokens === 'number' ? newTokens : null,
+              tokenLimit:
+                typeof compactData.tokenLimit === 'number' && compactData.tokenLimit > 0
+                  ? compactData.tokenLimit
+                  : capForWarning,
+              // The normalised note: the same single-line form the server put
+              // into the prompt, so the quote cannot be multi-line.
+              ...(focusNote === undefined ? {} : { focus: focusNote }),
+            });
+            addSystem(receipt.text);
+            if (receipt.warning !== null) {
+              addSystem(receipt.warning);
             }
             await loadSessions();
           } catch (err) {

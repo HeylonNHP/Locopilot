@@ -103,7 +103,18 @@ export interface SseEventPayloadMap {
     agentId?: string;
   };
   compact_progress: { message: string };
-  compact: { messages: ChatMessage[]; stats: CompactStats };
+  compact: {
+    messages: ChatMessage[];
+    stats: CompactStats;
+    /**
+     * The context window the compacted history now has to fit — the window the
+     * NEXT turn will run with, not the compaction model's. It lets the client
+     * warn when a compaction succeeded and still left the history over the
+     * limit (an outcome the user has to act on, and one the old payload could
+     * only guess from its own idea of the cap).
+     */
+    tokenLimit?: number;
+  };
   done: {
     content: string;
     thinking: string;

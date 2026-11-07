@@ -55,13 +55,14 @@ export const subAgentToolSchema: ToolSchema = {
   },
 };
 
-import { AUTO_COMPACT_THRESHOLD_PCT, TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
+import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
 import { recordDiscoveredCap } from '@/services/capResolver';
 import {
   compactHistory,
   COMPACTION_ADAPTIVE_DIRECTIVE,
   COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD,
   COMPACTION_INITIAL_DIRECTIVE,
+  computeCompactionTriggerTokens,
   SYNTHETIC_NUDGE_END,
   SYNTHETIC_NUDGE_MARKER,
 } from '@/services/compact';
@@ -94,6 +95,7 @@ import {
   toolRegistry,
 } from '@/tools/toolRegistry';
 import { WorkingDirectoryScope } from '@/tools/workingDirectory';
+import { forwardableReasoningEffort } from '@/types/chatConfig';
 
 function isInterruptOrAbort(signal?: AbortSignal): boolean {
   return signal?.aborted === true;
@@ -160,10 +162,11 @@ const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
  * How many times one sub-agent may react to a provider context-limit 400 by
  * force-compacting its history and retrying the same turn. One is deliberate:
  * the first 400 discloses the server's real window, after which the corrected
- * `config.numCtx` makes the ordinary `AUTO_COMPACT_THRESHOLD_PCT` gate fire on
- * its own. A second 400 *after* a successful compaction therefore means
- * something else is wrong (auth, a malformed tool call, or a single prompt
- * larger than the whole window) and retrying would only burn the batch.
+ * `config.numCtx` makes the ordinary margin-based auto-compaction gate
+ * (`computeCompactionTriggerTokens`) fire on its own. A second 400 *after* a
+ * successful compaction therefore means something else is wrong (auth, a
+ * malformed tool call, or a single prompt larger than the whole window) and
+ * retrying would only burn the batch.
  */
 const MAX_CONTEXT_LIMIT_FORCED_COMPACT_ATTEMPTS = 1;
 
@@ -393,11 +396,12 @@ async function autoCompactSubAgentIfNeeded(
   compactionsSinceTaskStart: number,
   signal?: AbortSignal,
   /**
-   * Skip the proactive `AUTO_COMPACT_THRESHOLD_PCT` gate. Set by the reactive
+   * Skip the proactive auto-compaction gate. Set by the reactive
    * context-limit path in `runSingleAgent` after a provider 400: the provider
    * has already told us this request was too big, so waiting for the
-   * percentage gate — which is measured against a `numCtx` that was still wrong
-   * when the request was sent — would just reproduce the same rejection. The
+   * margin-based trigger (`computeCompactionTriggerTokens`) — which is
+   * measured against a `numCtx` that was still wrong when the request was sent
+   * — would just reproduce the same rejection. The
    * `numCtx <= 0` and `messages.length < 4` guards still apply: they exist so
    * `compactHistory` can never be handed a history whose split logic turns into
    * an empty `messagesToSummarise`.
@@ -434,10 +438,15 @@ async function autoCompactSubAgentIfNeeded(
   }
 
   const tokensUsed = countMessagesTokens(messages, config.model);
-  const pct = (tokensUsed / config.numCtx) * 100;
-  if (!force && pct < AUTO_COMPACT_THRESHOLD_PCT) {
+  // Gate on the RESERVED MARGIN (numCtx minus the room a reply needs), not on
+  // a flat percentage: the sub-agent has to be able to finish its turn after
+  // the compaction, and the margin is what guarantees that. Measured against
+  // the SUB-AGENT's own window (`config.numCtx`), never the compaction model's
+  // (`compactionNumCtx`) — the history is what has to fit.
+  if (!force && tokensUsed < computeCompactionTriggerTokens(config.numCtx)) {
     return false;
   }
+  const pct = (tokensUsed / config.numCtx) * 100;
 
   const agentOutput = makeAgentSink(output, agentId);
   const compactionRequestId = config.compactionLlmRequestContext?.requestId;
@@ -482,7 +491,10 @@ async function autoCompactSubAgentIfNeeded(
           2,
           undefined,
           signal,
-          undefined,
+          // The compaction model's own reasoning effort, inherited from the
+          // parent's compaction setting (NOT the sub-agent's `reasoningEffort`,
+          // which is the main model's level). 'off' is normalised away here.
+          forwardableReasoningEffort(config.compactionReasoningEffort),
           // Live compaction speed — the route forwards reportTps to the client,
           // so the t/s badge keeps updating while the sub-agent compacts.
           (tps: number) => {

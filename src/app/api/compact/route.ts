@@ -8,6 +8,11 @@ import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
 import { SSE_KEEPALIVE_MS } from '@/constants';
 import { resolveEffectiveNumCtx } from '@/services/capResolver';
 import { compactHistory } from '@/services/compact';
+import {
+  COMPACT_FOCUS_MAX_CHARS,
+  COMPACT_FOCUS_RAW_MAX_CHARS,
+  normaliseCompactionFocus,
+} from '@/services/compact/focus';
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
 import {
@@ -20,7 +25,11 @@ import {
 } from '@/services/llm';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
-import { isReasoningEffort, type ReasoningEffort } from '@/types/chatConfig';
+import {
+  forwardableReasoningEffort,
+  isReasoningEffort,
+  type ReasoningEffort,
+} from '@/types/chatConfig';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,6 +61,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const compactionModel = body.compactionModel;
   const compactionProviderId = body.compactionProviderId;
   const sessionId = body.sessionId;
+  const focusRaw: unknown = body.focus;
 
   const compactionReasoningEffortRaw: unknown = body.compactionReasoningEffort;
   const compactionReasoningEffort: ReasoningEffort | undefined = isReasoningEffort(
@@ -62,6 +72,48 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   if (typeof model !== 'string' || !model.trim()) {
     return NextResponse.json({ error: 'Model name is required.' }, { status: 400 });
+  }
+
+  // ── The `/compact` focus note ─────────────────────────────────────
+  //
+  // `focus` is the text the user typed after `/compact`: a note about what the
+  // summary should keep. It is OPTIONAL, so an absent field is fine — but a
+  // field that is PRESENT and not a string is a client bug, not something to
+  // coerce, because the note ends up inside the summariser's system prompt.
+  //
+  // The length check runs on the NORMALISED note (the form that reaches the
+  // prompt) and REJECTS rather than truncates: the tail of the note is where
+  // the qualification tends to be — "…but keep the failing test output" — so
+  // silently dropping it would lose exactly the part the user cared about.
+  if (focusRaw !== undefined && typeof focusRaw !== 'string') {
+    return NextResponse.json({ error: 'The compaction focus must be a string.' }, { status: 400 });
+  }
+  // A cheap RAW-size gate BEFORE normalising. Normalising a 10 MB note means
+  // walking every character to strip control characters and collapsing every
+  // whitespace run — the whole string is materialised twice — only to send a
+  // 400 that was certain from the start. The gate is a generous multiple of the
+  // real limit, so it can only reject notes no amount of collapsing could
+  // bring under it. Same message, same status.
+  if (typeof focusRaw === 'string' && focusRaw.length > COMPACT_FOCUS_RAW_MAX_CHARS) {
+    return NextResponse.json(
+      {
+        error:
+          `The compaction focus is ${focusRaw.length} characters long — the limit is ` +
+          `${COMPACT_FOCUS_MAX_CHARS}. Shorten the note and try again.`,
+      },
+      { status: 400 }
+    );
+  }
+  const focus = normaliseCompactionFocus(focusRaw);
+  if (focus !== undefined && focus.length > COMPACT_FOCUS_MAX_CHARS) {
+    return NextResponse.json(
+      {
+        error:
+          `The compaction focus is ${focus.length} characters long — the limit is ` +
+          `${COMPACT_FOCUS_MAX_CHARS}. Shorten the note and try again.`,
+      },
+      { status: 400 }
+    );
   }
 
   if (!Array.isArray(messages) || messages.length <= 1 || !messages.every(isPersistedChatMessage)) {
@@ -244,9 +296,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           // 'off' is the UI default and means "no explicit level"; only
           // forward an explicit reasoning level so the adapter applies its
           // own default mapping. Mirrors the chat route's convention.
-          compactionReasoningEffort !== undefined && compactionReasoningEffort !== 'off'
-            ? compactionReasoningEffort
-            : undefined,
+          forwardableReasoningEffort(compactionReasoningEffort),
           // Live compaction speed for the t/s badge.
           (tps: number) => {
             sendEvent('status', { phase: 'compacting', tps });
@@ -255,7 +305,11 @@ export async function POST(request: NextRequest): Promise<Response> {
           // same source the compaction provider is resolved from): with it
           // OFF the summariser sees the raw tool arguments and tool results,
           // with it ON both are redacted.
-          config?.redactSecrets ?? true
+          config?.redactSecrets ?? true,
+          // What the user asked the summary to keep. `undefined` when the
+          // command was typed without a note, which leaves every prompt
+          // byte-identical to the pre-focus prompts.
+          focus
         );
 
         const parsedSessionId =
@@ -291,6 +345,12 @@ export async function POST(request: NextRequest): Promise<Response> {
         sendEvent('compact', {
           messages: result.newMessages,
           stats: result.stats,
+          // The window the NEXT turn has to fit, so the client can say when a
+          // compaction succeeded and still did not make room. This is the
+          // MAIN window, not the compaction provider's: a separate compaction
+          // model with a huge window does not make the chat model's history
+          // any smaller.
+          ...(effectiveNumCtx > 0 ? { tokenLimit: effectiveNumCtx } : {}),
         });
       } catch (err) {
         const fallbackMessage = err instanceof Error ? err.message : 'Unknown error';

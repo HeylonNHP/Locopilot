@@ -42,7 +42,6 @@ import {
 import { enqueueSessionRename, enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
 import { clearSteerMessages, drainSteerMessages } from '@/app/lib/steerRegistry';
 import {
-  AUTO_COMPACT_THRESHOLD_PCT,
   DEFAULT_NUM_CTX,
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_SESSION_NAME,
@@ -50,6 +49,7 @@ import {
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
   HTTP_BAD_REQUEST,
+  MAX_COMPACTION_FAILURES_PER_TURN,
   MAX_MERMAID_RECOVERY_ATTEMPTS,
   MCP_TOOL_SEARCH_THRESHOLD,
   SSE_CONTENT_TYPE,
@@ -63,6 +63,7 @@ import {
   COMPACTION_ADAPTIVE_DIRECTIVE,
   COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD,
   COMPACTION_INITIAL_DIRECTIVE,
+  computeCompactionTriggerTokens,
   SYNTHETIC_NUDGE_END,
   SYNTHETIC_NUDGE_MARKER,
 } from '@/services/compact';
@@ -137,6 +138,7 @@ import {
 import { WorkingDirectoryScope } from '@/tools/workingDirectory';
 import {
   type Config,
+  forwardableReasoningEffort,
   isReasoningEffort,
   type ProviderConfig,
   type ReasoningEffort,
@@ -411,6 +413,12 @@ export async function POST(req: NextRequest): Promise<Response> {
       // Last authoritative token count from Ollama; used by the auto-compact
       // check so it stays anchored to the latest exact provider count.
       let lastAuthoritativeTokens = 0;
+      // Auto-compaction failures in a row within this turn. With the wider
+      // retry window a compaction that keeps failing would otherwise re-fire
+      // on EVERY loop iteration — re-summarising the same history, burning the
+      // same tokens, and pushing the turn further from a usable reply. Bounded
+      // by MAX_COMPACTION_FAILURES_PER_TURN; reset on any success.
+      let compactionFailureStreak = 0;
       // Whether YOLO mode is active (set from config below). When true,
       // run_command skips the approval gate and executes unconditionally.
       let effectiveYolo = false;
@@ -905,6 +913,14 @@ export async function POST(req: NextRequest): Promise<Response> {
               // compaction summaries are redacted exactly like the main
               // session's.
               redactSecrets: config?.redactSecrets ?? true,
+              // The COMPACTION model's reasoning effort, not the sub-agent's own
+              // (`reasoningEffort` above, inherited from the parent's main
+              // model). The sub-agent's own compaction must run at the level the
+              // user picked for compaction; 'off' is normalised away when it is
+              // forwarded to the pipeline.
+              ...(config?.compactionReasoningEffort === undefined
+                ? {}
+                : { compactionReasoningEffort: config.compactionReasoningEffort }),
               ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
               tools: TOOLS.filter(
                 (tool) =>
@@ -1444,21 +1460,38 @@ export async function POST(req: NextRequest): Promise<Response> {
             }
           }
 
-          // Auto-compact when approaching the context limit, mirroring the
-          // server-side autoCompactIfNeeded() logic in services/chatSession.ts.
+          // Auto-compact when the history no longer fits alongside the reply.
+          //
+          // The gate is a RESERVED MARGIN, not a flat percentage: the trigger
+          // is `numCtx - reserve` (see computeCompactionTriggerTokens), so the
+          // room the model still needs to answer is what decides, rather than
+          // how full the window happens to look. A flat 92 % gate left 640
+          // tokens on an 8k window — less than one reply.
           if (effectiveNumCtx > 0) {
             const tokensUsed =
               lastAuthoritativeTokens > 0
                 ? lastAuthoritativeTokens
                 : countMessagesTokens(currentMessages, model as string);
+            // `usagePct` is still computed: it feeds the post-compaction nudge
+            // and the status events, which report how full the window is.
             const usagePct = (tokensUsed / effectiveNumCtx) * 100;
+            const compactionTriggerTokens = computeCompactionTriggerTokens(effectiveNumCtx);
 
             // Only compact when there is enough history for the split logic to
             // produce a non-empty messagesToSummarise. With fewer than 4 messages,
             // the anchor-rescue fallback can return an empty array, which would
             // otherwise trip the too-short guard with a confusing near-zero token
             // estimate (see tools/impl/subAgentTool.ts and services/compact.ts).
-            if (usagePct >= AUTO_COMPACT_THRESHOLD_PCT && currentMessages.length >= 4) {
+            //
+            // The failure-streak latch bounds a compaction that keeps throwing:
+            // without it the wider trigger window re-fires it on every loop
+            // iteration, which never shrinks the history and never finishes the
+            // turn.
+            if (
+              tokensUsed >= compactionTriggerTokens &&
+              currentMessages.length >= 4 &&
+              compactionFailureStreak < MAX_COMPACTION_FAILURES_PER_TURN
+            ) {
               sendEvent('status', {
                 phase: 'compacting',
                 tokensUsed,
@@ -1497,7 +1530,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                   2,
                   undefined,
                   req.signal,
-                  undefined,
+                  // The compaction model's own reasoning effort — NOT this
+                  // route's `reasoningEffort`, which is the MAIN model's level
+                  // from the request body. 'off' means "no explicit level", so
+                  // it is normalised away before it reaches the adapter.
+                  forwardableReasoningEffort(config?.compactionReasoningEffort),
                   // Live compaction speed for the t/s badge.
                   (tps: number) => {
                     sendEvent('status', { phase: 'compacting', tps });
@@ -1518,6 +1555,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                   preservedSystemMessage,
                   ...compactResult.newMessages
                 );
+                // The compaction worked, so the failure latch is released: the
+                // history can grow past the trigger again later in the same
+                // turn, and that compaction gets a full budget of attempts.
+                compactionFailureStreak = 0;
                 // Persist compacted history so the frontend sees the reduced state.
                 pendingReplace = [...currentMessages];
                 // LLM-only nudge – not sent to the client and not persisted.
@@ -1550,6 +1591,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                 sendEvent('compact', {
                   messages: compactResult.newMessages,
                   stats: compactResult.stats,
+                  // The MAIN window: a compaction that ran on a separate
+                  // provider with a bigger context does not make THIS turn's
+                  // history fit here, and this is the number the receipt's
+                  // "still over the context window" warning is about.
+                  ...(effectiveNumCtx > 0 ? { tokenLimit: effectiveNumCtx } : {}),
                 });
                 lastAuthoritativeTokens = countMessagesTokens(currentMessages, model as string);
                 if (compactResult.stats.newTokenCount > effectiveNumCtx) {
@@ -1573,8 +1619,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                   result: 'completed',
                 });
               } catch (err) {
-                // Non-fatal — log and continue with existing messages.
+                // Non-fatal — log and continue with existing messages. The
+                // streak is what stops a broken compaction from re-firing on
+                // every remaining iteration of this turn.
                 compactFailed = true;
+                compactionFailureStreak += 1;
                 debugLog.diagnostic({
                   layer: 'route',
                   phase: 'compaction_end',
@@ -2323,8 +2372,8 @@ export async function POST(req: NextRequest): Promise<Response> {
             // send back). Invalidate it so the next loop iteration does
             // a fresh `countMessagesTokens` recount — this is the
             // auto-compact gate, and trusting the stale anchor would let
-            // a large tool result push us past the 92% threshold without
-            // triggering compaction.
+            // a large tool result push us past the compaction trigger
+            // without triggering compaction.
             lastAuthoritativeTokens = 0;
 
             // Signal we are switching back to the LLM with tool results.

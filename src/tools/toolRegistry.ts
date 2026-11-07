@@ -139,6 +139,18 @@ export interface SubAgentConfig {
   /** Context window size for the compaction model/provider. */
   compactionNumCtx?: number;
   /**
+   * Reasoning effort for the sub-agent's own COMPACTION calls, inherited from
+   * the parent session's `compactionReasoningEffort`.
+   *
+   * Distinct from `reasoningEffort` below, which is the MAIN model's level and
+   * governs the sub-agent's ordinary LLM calls. A session can run its chat
+   * model at 'high' while its compaction model runs at 'off' (the default), and
+   * forwarding the chat level to the summariser would quietly change what the
+   * user chose. 'off' means "no explicit level": callers normalise it away with
+   * `forwardableReasoningEffort` before it reaches the adapter.
+   */
+  compactionReasoningEffort?: ReasoningEffort;
+  /**
    * Applies any model switch the user has requested mid-turn, mutating this
    * config in place. Called at the top of each sub-agent iteration so a
    * long-running `run_subagents` batch — which parks the main tool-call

@@ -21,7 +21,6 @@ export const MODEL_LIST_TIMEOUT_MS = 60_000;
 export const DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES = 5;
 export const IMAGE_TOKEN_ESTIMATE = 1024;
 export const APPROX_CHARS_PER_TOKEN = 4;
-export const AUTO_COMPACT_THRESHOLD_PCT = 92;
 export const READ_FILE_TOKEN_WARN_PCT = 25;
 export const READ_FILE_TOKEN_CRITICAL_PCT = 50;
 export const READ_FILE_CHAR_WARN_THRESHOLD = 100_000; // ~25,000 tokens — warns when model/context size unknown
@@ -73,6 +72,22 @@ export const CAP_CACHE_TTL_MS = 5 * 60 * 1_000;
 
 /** Minimum message count before auto-compact will run. */
 export const MIN_MESSAGES_FOR_COMPACTION = 4;
+
+/**
+ * How many auto-compactions in a row may FAIL in one turn before the chat
+ * route stops trying for the rest of that turn.
+ *
+ * WHY a latch is needed: the trigger fires on a RESERVED MARGIN (see
+ * `computeCompactionTriggerTokens`), so it is reached earlier and stays
+ * reached — a compaction that throws leaves the history exactly as it was,
+ * which means the very next loop iteration would try again, and again, paying
+ * for the same summarisation each time. Two attempts keep a transient provider
+ * failure recoverable; a third against the same unchanged history is not going
+ * to fail differently. The sub-agent path is deliberately stateless: it is
+ * re-entered from scratch on each of its own iterations, and its history is
+ * short-lived.
+ */
+export const MAX_COMPACTION_FAILURES_PER_TURN = 2;
 
 /** Context floor for the compact split/measure routines (same value as in `compact/measure.ts`). */
 export const MEASUREMENT_CTX_FLOOR = 32_768;
