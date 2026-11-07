@@ -12,6 +12,7 @@ import type { ChatMessage, LlmRequestContext } from '@/services/llm';
 import type { ReasoningEffort } from '@/types/chatConfig';
 
 import { debugLog } from '@/app/lib/debugLogger';
+import { pinTokenCalibration, unpinTokenCalibration } from '@/services/tokenCalibration';
 import { countMessagesTokens, countMessageTokens } from '@/services/tokenizer';
 import { getAgentWorkingDirectory } from '@/tools/workingDirectory';
 
@@ -24,7 +25,7 @@ import {
   MIN_SUMMARISE_TOKENS,
   SUMMARY_PREAMBLE,
 } from './constants';
-import { distillToolMessages } from './distill';
+import { createDistillBudget, distillToolMessages } from './distill';
 import { measureConversationTokens } from './measure';
 import {
   attachRecentFilesMessage,
@@ -113,8 +114,68 @@ import { computePreservedWindowBudget, planWindowTrim, type WindowTrimPlan } fro
  *                          a stored path is absolute but says nothing about
  *                          which scope resolved it. Defaults to the process's
  *                          default working directory.
+ *
+ * The model's TOKEN CALIBRATION FACTOR is pinned for the whole compaction: the
+ * before/after counts have to be measured with the SAME factor, or "did the
+ * history shrink?" can flip mid-compaction — a second tab that finished a
+ * request in between would move the factor between the two counts and the
+ * verdict would compare two different scales. The pin nests (the retry pass
+ * re-enters this function), and the samples the compaction's own requests
+ * produce are queued and applied when the LAST pin is released.
  */
 export async function compactHistory(
+  ctx: LlmRequestContext,
+  model: string,
+  messages: ChatMessage[],
+  numCtx: number,
+  onProgress?: (message: string) => void,
+  aggressiveFactor: number = 1,
+  remainingRetries: number = 2,
+  onStats?: (stats: CompactStats) => void,
+  signal?: AbortSignal,
+  reasoningEffort?: ReasoningEffort,
+  onTps?: (tps: number) => void,
+  redactSecrets: boolean = true,
+  focus?: string,
+  systemPromptTokens?: number,
+  recentFiles?: RecentFileRow[],
+  recentFilesRoot?: string
+): Promise<CompactResult> {
+  pinTokenCalibration(model);
+  try {
+    return await compactHistoryPinned(
+      ctx,
+      model,
+      messages,
+      numCtx,
+      onProgress,
+      aggressiveFactor,
+      remainingRetries,
+      onStats,
+      signal,
+      reasoningEffort,
+      onTps,
+      redactSecrets,
+      focus,
+      systemPromptTokens,
+      recentFiles,
+      recentFilesRoot
+    );
+  } finally {
+    unpinTokenCalibration(model);
+  }
+}
+
+/**
+ * The compaction itself — the body of {@link compactHistory}, split out so
+ * the calibration pin can wrap it.
+ *
+ * WHY it is a separate function: the pin has to be held across the WHOLE
+ * pass, and a `try`/`finally` around this body would have meant re-indenting
+ * several hundred lines — a diff in which a changed indent hides a changed
+ * line. The pin lives in the thin exported wrapper above instead.
+ */
+async function compactHistoryPinned(
   ctx: LlmRequestContext,
   model: string,
   messages: ChatMessage[],
@@ -141,6 +202,15 @@ export async function compactHistory(
   // (new >= old) comparing like with like: on the retry pass the history has no
   // `system` row, and charging the system prompt to the new count alone could
   // make a genuinely smaller history look like it did not shrink at all.
+  //
+  // ONE UNIT SYSTEM: both counts are CALIBRATED counts (the tokenizer's own
+  // count is never compared against a token budget), and both are in the
+  // `chat` class — the compacted history is the MAIN chat request's content,
+  // so it is measured the way a chat request is shaped. The acceptance
+  // boundary below is a share of the model's context window, which is
+  // denominated in provider tokens, so the estimate has to be in provider
+  // tokens too. (The summariser's own requests are measured in the
+  // `summarise` class, in `reduce.ts`.)
   const systemMessages = messages.filter((message) => message.role === 'system');
   const resolvedSystemPromptTokens =
     systemPromptTokens ?? countMessagesTokens(systemMessages, model);
@@ -235,6 +305,12 @@ export async function compactHistory(
   // turns the budget into a smaller RESULT, not just a cheaper summary
   // request.
   const distillCallCap = computeDistillCallCap(numCtx);
+  // The PREFILL budget of this compaction: the total number of tokens its
+  // distillation calls may read, across BOTH passes. The call cap bounds how
+  // MANY calls there are; the budget bounds what they may COST — eight calls
+  // at half a million tokens each is several windows' worth of prefill
+  // inside one compaction.
+  const distillBudget = createDistillBudget(numCtx);
   const recentDistill = await distillToolMessages(
     ctx,
     historySplit.preservedRecentMessages,
@@ -244,27 +320,54 @@ export async function compactHistory(
     onProgress,
     signal,
     reasoningEffort,
-    onTps
+    onTps,
+    distillBudget
   );
+  distillBudget.usedTokens += recentDistill.prefillTokens;
   const preparedRecentMessages = recentDistill.messages;
 
-  // The older slice gets whatever the window did not spend.
+  // The older slice gets whatever the window did not spend — the CALL budget
+  // and the PREFILL budget, both of them.
+  //
+  // WHY the CALLS MADE and not the calls that succeeded: a call that failed
+  // still cost a model call (and its prefill), so it spends the cap. Counting
+  // only the successes would let a flaky provider push the compaction past
+  // its call budget.
   const historyDistill = await distillToolMessages(
     ctx,
     historySplit.messagesToSummarise,
     numCtx,
     model,
-    Math.max(0, distillCallCap - recentDistill.distilledCount),
+    Math.max(0, distillCallCap - recentDistill.attemptedCount),
     onProgress,
     signal,
     reasoningEffort,
-    onTps
+    onTps,
+    distillBudget
   );
+  distillBudget.usedTokens += historyDistill.prefillTokens;
   const preparedHistoryMessages = historyDistill.messages;
 
   const skippedDistillations = recentDistill.skippedCount + historyDistill.skippedCount;
   const orphanDistillations = recentDistill.orphanCount + historyDistill.orphanCount;
-  if (skippedDistillations > 0 || orphanDistillations > 0) {
+  const budgetStoppedDistillations =
+    recentDistill.budgetSkippedCount + historyDistill.budgetSkippedCount;
+  const failedDistillations = recentDistill.failedCount + historyDistill.failedCount;
+  const candidateDistillations = recentDistill.candidateCount + historyDistill.candidateCount;
+  const distilledTotal = recentDistill.distilledCount + historyDistill.distilledCount;
+  const prefillTokens = recentDistill.prefillTokens + historyDistill.prefillTokens;
+
+  // The summary line is ALWAYS emitted, not only when something was left
+  // behind: these numbers are the only record of what the distillation cost
+  // and of what it did NOT manage to do, and a compaction whose distillation
+  // silently did nothing is the case that has to be visible.
+  onProgress?.(
+    `Tool distillation: distilled ${distilledTotal} of ${candidateDistillations} oversized tool ` +
+      `output(s) (~${prefillTokens} tokens of prefill of a ${distillBudget.totalTokens}-token budget; ` +
+      `${failedDistillations} call(s) failed and stay verbatim)`
+  );
+
+  if (skippedDistillations > 0 || orphanDistillations > 0 || budgetStoppedDistillations > 0) {
     // WHY the orphan clause: `skippedCount` is what the CALL CAP left verbatim,
     // and a `tool` row whose owning assistant is not in the slice is never a
     // candidate for the cap — it is passed through because distillation could
@@ -280,6 +383,12 @@ export async function compactHistory(
     if (orphanDistillations > 0) {
       verbatimParts.push(
         `${orphanDistillations} oversized tool result(s) left verbatim because their assistant call is not in the same slice`
+      );
+    }
+    if (budgetStoppedDistillations > 0) {
+      verbatimParts.push(
+        `${budgetStoppedDistillations} oversized tool output(s) left verbatim because the compaction's ` +
+          `distillation prefill budget ran out`
       );
     }
     onProgress?.(

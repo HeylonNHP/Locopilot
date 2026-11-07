@@ -11,8 +11,15 @@
 import type { ReasoningEffort } from '@/types/chatConfig';
 
 import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
-import { type ChatMessage, type LlmRequestContext, sendLlmChatStream } from '@/services/llm';
-import { countMessagesTokens } from '@/services/tokenizer';
+import {
+  type ChatApiResponse,
+  type ChatMessage,
+  getLlmTurnStats,
+  type LlmRequestContext,
+  sendLlmChatStream,
+} from '@/services/llm';
+import { recordTokenCalibrationSample } from '@/services/tokenCalibration';
+import { countMessagesTokens, countRawMessagesTokens } from '@/services/tokenizer';
 import { LiveThroughputMeter } from '@/services/tokenThroughput';
 
 import type { SummaryBudget, ToolNameMap } from './types';
@@ -401,6 +408,13 @@ Return ONLY plain summary text (no markdown syntax — no bullets, no bold, no c
  *
  * The measurement uses the SAME prompt parameters that will be sent, and the
  * repo's own tokenizer.
+ *
+ * ONE UNIT SYSTEM: the prompt is measured in the `summarise` class, which is
+ * the same class the serialised HISTORY is measured in (see
+ * `estimateSerializedMessageTokens` in `reduce.ts`). The budget this prompt is
+ * paid out of is a number of provider tokens, so both terms of the
+ * subtraction have to be in provider tokens, and both have to be measured the
+ * way a summariser request is actually shaped.
  */
 export function countSummarisationPromptTokens(
   params: BuildCompactSystemPromptParams,
@@ -411,7 +425,8 @@ export function countSummarisationPromptTokens(
       { role: 'system', content: buildCompactSystemPrompt(params) },
       { role: 'user', content: SUMMARY_REQUEST_USER_PREFIX },
     ],
-    model
+    model,
+    'summarise'
   );
 }
 
@@ -422,6 +437,9 @@ export function countSummarisationPromptTokens(
  * does not fit into the context window, so its cost has to be measured with
  * the same tokenizer and the same wrapper — the budget arithmetic must never
  * be done against a number that is not the one that will be sent.
+ *
+ * The class is `summarise`, like the full prompt's: the two are subtracted
+ * from the same budget as the serialised history.
  */
 export function countRetryPromptTokens(
   params: BuildRetrySystemPromptParams,
@@ -432,7 +450,8 @@ export function countRetryPromptTokens(
       { role: 'system', content: buildRetrySystemPrompt(params) },
       { role: 'user', content: SUMMARY_REQUEST_USER_PREFIX },
     ],
-    model
+    model,
+    'summarise'
   );
 }
 
@@ -448,6 +467,9 @@ async function streamSummary(
   onTps?: (tps: number) => void
 ): Promise<string> {
   let text = '';
+  // The terminal chunk of the stream — the one that carries the provider's
+  // PROMPT count. Kept so the calibration sample below can read it.
+  let lastChunk: ChatApiResponse | undefined;
   // Live t/s meter so the UI can show generation speed while compaction runs
   // (same shared policy as the main loop: rebaseline at first token, min
   // interval, minimum measurement window). Fresh meter per attempt so the
@@ -465,6 +487,7 @@ async function streamSummary(
     ...(signal ? { signal } : {}),
     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
   })) {
+    lastChunk = chunk;
     const content = chunk.message?.content ?? '';
     if (content.length > 0) {
       text += content;
@@ -473,6 +496,46 @@ async function streamSummary(
     }
     liveMeter.maybeReport((tps) => onTps?.(tps));
   }
+
+  // ── Calibration sample (the summariser request) ──
+  //
+  // A CLEAN sample: the request carries `tools: []`, so the provider's prompt
+  // count and our own count describe the SAME thing — the messages sent — and
+  // nothing has to be subtracted from the provider's side. The PROMPT count
+  // only; `eval_count` is the generated summary and is not part of the
+  // request's cost.
+  //
+  // This is the sample that calibrates the COMPACTION model, which may be a
+  // different model from the one the main chat turn uses — the cache is keyed
+  // on the provider and the model, so each model learns its own factor.
+  //
+  // The class is `summarise`: a summarisation request is ONE big blob plus a
+  // system prompt, so it pays the provider's per-message framing once — not
+  // once per message, the way a chatty chat request does. Its factor is
+  // therefore its own, and it cannot contaminate the chat factor (nor the
+  // other way round).
+  //
+  // Best-effort: a calibration that cannot be recorded must never break a
+  // compaction.
+  try {
+    if (lastChunk) {
+      const stats = getLlmTurnStats(ctx, lastChunk);
+      if (stats) {
+        recordTokenCalibrationSample({
+          model,
+          provider: ctx.provider ?? 'ollama',
+          class: 'summarise',
+          estimatedTokens: countRawMessagesTokens(messages, model),
+          authoritativeTokens: stats.promptEvalCount,
+          overheadTokens: 0,
+          hasImages: false,
+        });
+      }
+    }
+  } catch {
+    // Calibration is best-effort: a failure here must not fail the compaction.
+  }
+
   return text.trim();
 }
 

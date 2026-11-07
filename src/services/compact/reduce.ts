@@ -13,7 +13,7 @@
 import type { ReasoningEffort } from '@/types/chatConfig';
 
 import { type ChatMessage, type LlmRequestContext } from '@/services/llm';
-import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
+import { countCalibratedTextTokens, countMessagesTokens } from '@/services/tokenizer';
 
 import type { ToolNameMap } from './types';
 
@@ -64,6 +64,16 @@ const MIN_TOOL_RESULT_CHARS = 2000;
  * separator is included so that summing the per-message estimates also covers
  * the separators between the blocks.
  *
+ * ONE UNIT SYSTEM: the serialised text is measured with the CALIBRATED
+ * counter, because the budget it is fitted into is a number of PROVIDER
+ * tokens (the safe input budget is a share of the model's context window).
+ * A raw count here is 25–40 % smaller than the provider's own count of the
+ * same text, so a chunk fitted against a raw estimate is sent over the
+ * window — which is how a summarisation request came to be rejected with an
+ * empty summary. The class is `summarise`: the summariser's request is ONE
+ * big blob, so it pays the provider's per-message framing once, not once per
+ * message — and its factor is learned from summariser requests.
+ *
  * The options MUST be the ones the summarisation itself uses (the tool-name
  * map, the redaction switch and the tool-result cap), or the estimate
  * measures a different text than the one that is sent.
@@ -79,7 +89,11 @@ export function estimateSerializedMessageTokens(
   if (text.length === 0) {
     return 0;
   }
-  return countTextTokens(`${text}${SERIALIZED_BLOCK_SEPARATOR}`, model);
+  return countCalibratedTextTokens(
+    `${text}${SERIALIZED_BLOCK_SEPARATOR}`,
+    model,
+    'summarise'
+  );
 }
 
 /**
@@ -238,9 +252,10 @@ export async function produceConversationSummary(
   // body is megabytes of source code the summariser never sees), so sizing
   // the summary against it asks for a summary of something the model was
   // never given.
-  const serializedEstimate = countTextTokens(
+  const serializedEstimate = countCalibratedTextTokens(
     serializeHistoryForSummaryText(preparedHistoryMessages, serializeOptions),
-    model
+    model,
+    'summarise'
   );
 
   const singlePassBudget = computeSummaryBudget(numCtx, aggressiveFactor, serializedEstimate);
@@ -320,9 +335,10 @@ export async function produceConversationSummary(
     }
     // The chunk's budget is sized against the SERIALISED chunk — the same
     // number the chunk boundary was drawn with.
-    const chunkSerializedEstimate = countTextTokens(
+    const chunkSerializedEstimate = countCalibratedTextTokens(
       serializeHistoryForSummaryText(chunk, serializeOptions),
-      model
+      model,
+      'summarise'
     );
     const chunkBudget = computeSummaryBudget(numCtx, aggressiveFactor, chunkSerializedEstimate);
     const label = `chunk ${index + 1}/${chunks.length}`;
@@ -411,7 +427,8 @@ function countReductionRequestOverhead(model: string, focus?: string): number {
       { role: 'system', content: buildReductionCombineSystemPrompt(focus) },
       { role: 'user', content: REDUCTION_REQUEST_USER_PREFIX },
     ],
-    model
+    model,
+    'summarise'
   );
   const retryOverhead = countMessagesTokens(
     [
@@ -429,7 +446,8 @@ function countReductionRequestOverhead(model: string, focus?: string): number {
       },
       { role: 'user', content: REDUCTION_REQUEST_USER_PREFIX },
     ],
-    model
+    model,
+    'summarise'
   );
   return Math.max(combineOverhead, retryOverhead);
 }
@@ -470,7 +488,11 @@ export function batchReductionParts(
   let current: ReductionPart[] = [];
   for (const part of parts) {
     const candidate = [...current, part];
-    const candidateTokens = countTextTokens(buildReductionBatchText(candidate), model);
+    const candidateTokens = countCalibratedTextTokens(
+      buildReductionBatchText(candidate),
+      model,
+      'summarise'
+    );
     const exceedsFanIn = current.length >= REDUCTION_FAN_IN;
     const exceedsBudget = current.length > 0 && candidateTokens > partsBudget;
     if (exceedsFanIn || exceedsBudget) {
@@ -720,7 +742,7 @@ async function reduceSummaryGroupsAtRound(
       },
     ];
 
-    const sourceEstimate = countMessagesTokens(batchMessages, model);
+    const sourceEstimate = countMessagesTokens(batchMessages, model, 'summarise');
     const budget = computeSummaryBudget(numCtx, aggressiveFactor, sourceEstimate);
     onProgress?.(label ? `Reducing ${label}...` : 'Reducing summaries...');
 

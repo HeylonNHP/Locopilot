@@ -130,6 +130,13 @@ function adjustSplitForToolBlockIntegrity(
  * Splits history into a "summarise older" slice and a "preserve recent
  * verbatim" slice, honoring token budgets, a recent-message floor and the
  * latest-user-message anchor.
+ *
+ * ONE UNIT SYSTEM: every count here is a CALIBRATED count (the tokenizer's
+ * own count is never compared against a token budget), and the class is
+ * `chat` — the slice and the preserved window are parts of the MAIN chat
+ * request, so they are measured the way a chat request is shaped. The
+ * summariser's budget, which is measured in the `summarise` class, is a
+ * different request and is sized in `reduce.ts`.
  */
 export function splitHistoryForCompaction(
   historyMessages: ChatMessage[],
@@ -275,18 +282,27 @@ export function splitHistoryForCompaction(
  * current chunk so assistant + tool-response blocks always stay together (even
  * if that slightly exceeds the nominal budget).
  *
+ * ONE UNIT SYSTEM: the budget is a number of provider tokens, so the
+ * estimator has to be a calibrated count — a raw count is 25–40 % smaller
+ * than the provider's own count of the same text, and a chunk fitted against
+ * a raw estimate is sent over the window. The class is `summarise`, because
+ * a chunk is a piece of the SUMMARISER's request: the map-reduce path
+ * overrides the estimator with the size of the SERIALISED message (that is
+ * what the summariser actually receives), and the default measures the same
+ * request shape.
+ *
  * @param estimateMessageTokens - How many tokens a single message contributes.
- *                               Defaults to the raw message estimate. The
- *                               map-reduce path overrides it with the size of
- *                               the SERIALISED message, because that is what
- *                               the summariser actually receives.
+ *                               Defaults to the calibrated message estimate.
+ *                               The map-reduce path overrides it with the size
+ *                               of the SERIALISED message, because that is
+ *                               what the summariser actually receives.
  */
 export function splitHistoryIntoChunks(
   messages: ChatMessage[],
   safeInputBudget: number,
   model: string,
   estimateMessageTokens: (message: ChatMessage) => number = (message) =>
-    countMessageTokens(message, model)
+    countMessageTokens(message, model, 'summarise')
 ): ChatMessage[][] {
   const chunks: ChatMessage[][] = [];
   if (messages.length === 0) {

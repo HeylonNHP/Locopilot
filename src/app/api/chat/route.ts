@@ -124,7 +124,12 @@ import {
 import { sanitizeChatMessage } from '@/services/textUtils';
 import { generateSessionTitle, sanitizeContentForTitle } from '@/services/titleGeneration';
 import { generateFallbackTitle } from '@/services/titleUtils';
-import { countMessagesTokens } from '@/services/tokenizer';
+import { recordTokenCalibrationSample } from '@/services/tokenCalibration';
+import {
+  countCalibratedTextTokens,
+  countMessagesTokens,
+  countRawMessagesTokens,
+} from '@/services/tokenizer';
 import {
   type CleanTurnStats,
   extractTurnStats,
@@ -1475,10 +1480,24 @@ export async function POST(req: NextRequest): Promise<Response> {
           // how full the window happens to look. A flat 92 % gate left 640
           // tokens on an 8k window — less than one reply.
           if (effectiveNumCtx > 0) {
+            // ONE UNIT SYSTEM: both sides of this comparison are in PROVIDER
+            // tokens. The authoritative count is the provider's own prompt
+            // count (it INCLUDES the tool schemas), and the fallback estimate
+            // is our calibrated count of the history PLUS our calibrated
+            // estimate of the tool schemas — because the history estimate
+            // alone omits them, and an estimate that is missing a few
+            // thousand tokens of tool schemas fires the trigger late. The
+            // tool schemas are measured with the CALIBRATED counter for the
+            // same reason the history is: the raw count is in tokenizer
+            // tokens and the window is in provider tokens.
             const tokensUsed =
               lastAuthoritativeTokens > 0
                 ? lastAuthoritativeTokens
-                : countMessagesTokens(currentMessages, model as string);
+                : countMessagesTokens(currentMessages, model as string) +
+                  countCalibratedTextTokens(
+                    JSON.stringify(mergedTools ?? []),
+                    model as string
+                  );
             // `usagePct` is still computed: it feeds the post-compaction nudge
             // and the status events, which report how full the window is.
             const usagePct = (tokensUsed / effectiveNumCtx) * 100;
@@ -1621,7 +1640,21 @@ export async function POST(req: NextRequest): Promise<Response> {
                   // "still over the context window" warning is about.
                   ...(effectiveNumCtx > 0 ? { tokenLimit: effectiveNumCtx } : {}),
                 });
-                lastAuthoritativeTokens = countMessagesTokens(currentMessages, model as string);
+                // The authoritative count is stale after a compaction: it
+                // measured the history BEFORE the compaction, and it is in the
+                // provider's units. Replacing it with a bare estimate of the
+                // new history would compare two DIFFERENT quantities — the
+                // provider's count included the tool schemas, the estimate
+                // does not — so the replacement adds the tool schemas back,
+                // in the same calibrated unit as the history estimate. (The
+                // tool list is the whole list, not the filtered one the
+                // request will carry: an upper bound is the safe direction.)
+                lastAuthoritativeTokens =
+                  countMessagesTokens(currentMessages, model as string) +
+                  countCalibratedTextTokens(
+                    JSON.stringify(mergedTools ?? []),
+                    model as string
+                  );
                 if (compactResult.stats.newTokenCount > effectiveNumCtx) {
                   sendEvent('status', {
                     phase: 'compact_overflow',
@@ -1961,6 +1994,51 @@ export async function POST(req: NextRequest): Promise<Response> {
           // Anchor the token estimate to Ollama's authoritative count so
           // the next loop iteration's auto-compact check is accurate.
           lastAuthoritativeTokens = promptEvalCount + evalCount;
+
+          // ── Calibration sample (the main turn) ──
+          //
+          // WHY HERE: this is the one request whose PROMPT count the provider
+          // reports for exactly the array we sent, so it is the measurement
+          // the calibration is built on. The PROMPT count only — the reply's
+          // `eval_count` is a DIFFERENT quantity (tokens generated) and
+          // adding it would teach the calibration that a request costs more
+          // than it does.
+          //
+          // WHAT IS COMPARED: our RAW count of `llmMessages` (the exact array
+          // that was sent — system prompt, the `[Sent …]` prefix and the
+          // images included) against the provider's prompt count. The
+          // provider's count ALSO carries the tool schemas and its own
+          // chat-template framing, and NOTHING is subtracted from it: the
+          // old build subtracted our own cl100k estimate of the tool schemas,
+          // which could push the ratio below 1 — the direction in which the
+          // app believes it has room it does not have. The tool schemas now
+          // inflate the numerator instead, so the learned factor is
+          // CONSERVATIVE (it over-states what a conversation costs).
+          //
+          // The class is `chat`: a chatty request pays the provider's
+          // per-message framing on every message, and that framing is what
+          // makes a chat request bigger than its text. The summariser's and
+          // the distiller's requests are one big blob each, and they have
+          // their own factors.
+          //
+          // A request with IMAGES is never sampled: our `IMAGE_TOKEN_ESTIMATE`
+          // is a flat guess, not the provider's real image cost, so the ratio
+          // would be measuring the wrong thing. The sampler rejects it.
+          //
+          // Best-effort by design: a calibration that cannot be recorded must
+          // never break a turn.
+          try {
+            recordTokenCalibrationSample({
+              model: model as string,
+              provider: llmRequestContext.provider ?? 'ollama',
+              class: 'chat',
+              estimatedTokens: countRawMessagesTokens(llmMessages, model as string),
+              authoritativeTokens: promptEvalCount,
+              hasImages: llmMessages.some((message) => message.images?.length),
+            });
+          } catch {
+            // Calibration is best-effort: a failure here must not fail the turn.
+          }
 
           // -- Build the assistant message --------------------------
           const assistantMessage = sanitizeChatMessage({

@@ -42,6 +42,7 @@
     "test:stream-machine": "npx tsx scripts/test-stream-machine.mjs",
     "test:chat-store": "npx tsx scripts/test-chat-store.mjs",
     "test:chat-turn": "npx tsx scripts/test-chat-turn.mjs",
+    "test:token-calibration": "npx tsx scripts/test-token-calibration.mjs",
     "test:bind-host": "node scripts/test-bind-host.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

@@ -207,6 +207,29 @@ export const COMPACT_MEASURE_CONFIRM_BAND_RATIO = 0.05;
 export const COMPACT_RESERVE_RATIO = 0.25;
 export const COMPACT_RESERVE_MIN_TOKENS = 1500;
 export const COMPACT_RESERVE_MAX_TOKENS = 13000;
+
+/**
+ * The reply budget at the reference window, and the reference window itself.
+ *
+ * WHY a reference window instead of a flat reserve: the reserve is the room
+ * the model needs to FINISH its answer once compaction has fired, and a
+ * FLAT reserve cannot serve both ends of the range. 13 000 tokens is a
+ * quarter of a 32k window (generous) but 1.2 % of a 1M window (nothing) —
+ * so at 256k and 1M the trigger used to sit at 95 % and 97 % of the window
+ * and a long reply overflowed mid-generation, which kills the turn.
+ *
+ * WHY √ growth and not linear: the reply budget is not the window. A bigger
+ * window does not make the ANSWER bigger, it makes the QUESTION bigger, and
+ * the answer grows far more slowly than the window does. √ is the shape that
+ * gives the 256k window twice the reply room of the 64k one without
+ * reserving a quarter of a million tokens at 1M — and it leaves every window
+ * at or below ~82 500 exactly as it was, so the tuned 8k/32k cases do not
+ * move.
+ */
+export const COMPACT_REPLY_RESERVE_TOKENS = 8192;
+export const COMPACT_REPLY_RESERVE_BASE_WINDOW = 32768;
+export const COMPACT_REPLY_RESERVE_GROWTH = 0.5;
+
 /**
  * Upper bound on the reserve, as a fraction of the window.
  *
@@ -236,8 +259,176 @@ export const TOOL_DISTILL_SYSTEM_PROMPT =
   'If this output is already concise, return a near-verbatim version.\n' +
   'Write plain text only (no markdown).';
 export const TOOL_DISTILL_CHAR_THRESHOLD = 1200;
-export const TOOL_DISTILL_MAX_CHARS = 2400;
-export const TOOL_DISTILL_NUM_PREDICT = 1024;
+
+/**
+ * The BASE number of tokens the distiller may emit, the most it may ever
+ * emit, and how many tokens of window buy one more token of digest.
+ *
+ * WHY the output limit has to scale with the window: the DIGEST is the
+ * distiller's ANSWER, so the digest's size is bounded by what the model can
+ * emit — not by the window. With a flat 1024-token limit a 1M-token window
+ * still got a ~4096-character digest, so "the digest scales with the window"
+ * was false: the digest's size was set by the OUTPUT LIMIT, not by the cap.
+ *
+ * The limit is now `clamp(floor(numCtx / 256), 1024, 4096)`: 1024 tokens at
+ * every window up to 262 144, 2048 at 524 288, 4096 at 1 048 576.
+ *
+ * WHY the floor is 1024 and not lower: every window that was already tuned
+ * (8k, 32k) was measured against a 1024-token digest, and a SMALLER digest
+ * there would be a regression, not a saving. The floor keeps those windows
+ * exactly as they were.
+ *
+ * WHY the ceiling is 4096: past that the distiller is writing an essay, and
+ * the digest stops being a digest.
+ */
+export const TOOL_DISTILL_NUM_PREDICT_BASE = 1024;
+export const TOOL_DISTILL_NUM_PREDICT_MAX = 4096;
+export const TOOL_DISTILL_NUM_PREDICT_WINDOW_DIVISOR = 256;
+
+/**
+ * The share of the context window one tool output may take in the INPUT of a
+ * distillation request.
+ *
+ * WHY a share and not a flat character cap: the old cap was
+ * `min(50 000, numCtx * 8)` CHARACTERS, and the `min` bound for every window
+ * at or above 6250 — so a 500 KB tool result was cut to 10 % of itself
+ * before the distiller ever saw it, at 256k and at 1M alike. A window that
+ * can hold the output can hold the distillation of it.
+ */
+export const TOOL_DISTILL_INPUT_TOKEN_RATIO = 0.5;
+
+/**
+ * What the distillation request costs on top of the tool output: the system
+ * prompt plus the tool name / length frame.
+ *
+ * WHY it is charged: the distillation request is a request like any other, so
+ * the output it carries plus this overhead has to fit in the window. The
+ * model's own answer (see {@link TOOL_DISTILL_NUM_PREDICT_BASE}) is charged too.
+ */
+export const TOOL_DISTILL_INPUT_OVERHEAD_TOKENS = 256;
+
+/**
+ * The smallest tool output the distiller will look at.
+ *
+ * WHY a floor: a window too small to hold the distiller's own answer cannot
+ * afford a meaningful slice of output either, and a zero-length slice would
+ * be a request that carries nothing.
+ */
+export const TOOL_DISTILL_INPUT_MIN_TOKENS = 512;
+
+/**
+ * The largest tool output the distiller may be sent, in characters — the
+ * ABSOLUTE ceiling, independent of the window.
+ *
+ * WHY an absolute ceiling at all: the window-derived cap is sized against the
+ * window LOCOPILOT BELIEVES, and the provider's real input limit may be
+ * lower. The Ollama adapter sends `num_ctx`, so a local model gets the window
+ * it was configured with — but the OpenAI-compatible adapter NEVER sends it,
+ * so for that provider a 1M-token window is a CLAIM, not a promise. A
+ * 500k-token distillation request can therefore be REJECTED — and a rejected
+ * call leaves the output VERBATIM, which is exactly what the distillation
+ * exists to prevent (and then the compaction fails outright with "Compaction
+ * failed to reduce history size").
+ *
+ * 112 000 characters is 32 000 tokens at the distiller's conservative
+ * 3.5-characters-per-token conversion: a QUARTER of the 128 000-token input
+ * limit that the commonest hosted providers accept (the OpenAI `gpt-4o`
+ * family, most OpenAI-compatible gateways, most 128k local models). One
+ * distillation call can therefore never be more than a fraction of what a
+ * typical provider will take, whatever the window says.
+ *
+ * WHY this binds from a ~65 536-token window upwards: above that the
+ * window-derived cap is larger than this ceiling, so the per-CALL input stops
+ * growing. What still grows with the window is the per-COMPACTION prefill
+ * budget ({@link TOOL_DISTILL_PREFILL_BUDGET_WINDOW_RATIO}) and the number of
+ * calls ({@link TOOL_DISTILL_MAX_CALLS}).
+ */
+export const TOOL_DISTILL_INPUT_MAX_CHARS_ABSOLUTE = 112_000;
+
+/**
+ * The share of the window a DIGEST may take.
+ *
+ * WHY it scales: the digest replaces the tool output in the history, so the
+ * history is only as small as the digests allow. At a 1M-token window a
+ * 2400-character digest throws away detail the window can afford.
+ *
+ * WHICH OF THE TWO BINDS: the digest cap is the LARGER of this share and the
+ * model's output capacity (see {@link TOOL_DISTILL_NUM_PREDICT_BASE}), so the
+ * MODEL'S OUTPUT LIMIT binds at every window up to ~257 000 tokens and this
+ * share binds above it. The cap therefore never cuts the model's answer.
+ */
+export const TOOL_DISTILL_MAX_CHARS_WINDOW_RATIO = 0.02;
+
+/**
+ * The largest digest, in characters, whatever the window.
+ *
+ * WHY it is above the model's output capacity: the digest IS the model's
+ * answer. A cap BELOW what the model can emit CUTS that answer
+ * mid-sentence — and a digest that stops mid-sentence carries no signal
+ * that it was cut, so the summariser copies a fragment as if it were whole.
+ * 24 000 characters is above the largest capacity the model can reach
+ * (4096 tokens x 5 characters), so this ceiling can never be the thing that
+ * cuts the answer; it only keeps the arithmetic bounded.
+ */
+export const TOOL_DISTILL_DIGEST_MAX_CHARS_CEILING = 24_000;
+
+/**
+ * The share of the context window ONE compaction may spend on distillation
+ * PREFILL — the prompt-evaluation tokens, summed over every distillation
+ * call it makes.
+ *
+ * WHY the total has to be bounded and not only the NUMBER of calls: the call
+ * cap saturates at 8, but the per-call input grew 40x (50 000 characters to
+ * 2 000 000). Eight calls at 500k tokens each is ~4M tokens of prefill
+ * inside ONE compaction — several times the window it is trying to shrink.
+ *
+ * WHY one window's worth: the compaction's own summarisation request is
+ * allowed 60 % of the window ({@link SAFE_INPUT_BUDGET_RATIO}), so a
+ * distillation budget of one window keeps the whole compaction at
+ * roughly 2.5x its old cost instead of an unbounded multiple.
+ */
+export const TOOL_DISTILL_PREFILL_BUDGET_WINDOW_RATIO = 1;
+
+/**
+ * The prefill budget of a compaction whose window is not known.
+ *
+ * WHY a default and not zero: a caller that did not thread its window
+ * through must still be able to distil SOMETHING — a budget of zero would
+ * silently disable distillation for every such caller.
+ */
+export const TOOL_DISTILL_PREFILL_BUDGET_DEFAULT_TOKENS = 4096;
+
+/**
+ * The floor of a distillation call's timeout, and the two rates it grows at.
+ *
+ * WHY a timeout at all: the distillation request used to be sent with NO
+ * timeout, so a 500k-token prefill against a slow provider could hang the
+ * compaction for ever — the request neither failed nor returned, and the
+ * turn simply stopped.
+ *
+ * WHY it scales with the request: the prefill is the slow part (the model
+ * reads the tool output before it writes anything), and the output is the
+ * second slow part. A flat 60-second timeout would kill every large
+ * distillation call, and a flat 10-minute timeout would let a small one hang
+ * for ten minutes.
+ *
+ * 20 ms per 1000 prefill tokens is a slow local model (about 50 tokens a
+ * second of prompt evaluation); 30 ms per 1000 output tokens is a slow
+ * generation (about 33 tokens a second).
+ */
+export const TOOL_DISTILL_TIMEOUT_BASE_MS = 120_000;
+export const TOOL_DISTILL_TIMEOUT_MS_PER_1K_PREFILL_TOKENS = 20_000;
+export const TOOL_DISTILL_TIMEOUT_MS_PER_1K_OUTPUT_TOKENS = 30_000;
+
+/**
+ * The ceiling of a distillation call's timeout.
+ *
+ * WHY a ceiling: the timeout scales with the request, and an unbounded
+ * request would produce an unbounded timeout. Ten minutes is longer than
+ * the app's own chat timeout (twelve minutes for the WHOLE turn), so a
+ * distillation call can never outlast the turn it belongs to by much.
+ */
+export const TOOL_DISTILL_TIMEOUT_MAX_MS = 600_000;
 
 /**
  * The most distillation calls ONE compaction may make, and the fewest.
@@ -270,7 +461,7 @@ export const TOOL_DISTILL_MIN_CALLS = 2;
 export const TOOL_DISTILL_CALLS_PER_WINDOW = 1 / 16384;
 
 /**
- * The marker appended to a digest that was cut at {@link TOOL_DISTILL_MAX_CHARS}.
+ * The marker appended to a digest that was cut at the digest cap.
  *
  * WHY a marker is needed: the summariser's prompt tells the model to copy
  * names "character for character" and to report a value that was cut as cut.

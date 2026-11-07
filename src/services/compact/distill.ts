@@ -3,24 +3,41 @@
  *
  * Tool-output distillation for the compaction pipeline. Large tool results are
  * sent to the LLM one message at a time and replaced with a compact digest so
- * they do not dominate the summarisation input. Each distillation call is
- * individually bounded so it can never exceed the model context window, and
- * the NUMBER of calls is bounded too (`planDistillation` + the caller's
- * `computeDistillCallCap`): the largest results get the budget, everything
- * else is passed through verbatim.
+ * they do not dominate the summarisation input.
+ *
+ * Every distillation call is bounded three ways: by the SIZE of what it may
+ * carry ({@link computeDistillInputMaxChars}), by the TIME it may take
+ * ({@link computeDistillTimeoutMs}), and by the TOTAL prefill one compaction
+ * may spend ({@link DistillBudget}). The NUMBER of calls is bounded too
+ * ({@link planDistillation} + the caller's `computeDistillCallCap`): the
+ * largest results get the budget, everything else is passed through verbatim.
  */
 
 import type { ReasoningEffort } from '@/types/chatConfig';
 
-import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
-import { type ChatMessage, type LlmRequestContext, sendLlmChat } from '@/services/llm';
+import { APPROX_CHARS_PER_TOKEN, TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
+import {
+  type ChatMessage,
+  getLlmTurnStats,
+  type LlmRequestContext,
+  sendLlmChat,
+} from '@/services/llm';
+import { recordTokenCalibrationSample } from '@/services/tokenCalibration';
+import { countRawMessagesTokens } from '@/services/tokenizer';
 import { LiveThroughputMeter } from '@/services/tokenThroughput';
 import { isAbortError } from '@/util/error';
 
 import {
+  computeDistillDigestMaxChars,
+  computeDistillInputMaxChars,
+  computeDistillNumPredict,
+  computeDistillPrefillBudgetTokens,
+  computeDistillTimeoutMs,
+  estimateDistillPrefillTokens,
+} from './budget';
+import {
   TOOL_DISTILL_CHAR_THRESHOLD,
-  TOOL_DISTILL_MAX_CHARS,
-  TOOL_DISTILL_NUM_PREDICT,
+  TOOL_DISTILL_INPUT_OVERHEAD_TOKENS,
   TOOL_DISTILL_SYSTEM_PROMPT,
   TOOL_DISTILL_TRUNCATION_MARKER,
 } from './constants';
@@ -44,6 +61,70 @@ function cutWithMarker(text: string, maxChars: number): string {
   }
   const room = Math.max(0, maxChars - TOOL_DISTILL_TRUNCATION_MARKER.length);
   return `${text.slice(0, room)}${TOOL_DISTILL_TRUNCATION_MARKER}`;
+}
+
+/**
+ * The marker that says how much of a tool output the distiller actually saw.
+ *
+ * WHY it has to be exact: the summariser's prompt tells the model to report a
+ * value that was cut as cut, and the distiller is the only place that knows
+ * what the summariser will never see. A marker that said "truncated" and
+ * nothing else leaves the summariser unable to tell a whole value from a
+ * fragment, so it copies a fragment as if it were the whole thing.
+ *
+ * @param kept  - how many characters of the output were sent.
+ * @param total - how many characters the output has in all.
+ */
+function formatDistillInputTruncationMarker(kept: number, total: number): string {
+  return (
+    `\n\n[...truncated: only the first ${kept} of ${total} characters of this tool ` +
+    `output were sent to the distiller; the remaining ${total - kept} characters were NOT included]`
+  );
+}
+
+/**
+ * Cuts a tool output to the distiller's input cap and says how much was cut.
+ *
+ * WHY the kept count is SOLVED for rather than guessed: the marker has to fit
+ * INSIDE the cap, so the kept text is the cap minus the marker — and the
+ * marker's own length depends on the numbers it quotes. Each pass renders the
+ * marker for the current guess and shrinks the guess by the marker's length;
+ * the marker only ever gets shorter as the count shrinks (fewer digits), so
+ * this converges in one or two passes. The result never exceeds the cap.
+ *
+ * The kept count is the length of the SLICE, never the raw length: the
+ * marker says how much of the output the distiller will see, and that is the
+ * slice, not the whole thing.
+ *
+ * @param content  - the tool output.
+ * @param maxChars - the largest number of characters the request may carry.
+ */
+export function truncateToolOutputForDistillation(
+  content: string,
+  maxChars: number
+): { text: string; keptChars: number; totalChars: number; truncated: boolean } {
+  const totalChars = content.length;
+  if (totalChars <= maxChars) {
+    return { text: content, keptChars: totalChars, totalChars, truncated: false };
+  }
+  let kept = Math.max(0, maxChars);
+  let marker = formatDistillInputTruncationMarker(kept, totalChars);
+  for (let pass = 0; pass < 8 && kept + marker.length > maxChars; pass += 1) {
+    kept = Math.max(0, maxChars - marker.length);
+    marker = formatDistillInputTruncationMarker(kept, totalChars);
+  }
+  // A cap smaller than the marker itself cannot hold the marker. The text is
+  // cut to the cap and left unmarked, which is the lesser evil next to
+  // sending more than the cap allows.
+  if (kept + marker.length > maxChars) {
+    return { text: content.slice(0, maxChars), keptChars: maxChars, totalChars, truncated: true };
+  }
+  return {
+    text: `${content.slice(0, kept)}${marker}`,
+    keptChars: kept,
+    totalChars,
+    truncated: true,
+  };
 }
 
 /**
@@ -71,6 +152,168 @@ function findMatchingAssistantIndex(messages: ChatMessage[], toolIndex: number):
 }
 
 /**
+ * The distillation PREFILL budget of ONE compaction.
+ *
+ * WHY the total has to be bounded and not only the NUMBER of calls: the call
+ * cap saturates at 8, but the per-call input grew 40x (50 000 characters to
+ * 2 000 000). Eight calls at 500k tokens each is ~4M tokens of prefill
+ * inside ONE compaction — several times the window the compaction is trying
+ * to shrink, and the reason a compaction at a 1M-token window became about
+ * three times as expensive as it had been.
+ *
+ * The budget is spent LARGEST FIRST: the biggest tool outputs are the ones
+ * that decide whether the compacted history fits, and they are also the most
+ * expensive to distil, so they are the ones worth the budget.
+ */
+export interface DistillBudget {
+  /** The prefill tokens this compaction may spend on distillation in total. */
+  totalTokens: number;
+  /** The prefill tokens the earlier passes of this compaction already spent. */
+  usedTokens: number;
+}
+
+/**
+ * The prefill budget of a compaction with the given window.
+ *
+ * @param numCtx - the model's context window.
+ */
+export function createDistillBudget(numCtx: number): DistillBudget {
+  return { totalTokens: computeDistillPrefillBudgetTokens(numCtx), usedTokens: 0 };
+}
+
+/**
+ * How many prefill tokens are left in a budget.
+ *
+ * WHY a missing budget means "unlimited": a caller that does not pass one
+ * (the old behaviour) keeps its old semantics — the calls it asks for are the
+ * calls it gets.
+ *
+ * @param budget - the compaction's budget, if it has one.
+ */
+export function remainingDistillBudgetTokens(budget?: DistillBudget): number {
+  if (!budget) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.max(0, budget.totalTokens - budget.usedTokens);
+}
+
+/** One planned distillation call. */
+export interface DistillCall {
+  /** The index of the tool message to distil. */
+  index: number;
+  /** The prefill tokens the call is charged against the budget. */
+  prefillTokens: number;
+}
+
+/** The calls one pass will make, and what the budget left out. */
+export interface DistillCallPlan {
+  /** The calls to make, in the order the history is walked (ascending index). */
+  calls: DistillCall[];
+  /** How many of the selected candidates the budget could not pay for. */
+  budgetSkipped: number;
+  /** The prefill tokens the plan spends. */
+  prefillTokens: number;
+}
+
+/**
+ * Turns the selected candidates into the calls that can be AFFORDED.
+ *
+ * WHY the budget is spent largest first: the biggest outputs are the ones
+ * that decide whether the compacted history fits, and they are the most
+ * expensive to distil — so they are the ones worth the budget, and a small
+ * output that still fits in what is left is a better use of it than
+ * nothing.
+ *
+ * WHY a candidate the budget cannot pay for is skipped rather than allowed
+ * to overshoot: the budget is what keeps one compaction's distillation from
+ * costing several windows' worth of prefill.
+ *
+ * @param historyMessages - the slice being distilled.
+ * @param selectedIndices - the candidates the call cap chose.
+ * @param perCallMaxChars - the largest number of characters one call may carry.
+ * @param budgetTokens    - the prefill tokens the pass may spend.
+ */
+export function planDistillCalls(
+  historyMessages: ChatMessage[],
+  selectedIndices: number[],
+  perCallMaxChars: number,
+  budgetTokens: number
+): DistillCallPlan {
+  const candidates = selectedIndices
+    .map((index) => ({ index, length: historyMessages[index]?.content?.length ?? 0 }))
+    .sort((left, right) => right.length - left.length || left.index - right.index);
+
+  let remaining = budgetTokens;
+  let budgetSkipped = 0;
+  let prefillTokens = 0;
+  const calls: DistillCall[] = [];
+  for (const candidate of candidates) {
+    const sentChars = Math.min(candidate.length, perCallMaxChars);
+    const cost = estimateDistillPrefillTokens(sentChars) + TOOL_DISTILL_INPUT_OVERHEAD_TOKENS;
+    if (cost > remaining) {
+      budgetSkipped += 1;
+      continue;
+    }
+    remaining -= cost;
+    prefillTokens += cost;
+    calls.push({ index: candidate.index, prefillTokens: cost });
+  }
+  calls.sort((left, right) => left.index - right.index);
+  return { calls, budgetSkipped, prefillTokens };
+}
+
+/**
+ * What a failed distillation call failed WITH, in words a progress line can
+ * show.
+ *
+ * WHY the failure has to be NAMED: a failed call leaves the tool output
+ * VERBATIM — the thing the distillation existed to prevent — so the progress
+ * line has to say that it happened and why, or the compaction silently
+ * returns a history that is as big as it was.
+ *
+ * @param err - the thrown value.
+ */
+function describeDistillFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/timed?\s?out/i.test(message)) {
+    return 'the request timed out';
+  }
+  if (/abort/i.test(message)) {
+    return 'the request was aborted';
+  }
+  return 'the provider returned an error';
+}
+
+/**
+ * The token count of the distillation request, for the calibration sample.
+ *
+ * WHY the fallback: tiktoken's WASM throws `RuntimeError: unreachable` above
+ * about 524 288 characters, so a LARGE distillation request — which is
+ * exactly what the scaled input cap produces — cannot be counted by the
+ * tokenizer. The count used to be computed as an ARGUMENT of the calibration
+ * call, so the throw skipped the whole sample: the calibration could never
+ * learn from a large distillation request at all. The heuristic fallback
+ * keeps the sample, and it is the same four-characters-per-token estimate
+ * the tokenizer itself falls back to.
+ *
+ * @param messages - the request's messages.
+ * @param model    - the model whose encoder measures them.
+ */
+function countDistillRequestTokens(messages: ChatMessage[], model: string): number {
+  try {
+    return countRawMessagesTokens(messages, model);
+  } catch {
+    let total = 0;
+    for (const message of messages) {
+      total += 4;
+      total += Math.ceil(message.role.length / APPROX_CHARS_PER_TOKEN);
+      total += Math.ceil(message.content.length / APPROX_CHARS_PER_TOKEN);
+    }
+    return messages.length > 0 ? total + 2 : 0;
+  }
+}
+
+/**
  * The result of one {@link distillToolMessages} pass.
  *
  * `skippedCount` is what the call cap left verbatim — it is reported so the
@@ -91,6 +334,14 @@ export interface DistillResult {
   orphanCount: number;
   /** How many distillation calls threw and left their message verbatim. */
   failedCount: number;
+  /** How many model calls this pass made, the failed ones included. */
+  attemptedCount: number;
+  /** How many eligible outputs the prefill budget could not pay for. */
+  budgetSkippedCount: number;
+  /** How many eligible outputs there were in this slice. */
+  candidateCount: number;
+  /** The prefill tokens this pass charged against the budget. */
+  prefillTokens: number;
 }
 
 /**
@@ -177,6 +428,8 @@ export function planDistillation(
  * rest of the repo uses).
  *
  * @param maxCalls - How many distillation calls this pass may make.
+ * @param budget   - The compaction's prefill budget; the calls this pass
+ *                   cannot pay for are left verbatim.
  */
 export async function distillToolMessages(
   ctx: LlmRequestContext,
@@ -187,13 +440,40 @@ export async function distillToolMessages(
   onProgress?: (message: string) => void,
   signal?: AbortSignal,
   reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void
+  onTps?: (tps: number) => void,
+  budget?: DistillBudget
 ): Promise<DistillResult> {
   const plan = planDistillation(historyMessages, maxCalls);
-  const selectedIndices = new Set(plan.selected);
   const distilledMessages: ChatMessage[] = [];
   let distilledCount = 0;
   let failedCount = 0;
+  /** How many model calls this pass actually SENT. */
+  let attemptedCount = 0;
+  /** Why the failed calls failed, so the progress line can name the reason. */
+  const failureReasons = new Set<string>();
+
+  // Three caps, all of them window-scaled:
+  //
+  // - the INPUT cap is the share of the window the tool output may take
+  //   (`computeDistillInputMaxChars`), bounded by an ABSOLUTE ceiling so a
+  //   single call can never exceed what a typical provider accepts;
+  // - the DIGEST cap is the model's output capacity and the window's share
+  //   (`computeDistillDigestMaxChars`) — it never cuts the model's answer;
+  // - the OUTPUT limit (`computeDistillNumPredict`) is what the model may
+  //   write, and it is what actually decides the digest's size.
+  const inputMaxChars = computeDistillInputMaxChars(numCtx);
+  const digestMaxChars = computeDistillDigestMaxChars(numCtx);
+  const numPredict = computeDistillNumPredict(numCtx);
+
+  // The calls that can be AFFORDED: the call cap chooses the candidates, the
+  // prefill budget decides which of them this pass can actually pay for.
+  const callPlan = planDistillCalls(
+    historyMessages,
+    plan.selected,
+    inputMaxChars,
+    remainingDistillBudgetTokens(budget)
+  );
+  const plannedCalls = new Map(callPlan.calls.map((call) => [call.index, call]));
 
   for (let index = 0; index < historyMessages.length; index += 1) {
     const message = historyMessages[index];
@@ -201,7 +481,10 @@ export async function distillToolMessages(
       continue;
     }
 
-    if (!selectedIndices.has(index)) {
+    // Not selected by the call cap, or selected but not affordable: either
+    // way the output passes through verbatim.
+    const planned = plannedCalls.get(index);
+    if (!planned) {
       distilledMessages.push(message);
       continue;
     }
@@ -210,42 +493,64 @@ export async function distillToolMessages(
     const previous = historyMessages[matchingAssistantIndex];
     const toolName = previous ? getToolMessageName(previous) : 'unknown_tool';
 
+    // An empty tool output has nothing to distil: the call would be a
+    // request whose answer is an empty digest wrapped in a header that claims
+    // a length of zero. It is passed through verbatim.
+    if (message.content.length === 0) {
+      distilledMessages.push(message);
+      continue;
+    }
+
     // Guard against sending massive tool outputs to the distillation LLM.
     // A single tool output can exceed numCtx, causing the distillation call
-    // itself to fail with a 400.
-    const DISTILL_INPUT_MAX_CHARS = Math.min(50_000, numCtx * 8);
-    const distillInputContent =
-      message.content.length > DISTILL_INPUT_MAX_CHARS
-        ? `${message.content.slice(
-            0,
-            DISTILL_INPUT_MAX_CHARS
-          )}\n\n[...truncated ${message.content.length - DISTILL_INPUT_MAX_CHARS} chars for distillation]`
-        : message.content;
+    // itself to fail with a 400 — and a failed call leaves the output
+    // VERBATIM, which is the thing the distillation existed to avoid.
+    const truncation = truncateToolOutputForDistillation(message.content, inputMaxChars);
+    const distillInputContent = truncation.text;
+    const keptChars = truncation.keptChars;
+    const totalChars = truncation.totalChars;
 
     const input =
       `Tool name: ${toolName}\n` +
-      `Tool output length: ${message.content.length} chars${
-        message.content.length > DISTILL_INPUT_MAX_CHARS ? ' (truncated for distillation)' : ''
+      `Tool output length: ${totalChars} chars${
+        truncation.truncated
+          ? ` (only the first ${keptChars} chars were sent to the distiller)`
+          : ''
       }\n\n` +
       `Tool output:\n${distillInputContent}`;
 
     let distilledContent = '';
+    // The exact pair of messages the distiller receives. Hoisted out of the
+    // request literal so the calibration sample below can count EXACTLY what
+    // was sent — the system prompt plus the one user message carrying the
+    // tool output.
+    const distillRequestMessages: ChatMessage[] = [
+      { role: 'system', content: TOOL_DISTILL_SYSTEM_PROMPT },
+      { role: 'user', content: input },
+    ];
     // Live t/s meter so the UI can show generation speed while the
     // distillation requests run (same shared policy as the main loop).
     const liveMeter = new LiveThroughputMeter(model, TPS_STATUS_MIN_INTERVAL_MS);
+    // The call's DEADLINE. The request used to carry NO timeout at all, so a
+    // slow prefill (a 32k-token tool output against a loaded provider) could
+    // hang the compaction for ever: the request neither failed nor returned.
+    // The timeout scales with the size of the request — the prefill it has to
+    // read and the answer it has to write — and it is enforced by the
+    // adapter: Ollama treats it as the socket's silence timeout, the
+    // OpenAI-compatible client as the time to the first response byte (the
+    // prefill), which is exactly the phase that used to hang.
+    const timeoutMs = computeDistillTimeoutMs(planned.prefillTokens, numPredict);
     let distillResponse: Awaited<ReturnType<typeof sendLlmChat>>;
+    attemptedCount += 1;
     try {
       distillResponse = await sendLlmChat(
         ctx,
         {
           model,
-          messages: [
-            { role: 'system', content: TOOL_DISTILL_SYSTEM_PROMPT },
-            { role: 'user', content: input },
-          ],
+          messages: distillRequestMessages,
           tools: [],
           numCtx,
-          maxOutputTokens: TOOL_DISTILL_NUM_PREDICT,
+          maxOutputTokens: numPredict,
           options: {
             temperature: 0,
           },
@@ -261,18 +566,52 @@ export async function distillToolMessages(
             );
           }
         },
-        undefined,
+        timeoutMs,
         signal
       );
     } catch (err) {
       // An abort is the caller's decision, not a failure of this call: it has
       // to reach the route, which turns it into a `client_abort` error event.
+      //
+      // A TIMEOUT is NOT an abort: it is a failure of this call, and it falls
+      // through to the failure path below — the tool output stays verbatim,
+      // the pass continues, and the progress line says what happened. (The
+      // adapters report a timeout as a connection timeout, not as an abort:
+      // axios raises `ECONNABORTED`, the OpenAI client raises
+      // `APIConnectionTimeoutError`.)
       if (signal?.aborted === true || isAbortError(err)) {
         throw err;
       }
       failedCount += 1;
+      failureReasons.add(describeDistillFailure(err));
       distilledMessages.push(message);
       continue;
+    }
+
+    // ── Calibration sample (the distillation request) ──
+    //
+    // A CLEAN sample: the request carries `tools: []`, so the provider's
+    // prompt count and our own count describe the SAME thing — the two
+    // messages above — and nothing has to be subtracted from the provider's
+    // side. The PROMPT count only; `eval_count` is the generated digest and
+    // is not part of the request's cost.
+    //
+    // Best-effort: a calibration that cannot be recorded must never break a
+    // distillation pass.
+    try {
+      const stats = getLlmTurnStats(ctx, distillResponse);
+      if (stats) {
+        recordTokenCalibrationSample({
+          model,
+          provider: ctx.provider ?? 'ollama',
+          estimatedTokens: countDistillRequestTokens(distillRequestMessages, model),
+          authoritativeTokens: stats.promptEvalCount,
+          overheadTokens: 0,
+          hasImages: false,
+        });
+      }
+    } catch {
+      // Calibration is best-effort: a failure here must not fail the pass.
     }
 
     const rawDigest = (distillResponse.message?.content ?? '').trim();
@@ -283,21 +622,44 @@ export async function distillToolMessages(
     // from a cut one and copies a truncated value as if it were whole.
     const digest = cutWithMarker(
       rawDigest.length > 0 ? rawDigest : message.content,
-      TOOL_DISTILL_MAX_CHARS
+      digestMaxChars
     );
+
+    // The wrapper says what the digest is made of, and — when the INPUT was
+    // cut — what the distiller never saw. A digest of a PARTIAL output looks
+    // exactly like a digest of a whole one otherwise, and the summariser
+    // would report the missing part as if it had been in the history.
+    const wrapper = `[Distilled tool output from ${toolName}; original length ${totalChars} chars${
+      truncation.truncated ? `; only the first ${keptChars} chars were distilled` : ''
+    }]`;
 
     distilledMessages.push({
       ...message,
-      content: `[Distilled tool output from ${toolName}; original length ${message.content.length} chars]\n${digest}`,
+      content: `${wrapper}\n${digest}`,
     });
     distilledCount += 1;
 
-    onProgress?.(`Distilled tool output ${distilledCount}/${plan.selected.length} (${toolName})`);
+    onProgress?.(`Distilled tool output ${distilledCount}/${callPlan.calls.length} (${toolName})`);
   }
 
   if (failedCount > 0) {
+    // WHY the reason is named: a failed call leaves the tool output
+    // VERBATIM — the very thing the distillation existed to prevent — so a
+    // progress line that only said "N calls failed" left the user (and the
+    // compaction's own log) unable to tell a rejected request from a
+    // timeout. The compaction CONTINUES either way: an undistilled output
+    // costs tokens, a lost compaction costs the conversation.
+    const reasons = [...failureReasons].join('; ');
     onProgress?.(
-      `${failedCount} tool distillation call(s) failed — those tool output(s) stay verbatim.`
+      `${failedCount} of ${attemptedCount} tool distillation call(s) failed (${reasons}) — ` +
+        `those tool output(s) stay verbatim and the compaction continues.`
+    );
+  }
+
+  if (callPlan.budgetSkipped > 0) {
+    onProgress?.(
+      `${callPlan.budgetSkipped} oversized tool output(s) were left verbatim: the compaction's ` +
+        `distillation prefill budget ran out.`
     );
   }
 
@@ -307,5 +669,9 @@ export async function distillToolMessages(
     skippedCount: plan.skipped,
     orphanCount: plan.orphans,
     failedCount,
+    attemptedCount,
+    budgetSkippedCount: callPlan.budgetSkipped,
+    candidateCount: plan.selected.length + plan.skipped,
+    prefillTokens: callPlan.prefillTokens,
   };
 }

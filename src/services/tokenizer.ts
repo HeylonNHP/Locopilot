@@ -1,6 +1,12 @@
 import { encoding_for_model, get_encoding, init } from '@dqbd/tiktoken/init';
 
 import { APPROX_CHARS_PER_TOKEN, IMAGE_TOKEN_ESTIMATE } from '@/constants';
+// The ALIAS, not './tokenCalibration': the calibration cache is module state,
+// and the test runner (tsx) resolves an extension-less relative import and the
+// alias to two DIFFERENT module instances — which would silently split the
+// cache in two and make the calibration a no-op under test. One specifier
+// form everywhere means one instance everywhere.
+import { applyTokenCalibration, type TokenCalibrationClass } from '@/services/tokenCalibration';
 
 import { type ChatMessage } from './llm';
 import { stripSpecialTokens } from './textUtils';
@@ -144,17 +150,96 @@ function countMessageTokensWithEncoder(message: ChatMessage, activeEncoder: Tikt
   return total;
 }
 
-export function countTextTokens(text: string, model: string): number {
+/**
+ * The RAW token count of a text — what the tokenizer says, with NO calibration
+ * applied.
+ *
+ * WHY a raw variant exists: `countTextTokens` is calibrated, and the
+ * calibration factor is per MODEL and empirical. A few callers need the
+ * tokenizer's own number rather than the app's belief about what the request
+ * will cost:
+ *
+ *   - the t/s meter (`src/services/tokenThroughput.ts`), which counts the
+ *     tokens a stream produced and must not report a scaled rate;
+ *   - the calibration sampler itself, which compares what we counted with
+ *     what the provider counted and therefore has to compare the RAW numbers.
+ *
+ * @param text  - the text to measure.
+ * @param model - the model whose encoder measures it.
+ */
+export function countRawTextTokens(text: string, model: string): number {
   const activeEncoder = getEncoder(model);
   return countTextTokensWithEncoder(text, activeEncoder);
 }
 
-export function countMessageTokens(message: ChatMessage, model: string): number {
+/**
+ * The RAW token count of a text.
+ *
+ * STAYS RAW ON PURPOSE: this is the text-level measurement, and the t/s meter
+ * divides it by a duration to report a generation speed. A calibrated count
+ * would report a rate scaled by the model's calibration factor — a number
+ * that is not a rate at all.
+ *
+ * It is ALSO the wrong unit for a BUDGET comparison: the budget is a number of
+ * provider tokens, and this count is in tokenizer tokens. Every measurement
+ * that is compared against a token budget must use
+ * {@link countCalibratedTextTokens} (or a calibrated message count) instead,
+ * or the two sides of the comparison are in different units — which is how a
+ * 1.4× calibration factor turned a 0.6×window budget into a 40 % over-send.
+ */
+export function countTextTokens(text: string, model: string): number {
+  return countRawTextTokens(text, model);
+}
+
+/**
+ * The CALIBRATED token count of a text.
+ *
+ * `Math.round(raw × factor(model, requestClass))`, where the factor comes from
+ * the calibration (`src/services/tokenCalibration.ts`). With a cold model the
+ * factor is 1, so this is exactly what the tokenizer said.
+ *
+ * THIS is the count to use whenever a text measurement is compared against a
+ * TOKEN BUDGET: the budget is denominated in provider tokens, and the raw
+ * count is not.
+ *
+ * @param text         - the text to measure.
+ * @param model        - the model whose encoder measures it.
+ * @param requestClass - the shape of the request the text goes into; defaults
+ *                       to `chat`. The factor is per (provider, model, class),
+ *                       because the provider's per-message framing belongs to
+ *                       the request's shape.
+ * @returns {number} the calibrated token count.
+ */
+export function countCalibratedTextTokens(
+  text: string,
+  model: string,
+  requestClass: TokenCalibrationClass = 'chat'
+): number {
+  return applyTokenCalibration(model, countRawTextTokens(text, model), requestClass);
+}
+
+/**
+ * The RAW token count of one message — no calibration applied.
+ *
+ * @param message - the message to measure.
+ * @param model   - the model whose encoder measures it.
+ */
+export function countRawMessageTokens(message: ChatMessage, model: string): number {
   const activeEncoder = getEncoder(model);
   return countMessageTokensWithEncoder(message, activeEncoder);
 }
 
-export function countMessagesTokens(messages: ChatMessage[], model: string): number {
+/**
+ * The RAW token count of a message list — no calibration applied.
+ *
+ * This is what the calibration sampler compares against the provider's own
+ * prompt count: the numerator and the denominator of the ratio have to be
+ * the SAME measurement, or the ratio measures nothing.
+ *
+ * @param messages - the messages to measure.
+ * @param model    - the model whose encoder measures them.
+ */
+export function countRawMessagesTokens(messages: ChatMessage[], model: string): number {
   const activeEncoder = getEncoder(model);
   let total = 0;
 
@@ -163,4 +248,46 @@ export function countMessagesTokens(messages: ChatMessage[], model: string): num
   }
 
   return messages.length > 0 ? total + 2 : 0;
+}
+
+/**
+ * The CALIBRATED token count of one message.
+ *
+ * `Math.round(raw × factor(model, requestClass))`, where the factor comes from
+ * the per-model calibration (`src/services/tokenCalibration.ts`). With a cold
+ * model the factor is 1, so this is exactly what the tokenizer said.
+ *
+ * @param message      - the message to measure.
+ * @param model        - the model whose encoder measures it.
+ * @param requestClass - the shape of the request the message goes into;
+ *                       defaults to `chat`.
+ * @returns {number} the calibrated token count.
+ */
+export function countMessageTokens(
+  message: ChatMessage,
+  model: string,
+  requestClass: TokenCalibrationClass = 'chat'
+): number {
+  return applyTokenCalibration(model, countRawMessageTokens(message, model), requestClass);
+}
+
+/**
+ * The CALIBRATED token count of a message list.
+ *
+ * `Math.round(raw × factor(model, requestClass))`, where the factor comes from
+ * the per-model calibration (`src/services/tokenCalibration.ts`). With a cold
+ * model the factor is 1, so this is exactly what the tokenizer said.
+ *
+ * @param messages     - the messages to measure.
+ * @param model        - the model whose encoder measures them.
+ * @param requestClass - the shape of the request the messages go into;
+ *                       defaults to `chat`.
+ * @returns {number} the calibrated token count.
+ */
+export function countMessagesTokens(
+  messages: ChatMessage[],
+  model: string,
+  requestClass: TokenCalibrationClass = 'chat'
+): number {
+  return applyTokenCalibration(model, countRawMessagesTokens(messages, model), requestClass);
 }

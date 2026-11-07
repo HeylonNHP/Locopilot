@@ -40,11 +40,23 @@ import {
   computeCompactionReserveTokens,
   computeCompactionTriggerTokens,
   computeDistillCallCap,
+  computeDistillDigestMaxChars,
+  computeDistillInputMaxChars,
+  computeDistillNumPredict,
+  computeDistillPrefillBudgetTokens,
+  computeDistillTimeoutMs,
   computeEffectiveInputBudget,
   computeSafeInputBudget,
+  DISTILL_CHARS_PER_TOKEN,
+  DISTILL_OUTPUT_CHARS_PER_TOKEN,
+  estimateDistillPrefillTokens,
   evaluateCompactionSizes,
 } from '../src/services/compact/budget.ts';
 import {
+  COMPACT_RESERVE_MAX_TOKENS,
+  COMPACT_RESERVE_MAX_WINDOW_RATIO,
+  COMPACT_RESERVE_MIN_TOKENS,
+  COMPACT_RESERVE_RATIO,
   MAX_REDUCTION_ROUNDS,
   RECENT_FILES_MAX_TOTAL_TOKENS,
   RECENT_FILES_MAX_WINDOW_RATIO,
@@ -52,10 +64,26 @@ import {
   RECENT_FILES_MESSAGE_OVERHEAD_TOKENS,
   RECENT_FILES_MIN_TOKENS,
   TOOL_DISTILL_CHAR_THRESHOLD,
+  TOOL_DISTILL_DIGEST_MAX_CHARS_CEILING,
+  TOOL_DISTILL_INPUT_MAX_CHARS_ABSOLUTE,
+  TOOL_DISTILL_INPUT_OVERHEAD_TOKENS,
   TOOL_DISTILL_MAX_CALLS,
+  TOOL_DISTILL_MAX_CHARS_WINDOW_RATIO,
   TOOL_DISTILL_MIN_CALLS,
+  TOOL_DISTILL_NUM_PREDICT_BASE,
+  TOOL_DISTILL_NUM_PREDICT_MAX,
+  TOOL_DISTILL_PREFILL_BUDGET_WINDOW_RATIO,
+  TOOL_DISTILL_TIMEOUT_BASE_MS,
+  TOOL_DISTILL_TIMEOUT_MAX_MS,
+  TOOL_DISTILL_TRUNCATION_MARKER,
 } from '../src/services/compact/constants.ts';
-import { distillToolMessages, planDistillation } from '../src/services/compact/distill.ts';
+import {
+  createDistillBudget,
+  distillToolMessages,
+  planDistillation,
+  planDistillCalls,
+  truncateToolOutputForDistillation,
+} from '../src/services/compact/distill.ts';
 import { computeRecentFilesBudget } from '../src/services/compact/recentFiles.ts';
 import {
   batchReductionParts,
@@ -400,7 +428,7 @@ check('the reduction rounds strictly shrink the number of parts and terminate', 
     }));
   }
   assert.ok(rounds <= MAX_REDUCTION_ROUNDS, 'the reduction needed more rounds than the cap allows');
-  assert.ok(rounds > 0, 'the reduction did nothing at all');
+  assert.ok(rounds > 0, 'the reduction did not do anything at all');
 });
 
 check('the round cap is a hard bound on the reduction', () => {
@@ -462,17 +490,22 @@ console.log('the auto-compaction trigger reserves room for the reply');
  * The trigger each context window has to produce.
  *
  * These are the sizes people actually run: a small local window, the common
- * 8k/32k/128k hosted windows, and a 1M-token window where the reserve clamp
- * (and then the 97 % ceiling) takes over.
+ * 8k/32k/128k hosted windows, and the 1M-token window where the √ reply
+ * reserve (and then the 97 % ceiling) takes over.
+ *
+ * 131 072 and above are the windows the √ reserve moves: the reserve used to
+ * be a flat 13 000 tokens, which is 1.2 % of a 1M window — so the trigger sat
+ * at 95 %/97 % of the window and a long reply overflowed mid-generation.
  */
 const TRIGGER_TABLE = [
   [2048, 1229],
   [4096, 2596],
   [8192, 6144],
   [32768, 24576],
-  [131072, 118072],
-  [200000, 187000],
-  [1000000, 970000],
+  [131072, 114688],
+  [200000, 179762],
+  [1000000, 954746],
+  [1048576, 1002236],
 ];
 
 check('the trigger is the window minus a reserved reply margin', () => {
@@ -485,12 +518,18 @@ check('the trigger is the window minus a reserved reply margin', () => {
   }
 });
 
-check('the reserve is 25 % of the window, clamped and capped', () => {
+check('the reserve scales with the window, and is still bounded', () => {
+  // The flat part of the curve: the 25 % band and the MIN clamp, unchanged.
   assert.equal(computeCompactionReserveTokens(8192), 2048);
   // The MIN clamp: 25 % of 4096 is 1024, below the 1500 floor.
   assert.equal(computeCompactionReserveTokens(4096), 1500);
-  // The MAX clamp: 25 % of 131072 is 32768, far above the 13000 ceiling.
-  assert.equal(computeCompactionReserveTokens(131072), 13000);
+  // The √ reply budget: 8192 tokens at the 32k reference window, growing with
+  // the square root of the window from there. The old flat 13 000-token
+  // ceiling left only 1.2 % of a 1M window for the reply.
+  assert.equal(computeCompactionReserveTokens(65536), 13000);
+  assert.equal(computeCompactionReserveTokens(131072), 16384);
+  assert.equal(computeCompactionReserveTokens(262144), 23170);
+  assert.equal(computeCompactionReserveTokens(1048576), 46340);
   // The WINDOW cap: the clamp alone would reserve 1500 of 2048 tokens (73 %),
   // so compaction would fire almost constantly — and the pipeline cannot fit
   // its own short prompt in what would be left.
@@ -499,6 +538,113 @@ check('the reserve is 25 % of the window, clamped and capped', () => {
     computeCompactionReserveTokens(2048) < 1500,
     'the 40 % window cap is not being applied'
   );
+});
+
+/**
+ * The reserve formula this change replaces, computed the old way.
+ *
+ * WHY it is recomputed HERE rather than imported: the point of the sweep
+ * below is to prove that the new formula agrees with the old one over the
+ * whole range where it must agree, and a comparison against the new formula
+ * would prove nothing.
+ *
+ * @param {number} numCtx - the context window.
+ * @returns {number} the reserve the old formula produced.
+ */
+function oldReserveTokens(numCtx) {
+  const clamped = Math.max(
+    COMPACT_RESERVE_MIN_TOKENS,
+    Math.min(COMPACT_RESERVE_MAX_TOKENS, Math.floor(numCtx * COMPACT_RESERVE_RATIO))
+  );
+  return Math.min(clamped, Math.floor(numCtx * COMPACT_RESERVE_MAX_WINDOW_RATIO));
+}
+
+/**
+ * The last window at which the new reserve still equals the old one.
+ *
+ * WHY it is pinned and not computed: the √ reply ceiling reaches 13 001
+ * tokens at 82 533, so that is the first window whose reserve moves. A
+ * COMPUTED crossover would compare the new formula with itself and prove
+ * nothing.
+ */
+const RESERVE_CROSSOVER_WINDOW = 82_532;
+
+check('the reserve is unchanged for every window at or below the crossover', () => {
+  // The tuned 8k/32k cases and every smaller window must not move: the √
+  // ceiling is below the old flat 13 000-token ceiling all the way up to
+  // 82 532 tokens.
+  for (let numCtx = 512; numCtx <= RESERVE_CROSSOVER_WINDOW; numCtx += 1) {
+    const actual = computeCompactionReserveTokens(numCtx);
+    const expected = oldReserveTokens(numCtx);
+    if (actual !== expected) {
+      assert.equal(
+        actual,
+        expected,
+        `the reserve moved at numCtx ${numCtx}: ${actual}, expected ${expected}`
+      );
+    }
+  }
+  // And the crossover is EXACT: the √ ceiling reaches 13 001 at 82 533, so
+  // that is the first window whose reserve grows.
+  assert.equal(
+    computeCompactionReserveTokens(RESERVE_CROSSOVER_WINDOW),
+    COMPACT_RESERVE_MAX_TOKENS
+  );
+  assert.equal(
+    computeCompactionReserveTokens(RESERVE_CROSSOVER_WINDOW + 1),
+    COMPACT_RESERVE_MAX_TOKENS + 1
+  );
+});
+
+check('the trigger never goes backwards and the reply room never shrinks', () => {
+  let previousTrigger = -1;
+  let previousRoom = -1;
+  for (let numCtx = 512; numCtx <= 1048576; numCtx += 1) {
+    const trigger = computeCompactionTriggerTokens(numCtx);
+    const room = numCtx - trigger;
+    if (trigger < previousTrigger) {
+      assert.equal(
+        trigger,
+        previousTrigger,
+        `the trigger went backwards at numCtx ${numCtx}: ${previousTrigger} → ${trigger}`
+      );
+    }
+    if (room < previousRoom) {
+      assert.equal(
+        room,
+        previousRoom,
+        `the reply room shrank at numCtx ${numCtx}: ${previousRoom} → ${room}`
+      );
+    }
+    previousTrigger = trigger;
+    previousRoom = room;
+  }
+});
+
+check('the reserve is never more than 40 % of the window', () => {
+  for (let numCtx = 512; numCtx <= 1048576; numCtx += 1) {
+    const reserve = computeCompactionReserveTokens(numCtx);
+    if (reserve > Math.floor(numCtx * COMPACT_RESERVE_MAX_WINDOW_RATIO)) {
+      assert.equal(
+        reserve,
+        Math.floor(numCtx * COMPACT_RESERVE_MAX_WINDOW_RATIO),
+        `the reserve ${reserve} is more than 40 % of the window at numCtx ${numCtx}`
+      );
+    }
+  }
+});
+
+check('the trigger never exceeds 97 % of the window', () => {
+  for (let numCtx = 512; numCtx <= 1048576; numCtx += 1) {
+    const trigger = computeCompactionTriggerTokens(numCtx);
+    if (trigger > Math.floor(numCtx * 0.97)) {
+      assert.equal(
+        trigger,
+        Math.floor(numCtx * 0.97),
+        `the trigger ${trigger} is above 97 % of the window at numCtx ${numCtx}`
+      );
+    }
+  }
 });
 
 check('the trigger strictly increases with the window', () => {
@@ -672,6 +818,296 @@ check('the distillation cap never falls below the floor or above the ceiling', (
   }
 });
 
+console.log('the distiller input and digest caps scale with the window');
+
+/**
+ * The INPUT cap each context window has to produce, in characters.
+ *
+ * The cap used to be `min(50 000, numCtx * 8)` CHARACTERS: the `min` bound
+ * for every window at or above 6250 (so a 500 KB tool result was cut to 10 %
+ * before the distiller saw it at 256k and at 1M alike), and `numCtx * 8`
+ * characters is about `numCtx * 2` tokens — TWICE the window at small sizes.
+ *
+ * It is now a token budget converted at the CONSERVATIVE 3.5 characters per
+ * token (the Llama/Qwen tokenizers this feature exists for run at 3.0-3.5),
+ * and it is bounded by an ABSOLUTE ceiling of 112 000 characters (32 000
+ * tokens — a quarter of a 128k-token provider limit), because the window
+ * Locopilot believes is not the window the provider enforces.
+ */
+const DISTILL_INPUT_CAP_TABLE = [
+  [2048, 2688],
+  [8192, 14336],
+  [32768, 57344],
+  [65536, 112000],
+  [131072, 112000],
+  [262144, 112000],
+  [1048576, 112000],
+];
+
+/**
+ * The DIGEST cap each context window has to produce, in characters.
+ *
+ * The digest is the MODEL'S ANSWER, so its cap is the larger of the model's
+ * output capacity and the window's share — and it must never be the thing
+ * that cuts the answer. At every window up to ~257 000 tokens the MODEL'S
+ * OUTPUT LIMIT binds (5140 characters); above it the WINDOW SHARE binds.
+ */
+const DISTILL_DIGEST_CAP_TABLE = [
+  [2048, 5140],
+  [8192, 5140],
+  [32768, 5140],
+  [131072, 5140],
+  [262144, 5242],
+  [1048576, 20971],
+];
+
+/**
+ * The MODEL'S OUTPUT LIMIT each context window has to produce, in tokens.
+ *
+ * The digest's size is set by what the model can emit, so the limit has to
+ * scale with the window for "the digest scales with the window" to be true
+ * at all: `clamp(floor(numCtx / 256), 1024, 4096)`.
+ */
+const DISTILL_NUM_PREDICT_TABLE = [
+  [2048, 1024],
+  [8192, 1024],
+  [32768, 1024],
+  [131072, 1024],
+  [262144, 1024],
+  [524288, 2048],
+  [1048576, 4096],
+];
+
+/**
+ * WHICH of the two bounds the digest cap is at each window: the MODEL's
+ * OUTPUT LIMIT or the WINDOW SHARE.
+ */
+const DISTILL_DIGEST_BINDING_TABLE = [
+  [8192, 'output'],
+  [32768, 'output'],
+  [131072, 'output'],
+  [262144, 'window'],
+  [1048576, 'window'],
+];
+
+check('the distiller input cap scales with the window', () => {
+  for (const [numCtx, expected] of DISTILL_INPUT_CAP_TABLE) {
+    assert.equal(
+      computeDistillInputMaxChars(numCtx),
+      expected,
+      `a ${numCtx}-token window sends at most ${computeDistillInputMaxChars(numCtx)} chars, expected ${expected}`
+    );
+  }
+});
+
+check('the distiller input cap never exceeds the absolute ceiling', () => {
+  // The provider's real input limit may be LOWER than the window Locopilot
+  // believes (the OpenAI-compatible adapter never sends `num_ctx`), so a
+  // window-derived cap alone can send a request the provider rejects — and a
+  // rejected call leaves the tool output VERBATIM, which is what the
+  // distillation exists to prevent.
+  for (let numCtx = 512; numCtx <= 1048576; numCtx += 997) {
+    const cap = computeDistillInputMaxChars(numCtx);
+    assert.ok(
+      cap <= TOOL_DISTILL_INPUT_MAX_CHARS_ABSOLUTE,
+      `at numCtx ${numCtx} the input cap is ${cap}, over the ${TOOL_DISTILL_INPUT_MAX_CHARS_ABSOLUTE}-char ceiling`
+    );
+  }
+  assert.equal(TOOL_DISTILL_INPUT_MAX_CHARS_ABSOLUTE, 112000);
+  // The ceiling is a QUARTER of a 128k-token provider limit, at the
+  // distiller's conservative 3.5 characters per token.
+  assert.equal(
+    Math.floor(TOOL_DISTILL_INPUT_MAX_CHARS_ABSOLUTE / DISTILL_CHARS_PER_TOKEN),
+    32000,
+    'the absolute ceiling is not 32 000 tokens'
+  );
+  assert.ok(32000 * 4 <= 128000, 'the ceiling is more than a quarter of a 128k provider limit');
+});
+
+check('the distiller input never exceeds the window it is sent to', () => {
+  // The implied token count (characters / 3.5, the CONSERVATIVE conversion)
+  // has to leave room for the distiller's OWN answer and the request's own
+  // overhead. The old `numCtx * 8` cap allowed 4096 tokens at a 2048-token
+  // window: the distillation request itself 400ed and the output stayed
+  // verbatim.
+  for (let numCtx = 1792; numCtx <= 1048576; numCtx += 1) {
+    const implied = computeDistillInputMaxChars(numCtx) / DISTILL_CHARS_PER_TOKEN;
+    const limit = numCtx - computeDistillNumPredict(numCtx) - TOOL_DISTILL_INPUT_OVERHEAD_TOKENS;
+    if (implied > limit) {
+      assert.equal(
+        implied,
+        limit,
+        `the distiller input is ${implied} tokens at numCtx ${numCtx}, over the ${limit}-token limit`
+      );
+    }
+  }
+  // Below 1792 tokens the FLOOR of 512 tokens binds, and a window that small
+  // cannot host the distiller's own 1024-token answer anyway.
+  assert.equal(computeDistillInputMaxChars(1792), Math.floor(512 * DISTILL_CHARS_PER_TOKEN));
+});
+
+check("the distiller's characters-per-token conversion is CONSERVATIVE", () => {
+  // The shared 4-characters-per-token estimate is optimistic for exactly the
+  // models that need the scaling: Llama and Qwen tokenizers run at roughly
+  // 3.0-3.5 characters per token, so a 2 000 000-character output is really
+  // 570 000-670 000 tokens — 57-67 % of a 1M window, not 50 %.
+  assert.equal(DISTILL_CHARS_PER_TOKEN, 3.5);
+  assert.ok(
+    DISTILL_CHARS_PER_TOKEN < 4,
+    'the distiller is back to the optimistic 4-characters-per-token conversion'
+  );
+  // And the cap really is smaller than the optimistic conversion would make
+  // it: the same token budget, fewer characters.
+  const tokenBudget = 16384;
+  assert.ok(
+    computeDistillInputMaxChars(32768) < tokenBudget * 4,
+    'the input cap is not smaller than the optimistic conversion would give'
+  );
+  assert.equal(computeDistillInputMaxChars(32768), Math.floor(tokenBudget * 3.5));
+});
+
+check("the distiller's output limit scales with the window", () => {
+  for (const [numCtx, expected] of DISTILL_NUM_PREDICT_TABLE) {
+    assert.equal(
+      computeDistillNumPredict(numCtx),
+      expected,
+      `a ${numCtx}-token window lets the distiller write ${computeDistillNumPredict(numCtx)} tokens, expected ${expected}`
+    );
+  }
+  // The floor and the ceiling hold at every window.
+  for (let numCtx = 512; numCtx <= 1048576; numCtx += 1009) {
+    const limit = computeDistillNumPredict(numCtx);
+    assert.ok(
+      limit >= TOOL_DISTILL_NUM_PREDICT_BASE && limit <= TOOL_DISTILL_NUM_PREDICT_MAX,
+      `at numCtx ${numCtx} the output limit is ${limit}`
+    );
+  }
+  // And it never grows by more than one token per 256 tokens of window.
+  for (let numCtx = 512; numCtx <= 1048576; numCtx += 1) {
+    const limit = computeDistillNumPredict(numCtx);
+    assert.ok(
+      limit <= TOOL_DISTILL_NUM_PREDICT_BASE + Math.ceil(numCtx / 256),
+      `at numCtx ${numCtx} the output limit is ${limit}`
+    );
+  }
+});
+
+check('the digest cap scales with the window', () => {
+  for (const [numCtx, expected] of DISTILL_DIGEST_CAP_TABLE) {
+    assert.equal(
+      computeDistillDigestMaxChars(numCtx),
+      expected,
+      `a ${numCtx}-token window allows a ${computeDistillDigestMaxChars(numCtx)}-char digest, expected ${expected}`
+    );
+  }
+});
+
+check('the digest cap NEVER cuts the model answer', () => {
+  // The digest IS the model's answer. A cap below what the model can emit
+  // cuts it mid-sentence, and a digest that stops mid-sentence carries no
+  // signal that it was cut — the summariser then copies a fragment as if it
+  // were the whole value. The old flat 2400-character cap did exactly that
+  // at every window up to ~205 000 tokens.
+  for (let numCtx = 512; numCtx <= 1048576; numCtx += 331) {
+    const cap = computeDistillDigestMaxChars(numCtx);
+    const capacity =
+      computeDistillNumPredict(numCtx) * DISTILL_OUTPUT_CHARS_PER_TOKEN +
+      TOOL_DISTILL_TRUNCATION_MARKER.length;
+    assert.ok(
+      cap >= capacity,
+      `at numCtx ${numCtx} the digest cap is ${cap}, below the ${capacity}-char output capacity`
+    );
+    assert.ok(
+      cap <= TOOL_DISTILL_DIGEST_MAX_CHARS_CEILING,
+      `at numCtx ${numCtx} the digest cap is ${cap}`
+    );
+  }
+  assert.ok(
+    TOOL_DISTILL_DIGEST_MAX_CHARS_CEILING >
+      TOOL_DISTILL_NUM_PREDICT_MAX * DISTILL_OUTPUT_CHARS_PER_TOKEN +
+        TOOL_DISTILL_TRUNCATION_MARKER.length,
+    'the digest ceiling is below the largest output capacity — it would cut the answer'
+  );
+});
+
+check('the digest cap is never the old flat 2400 characters', () => {
+  // The regression the whole change exists for: the flat 2400-character
+  // digest is what the tuned small windows were measured against, and it is
+  // BELOW what the model can emit at every one of them — so it cut the
+  // model's answer in half.
+  for (const numCtx of [512, 1024, 2048, 4096, 8192, 16384, 32768]) {
+    const cap = computeDistillDigestMaxChars(numCtx);
+    assert.ok(
+      cap > 2400,
+      `a ${numCtx}-token window allows a ${cap}-char digest — the old flat cap is back`
+    );
+  }
+});
+
+check('which of the two bounds the digest cap is, at each window', () => {
+  for (const [numCtx, expected] of DISTILL_DIGEST_BINDING_TABLE) {
+    const capacity =
+      computeDistillNumPredict(numCtx) * DISTILL_OUTPUT_CHARS_PER_TOKEN +
+      TOOL_DISTILL_TRUNCATION_MARKER.length;
+    const share = Math.floor(numCtx * TOOL_DISTILL_MAX_CHARS_WINDOW_RATIO);
+    const binding = share > capacity ? 'window' : 'output';
+    assert.equal(
+      binding,
+      expected,
+      `at numCtx ${numCtx} the ${binding} bound binds (capacity ${capacity}, share ${share})`
+    );
+    // The cap is the LARGER of the two — the point of the whole fix.
+    assert.equal(computeDistillDigestMaxChars(numCtx), Math.max(capacity, share));
+  }
+});
+
+console.log('the distiller tells the truth about what it cut');
+
+check('a truncated input says how much of it was sent, and fits in the cap', () => {
+  const content = 'x'.repeat(5000);
+  const cap = 1000;
+  const result = truncateToolOutputForDistillation(content, cap);
+  assert.equal(result.truncated, true, 'the cut was not reported');
+  assert.equal(result.totalChars, 5000);
+  assert.ok(result.keptChars > 0, 'nothing was kept');
+  assert.ok(result.keptChars < cap, 'the kept count is not inside the cap');
+  // The marker counts towards the cap: the result never exceeds it.
+  assert.ok(
+    result.text.length <= cap,
+    `the truncated input is ${result.text.length} chars, over the ${cap}-char cap`
+  );
+  // The kept count is the SLICE, not the raw length.
+  assert.equal(result.text.slice(0, result.keptChars), 'x'.repeat(result.keptChars));
+  assert.ok(
+    result.text.includes(`only the first ${result.keptChars} of 5000 characters`),
+    `the marker does not name the kept count: ${result.text.slice(-200)}`
+  );
+  assert.ok(
+    result.text.includes(`the remaining ${5000 - result.keptChars} characters were NOT included`),
+    `the marker does not name the dropped count: ${result.text.slice(-200)}`
+  );
+  assert.match(
+    result.text,
+    /\[\.\.\.truncated: only the first \d+ of 5000 characters of this tool output were sent to the distiller; the remaining \d+ characters were NOT included]$/
+  );
+});
+
+check('an output that fits is sent whole and unmarked', () => {
+  const result = truncateToolOutputForDistillation('abc', 1000);
+  assert.equal(result.truncated, false);
+  assert.equal(result.text, 'abc');
+  assert.equal(result.keptChars, 3);
+  assert.equal(result.totalChars, 3);
+});
+
+check('a zero-length output is skipped, not marked', () => {
+  const result = truncateToolOutputForDistillation('', 1000);
+  assert.equal(result.truncated, false);
+  assert.equal(result.text, '');
+  assert.equal(result.keptChars, 0);
+  assert.equal(result.totalChars, 0);
+});
+
 console.log('the distillation planner spends calls on the biggest results');
 
 /**
@@ -785,6 +1221,177 @@ check('an oversized tool row with no owning assistant is counted apart from the 
   );
 });
 
+console.log('the distillation prefill budget bounds the whole compaction');
+
+/**
+ * The prefill budget each context window has to produce, in tokens.
+ *
+ * The budget is what keeps ONE compaction's distillation from costing
+ * several windows' worth of prefill: the call cap bounds how MANY calls
+ * there are, and the budget bounds what they may COST.
+ */
+const DISTILL_PREFILL_BUDGET_TABLE = [
+  [2048, 2048],
+  [8192, 8192],
+  [32768, 32768],
+  [131072, 131072],
+  [1048576, 1048576],
+];
+
+check('the prefill budget is one window of tokens', () => {
+  for (const [numCtx, expected] of DISTILL_PREFILL_BUDGET_TABLE) {
+    assert.equal(
+      computeDistillPrefillBudgetTokens(numCtx),
+      expected,
+      `a ${numCtx}-token window budgets ${computeDistillPrefillBudgetTokens(numCtx)} prefill tokens, expected ${expected}`
+    );
+  }
+  assert.equal(TOOL_DISTILL_PREFILL_BUDGET_WINDOW_RATIO, 1);
+  // A window that is not known still gets a usable budget — a budget of zero
+  // would silently disable the distillation for every such caller.
+  for (const numCtx of [0, -8192, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.ok(
+      computeDistillPrefillBudgetTokens(numCtx) > 0,
+      `a window of ${numCtx} got a budget of ${computeDistillPrefillBudgetTokens(numCtx)}`
+    );
+  }
+});
+
+check('a plan over many oversized results never exceeds the budget', () => {
+  // The regression the budget exists for: the per-call input grew 40x, so
+  // eight calls at half a million tokens each is ~4M tokens of prefill
+  // inside ONE compaction — several times the window it is trying to shrink.
+  const sizes = [900_000, 800_000, 700_000, 600_000, 500_000, 400_000, 300_000, 200_000, 100_000];
+  const history = distillFixture(sizes);
+  const plan = planDistillation(history, TOOL_DISTILL_MAX_CALLS);
+  assert.equal(plan.selected.length, TOOL_DISTILL_MAX_CALLS);
+
+  for (const numCtx of [8192, 32768, 131072, 262144, 1048576]) {
+    const budget = createDistillBudget(numCtx);
+    const calls = planDistillCalls(
+      history,
+      plan.selected,
+      computeDistillInputMaxChars(numCtx),
+      budget.totalTokens - budget.usedTokens
+    );
+    assert.ok(
+      calls.prefillTokens <= budget.totalTokens,
+      `at numCtx ${numCtx} the plan spends ${calls.prefillTokens} prefill tokens of a ${budget.totalTokens}-token budget`
+    );
+    // And every call is affordable on its own.
+    for (const call of calls.calls) {
+      assert.ok(
+        call.prefillTokens <= budget.totalTokens,
+        `one call costs ${call.prefillTokens} tokens of a ${budget.totalTokens}-token budget`
+      );
+    }
+  }
+});
+
+check('the budget is spent on the LARGEST results first', () => {
+  // The biggest outputs are the ones that decide whether the compacted
+  // history fits, and they are the most expensive to distil — so they are
+  // the ones worth the budget.
+  const sizes = [900_000, 800_000, 700_000, 600_000];
+  const history = distillFixture(sizes);
+  const plan = planDistillation(history, TOOL_DISTILL_MAX_CALLS);
+  const perCall = computeDistillInputMaxChars(131072);
+  const calls = planDistillCalls(history, plan.selected, perCall, 40_000);
+  assert.ok(calls.calls.length > 0, 'the budget stopped everything');
+  assert.ok(
+    calls.calls.length < plan.selected.length,
+    'the budget stopped nothing — the fixture is too small'
+  );
+  // The first call (largest first) is the biggest output, and the ones that
+  // were dropped are the SMALLER ones.
+  assert.equal(calls.calls[0].index, toolIndex(0));
+  assert.ok(calls.budgetSkipped > 0, 'the budget stopped nothing');
+  const dropped = plan.selected.filter(
+    (index) => !calls.calls.some((call) => call.index === index)
+  );
+  for (const index of dropped) {
+    assert.ok(
+      index > calls.calls.at(-1).index,
+      'a SMALLER output was dropped while a bigger one was kept'
+    );
+  }
+});
+
+check('the progress data is derivable from the plan', () => {
+  // The progress line reports "distilled N of M outputs (~T tokens of
+  // prefill; the budget stopped at K)" — so the numbers it needs have to
+  // exist: the candidates, the calls, the prefill and the budget stops.
+  const sizes = [50_000, 40_000, 30_000, 20_000, 10_000];
+  const history = distillFixture(sizes);
+  const plan = planDistillation(history, TOOL_DISTILL_MAX_CALLS);
+  const budget = createDistillBudget(32768);
+  const calls = planDistillCalls(
+    history,
+    plan.selected,
+    computeDistillInputMaxChars(32768),
+    budget.totalTokens - budget.usedTokens
+  );
+  const candidates = plan.selected.length + plan.skipped;
+  assert.equal(candidates, sizes.length);
+  assert.ok(calls.calls.length <= plan.selected.length);
+  assert.equal(calls.budgetSkipped, plan.selected.length - calls.calls.length);
+  assert.equal(
+    calls.prefillTokens,
+    calls.calls.reduce((total, call) => total + call.prefillTokens, 0),
+    'the reported prefill is not the sum of the calls'
+  );
+  // The budget is spent, not exceeded: what is left is never negative.
+  assert.ok(budget.totalTokens - calls.prefillTokens >= 0, 'the budget went negative');
+});
+
+check('the prefill estimate is conservative', () => {
+  assert.equal(estimateDistillPrefillTokens(0), 0);
+  assert.equal(estimateDistillPrefillTokens(-10), 0);
+  assert.equal(estimateDistillPrefillTokens(3500), 1000);
+  // It never UNDER-counts: 3.5 characters per token is the conservative side.
+  assert.ok(
+    estimateDistillPrefillTokens(112000) >= 32000,
+    'the prefill estimate under-counts the absolute ceiling'
+  );
+  assert.equal(estimateDistillPrefillTokens(112000), 32000);
+});
+
+console.log('the distillation call has a timeout');
+
+check('the timeout scales with the request and is bounded', () => {
+  // The request used to carry NO timeout, so a slow prefill could hang the
+  // compaction for ever.
+  const small = computeDistillTimeoutMs(768, 1024);
+  const large = computeDistillTimeoutMs(32_000, 4096);
+  assert.ok(small < large, `a small request (${small}) is not faster than a large one (${large})`);
+  assert.ok(small >= TOOL_DISTILL_TIMEOUT_BASE_MS, `the floor is ${TOOL_DISTILL_TIMEOUT_BASE_MS}`);
+  assert.ok(large <= TOOL_DISTILL_TIMEOUT_MAX_MS, `the ceiling is ${TOOL_DISTILL_TIMEOUT_MAX_MS}`);
+  // And it never leaves the band, whatever it is asked.
+  for (let tokens = 0; tokens <= 200_000; tokens += 997) {
+    for (const output of [1024, 2048, 4096]) {
+      const timeout = computeDistillTimeoutMs(tokens, output);
+      assert.ok(
+        timeout >= TOOL_DISTILL_TIMEOUT_BASE_MS && timeout <= TOOL_DISTILL_TIMEOUT_MAX_MS,
+        `a ${tokens}-token request with a ${output}-token answer timed out after ${timeout}ms`
+      );
+    }
+  }
+});
+
+check('the timeout is never shorter than the base and never longer than the ceiling', () => {
+  assert.equal(computeDistillTimeoutMs(0, 0), TOOL_DISTILL_TIMEOUT_BASE_MS + 0);
+  assert.equal(computeDistillTimeoutMs(0, 1024), TOOL_DISTILL_TIMEOUT_BASE_MS + 60_000);
+  assert.equal(
+    computeDistillTimeoutMs(1_000, 1024),
+    TOOL_DISTILL_TIMEOUT_BASE_MS + 20_000 + 60_000
+  );
+  assert.equal(
+    computeDistillTimeoutMs(1_000_000, 4096),
+    TOOL_DISTILL_TIMEOUT_MAX_MS,
+    'a huge request is not clamped to the ceiling'
+  );
+});
+
 console.log('a failed distillation does not cost the whole compaction');
 
 /**
@@ -825,13 +1432,22 @@ await checkAsync(
       'a failed call changed the history'
     );
     assert.equal(result.messages.length, history.length, 'the pass lost a message');
-    // Not silent: one line names how many calls failed.
-    const reported = progress.filter((line) => /2 tool distillation call\(s\) failed/.test(line));
+    // Not silent: one line names how many calls failed AND why, because a
+    // failed call leaves the tool output VERBATIM — the thing the
+    // distillation existed to prevent.
+    const reported = progress.filter((line) => /tool distillation call\(s\) failed/.test(line));
     assert.equal(
       reported.length,
       1,
       `the failure was not reported once: ${JSON.stringify(progress)}`
     );
+    assert.match(reported[0], /2 of 2 tool distillation call\(s\) failed/);
+    assert.match(reported[0], /stay verbatim/);
+    assert.match(reported[0], /\(.+\)/, 'the failure line does not name a reason');
+    // And the pass reports what it did as well as what it could not do.
+    assert.equal(result.attemptedCount, 2, 'the pass did not report the calls it made');
+    assert.equal(result.candidateCount, 2, 'the pass did not report its candidates');
+    assert.ok(result.prefillTokens > 0, 'the pass charged nothing for its prefill');
   }
 );
 
@@ -850,6 +1466,40 @@ await checkAsync('an abort still propagates out of the distiller', async () => {
         controller.signal
       ),
     'an aborted compaction was swallowed as a per-message failure'
+  );
+});
+
+await checkAsync('the budget stops the calls it cannot pay for', async () => {
+  // A budget of one token cannot pay for a single call, so NOTHING is
+  // distilled and every candidate is reported as left behind — the output
+  // stays verbatim, which is the honest outcome.
+  const history = distillFailureFixture();
+  const budget = { totalTokens: 1, usedTokens: 0 };
+  const progress = [];
+  const result = await distillToolMessages(
+    REFUSING_CTX,
+    history,
+    8192,
+    MODEL,
+    2,
+    (message) => progress.push(message),
+    undefined,
+    undefined,
+    undefined,
+    budget
+  );
+  assert.equal(result.distilledCount, 0, 'a call was made with no budget');
+  assert.equal(result.attemptedCount, 0, 'a call was made with no budget');
+  assert.equal(result.budgetSkippedCount, 2, 'the budget did not report what it stopped');
+  assert.equal(result.prefillTokens, 0, 'the plan charged for calls it did not make');
+  assert.deepEqual(
+    result.messages.map((entry) => entry.content),
+    history.map((entry) => entry.content),
+    'a budgeted-out output changed the history'
+  );
+  assert.ok(
+    progress.some((line) => /prefill budget ran out/.test(line)),
+    `the budget stop was not reported: ${JSON.stringify(progress)}`
   );
 });
 
