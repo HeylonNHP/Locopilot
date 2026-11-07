@@ -46,11 +46,17 @@ import {
 } from '../src/services/compact/budget.ts';
 import {
   MAX_REDUCTION_ROUNDS,
+  RECENT_FILES_MAX_TOTAL_TOKENS,
+  RECENT_FILES_MAX_WINDOW_RATIO,
+  RECENT_FILES_MESSAGE_FRAMING_TOKENS,
+  RECENT_FILES_MESSAGE_OVERHEAD_TOKENS,
+  RECENT_FILES_MIN_TOKENS,
   TOOL_DISTILL_CHAR_THRESHOLD,
   TOOL_DISTILL_MAX_CALLS,
   TOOL_DISTILL_MIN_CALLS,
 } from '../src/services/compact/constants.ts';
 import { distillToolMessages, planDistillation } from '../src/services/compact/distill.ts';
+import { computeRecentFilesBudget } from '../src/services/compact/recentFiles.ts';
 import {
   batchReductionParts,
   concatenateReductionParts,
@@ -61,6 +67,7 @@ import {
   countRetryPromptTokens,
   countSummarisationPromptTokens,
 } from '../src/services/compact/summarize.ts';
+import { countMessageTokens, countTextTokens } from '../src/services/tokenizer.ts';
 import { forwardableReasoningEffort } from '../src/types/chatConfig.ts';
 
 const MODEL = 'gpt-4o';
@@ -943,6 +950,176 @@ check('the pipeline measures a conversation once, and only to confirm', () => {
   assert.ok(
     localCounts.length >= 2,
     `orchestrate.ts counts tokens locally only ${localCounts.length} time(s)`
+  );
+});
+
+console.log('the recent-files stub budget');
+
+check('the stub budget never exceeds the window share or the flat cap', () => {
+  // The stub is paid for out of the context the compaction just freed, so it
+  // can never be more than a tenth of the window — and never more than the flat
+  // 5000-token cap, whichever is smaller.
+  for (const numCtx of CONTEXT_SIZES) {
+    const ceiling = Math.min(
+      RECENT_FILES_MAX_TOTAL_TOKENS,
+      Math.floor(numCtx * RECENT_FILES_MAX_WINDOW_RATIO)
+    );
+    for (const old of [0, 500, 5000, 100_000, 1_000_000]) {
+      const budget = computeRecentFilesBudget({
+        numCtx,
+        acceptanceBudget: Math.floor(numCtx * 0.9),
+        oldTokenCount: old,
+        headerTokens: 0,
+        windowTokens: 0,
+        systemPromptTokens: 0,
+      });
+      assert.ok(
+        budget <= ceiling,
+        `the budget ${budget} at numCtx ${numCtx}, old ${old} exceeds the ${ceiling}-token ceiling`
+      );
+    }
+  }
+});
+
+check('the stub budget can never make the result no smaller than its input', () => {
+  // THE load-bearing property: `evaluateCompactionSizes` ABORTS a compaction
+  // whose result is not smaller than its input, so a stub that ate the whole
+  // acceptance budget on a history that was not near it would turn a successful
+  // compaction into a thrown error. The stub's room is therefore bounded by
+  // `min(acceptanceBudget, old - 1)`, minus everything the result already
+  // carries and minus the stub's own message framing.
+  for (const numCtx of [1024, 2048, 4096, 8192, 32768, 131072]) {
+    const acceptanceBudget = Math.floor(numCtx * 0.9);
+    for (const old of [0, 1, 2, 150, 1000, 5000, 20_000, 200_000, 2_000_000]) {
+      for (const [headerTokens, windowTokens, systemPromptTokens] of [
+        [0, 0, 0],
+        [600, 3000, 1500],
+        [2000, 10_000, 4000],
+        [50, 20, 30],
+      ]) {
+        const budget = computeRecentFilesBudget({
+          numCtx,
+          acceptanceBudget,
+          oldTokenCount: old,
+          headerTokens,
+          windowTokens,
+          systemPromptTokens,
+        });
+        if (budget === 0) {
+          // Zero is always safe: no stub is emitted at all.
+          continue;
+        }
+        assert.ok(
+          Number.isInteger(budget) && budget >= RECENT_FILES_MIN_TOKENS,
+          `a budget of ${budget} is neither zero nor a usable size (numCtx ${numCtx}, old ${old})`
+        );
+        // Everything the result would carry if the stub spent its whole budget:
+        // the charges, the 8-token framing, and the budget itself. It has to
+        // stay strictly under the OLD size or the abort guard fires.
+        const worstCase = headerTokens + windowTokens + systemPromptTokens + 8 + budget;
+        assert.ok(
+          worstCase < old,
+          `the stub could push the result to ${worstCase} against an old size of ${old} ` +
+            `(numCtx ${numCtx}, charges ${headerTokens}/${windowTokens}/${systemPromptTokens})`
+        );
+        assert.ok(
+          worstCase <= acceptanceBudget,
+          `the stub could push the result past the acceptance boundary at numCtx ${numCtx}`
+        );
+      }
+    }
+  }
+});
+
+check('the stub budget is zero when the existing charges already exceed it', () => {
+  const acceptanceBudget = Math.floor(8192 * 0.9);
+  for (const charges of [
+    { headerTokens: 4000, windowTokens: 5000, systemPromptTokens: 2000 },
+    { headerTokens: acceptanceBudget, windowTokens: 0, systemPromptTokens: 0 },
+    { headerTokens: 0, windowTokens: 0, systemPromptTokens: acceptanceBudget + 1 },
+    // The history was already tighter than the acceptance boundary.
+    { headerTokens: 100, windowTokens: 100, systemPromptTokens: 100 },
+  ]) {
+    const oldTokenCount = charges.headerTokens === 100 ? 400 : 1_000_000;
+    assert.equal(
+      computeRecentFilesBudget({ numCtx: 8192, acceptanceBudget, oldTokenCount, ...charges }),
+      0,
+      `a stub was planned with charges ${JSON.stringify(charges)} against old ${oldTokenCount}`
+    );
+  }
+});
+
+check('the ceiling bounds the MESSAGE, framing included', () => {
+  // The budget is a budget for the stub's TEXT, and the message that carries it
+  // costs 5 tokens more (a message base plus the role name). The ceiling used to
+  // be applied to the text alone, so a stub at its full budget overran by the
+  // framing — measured at 2 tokens on a real plan, 5 in the worst case.
+  const framing =
+    countMessageTokens({ role: 'assistant', content: 'a' }, MODEL) - countTextTokens('a', MODEL);
+  assert.equal(
+    framing,
+    RECENT_FILES_MESSAGE_FRAMING_TOKENS,
+    'the framing constant no longer matches what the tokenizer charges'
+  );
+
+  for (const numCtx of CONTEXT_SIZES) {
+    const ceiling = Math.min(
+      RECENT_FILES_MAX_TOTAL_TOKENS,
+      Math.floor(numCtx * RECENT_FILES_MAX_WINDOW_RATIO)
+    );
+    const acceptanceBudget = Math.floor(numCtx * 0.9);
+    for (const old of [0, 500, 5000, 100_000, 1_000_000]) {
+      for (const [headerTokens, windowTokens, systemPromptTokens] of [
+        [0, 0, 0],
+        [600, 3000, 1500],
+        [50, 20, 30],
+      ]) {
+        const budget = computeRecentFilesBudget({
+          numCtx,
+          acceptanceBudget,
+          oldTokenCount: old,
+          headerTokens,
+          windowTokens,
+          systemPromptTokens,
+        });
+        if (budget === 0) continue;
+        assert.ok(
+          budget + framing <= ceiling,
+          `a stub of ${budget} text tokens costs ${budget + framing} with its framing, ` +
+            `over the ${ceiling}-token ceiling (numCtx ${numCtx})`
+        );
+        // The saving bound is now stricter by the same amount, because the
+        // framing has to fit inside it too.
+        const worstCase =
+          headerTokens +
+          windowTokens +
+          systemPromptTokens +
+          RECENT_FILES_MESSAGE_OVERHEAD_TOKENS +
+          budget +
+          framing;
+        assert.ok(
+          worstCase < old || old === 0,
+          `the stub could push the result to ${worstCase} against an old size of ${old}`
+        );
+        assert.ok(
+          worstCase <= acceptanceBudget,
+          `the stub could push the result past the acceptance boundary at numCtx ${numCtx}`
+        );
+      }
+    }
+  }
+});
+
+check('the floor is above the cheapest stub that is worth emitting', () => {
+  // 150 used to be the floor, and the cheapest mandatory stub (header + five
+  // path-only bullets + end marker) measured 176 — so the band 150–176 bought
+  // nothing while the comment claimed it did. The floor now covers the
+  // measured cost of five path-only bullets at ~80-character paths (~280
+  // tokens), and `test-compact-recent-files` proves a budget of exactly the
+  // floor really buys that stub.
+  assert.ok(
+    RECENT_FILES_MIN_TOKENS >= 280,
+    `the floor is ${RECENT_FILES_MIN_TOKENS}, below the measured mandatory stub`
   );
 });
 

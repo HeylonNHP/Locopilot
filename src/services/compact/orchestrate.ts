@@ -7,11 +7,13 @@
  * the sub-agent auto-compactor.
  */
 
+import type { RecentFileRow } from '@/services/history';
 import type { ChatMessage, LlmRequestContext } from '@/services/llm';
 import type { ReasoningEffort } from '@/types/chatConfig';
 
 import { debugLog } from '@/app/lib/debugLogger';
 import { countMessagesTokens, countMessageTokens } from '@/services/tokenizer';
+import { getAgentWorkingDirectory } from '@/tools/workingDirectory';
 
 import type { CompactResult, CompactStats } from './types';
 
@@ -24,6 +26,15 @@ import {
 } from './constants';
 import { distillToolMessages } from './distill';
 import { measureConversationTokens } from './measure';
+import {
+  attachRecentFilesMessage,
+  buildRecentFilesMessage,
+  computeBudgetForResult,
+  pathsNamedInToolCalls,
+  readRecentFileFromDisk,
+  type RecentFileReader,
+  type RecentFilesPlan,
+} from './recentFiles';
 import { produceConversationSummary } from './reduce';
 import { buildToolNameMap } from './serialize';
 import { findLatestUserMessageIndex, splitHistoryForCompaction } from './split';
@@ -79,6 +90,29 @@ import { computePreservedWindowBudget, planWindowTrim, type WindowTrimPlan } fro
  *                          route's overflow warning never fired). When absent,
  *                          the number is computed from the `system` rows of
  *                          `messages`.
+ * @param recentFiles    - The files this session touched most recently, newest
+ *                          first (usually `loadRecentFiles(sessionId, 12)`).
+ *                          Their paths — and, when a file fits WHOLE in its
+ *                          per-file budget, its contents — are re-injected as
+ *                          an assistant message right after the summary, so
+ *                          the model does not re-read the files it was working
+ *                          on. The stub is built ONCE, after the size verdict
+ *                          and after any retry, against the FINAL history's
+ *                          budget, so it can neither cause a retry nor be lost
+ *                          to one. `undefined` means "no stub" and is what
+ *                          every sub-agent passes: their tool calls bypass
+ *                          `fileTouchRecorder`, and the only session id in
+ *                          reach there is the PARENT's — stamping the parent's
+ *                          working set onto a sub-agent's prompt would be a
+ *                          confident lie about files the sub-agent never
+ *                          touched.
+ * @param recentFilesRoot - The directory the excerpt reader is confined to.
+ *                          The caller supplies it because only the caller can:
+ *                          the confinement is the request's agent working
+ *                          directory (`getAgentWorkingDirectory(scope)`), and
+ *                          a stored path is absolute but says nothing about
+ *                          which scope resolved it. Defaults to the process's
+ *                          default working directory.
  */
 export async function compactHistory(
   ctx: LlmRequestContext,
@@ -94,7 +128,9 @@ export async function compactHistory(
   onTps?: (tps: number) => void,
   redactSecrets: boolean = true,
   focus?: string,
-  systemPromptTokens?: number
+  systemPromptTokens?: number,
+  recentFiles?: RecentFileRow[],
+  recentFilesRoot?: string
 ): Promise<CompactResult> {
   // The system prompt is NOT part of the compacted array (the caller injects
   // its own), but it IS part of every request the history is sent in — so it
@@ -289,6 +325,34 @@ export async function compactHistory(
     role: 'assistant',
     content: `${SUMMARY_PREAMBLE}\n\n${summary}`,
   };
+
+  // The acceptance boundary is PURE — `floor(numCtx * headroom)` — and the
+  // recent-files stub needs it BEFORE the result is assembled (the stub is only
+  // allowed to spend what is left below it), so it is computed here and used
+  // again further down for the retry/trim decision.
+  const acceptanceBudget = Math.floor(numCtx * COMPACT_ACCEPTANCE_HEADROOM);
+
+  // ── The result, WITHOUT the recent-files stub ─────────────────────
+  //
+  // The stub is re-attached BELOW, once, against the FINAL history. It is
+  // deliberately not an input to anything that decides what the result is:
+  //
+  //   - The retry decision is taken on this array, so the stub can never be the
+  //     reason a compaction re-summarises itself.
+  //   - The retry recursion receives this array, which has no stub in it — so
+  //     the summariser never sees a few thousand tokens of file heads as prose
+  //     to compress, and the recursion does not have to know the stub exists.
+  //   - The progress line is emitted only after the stub is IN the array that
+  //     is returned, so "the files were re-attached" and "the returned messages
+  //     carry them" cannot disagree.
+  //
+  // That ordering is the fix for a stub built too early. It used to be
+  // assembled before the size verdict, and on a tight window one of two things
+  // happened: a stub big enough to matter pushed the verdict into a retry — and
+  // the retry, which deliberately did not forward the rows, came back with NO
+  // stub at all after the user had been told the files were re-attached; or the
+  // trim paid for the stub's tokens out of the preserved window, dropping turns
+  // to fund a convenience.
   let newMessages: ChatMessage[] = [summaryMessage, ...preparedRecentMessages];
 
   // The NEW count is a local estimate too — with ONE correction: the system
@@ -331,7 +395,6 @@ export async function compactHistory(
   // can under-count by the size of the tool schemas. It is a prompt-eval
   // count of the conversation text only; it exists to break a tie the local
   // tokenizer cannot, not to certify the next request.
-  const acceptanceBudget = Math.floor(numCtx * COMPACT_ACCEPTANCE_HEADROOM);
   let shouldRetry = verdict.retry;
   let confirmedTokenCount: number | undefined;
   if (verdict.confirm) {
@@ -379,6 +442,10 @@ export async function compactHistory(
   // avoid.
   let trim: WindowTrimPlan | undefined;
   if (shouldRetry) {
+    // The header the trim charges is the SUMMARY alone. The stub is attached
+    // afterwards, out of whatever room the trimmed result leaves — so it can
+    // never cause a preserved turn to be dropped to fund it, and the planner
+    // is still not allowed to drop anything it cannot see.
     const headerTokens = countMessagesTokens([summaryMessage], model);
     const noticeTokens = countMessageTokens(
       {
@@ -416,36 +483,18 @@ export async function compactHistory(
     }
   }
 
-  // Which method decided the retry is a diagnostic, not a stat: `CompactStats`
-  // is what the UI shows and it must stay reproducible from the stored history.
-  debugLog.diagnostic({
-    layer: 'compact',
-    phase: 'compaction_size',
-    method: confirmedTokenCount === undefined ? 'local-estimate' : 'live-confirmed',
-    numCtx,
-    acceptanceBudget,
-    oldTokenCount,
-    estimatedNewTokens: newTokenCount,
-    systemPromptTokens: resolvedSystemPromptTokens,
-    ...(confirmedTokenCount === undefined ? {} : { confirmedNewTokens: confirmedTokenCount }),
-    ...(trim === undefined
-      ? {}
-      : {
-          windowTrim: {
-            droppedCount: trim.droppedCount,
-            droppedTokens: trim.droppedTokens,
-            stopReason: trim.stopReason,
-          },
-        }),
-    retry: shouldRetry,
-  });
-
+  let retried = false;
   if (shouldRetry && remainingRetries > 0) {
     const retryFactor = Math.max(1.5, newTokenCount / (numCtx * 0.75));
     onProgress?.(
       `Compacted to ${newTokenCount} tokens but limit is ${numCtx} — ` +
         `retrying with ${retryFactor.toFixed(1)}x stronger compression (${remainingRetries} attempt(s) left)...`
     );
+    // The recursion is handed the STUB-LESS array, and it does not receive the
+    // rows: a second stub would be built on top of a first one, charged twice,
+    // and — worse — the summariser would read a few thousand tokens of file
+    // heads as part of the history it is compressing. The stub is attached
+    // once, below, to whatever this returns.
     const retryResult = await compactHistory(
       ctx,
       model,
@@ -470,15 +519,146 @@ export async function compactHistory(
       // would all be short by the whole system prompt.
       resolvedSystemPromptTokens
     );
-    // Report stats relative to the original pre-compaction history.
-    return {
-      newMessages: retryResult.newMessages,
-      stats: {
-        oldTokenCount,
-        newTokenCount: retryResult.stats.newTokenCount,
-      },
-    };
+    retried = true;
+    newMessages = retryResult.newMessages;
+    newTokenCount = retryResult.stats.newTokenCount;
   }
+
+  // ── The recent-files stub: built ONCE, against the FINAL history ──────
+  //
+  // WHY a stub at all: the summary replaces every `read_file` /
+  // `patch_file` / `write_file` call of the summarised turns, so the model
+  // loses the one cheap fact it had — WHICH files this session is working on —
+  // and pays a full round of tool calls to get it back. `session_recent_files`
+  // already remembers it (see `fileTouchRecorder.ts`), and the files are still
+  // on disk, so the stub re-states the working set and — when a file fits WHOLE
+  // in the per-file budget — reproduces it.
+  //
+  // WHY an ASSISTANT message between the summary and the window:
+  //
+  //   - NEVER a `user`-role row. `findLatestUserMessageIndex` anchors the next
+  //     compaction on the latest real user message; a user-role stub would
+  //     become that anchor, and on a second compaction in the same turn the
+  //     REAL prompt (which sits earlier) would be summarised away.
+  //   - Between the summary and the window it reads as one unit with the
+  //     summary — "this is what came before" — and chronologically it is right
+  //     (the excerpts are the files as they were at compaction time). After the
+  //     window it would read as the newest event in the conversation, which
+  //     invites the model to answer the content of a file instead of the user's
+  //     request.
+  //
+  // The budget is charged against `newTokenCount` — everything the finished
+  // result already carries, system prompt included — and capped by
+  // `min(acceptanceBudget, oldTokenCount - 1)`, so the stub can never push the
+  // result past the acceptance boundary, and never back to (or past) the size
+  // of the history it replaced: that would trip the `aborted` verdict above and
+  // throw "failed to reduce history".
+  let recentFilesPlan: RecentFilesPlan | undefined;
+  let recentFilesMessage: ChatMessage | undefined;
+  if (recentFiles !== undefined && recentFiles.length > 0) {
+    const budgetTokens = computeBudgetForResult({
+      numCtx,
+      acceptanceBudget,
+      oldTokenCount,
+      resultTokens: newTokenCount,
+    });
+    if (budgetTokens > 0) {
+      // The reader is confined to the agent's working directory: the rows carry
+      // absolute paths, but a path is only safe to READ if it is inside the
+      // directory the session is allowed to work in (see
+      // `readRecentFileFromDisk`).
+      const root = recentFilesRoot ?? getAgentWorkingDirectory();
+      const readExcerpt: RecentFileReader = (absPath) => readRecentFileFromDisk(absPath, root);
+      const plan = await buildRecentFilesMessage({
+        files: recentFiles,
+        budgetTokens,
+        model,
+        redactSecrets,
+        readExcerpt,
+        // The files the preserved window ALREADY carries verbatim are named but
+        // not reproduced: the window is several turns and usually contains the
+        // `read_file` result the model itself asked for, so a second copy of
+        // the same head is pure waste.
+        inContextPaths: [...pathsNamedInToolCalls(newMessages, root)],
+      });
+      if (plan.text !== '') {
+        recentFilesPlan = plan;
+        recentFilesMessage = { role: 'assistant', content: recentFilesPlan.text };
+        // The attach is a CHECKED step, not a `splice`: it returns `null` when
+        // the stub would un-shrink the history or push it past the acceptance
+        // boundary, and `null` is the only path on which nothing is claimed.
+        const stubbedMessages = attachRecentFilesMessage({
+          messages: newMessages,
+          message: recentFilesMessage,
+          model,
+          systemPromptTokens: resolvedSystemPromptTokens,
+          oldTokenCount,
+          acceptanceBudget,
+        });
+        if (stubbedMessages === null) {
+          recentFilesPlan = undefined;
+          recentFilesMessage = undefined;
+        } else {
+          newMessages = stubbedMessages;
+          newTokenCount = countMessagesTokens(newMessages, model) + resolvedSystemPromptTokens;
+          const attached = recentFilesPlan;
+          const included = attached.included.length;
+          const filesSubject = included === 1 ? 'file' : 'files';
+          // The line says WHAT was re-attached, because "paths only" and "with
+          // excerpts" are very different amounts of context for the same count —
+          // and it is emitted HERE, after the stub is in the array that is
+          // returned, so the claim and the result cannot disagree.
+          const shape =
+            attached.dropped === 'none'
+              ? 'with whole-file excerpts'
+              : attached.dropped === 'unreadable'
+                ? 'as paths only (none could be read)'
+                : attached.dropped === 'oversize'
+                  ? 'as paths only (too large to include whole)'
+                  : attached.dropped === 'in-context'
+                    ? 'as paths only (already in the preserved window)'
+                    : 'as paths only (no room for excerpts)';
+          onProgress?.(
+            `Re-attached the ${included} most recently touched ${filesSubject} ${shape} (~${attached.tokensUsed} tokens).`
+          );
+        }
+      }
+    }
+  }
+
+  // Which method decided the retry is a diagnostic, not a stat: `CompactStats`
+  // is what the UI shows and it must stay reproducible from the stored history.
+  debugLog.diagnostic({
+    layer: 'compact',
+    phase: 'compaction_size',
+    method: confirmedTokenCount === undefined ? 'local-estimate' : 'live-confirmed',
+    numCtx,
+    acceptanceBudget,
+    oldTokenCount,
+    estimatedNewTokens: newTokenCount,
+    systemPromptTokens: resolvedSystemPromptTokens,
+    ...(confirmedTokenCount === undefined ? {} : { confirmedNewTokens: confirmedTokenCount }),
+    ...(recentFilesPlan === undefined
+      ? {}
+      : {
+          recentFiles: {
+            included: recentFilesPlan.included.length,
+            tokens: recentFilesPlan.tokensUsed,
+            dropped: recentFilesPlan.dropped,
+          },
+        }),
+    ...(trim === undefined
+      ? {}
+      : {
+          windowTrim: {
+            droppedCount: trim.droppedCount,
+            droppedTokens: trim.droppedTokens,
+            stopReason: trim.stopReason,
+          },
+        }),
+    retried,
+    retry: shouldRetry,
+  });
 
   onStats?.({
     oldTokenCount,

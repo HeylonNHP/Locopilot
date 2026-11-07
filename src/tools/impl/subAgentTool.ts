@@ -504,6 +504,14 @@ async function autoCompactSubAgentIfNeeded(
           // compaction summaries are redacted exactly like the main
           // session's.
           config.redactSecrets ?? true
+          // `recentFiles` is deliberately NOT passed. The stub names the files
+          // a session touched, and a sub-agent records none of its own: its
+          // tool calls go straight to `command.execute`, bypassing the
+          // `handleToolCall` dispatch point where `recordToolFileTouch` lives
+          // (see `fileTouchRecorder.ts`). The only session id in reach here is
+          // the PARENT's, so attaching its rows would tell this agent it has
+          // been working on files it has never opened — a confident lie is
+          // worse than the re-read the stub exists to prevent.
         );
         return {
           newMessages: compactionResult.newMessages,

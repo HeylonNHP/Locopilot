@@ -67,6 +67,7 @@ import {
   SYNTHETIC_NUDGE_END,
   SYNTHETIC_NUDGE_MARKER,
 } from '@/services/compact';
+import { RECENT_FILES_LOAD_LIMIT } from '@/services/compact/constants';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_OLLAMA_BASE_URL,
@@ -78,7 +79,13 @@ import {
   hasMeaningfulAssistantContent,
   sanitizeAssistantTextFragment,
 } from '@/services/emptyResponseRecovery';
-import { createSession, getSessionName, renameSession, sessionExists } from '@/services/history';
+import {
+  createSession,
+  getSessionName,
+  loadRecentFiles,
+  renameSession,
+  sessionExists,
+} from '@/services/history';
 import {
   buildLlmRequestContext,
   type ChatMessage,
@@ -135,7 +142,7 @@ import {
   type ToolOutputSink,
   TOOLS,
 } from '@/tools/tools';
-import { WorkingDirectoryScope } from '@/tools/workingDirectory';
+import { getAgentWorkingDirectory, WorkingDirectoryScope } from '@/tools/workingDirectory';
 import {
   type Config,
   forwardableReasoningEffort,
@@ -1542,7 +1549,24 @@ export async function POST(req: NextRequest): Promise<Response> {
                   // The user's redaction setting: with it OFF the summariser
                   // sees the raw tool arguments and tool results, with it ON
                   // both are redacted.
-                  config?.redactSecrets ?? true
+                  config?.redactSecrets ?? true,
+                  // No `/compact` focus note on the automatic path, and no
+                  // borrowed system prompt either: `currentMessages` still has
+                  // its `system` row here, so `compactHistory` measures it.
+                  undefined,
+                  undefined,
+                  // The files this session touched most recently — recorded by
+                  // `recordToolFileTouch` at the single tool dispatch point —
+                  // re-attached after the compaction so the model does not
+                  // re-read what it was already working on. A few more rows
+                  // than the stub shows, so an unreadable file cannot starve
+                  // the list.
+                  loadRecentFiles(activeSessionId, RECENT_FILES_LOAD_LIMIT),
+                  // The reader is confined to THIS request's working directory:
+                  // `run_command`'s `cd` tracking lives on the scope, so the
+                  // containment root has to follow it (a path outside it is not
+                  // read, and the stub degrades to its path list).
+                  getAgentWorkingDirectory(requestContext.workingDirectoryScope)
                 );
                 // Replace server-side history with the compacted result.
                 const preservedSystemMessage = currentMessages[0];

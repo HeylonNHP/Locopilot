@@ -8,6 +8,7 @@ import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
 import { SSE_KEEPALIVE_MS } from '@/constants';
 import { resolveEffectiveNumCtx } from '@/services/capResolver';
 import { compactHistory } from '@/services/compact';
+import { RECENT_FILES_LOAD_LIMIT } from '@/services/compact/constants';
 import {
   COMPACT_FOCUS_MAX_CHARS,
   COMPACT_FOCUS_RAW_MAX_CHARS,
@@ -15,6 +16,7 @@ import {
 } from '@/services/compact/focus';
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
+import { loadRecentFiles } from '@/services/history';
 import {
   buildLlmRequestContext,
   type ChatMessage,
@@ -25,6 +27,7 @@ import {
 } from '@/services/llm';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
+import { getAgentWorkingDirectory } from '@/tools/workingDirectory';
 import {
   forwardableReasoningEffort,
   isReasoningEffort,
@@ -281,6 +284,22 @@ export async function POST(request: NextRequest): Promise<Response> {
         });
         compactStartedAt = Date.now();
 
+        // The session whose recent files are re-attached after the compaction,
+        // when there is one (a `/compact` of an unsaved conversation has no
+        // session id and simply gets no stub). Parsed here because the same
+        // value decides whether the compacted history is persisted below.
+        const parsedSessionId =
+          typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
+            ? sessionId
+            : null;
+        // A FEW more rows than the stub shows: a row whose file has since been
+        // deleted or moved is unreadable, and loading exactly as many rows as
+        // the stub names would let one dangling row cost a slot.
+        const recentFiles =
+          parsedSessionId === null
+            ? undefined
+            : loadRecentFiles(parsedSessionId, RECENT_FILES_LOAD_LIMIT);
+
         const result = await compactHistory(
           compactionLlmRequestContext,
           effectiveCompactionModel,
@@ -309,13 +328,25 @@ export async function POST(request: NextRequest): Promise<Response> {
           // What the user asked the summary to keep. `undefined` when the
           // command was typed without a note, which leaves every prompt
           // byte-identical to the pre-focus prompts.
-          focus
+          focus,
+          // No borrowed system prompt: `conversationMessages` was stripped of
+          // every `system` row above, so `compactHistory` measures 0 for it on
+          // both sides of the comparison — the same arithmetic this route has
+          // always used. (Passing a number here would charge the stub's budget
+          // for a prompt this array does not carry.)
+          undefined,
+          // The files this session touched most recently (PART A records them in
+          // `session_recent_files`), so the model does not re-read them after
+          // the compaction.
+          recentFiles,
+          // The reader is confined to the agent's working directory. This
+          // route has no `WorkingDirectoryScope` of its own (it runs no tools),
+          // so it uses the process default — the same directory a tool call
+          // with no scope would resolve relative paths against. A path outside
+          // it is simply not read, and the stub degrades to its path list.
+          getAgentWorkingDirectory()
         );
 
-        const parsedSessionId =
-          typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0
-            ? sessionId
-            : null;
         if (parsedSessionId) {
           // Use a reducer so the queue reads current DB state inside the
           // critical section.  Compaction replaces the conversation with

@@ -30,6 +30,8 @@
     "test:compact-receipt": "npx tsx scripts/test-compact-receipt.mjs",
     "test:compact-budget": "npx tsx scripts/test-compact-budget.mjs",
     "test:compact-trim": "npx tsx scripts/test-compact-trim.mjs",
+    "test:compact-recent-files": "npx tsx scripts/test-compact-recent-files.mjs",
+    "test:recent-files-store": "npx tsx scripts/test-recent-files-store.mjs",
     "test:mermaid-contrast": "node scripts/mermaid/test-mermaid-contrast.mjs",
     "test:mermaid-security": "node scripts/mermaid/test-mermaid-security.mjs",
     "test:mermaid-recovery": "npx tsx scripts/test-mermaid-recovery.mjs",

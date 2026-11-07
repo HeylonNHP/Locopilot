@@ -29,7 +29,16 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { formatWindowTrimNotice, SUMMARY_PREAMBLE } from '../src/services/compact/constants.ts';
+import {
+  formatWindowTrimNotice,
+  RECENT_FILES_MIN_TOKENS,
+  SUMMARY_PREAMBLE,
+} from '../src/services/compact/constants.ts';
+import {
+  attachRecentFilesMessage,
+  buildRecentFilesMessage,
+  computeBudgetForResult,
+} from '../src/services/compact/recentFiles.ts';
 import {
   computePreservedWindowBudget,
   planWindowTrim,
@@ -41,6 +50,8 @@ import {
 } from '../src/services/tokenizer.ts';
 
 const MODEL = 'gpt-4o';
+/** A fixed "now" so the stub's ages are exact. */
+const NOW = 1_700_000_000_000;
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 let passed = 0;
@@ -62,6 +73,34 @@ function check(label, fn) {
     console.error(`        ${err instanceof Error ? err.message : String(err)}`);
     failed += 1;
   }
+}
+
+/**
+ * The async twin of {@link check}, for the checks that drive the planner.
+ *
+ * @param {string} label - what the check asserts.
+ * @param {() => Promise<void>} fn - the check.
+ */
+async function checkAsync(label, fn) {
+  try {
+    await fn();
+    console.log(`  PASS  ${label}`);
+    passed += 1;
+  } catch (err) {
+    console.error(`  FAIL  ${label}`);
+    console.error(`        ${err instanceof Error ? err.message : String(err)}`);
+    failed += 1;
+  }
+}
+
+/**
+ * One `session_recent_files` row, as the loader returns it.
+ *
+ * @param {string} filePath - the absolute path.
+ * @returns {object} the row.
+ */
+function recentFileRow(filePath) {
+  return { path: filePath, tool: 'patch_file', hits: 2, lastSeenAt: NOW - 120_000 };
 }
 
 /**
@@ -695,6 +734,178 @@ check('orchestrate.ts drops the preserved window before it recurses', () => {
   const gateIndex = source.lastIndexOf('if (shouldRetry && remainingRetries > 0)', retryIndex);
   assert.ok(gateIndex !== -1 && gateIndex < retryIndex, 'the retry is no longer gated');
   assert.ok(gateIndex > trimIndex, 'the trim does not run before the retry gate');
+});
+
+console.log('the trim budget and the recent-files stub');
+
+check('the window budget is charged the summary alone', () => {
+  // The stub used to be part of the trim's header charge — so the planner
+  // dropped preserved turns to fund it. It is now attached AFTER the trim (and
+  // after any retry), out of whatever room the final result leaves, so the trim
+  // must not pay for a message it never sees.
+  const summary = { role: 'assistant', content: 'x'.repeat(800) };
+  const charges = { acceptanceBudget: 7372, noticeTokens: 60, systemPromptTokens: 3712 };
+  const budget = computePreservedWindowBudget({
+    ...charges,
+    headerTokens: countMessagesTokens([summary], MODEL),
+  });
+  const chargesWithStub = {
+    ...charges,
+    headerTokens:
+      countMessagesTokens([summary], MODEL) +
+      countMessageTokens({ role: 'assistant', content: 'y'.repeat(400) }, MODEL) -
+      countMessageTokens({ role: 'assistant', content: '' }, MODEL),
+  };
+  // The arithmetic is still decisive — a charge that IS included shrinks the
+  // budget by exactly its own cost — which is what makes "the stub is not in
+  // it" a meaningful statement rather than a vacuous one.
+  assert.ok(
+    computePreservedWindowBudget(chargesWithStub) < budget,
+    'the window budget ignores the header charge it is given'
+  );
+});
+
+check('orchestrate.ts keeps the stub out of the trim, and out of the retry', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'), 'utf8');
+
+  // The header the trim charges is the summary alone.
+  assert.ok(
+    source.includes('const headerTokens = countMessagesTokens([summaryMessage], model);'),
+    'the trim budget does not charge the summary alone'
+  );
+  // The rebuild after a trim has no stub in it.
+  const rebuild = source.indexOf('...trimPlan.messages');
+  assert.ok(rebuild !== -1, 'orchestrate.ts no longer rebuilds from the trim plan');
+  const rebuildBlock = source.slice(Math.max(0, rebuild - 400), rebuild);
+  assert.ok(
+    !rebuildBlock.includes('recentFilesMessage'),
+    'the trim rebuild still puts the stub between the summary and the window'
+  );
+  assert.ok(
+    source.includes('planWindowTrim(preparedRecentMessages, windowBudget, model)'),
+    'the trimmer is no longer given the preserved window alone'
+  );
+  // And the retry does not forward the rows — `newMessages` has no stub at that
+  // point, so a second one would be stacked on the recursion's result.
+  const retry = source.slice(source.indexOf('const retryResult = await compactHistory('));
+  const retryCall = retry.slice(0, retry.indexOf('\n    );'));
+  // Comments are stripped first: the call carries a comment that names the two
+  // parameters, and a check the comment can satisfy would pass on a regression.
+  const retryArguments = retryCall.replaceAll(/\/\/[^\n]*/gu, '');
+  assert.ok(
+    !/\brecentFiles(Root)?\b/u.test(retryArguments),
+    'the retry recursion re-attaches the stub — it would be duplicated and charged twice'
+  );
+  assert.match(
+    retryArguments,
+    /\bmodel,\n\s+newMessages,/u,
+    'the retry recursion is not handed the stub-less array'
+  );
+});
+
+console.log('the retry invariant');
+
+check('the stub is built ONCE, after the retry, and only claimed once attached', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'), 'utf8');
+  const retryIndex = source.indexOf('const retryResult = await compactHistory(');
+  const buildIndex = source.indexOf('await buildRecentFilesMessage(');
+  const attachIndex = source.indexOf('attachRecentFilesMessage(');
+  const progressIndex = source.indexOf('Re-attached the ');
+  assert.ok(retryIndex !== -1 && buildIndex !== -1 && attachIndex !== -1 && progressIndex !== -1);
+  assert.ok(retryIndex < buildIndex, 'the stub is built before the retry decides the history');
+  assert.ok(buildIndex < attachIndex, 'the stub is claimed before it is attached');
+  assert.ok(
+    attachIndex < progressIndex,
+    'the progress line is emitted before the stub is attached — it could announce a stub that the abort guard then refuses'
+  );
+  // The summariser's input: nothing between the result array and the recursion
+  // may build, splice or mention a stub, so the array the summariser sees has
+  // none — and no file content is summarised into prose.
+  const beforeRetry = source.slice(
+    source.indexOf('let newMessages: ChatMessage[] = [summaryMessage'),
+    retryIndex
+  );
+  for (const forbidden of [
+    'buildRecentFilesMessage',
+    'attachRecentFilesMessage',
+    'recentFilesPlan',
+  ]) {
+    // A RegExp rather than `String#includes` on purpose: the lint rule that
+    // rewrites `includes` to a Set turns a substring test into a character
+    // test, which would make this check vacuous.
+    assert.ok(
+      !new RegExp(forbidden, 'u').test(beforeRetry),
+      `${forbidden} runs before the retry, so the stub reaches the summariser`
+    );
+  }
+  // And the assistant role is pinned where the message is actually built.
+  const recentFilesSource = readFileSync(
+    path.join(REPO_ROOT, 'src/services/compact/recentFiles.ts'),
+    'utf8'
+  );
+  assert.ok(
+    recentFilesSource.includes('candidate.splice(1, 0, params.message)') &&
+      source.includes("recentFilesMessage = { role: 'assistant', content: recentFilesPlan.text }"),
+    'the recent-files stub is not injected as an assistant message directly after the summary'
+  );
+});
+
+await checkAsync('a retried compaction still ends with the stub attached', async () => {
+  // The behaviour behind the ordering: the budget is charged against the FINAL
+  // history. On the pre-retry sizes the only honest answer is "no stub"; after
+  // a retry there is room — which is exactly the case that used to end with the
+  // progress line printed and no stub in the result.
+  const numCtx = 8192;
+  const acceptanceBudget = Math.floor(numCtx * 0.9);
+  const systemPromptTokens = 1000;
+
+  const tooTight = computeBudgetForResult({
+    numCtx,
+    acceptanceBudget,
+    oldTokenCount: 20_000,
+    resultTokens: acceptanceBudget - 60,
+  });
+  assert.equal(tooTight, 0, 'the fixture is not tight enough to prove the point');
+
+  const afterRetryTokens = 3600;
+  const budget = computeBudgetForResult({
+    numCtx,
+    acceptanceBudget,
+    oldTokenCount: 20_000,
+    resultTokens: afterRetryTokens,
+  });
+  assert.ok(budget > RECENT_FILES_MIN_TOKENS, `the post-retry budget is ${budget}`);
+
+  const plan = await buildRecentFilesMessage({
+    files: [recentFileRow('/work/status-bar.ts')],
+    budgetTokens: budget,
+    model: MODEL,
+    redactSecrets: true,
+    readExcerpt: async () => 'export const status = 1;\n',
+    now: NOW,
+  });
+  assert.notEqual(plan.text, '', 'no stub was planned for the retried history');
+
+  const summary = { role: 'assistant', content: 'x'.repeat(600) };
+  const window = [{ role: 'user', content: 'y'.repeat(2000) }];
+  const finalMessages = [summary, ...window];
+  const finalTokens = countMessagesTokens(finalMessages, MODEL) + systemPromptTokens;
+  const attached = attachRecentFilesMessage({
+    messages: finalMessages,
+    message: { role: 'assistant', content: plan.text },
+    model: MODEL,
+    systemPromptTokens,
+    oldTokenCount: 20_000,
+    acceptanceBudget,
+  });
+  assert.notEqual(attached, null, 'the stub was refused on the final history');
+  assert.equal(attached[1].content, plan.text, 'the stub is not in the returned messages');
+  const total = countMessagesTokens(attached, MODEL) + systemPromptTokens;
+  assert.ok(total < 20_000, 'the stub un-shrank the history');
+  assert.ok(total <= acceptanceBudget, 'the stub pushed the result past the boundary');
+  // The stub is a message on top of the finished history, not a rewrite of it.
+  assert.equal(attached.length, finalMessages.length + 1);
+  assert.equal(countMessagesTokens(finalMessages, MODEL), finalTokens - systemPromptTokens);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

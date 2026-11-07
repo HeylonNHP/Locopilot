@@ -8,8 +8,10 @@
  *
  * Schema
  * ──────
- *   sessions  – one row per named conversation
- *   messages  – ordered messages belonging to a session
+ *   sessions             – one row per named conversation
+ *   messages             – ordered messages belonging to a session
+ *   session_recent_files – the files a session last read or wrote, keyed by
+ *                          absolute path; survives `updateSessionMessages`
  */
 
 import Database from 'better-sqlite3';
@@ -40,15 +42,60 @@ export interface SessionTokenStats {
   evalCount: number;
 }
 
+/**
+ * One row of `session_recent_files`, as handed to the compaction planner.
+ *
+ * The shape is camelCase on purpose: `lastSeenAt` is a JS epoch-millisecond
+ * number, and the planner renders relative ages from it directly.
+ */
+export interface RecentFileRow {
+  /** Absolute path of the file (never a relative one — the cwd drifts). */
+  path: string;
+  /** The tool that touched it last: `read_file`, `patch_file`, or `write_file`. */
+  tool: string;
+  /** How many times the session touched this path. */
+  hits: number;
+  /** Epoch milliseconds of the last touch. */
+  lastSeenAt: number;
+}
+
 // ---------------------------------------------------------------------------
 // Database bootstrapping
 // ---------------------------------------------------------------------------
 
 const db = new Database(DB_PATH);
 
-// Enable WAL for better concurrent read performance and reliability.
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+/**
+ * Runs one bootstrap step and reports a failure instead of throwing.
+ *
+ * WHY this module must not throw here: `history.ts` is imported by every route,
+ * so a throw at import is not "recent files are unavailable" — it is "the app
+ * does not start". A READ-ONLY database (a backup opened in place, a copy on a
+ * read-only mount) cannot set `journal_mode = WAL` and cannot `CREATE TABLE`; a
+ * `session_recent_files` that some older version created with different columns
+ * makes the index below fail. Every one of those must degrade the FEATURE, so
+ * the failure goes to the debug log and the readers/writers fall back (see
+ * `getRecentFileStatements`).
+ */
+function bootstrapStep(label: string, step: () => void): void {
+  try {
+    step();
+  } catch (err) {
+    try {
+      debugLog.debug('history-bootstrap-degraded', {
+        step: label,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } catch {
+      // The logger itself is best-effort.
+    }
+  }
+}
+
+// Enable WAL for better concurrent read performance and reliability. It is a
+// WRITE, so a read-only database refuses it — which must not be fatal.
+bootstrapStep('journal_mode', () => db.pragma('journal_mode = WAL'));
+bootstrapStep('foreign_keys', () => db.pragma('foreign_keys = ON'));
 
 db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -70,7 +117,41 @@ db.exec(`
         created_at DATETIME,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
+
 `);
+
+// The recent-files table gets its OWN bootstrap step, because it is the only
+// one whose failure is survivable: a database that cannot be written still
+// serves the history it already holds, and the stub is a convenience. (The core
+// schema above stays unguarded on purpose — without `sessions` and `messages`
+// there is nothing here to serve, and the prepared statements below would throw
+// at import anyway.)
+bootstrapStep('recent-files-schema', () => {
+  db.exec(`
+    -- Files the session has read or written, one row per absolute path.
+    -- WHY a separate table: a compaction replaces every row of 'messages'
+    -- (see updateSessionMessages), so the paths that live only inside
+    -- 'tool_calls' JSON are destroyed exactly when we need them most. This
+    -- table is written by the tool-dispatch hook and read by the compaction
+    -- planner to re-inject a stub of the recently touched files.
+    --
+    -- last_seen_at is epoch MILLISECONDS written from JS (Date.now()),
+    -- not SQL datetime('now'): the stub renders relative ages ('4m ago')
+    -- and must not depend on SQLite's date formatting.
+    CREATE TABLE IF NOT EXISTS session_recent_files (
+        session_id   INTEGER NOT NULL,
+        path         TEXT    NOT NULL,
+        tool         TEXT    NOT NULL DEFAULT '',
+        hits         INTEGER NOT NULL DEFAULT 1,
+        last_seen_at INTEGER NOT NULL,
+        PRIMARY KEY (session_id, path),
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_recent_files_recent
+        ON session_recent_files (session_id, last_seen_at DESC);
+  `);
+});
 
 function addColumnIfMissing(sql: string): void {
   try {
@@ -142,6 +223,70 @@ const stmtSearchSessions = db.prepare<[string, string]>(
 const stmtGetSessionName = db.prepare<[number]>('SELECT name FROM sessions WHERE id = ?');
 
 const stmtSessionExists = db.prepare<[number]>('SELECT 1 FROM sessions WHERE id = ?');
+
+// --- Recent files -----------------------------------------------------------
+//
+// Prepared on FIRST USE, not at import, and never fatally: on a database that
+// is read-only, or that carries an older `session_recent_files` with a
+// different shape, these three statements cannot compile at all. Doing the
+// `db.prepare` here meant a throw during module evaluation — i.e. every route
+// down because a convenience table was missing. The getter below turns that
+// into `null`, which `recordTouchedFile` reads as "do nothing" and
+// `loadRecentFiles` as "no rows".
+//
+// Upsert keyed on (session_id, path): a re-touch bumps the counter and the
+// timestamp and refreshes which tool was last responsible for the file.
+function prepareRecentFileStatements() {
+  return {
+    load: db.prepare<[number, number]>(
+      'SELECT path, tool, hits, last_seen_at FROM session_recent_files WHERE session_id = ? ORDER BY last_seen_at DESC, path ASC LIMIT ?'
+    ),
+    // Keeps only the N most recent rows of one session. The secondary `path`
+    // term makes the cut deterministic when several touches share a millisecond.
+    prune: db.prepare<[number, number, number]>(
+      `DELETE FROM session_recent_files
+       WHERE session_id = ?
+         AND path NOT IN (
+           SELECT path FROM session_recent_files
+           WHERE session_id = ?
+           ORDER BY last_seen_at DESC, path ASC
+           LIMIT ?
+         )`
+    ),
+    upsert: db.prepare<[number, string, string, number]>(
+      `INSERT INTO session_recent_files (session_id, path, tool, hits, last_seen_at)
+       VALUES (?, ?, ?, 1, ?)
+       ON CONFLICT(session_id, path) DO UPDATE SET
+         tool = excluded.tool,
+         hits = hits + 1,
+         last_seen_at = excluded.last_seen_at`
+    ),
+  };
+}
+
+/** The recent-files statements, or `null` when this database cannot run them. */
+let recentFileStatements: ReturnType<typeof prepareRecentFileStatements> | null | undefined;
+
+/**
+ * Returns the recent-files statements, preparing them once; `null` if the table
+ * is missing, differently shaped, or in a database that refuses to be written.
+ */
+function getRecentFileStatements(): ReturnType<typeof prepareRecentFileStatements> | null {
+  if (recentFileStatements !== undefined) return recentFileStatements;
+  try {
+    recentFileStatements = prepareRecentFileStatements();
+  } catch (err) {
+    recentFileStatements = null;
+    try {
+      debugLog.debug('recent-files-statements-unavailable', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } catch {
+      // The logger itself is best-effort.
+    }
+  }
+  return recentFileStatements;
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -544,4 +689,123 @@ export function deleteMessagesFrom(sessionId: number, messageId: number): Persis
   run();
 
   return loadSessionMessages(sessionId);
+}
+
+// ---------------------------------------------------------------------------
+// Recent files
+// ---------------------------------------------------------------------------
+
+/**
+ * How many rows one session keeps in `session_recent_files`.
+ *
+ * WHY a cap at all: a long session can read hundreds of files, and the stub
+ * re-injected after compaction is a handful of lines. Twenty-four rows is
+ * enough to cover a working set while staying a rounding error in tokens.
+ */
+const RECENT_FILES_KEEP_PER_SESSION = 24;
+
+/** The columns the recent-files load statement selects, in snake_case as stored. */
+interface RecentFileDbRow {
+  path: string;
+  tool: string;
+  hits: number;
+  last_seen_at: number;
+}
+
+/**
+ * Records that a session touched `filePath` with `tool`, bumping the hit
+ * counter and the timestamp, and prunes the session back to
+ * {@link RECENT_FILES_KEEP_PER_SESSION} rows — all in one transaction.
+ *
+ * Never throws. Recording is a diagnostic nicety: a failure here must never
+ * fail the tool call that produced it, so bad ids, empty paths, and a session
+ * that no longer exists (the foreign key rejects the insert) are all silent
+ * no-ops.
+ *
+ * @param sessionId – Owning chat session. Sub-agents have none and never call this.
+ * @param filePath  – The ABSOLUTE path of the file.
+ * @param tool      – Tool name that touched it (`read_file`, `patch_file`, `write_file`).
+ * @param now       – Epoch milliseconds to store; defaults to `Date.now()`.
+ *                    Injectable so tests can order touches deterministically.
+ */
+export function recordTouchedFile(
+  sessionId: number,
+  filePath: string,
+  tool: string,
+  now?: number
+): void {
+  try {
+    if (!Number.isInteger(sessionId)) return;
+    if (typeof filePath !== 'string') return;
+    const trimmedPath = filePath.trim();
+    if (trimmedPath === '') return;
+    const stamp = typeof now === 'number' && Number.isFinite(now) ? now : Date.now();
+    const toolName = typeof tool === 'string' ? tool : '';
+
+    // No statements means no table (or no permission to use it): the touch is
+    // simply not remembered, which is exactly the pre-feature behaviour.
+    const statements = getRecentFileStatements();
+    if (statements === null) return;
+
+    const run = db.transaction(() => {
+      statements.upsert.run(sessionId, trimmedPath, toolName, stamp);
+      statements.prune.run(sessionId, sessionId, RECENT_FILES_KEEP_PER_SESSION);
+    });
+    run();
+  } catch (err) {
+    // A recording failure is never worth failing a tool call over, and the
+    // caller already wraps this — belt and braces, because a throw here would
+    // abort the whole turn.
+    try {
+      debugLog.debug('recent-files-record-failed', {
+        sessionId: Number.isInteger(sessionId) ? sessionId : null,
+        tool: typeof tool === 'string' ? tool : null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } catch {
+      // The logger itself is best-effort.
+    }
+  }
+}
+
+/**
+ * Returns the most recently touched files of a session, newest first,
+ * capped at `limit` rows.
+ *
+ * Rows are never written for a session id that was never created (the
+ * foreign key rejects them), so an unknown session simply returns `[]` —
+ * as does an unreadable database, since this is a read on a best-effort
+ * reporting path.
+ */
+export function loadRecentFiles(sessionId: number, limit: number): RecentFileRow[] {
+  try {
+    if (!Number.isInteger(sessionId)) return [];
+    if (typeof limit !== 'number' || !Number.isFinite(limit)) return [];
+    const capped = Math.floor(limit);
+    if (capped <= 0) return [];
+
+    // No statements means no table (or a read-only database): an empty list is
+    // the answer that costs the caller nothing — the compaction just gets no
+    // stub.
+    const statements = getRecentFileStatements();
+    if (statements === null) return [];
+
+    const rows = statements.load.all(sessionId, capped) as RecentFileDbRow[];
+    return rows.map((row) => ({
+      path: row.path,
+      tool: row.tool,
+      hits: row.hits,
+      lastSeenAt: row.last_seen_at,
+    }));
+  } catch (err) {
+    try {
+      debugLog.debug('recent-files-load-failed', {
+        sessionId: Number.isInteger(sessionId) ? sessionId : null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } catch {
+      // The logger itself is best-effort.
+    }
+    return [];
+  }
 }

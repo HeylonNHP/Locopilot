@@ -49,6 +49,7 @@ import { getToolPrompt as getWriteFilePrompt, writeFileToolSchema } from './impl
 // Keep defaultShell export (used in runCommandToolSchema via defaultShell() call)
 export { defaultShell } from './impl/runCommandTool';
 
+import { recordToolFileTouch } from './fileTouchRecorder';
 import { noopToolOutputSink, type ToolOutputSink } from './toolOutput';
 import {
   type RequestContext,
@@ -231,7 +232,16 @@ export async function handleToolCall(
   signal?: AbortSignal
 ): Promise<ToolCallResult> {
   const command = toolRegistry.get(name);
-  if (command) return command.execute(args, onProgress, output, context, signal);
+  if (command) {
+    const result = await command.execute(args, onProgress, output, context, signal);
+    // Remember the file this call touched, for the stub re-injected after a
+    // compaction. Deliberately the MAIN route's dispatch point: sub-agents
+    // call `command.execute` directly, have no session id, and are out of
+    // scope. The hook never throws, so a recording failure cannot fail a
+    // tool call.
+    recordToolFileTouch(name, args, result, context);
+    return result;
+  }
   // Namespaced MCP tools (`mcp__<server>__<tool>`) are exposed to the LLM
   // but are not in the static registry — dispatch them through the MCP layer.
   const mcpResult = await tryRunNamespacedMCPCall(name, args, context, signal);

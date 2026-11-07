@@ -280,6 +280,137 @@ export const TOOL_DISTILL_CALLS_PER_WINDOW = 1 / 16384;
  */
 export const TOOL_DISTILL_TRUNCATION_MARKER = '… [digest truncated]';
 
+// ---- Recent-files stub (re-injected after compaction) ----
+//
+// WHY this exists: a compaction replaces every message row of the session, so
+// `read_file` / `patch_file` / `write_file` calls — the only record of WHICH
+// files the session was working on — are summarised away, and the model
+// re-reads them from scratch. The stub re-injects the most recently touched
+// files, path first and (when the file fits whole) its contents, so the model
+// continues from what it already had instead of paying a full round of tool
+// calls to get it back.
+//
+// Every limit here is a budget, because the stub is paid for out of context
+// that the compaction just worked to free: it must never be the reason a
+// compaction fails to shrink the history.
+
+/** How many files the stub may name. */
+export const RECENT_FILES_MAX_FILES = 5;
+
+/**
+ * The most tokens ONE file's contents may take — and it is all or nothing.
+ *
+ * WHY all or nothing: a `read_file` hands the model the WHOLE file, so a
+ * truncated head is not a smaller version of the same information — it is
+ * information about a region the model was probably not editing. A 2 000-line
+ * file cut to its first 100 lines costs 1 000 tokens and still forces the
+ * re-read the stub exists to prevent. A file that does not fit is therefore
+ * named by path, line count and a hint (one line), which is both honest and
+ * cheap; only a file that fits WHOLE is reproduced.
+ */
+export const RECENT_FILES_MAX_TOKENS_PER_FILE = 1000;
+
+/** The most tokens the whole stub may take. */
+export const RECENT_FILES_MAX_TOTAL_TOKENS = 5000;
+
+/**
+ * The stub's share of the context window, as a fraction.
+ *
+ * WHY a fraction as well as a flat cap: 5000 tokens is a rounding error on a
+ * 200k window and a fifth of a 24k one, so the flat cap alone would let the
+ * stub crowd out the summary it is supposed to accompany on a small window.
+ */
+export const RECENT_FILES_MAX_WINDOW_RATIO = 0.1;
+
+/**
+ * Below this many tokens there is no stub at all.
+ *
+ * WHY a floor, and why it is this high: a budget below the MANDATORY part buys
+ * a fragment — a header with no bullets, or three of five paths — which costs
+ * context and repays nothing. The number is therefore an upper bound on the
+ * measured cost of the worst-case mandatory stub (the header, five path-only
+ * bullets and the end marker): 254 tokens for five 45-character paths, 279 for
+ * 80-character ones, 294 for 100-character ones, measured with the real
+ * tokenizer. It used to be 150, which is below EVERY one of those: the range
+ * 150–254 bought nothing while the comment claimed it was where a stub became
+ * useful. A working set whose paths are longer than ~100 characters can still
+ * exceed this, and the planner handles that honestly — it drops slots until the
+ * mandatory part fits, or returns no stub — because this constant is a cheap
+ * pre-filter, not the correctness condition.
+ *
+ * `scripts/test-compact-recent-files.mjs` pins both halves: the floor covers a
+ * five-bullet stub of 80-character paths, and a budget of exactly this many
+ * tokens really does buy that stub.
+ */
+export const RECENT_FILES_MIN_TOKENS = 300;
+
+/**
+ * How many bytes of a file the reader will look at.
+ *
+ * WHY bounded: the reader runs on a request path and the files in the table are
+ * whatever the model happened to touch, so it must never pull a 400 MB log into
+ * memory to throw 99.9 % of it away. 16 KiB is roughly 4000 tokens — well above
+ * the 1000-token per-file cap, so the cap, not the buffer, is what decides
+ * whether a file is reproduced whole in practice; a file bigger than the buffer
+ * can never be, because what was read is not the whole file.
+ */
+export const RECENT_FILES_MAX_READ_BYTES = 16_384;
+
+/**
+ * What the stub's message framing costs, charged before any content.
+ *
+ * WHY a constant rather than a measurement: the budget is computed BEFORE the
+ * stub exists (`computeRecentFilesBudget`), so the framing has to be charged
+ * from a fixed number. It covers the tokenizer's per-message base (4 tokens)
+ * and the per-array overhead (2 tokens), and the slack is deliberate — it is
+ * what keeps the stub from pushing the result back to (or past) the size of
+ * the history it replaced.
+ */
+export const RECENT_FILES_MESSAGE_OVERHEAD_TOKENS = 8;
+
+/**
+ * The tokens `countMessageTokens` adds for the message itself, on top of the
+ * text.
+ *
+ * WHY it is charged SEPARATELY from {@link RECENT_FILES_MESSAGE_OVERHEAD_TOKENS}:
+ * the budget used to be a budget for the TEXT while the message that carries it
+ * costs this much more, so a stub that spent its whole budget overran the
+ * ceiling by exactly this amount (measured: 5 = a 4-token message base plus the
+ * 1-token role name; the observed overrun in a real plan was 2 because the
+ * planned text happened to land a couple of tokens short). The ceiling is now
+ * reduced by it, so `tokensUsed + RECENT_FILES_MESSAGE_FRAMING_TOKENS` is what
+ * the ceiling actually bounds.
+ */
+export const RECENT_FILES_MESSAGE_FRAMING_TOKENS = 5;
+
+/**
+ * Appended to text that was cut, so a partial file cannot be read as a whole
+ * one.
+ *
+ * WHY it matters more here than in a digest: a model that believes it has seen
+ * the end of `foo.ts` will not go looking for the rest of it. Two consumers
+ * depend on it: the disk reader appends it when a file is longer than
+ * {@link RECENT_FILES_MAX_READ_BYTES}, and the stub planner treats a body that
+ * ends with it as NOT the whole file — a cut read is never reproduced as
+ * content, however few tokens the head happens to be (it gets the path, a
+ * "more than N lines" count and the hint instead).
+ */
+export const RECENT_FILES_TRUNCATION_MARKER = '… [excerpt truncated]';
+
+/**
+ * How many rows a caller should load from `session_recent_files`, and how far
+ * the planner may walk them.
+ *
+ * WHY more than {@link RECENT_FILES_MAX_FILES}: rows whose file has since been
+ * deleted, moved outside the working directory, or turned into something the
+ * reader refuses (binary, a directory) produce nothing the model can open. The
+ * planner therefore walks the candidates in priority order and keeps going
+ * past an unreadable one, so five dead paths cannot starve the five slots —
+ * and `selectRecentFiles` alone no longer truncates the list to five, which is
+ * what made this limit decorative.
+ */
+export const RECENT_FILES_LOAD_LIMIT = 12;
+
 // ---- Chunked (map-reduce) compaction ----
 // The fraction of the model context window reserved for the input of a single
 // summarisation request. Keeping this well below 1.0 leaves room for the

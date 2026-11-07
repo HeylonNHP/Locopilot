@@ -58,7 +58,14 @@ try {
     {
       label: 'an Authorization header',
       secret: 'ey' + 'JhbGciOiJIUzI1NiJ9' + '.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
-      text: 'Authorization: Bearer ' + 'ey' + 'JhbGciOiJIUzI1NiJ9.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
+      text:
+        'Authorization: Bearer ' +
+        'ey' +
+        'JhbGciOiJIUzI1NiJ9.' +
+        'ey' +
+        'JzdWIiOiIxIn0' +
+        '.' +
+        'abcdefghijklmnop',
     },
     {
       label: 'a bare bearer token',
@@ -68,7 +75,15 @@ try {
     {
       label: 'a JSON web token',
       secret: 'ey' + 'JhbGciOiJIUzI1NiJ9' + '.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop',
-      text: 'the token was ' + 'ey' + 'JhbGciOiJIUzI1NiJ9.' + 'ey' + 'JzdWIiOiIxIn0' + '.' + 'abcdefghijklmnop' + ' and then',
+      text:
+        'the token was ' +
+        'ey' +
+        'JhbGciOiJIUzI1NiJ9.' +
+        'ey' +
+        'JzdWIiOiIxIn0' +
+        '.' +
+        'abcdefghijklmnop' +
+        ' and then',
     },
     {
       label: 'an sk- key',
@@ -120,6 +135,41 @@ try {
       secret: 'abcdefghijklmnop',
       text: 'apiKey=abcdefghijklmnop',
     },
+    // ── Prefixed assignments and URL credentials ──────────────────────────
+    // The rule anchored on `\b` and required the secret word to START the
+    // variable, and `_` is a word character — so every `SOMETHING_PASSWORD=`
+    // went through untouched. These are the shapes the model actually sees in
+    // a `.env` or a compose file.
+    {
+      label: 'a DB_PASSWORD assignment',
+      secret: 'hunter2',
+      text: 'DB_PASSWORD=hunter2',
+    },
+    {
+      label: 'a MYSQL_ROOT_PASSWORD assignment',
+      secret: 's3cr' + 'etvalue',
+      text: 'MYSQL_ROOT_PASSWORD=s3cr' + 'etvalue',
+    },
+    {
+      label: 'a MY_API_KEY assignment',
+      secret: 'abcdefghijkl' + 'mnopqrst',
+      text: 'MY_API_KEY=abcdefghijkl' + 'mnopqrst',
+    },
+    {
+      label: 'a DB_PASSWORD entry in YAML',
+      secret: 'hunter2',
+      text: 'DB_PASSWORD: hunter2',
+    },
+    {
+      label: 'a password embedded in a DATABASE_URL',
+      secret: 'hunter2',
+      text: 'DATABASE_URL=postgres://app:hunter2@db.example.com:5432/app',
+    },
+    {
+      label: 'a password in a URL with no user name',
+      secret: 'topsecret',
+      text: 'redis://:topsecret@cache:6379',
+    },
     {
       label: 'a private key block',
       secret: 'MIIEowIBAAKCAQEAsupersecretkeymaterial',
@@ -148,6 +198,26 @@ try {
     assert.ok(result.includes(REDACTED));
   });
 
+  check('a prefixed assignment keeps its whole label', () => {
+    // The prefix is matched, not eaten: the model still learns WHICH variable
+    // was set, which is the difference between "a secret leaked" and
+    // "DB_PASSWORD leaked".
+    const result = redact('MY_API_KEY=abcdefghijklmnop');
+    assert.equal(result, `MY_API_KEY=${REDACTED}`);
+    assert.equal(redact('DB_PASSWORD=hunter2'), `DB_PASSWORD=${REDACTED}`);
+    assert.equal(redact('MYSQL_ROOT_PASSWORD=s3cretvalue'), `MYSQL_ROOT_PASSWORD=${REDACTED}`);
+  });
+
+  check('a URL credential keeps the scheme, the user and the host', () => {
+    const result = redact('DATABASE_URL=postgres://app:hunter2@db.example.com:5432/app');
+    assert.ok(!result.includes('hunter2'), 'the password survived');
+    assert.ok(result.includes('postgres://app:'), 'the scheme and user were lost');
+    assert.ok(result.includes('@db.example.com:5432/app'), 'the host was lost');
+    // A URL with no `@`, or with no password, is not a credential and stays.
+    assert.equal(redact('https://example.com/path'), 'https://example.com/path');
+    assert.equal(redact('https://user@example.com/x'), 'https://user@example.com/x');
+  });
+
   // ── Ordinary text ────────────────────────────────────────────────────────
   const ORDINARY = [
     'normal output with no secrets at all',
@@ -155,6 +225,10 @@ try {
     'task_id=42 finished',
     'a bearer of bad news',
     'TOKEN_COUNT=5',
+    // The prefix rule must not turn into a sledgehammer: a COUNT is not a
+    // credential, and `_` after the word is not a separator.
+    'MY_TOKEN_COUNT=5',
+    'MAX_PASSWORD_LENGTH=64',
     'secretary=smith',
     'https://example.com/path?page=2',
   ];
@@ -348,7 +422,12 @@ try {
     const dir2 = mkdtempSync(path.join(tmpdir(), 'locopilot-redaction-off-'));
     try {
       const spool = new OutputSpool({
-        limits: { inlineMaxBytes: 8 * 1024, headMaxBytes: 32 * 1024, tailMaxBytes: 8 * 1024, maxSpoolBytes: 10 * 1024 * 1024 },
+        limits: {
+          inlineMaxBytes: 8 * 1024,
+          headMaxBytes: 32 * 1024,
+          tailMaxBytes: 8 * 1024,
+          maxSpoolBytes: 10 * 1024 * 1024,
+        },
         directory: dir2,
         name: 'raw.log',
         enabled: true,

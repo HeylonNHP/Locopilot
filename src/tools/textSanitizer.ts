@@ -128,20 +128,39 @@ const REDACTION_RULES: readonly RedactionRule[] = [
     pattern: /\bAIza[\w-]{35}\b/g,
     replacement: REDACTED,
   },
+  // A credential embedded in a URL: `scheme://user:password@host`. Matched
+  // separately from the assignment rules because the KEY names nothing secret
+  // (`DATABASE_URL=postgres://app:hunter2@db:5432/x`), so there is no label to
+  // key on — the credential is in the authority section of the value. The
+  // scheme and the user stay, because they say WHERE the credential leaked
+  // without being one. The user is optional (`*`, not `+`) because a DSN may
+  // spell it as `redis://:hunter2@cache:6379`.
+  {
+    pattern: /\b([a-z][\d+.a-z-]*:\/\/[^\s/:@]*:)([^\s/@]+)@/gi,
+    replacement: `$1${REDACTED}@`,
+  },
   // A credential in a query string or in an environment assignment. The
   // value ends at the first space, quote, ampersand, semicolon or comma.
-  // The key has to START with the secret word: a rule that matches a
-  // variable-length prefix would rescan the line for every candidate.
+  //
+  // The `(?:[\da-z]+_){0,8}` prefix (case-insensitive, i.e. `[A-Z0-9_]` in
+  // practice) is what makes `DB_PASSWORD=`, `MYSQL_ROOT_PASSWORD=` and
+  // `MY_API_KEY=` match at all: without it the rule anchored on `\b` and the
+  // secret word had to START the token, and `_` is a word character, so
+  // `DB_PASSWORD` had no word boundary in front of `PASSWORD` and the most
+  // common shape of an environment assignment went through untouched. The
+  // repeat count is bounded ({0,8}) rather than `*` so the prefix cannot
+  // backtrack through an arbitrarily long identifier.
   {
     pattern:
-      /\b((?:secret|token|password|passwd|pwd|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token|credential)s?\s*=\s*)(?:"[^\n"]*"|'[^\n']*'|[^\s&,;]+)/gi,
+      /\b((?:[\da-z]+_){0,8}(?:secret|token|password|passwd|pwd|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token|credential)s?\s*=\s*)(?:"[^\n"]*"|'[^\n']*'|[^\s&,;]+)/gi,
     replacement: `$1${REDACTED}`,
   },
   // The same credentials in a YAML file, where the separator is a colon.
-  // "token" is left out on purpose: "token: expired" is prose.
+  // "token" is left out on purpose: "token: expired" is prose. The prefix
+  // rule is the one from above, for the same reason (`DB_PASSWORD: …`).
   {
     pattern:
-      /\b((?:password|passwd|secret|api[_-]?key|apikey|private[_-]?key|credential)s?\s*:\s*)(?:"[^\n"]*"|'[^\n']*'|[^\s&,;]+)/gi,
+      /\b((?:[\da-z]+_){0,8}(?:password|passwd|secret|api[_-]?key|apikey|private[_-]?key|credential)s?\s*:\s*)(?:"[^\n"]*"|'[^\n']*'|[^\s&,;]+)/gi,
     replacement: `$1${REDACTED}`,
   },
   // The environment variables that are secret by name. They are spelled out
