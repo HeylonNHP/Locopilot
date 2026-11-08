@@ -461,6 +461,33 @@ export const TOOL_DISTILL_MIN_CALLS = 2;
 export const TOOL_DISTILL_CALLS_PER_WINDOW = 1 / 16384;
 
 /**
+ * The most EXTRA distillation calls one compaction may spend on the PRESERVED
+ * WINDOW once the window trim has proved not to be enough.
+ *
+ * WHY an extra allowance exists at all: the call cap ({@link TOOL_DISTILL_MAX_CALLS})
+ * saturates at 8, but the prefill budget ({@link TOOL_DISTILL_PREFILL_BUDGET_WINDOW_RATIO})
+ * is ONE WINDOW. At a 262 144-token window the two bind together — eight
+ * calls at ~32 000 prefill tokens each is the whole budget — but at a
+ * 1 048 576-token window the cap binds FIRST: eight calls spend ~258 000 of
+ * 1 048 576 tokens, so ~790 000 tokens of the budget go UNSPENT while the
+ * oversized tool outputs that were not digested stay VERBATIM in the
+ * preserved window. A verbatim tool output in the result is what decides
+ * whether the compaction fits, so the leftover budget was worth more spent
+ * than idle.
+ *
+ * WHY 32: the ceiling is a LATENCY guard, not a budget. Every extra call is a
+ * real prompt evaluation with a real timeout, and the spend is only worth it
+ * when the trim was not enough — so the number of calls has to stay bounded
+ * even when the budget would allow more. 32 extra calls is four times the
+ * normal cap and roughly the number a 1M-token window's leftover budget can
+ * actually pay for (a 112 000-character call costs ~32 256 prefill tokens, so
+ * 24 of them fit in the ~790 000 tokens a 1M window leaves over) — which means
+ * the ceiling and the budget bind at about the same place, and neither is
+ * decorative.
+ */
+export const TOOL_DISTILL_EXTRA_CALLS_MAX = 32;
+
+/**
  * The marker appended to a digest that was cut at the digest cap.
  *
  * WHY a marker is needed: the summariser's prompt tells the model to copy

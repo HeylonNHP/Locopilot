@@ -181,6 +181,19 @@ function assertPlanInvariants(preserved, plan, label) {
     }
     previous = found;
   });
+  // 7: the kept indexes point back at the input window.
+  assert.equal(
+    plan.keptIndices.length,
+    plan.messages.length,
+    `${label}: the kept-index mapping is not the length of the plan`
+  );
+  plan.messages.forEach((entry, position) => {
+    assert.equal(
+      plan.keptIndices[position],
+      preserved.indexOf(entry),
+      `${label}: the kept index at ${position} does not point at the kept message`
+    );
+  });
 }
 
 console.log('the window trimmer leaves a window that already fits alone');
@@ -736,6 +749,110 @@ check('orchestrate.ts drops the preserved window before it recurses', () => {
   assert.ok(gateIndex > trimIndex, 'the trim does not run before the retry gate');
 });
 
+console.log('the leftover distillation budget is spent before the re-summary');
+
+check('the extra spend runs BETWEEN the trim and the retry recursion', () => {
+  // The order is the whole feature: the trim is free (no model call) and it
+  // costs context but not fidelity, so it goes first; the extra digests cost
+  // model calls, so they are only spent when the trim was not enough; and
+  // the retry recursion — a summary of a summary — is the last resort.
+  const source = readFileSync(path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'), 'utf8');
+  const trimIndex = source.indexOf('planWindowTrim(preparedRecentMessages, windowBudget, model)');
+  const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
+  const retryIndex = source.indexOf('const retryResult = await compactHistory(');
+  assert.ok(trimIndex !== -1, 'orchestrate.ts never plans a window trim');
+  assert.ok(extraIndex !== -1, 'orchestrate.ts never spends the leftover distillation budget');
+  assert.ok(retryIndex !== -1, 'orchestrate.ts has no retry recursion to compare against');
+  assert.ok(
+    trimIndex < extraIndex,
+    'the extra spend runs BEFORE the window trim — it would digest rows the trim then drops'
+  );
+  assert.ok(
+    extraIndex < retryIndex,
+    'the extra spend runs AFTER the retry recursion — the expensive pass is still first'
+  );
+});
+
+check('the extra spend is gated on the result STILL being over budget', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'), 'utf8');
+  const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
+  const gateIndex = source.lastIndexOf('if (shouldRetry) {', extraIndex);
+  assert.ok(gateIndex !== -1, 'the extra spend is not gated on the size verdict');
+  assert.ok(extraIndex > gateIndex, 'the extra spend is not inside the gate');
+  // And the gate is the POST-TRIM verdict: the trim block comes before it.
+  const trimIndex = source.indexOf('planWindowTrim(preparedRecentMessages, windowBudget, model)');
+  assert.ok(trimIndex < gateIndex, 'the extra spend is gated before the trim has been tried');
+  // The aborted verdict is thrown BEFORE the gate, so nothing is spent on a
+  // compaction that is going to be refused.
+  const abortIndex = source.indexOf('if (verdict.aborted)');
+  assert.ok(
+    abortIndex !== -1 && abortIndex < gateIndex,
+    'the aborted verdict comes after the gate'
+  );
+});
+
+check('the extra spend draws on the SAME distillation budget', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'), 'utf8');
+  const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
+  const extraCall = source.slice(extraIndex, source.indexOf('\n    );', extraIndex));
+  // The budget object is handed to the extra pass…
+  assert.match(extraCall, /\bdistillBudget\b/u, 'the extra pass does not use the budget');
+  // …and the extra pass's prefill is charged back to it, so the total
+  // prefill of ONE compaction still respects the window's budget.
+  assert.ok(
+    source.includes('distillBudget.usedTokens += extraDistill.prefillTokens;'),
+    "the extra spend is not charged against the compaction's distillation budget"
+  );
+  // And the calls are bounded by the ceiling, so the spend cannot blow up the
+  // latency even when the budget would allow more.
+  assert.match(extraCall, /TOOL_DISTILL_EXTRA_CALLS_MAX/u, 'the extra spend has no call ceiling');
+});
+
+check('the extra spend skips the rows the first pass already dealt with', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'), 'utf8');
+  const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
+  const extraCall = source.slice(extraIndex, source.indexOf('\n    );', extraIndex));
+  assert.match(extraCall, /handledRows/u, 'the extra spend does not skip the handled rows');
+  // The bookkeeping is per-ROW and per-PASS: the digests and the failures of
+  // the WINDOW pass are what is excluded, and the exclusion set is built in
+  // the index space of the array the extra pass walks (the trimmer re-indexes
+  // the window, so the two index spaces are not the same).
+  assert.ok(
+    source.includes('recentDistill.distilledIndices'),
+    'the extra spend does not know which rows are already digests'
+  );
+  assert.ok(
+    source.includes('recentDistill.failedIndices'),
+    'the extra spend does not know which rows already had their one attempt'
+  );
+  assert.ok(
+    source.includes('resultWindowSources = trimPlan.keptIndices;'),
+    'the extra spend does not re-index the window after the trim'
+  );
+});
+
+check('the verdict is re-taken after the extra spend', () => {
+  const source = readFileSync(path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'), 'utf8');
+  const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
+  const retryIndex = source.indexOf('const retryResult = await compactHistory(');
+  const sliceText = source.slice(extraIndex, retryIndex);
+  assert.ok(
+    /countMessagesTokens\(digestedMessages, model\) \+ resolvedSystemPromptTokens/.test(sliceText),
+    'the result is not re-counted after the extra spend'
+  );
+  assert.ok(
+    /shouldRetry = numCtx > 0 && newTokenCount > acceptanceBudget;/.test(sliceText),
+    'the verdict is not re-taken after the extra spend'
+  );
+  // And the digests are only kept when they made the result SMALLER: a digest
+  // can be longer than the output it replaced, and spending the budget must
+  // never make the result bigger.
+  assert.ok(
+    sliceText.includes('if (distilledTokens < newTokenCount) {'),
+    'the extra spend does not check that its digests made the result smaller'
+  );
+});
+
 console.log('the trim budget and the recent-files stub');
 
 check('the window budget is charged the summary alone', () => {
@@ -773,13 +890,23 @@ check('orchestrate.ts keeps the stub out of the trim, and out of the retry', () 
     source.includes('const headerTokens = countMessagesTokens([summaryMessage], model);'),
     'the trim budget does not charge the summary alone'
   );
-  // The rebuild after a trim has no stub in it.
-  const rebuild = source.indexOf('...trimPlan.messages');
+  // The rebuild after a trim has no stub in it: the result is the summary
+  // plus the trimmed window, and the stub is attached later (see below).
+  const rebuild = source.indexOf('newMessages = [resultSummary, ...resultWindow];');
   assert.ok(rebuild !== -1, 'orchestrate.ts no longer rebuilds from the trim plan');
   const rebuildBlock = source.slice(Math.max(0, rebuild - 400), rebuild);
   assert.ok(
     !rebuildBlock.includes('recentFilesMessage'),
     'the trim rebuild still puts the stub between the summary and the window'
+  );
+  assert.ok(
+    source.includes('resultWindow = trimPlan.messages;'),
+    'the trim plan no longer becomes the window of the result'
+  );
+  assert.match(
+    source,
+    /resultSummary = \{\s*\.\.\.summaryMessage,/u,
+    'the trim no longer rebuilds the summary from the summary message'
   );
   assert.ok(
     source.includes('planWindowTrim(preparedRecentMessages, windowBudget, model)'),

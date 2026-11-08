@@ -40,6 +40,11 @@
  * 6. TERMINATION. The cut is monotonically advanced and is bounded by the hard
  *    limit, so the exact-recount loop runs at most `preserved.length` times
  *    and always returns.
+ * 7. THE KEPT INDEXES. `keptIndices[position]` is the index of
+ *    `messages[position]` in the INPUT window, so a caller can always map a
+ *    kept row back to where it came from — which the extra distillation pass
+ *    needs, because it has to recognise the rows an earlier pass already
+ *    digested.
  */
 
 import type { ChatMessage } from '@/services/llm';
@@ -116,11 +121,32 @@ export function computePreservedWindowBudget(params: {
 export interface WindowTrimPlan {
   /** The messages to keep (a subsequence of the input, plus any hoisted anchor). */
   messages: ChatMessage[];
+  /**
+   * The index each kept message came from in the INPUT window.
+   *
+   * WHY it matters: the trimmer cuts a PREFIX of the window and may hoist the
+   * anchor to the front, so the kept messages do NOT carry the input's
+   * indices any more. A caller that has to go on and talk about the window's
+   * rows — the extra distillation pass, which has to know which rows are
+   * already digests — needs the mapping back, and the mapping is exactly this
+   * array: `keptIndices[position]` is the input index of `messages[position]`.
+   */
+  keptIndices: number[];
   /** How many messages were removed (the hoisted anchor is not one of them). */
   droppedCount: number;
   /** The tokens those messages carried, as the local tokenizer counted them. */
   droppedTokens: number;
   stopReason: WindowTrimStopReason;
+}
+
+/**
+ * The identity mapping: position `i` came from index `i`.
+ *
+ * @param length - how many entries the mapping has.
+ * @returns the identity indices.
+ */
+function identityIndices(length: number): number[] {
+  return Array.from({ length }, (_, index) => index);
 }
 
 /**
@@ -152,6 +178,7 @@ export function planWindowTrim(
 ): WindowTrimPlan {
   const unchanged = (stopReason: WindowTrimStopReason): WindowTrimPlan => ({
     messages: preserved,
+    keptIndices: identityIndices(preserved.length),
     droppedCount: 0,
     droppedTokens: 0,
     stopReason,
@@ -207,6 +234,7 @@ export function planWindowTrim(
       }
       return {
         messages: built.messages,
+        keptIndices: built.keptIndices,
         droppedCount: built.droppedCount,
         droppedTokens: built.droppedTokens,
         stopReason: fits ? 'trimmed' : 'trimmed-insufficient',
@@ -223,6 +251,7 @@ export function planWindowTrim(
       }
       return {
         messages: built.messages,
+        keptIndices: built.keptIndices,
         droppedCount: built.droppedCount,
         droppedTokens: built.droppedTokens,
         stopReason: 'trimmed-insufficient',
@@ -303,15 +332,27 @@ function buildPlan(
   cut: number,
   anchorIndex: number,
   tokenCosts: number[]
-): { messages: ChatMessage[]; droppedCount: number; droppedTokens: number } {
+): {
+  messages: ChatMessage[];
+  keptIndices: number[];
+  droppedCount: number;
+  droppedTokens: number;
+} {
   if (cut <= 0) {
-    return { messages: preserved, droppedCount: 0, droppedTokens: 0 };
+    return {
+      messages: preserved,
+      keptIndices: identityIndices(preserved.length),
+      droppedCount: 0,
+      droppedTokens: 0,
+    };
   }
 
   const hoistAnchor = anchorIndex >= 0 && anchorIndex < cut;
   const anchorMessage = hoistAnchor ? preserved[anchorIndex] : undefined;
-  const messages =
-    anchorMessage === undefined ? preserved.slice(cut) : [anchorMessage, ...preserved.slice(cut)];
+  const tail = preserved.slice(cut);
+  const tailIndices = Array.from({ length: tail.length }, (_, index) => cut + index);
+  const messages = anchorMessage === undefined ? tail : [anchorMessage, ...tail];
+  const keptIndices = anchorMessage === undefined ? tailIndices : [anchorIndex, ...tailIndices];
 
   let droppedCount = 0;
   let droppedTokens = 0;
@@ -323,5 +364,5 @@ function buildPlan(
     droppedTokens += tokenCosts[index] ?? 0;
   }
 
-  return { messages, droppedCount, droppedTokens };
+  return { messages, keptIndices, droppedCount, droppedTokens };
 }

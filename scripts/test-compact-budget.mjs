@@ -65,6 +65,7 @@ import {
   RECENT_FILES_MIN_TOKENS,
   TOOL_DISTILL_CHAR_THRESHOLD,
   TOOL_DISTILL_DIGEST_MAX_CHARS_CEILING,
+  TOOL_DISTILL_EXTRA_CALLS_MAX,
   TOOL_DISTILL_INPUT_MAX_CHARS_ABSOLUTE,
   TOOL_DISTILL_INPUT_OVERHEAD_TOKENS,
   TOOL_DISTILL_MAX_CALLS,
@@ -82,6 +83,7 @@ import {
   distillToolMessages,
   planDistillation,
   planDistillCalls,
+  planDistillPass,
   truncateToolOutputForDistillation,
 } from '../src/services/compact/distill.ts';
 import { computeRecentFilesBudget } from '../src/services/compact/recentFiles.ts';
@@ -99,6 +101,17 @@ import { countMessageTokens, countTextTokens } from '../src/services/tokenizer.t
 import { forwardableReasoningEffort } from '../src/types/chatConfig.ts';
 
 const MODEL = 'gpt-4o';
+
+/**
+ * An LLM context whose calls fail at the TRANSPORT layer (port 1 refuses the
+ * connection immediately) — no network, no quota, no model.
+ *
+ * WHY it lives at the top of the file: it is a CONST, and a const is in its
+ * temporal dead zone until its declaration is evaluated — so a check that
+ * used it above the declaration would fail with a ReferenceError rather
+ * than with an assertion.
+ */
+const REFUSING_CTX = { baseUrl: 'http://127.0.0.1:1' };
 
 /** The context windows the arithmetic is checked at. */
 const CONTEXT_SIZES = [512, 1024, 2048, 8192, 200000];
@@ -1221,6 +1234,182 @@ check('an oversized tool row with no owning assistant is counted apart from the 
   );
 });
 
+console.log('the extra distillation spend plans the leftovers');
+
+// The EXTRA spend: the SECOND pass over the preserved window, made when the
+// window trim has proved not to be enough. It may only digest the rows the
+// FIRST pass never touched — the ones the call cap (or the prefill budget)
+// left behind.
+//
+// WHY the plan is a separate concern: the call cap saturates at 8 calls, but
+// the prefill budget is ONE WINDOW. At a 1M-token window the cap binds
+// FIRST, so ~790 000 tokens of the budget go UNSPENT while the oversized
+// outputs that were not digested stay VERBATIM in the preserved window — and
+// a verbatim tool output in the result is exactly what makes it too big.
+
+/**
+ * Plans one distillation pass with the caps the orchestrator uses.
+ *
+ * @param {object[]} history - the slice to plan over.
+ * @param {number} maxCalls - the call ceiling.
+ * @param {number} budgetTokens - the prefill tokens the pass may spend.
+ * @param {number} [perCallMaxChars] - the per-call input cap.
+ * @param {Set<number>} [excludeIndices] - the rows an earlier pass dealt with.
+ * @returns {object} the plan.
+ */
+function passPlan(history, maxCalls, budgetTokens, perCallMaxChars = 100_000, excludeIndices) {
+  return planDistillPass({
+    historyMessages: history,
+    maxCalls,
+    perCallMaxChars,
+    budgetTokens,
+    ...(excludeIndices === undefined ? {} : { excludeIndices }),
+  });
+}
+
+check('the extra pass takes the NEXT largest outputs, never a digest again', () => {
+  const sizes = [1300, 5000, 2000, 40000, 1500, 8000, 3000, 1600, 12000, 6000];
+  const history = distillFixture(sizes);
+
+  // The FIRST pass: the three largest, exactly as the ordering check above
+  // pins.
+  const first = passPlan(history, 3, 1_000_000);
+  assert.deepEqual(
+    first.calls.map((call) => call.index),
+    [toolIndex(3), toolIndex(5), toolIndex(8)],
+    'the first pass did not take the three largest outputs'
+  );
+
+  // The SECOND pass: the SAME planner, over the rows the first pass did not
+  // digest. It takes the next three largest — and never one of the three the
+  // first pass already turned into a digest (a digest can be LONGER than the
+  // output it replaced, so distilling it again would make the window bigger).
+  const digested = new Set(first.calls.map((call) => call.index));
+  const second = passPlan(history, 3, 1_000_000, 100_000, digested);
+  assert.deepEqual(
+    second.calls.map((call) => call.index),
+    [toolIndex(1), toolIndex(6), toolIndex(9)],
+    'the extra pass did not take the next three largest outputs'
+  );
+  for (const call of second.calls) {
+    assert.ok(!digested.has(call.index), 'the extra pass re-digested a digest');
+  }
+  // The two passes together covered six DISTINCT rows.
+  const covered = new Set([...first.calls, ...second.calls].map((call) => call.index));
+  assert.equal(covered.size, 6, 'the two passes digested the same row twice');
+});
+
+check('an excluded row is neither selected nor counted as left behind', () => {
+  const history = distillFixture([4000, 2000, 3000]);
+  const excluded = new Set([toolIndex(0)]);
+  const plan = planDistillation(history, 8, undefined, excluded);
+  assert.deepEqual(
+    plan.selected,
+    [toolIndex(1), toolIndex(2)],
+    'the excluded row was selected again'
+  );
+  // The cap did not leave the excluded row behind — an earlier pass dealt
+  // with it — so it must not be reported as a candidate the cap skipped.
+  assert.equal(plan.skipped, 0, 'the excluded row was counted as left behind by the cap');
+});
+
+check('the extra spend is bounded by the call ceiling', () => {
+  const history = distillFixture(Array.from({ length: 40 }, () => 5000));
+  const plan = passPlan(history, TOOL_DISTILL_EXTRA_CALLS_MAX, 10_000_000);
+  assert.equal(plan.calls.length, TOOL_DISTILL_EXTRA_CALLS_MAX);
+  assert.equal(plan.capSkipped, 40 - TOOL_DISTILL_EXTRA_CALLS_MAX);
+});
+
+check('the extra spend never exceeds the leftover budget', () => {
+  const sizes = [900_000, 800_000, 700_000, 600_000, 500_000, 400_000];
+  const history = distillFixture(sizes);
+  const leftover = 100_000;
+  const plan = passPlan(history, TOOL_DISTILL_EXTRA_CALLS_MAX, leftover, 112_000);
+  assert.ok(
+    plan.prefillTokens <= leftover,
+    `the plan spends ${plan.prefillTokens} of a ${leftover}-token leftover budget`
+  );
+  for (const call of plan.calls) {
+    assert.ok(
+      call.prefillTokens <= leftover,
+      `one call costs ${call.prefillTokens} tokens of a ${leftover}-token leftover budget`
+    );
+  }
+  // And a candidate the budget cannot pay for is SKIPPED, not allowed to
+  // overshoot — the same rule the first pass obeys.
+  assert.ok(plan.budgetSkipped > 0, 'the fixture is too small to prove the bound');
+});
+
+check('the leftover budget of a 1M window is worth dozens of extra digests', () => {
+  // THE SCENARIO THE FEATURE EXISTS FOR. At a 1M-token window the call cap
+  // (8) binds BEFORE the prefill budget (one window): eight calls at the
+  // per-call ceiling cost ~258 000 tokens, so ~790 000 tokens of the budget
+  // go UNSPENT — and the oversized outputs that were not digested stay
+  // VERBATIM in the preserved window, which is what makes the result too
+  // big.
+  const numCtx = 1048576;
+  const perCall = computeDistillInputMaxChars(numCtx);
+  const budget = createDistillBudget(numCtx);
+  const history = distillFixture(Array.from({ length: 34 }, () => 200_000));
+
+  const first = passPlan(history, computeDistillCallCap(numCtx), budget.totalTokens, perCall);
+  assert.equal(first.calls.length, 8, 'the call cap did not bind at a 1M window');
+  assert.ok(
+    first.prefillTokens < budget.totalTokens / 2,
+    `the first pass spent ${first.prefillTokens} of ${budget.totalTokens} — the fixture does not reproduce the gap`
+  );
+
+  const leftover = budget.totalTokens - first.prefillTokens;
+  const extra = passPlan(
+    history,
+    TOOL_DISTILL_EXTRA_CALLS_MAX,
+    leftover,
+    perCall,
+    new Set(first.calls.map((call) => call.index))
+  );
+  assert.ok(extra.calls.length > 8, `the extra spend bought only ${extra.calls.length} calls`);
+  assert.ok(extra.prefillTokens <= leftover, 'the extra spend exceeded the leftover budget');
+  // And it is the BUDGET, not the ceiling, that bounds the extra spend at
+  // this window: the leftover cannot pay for 32 calls.
+  assert.ok(
+    extra.calls.length < TOOL_DISTILL_EXTRA_CALLS_MAX,
+    `the ceiling (${TOOL_DISTILL_EXTRA_CALLS_MAX}) bound the extra spend — the budget should bind first`
+  );
+  // The rows the first pass digested are never digested again.
+  const digested = new Set(first.calls.map((call) => call.index));
+  for (const call of extra.calls) {
+    assert.ok(!digested.has(call.index), 'the extra spend re-digested a digest');
+  }
+});
+
+await checkAsync('the extra spend never re-tries a row whose call failed', async () => {
+  // A failed call leaves the output VERBATIM — so it IS un-digested — but it
+  // is not retried here: the provider that just refused the request will
+  // refuse it again, and the extra spend may make up to 32 calls.
+  const history = distillFailureFixture();
+  const first = await distillToolMessages(
+    REFUSING_CTX,
+    history,
+    8192,
+    MODEL,
+    2,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined
+  );
+  assert.equal(first.failedCount, 2, `failedCount is ${first.failedCount}, expected 2`);
+  assert.deepEqual(first.failedIndices, [1, 4], 'the pass did not report which rows failed');
+  assert.deepEqual(first.distilledIndices, [], 'a failed call reported a digest');
+  // The extra pass excludes both the digests and the failures: there is
+  // nothing left for it to digest.
+  const handled = new Set([...first.distilledIndices, ...first.failedIndices]);
+  const extra = passPlan(history, 8, 1_000_000, 100_000, handled);
+  assert.equal(extra.calls.length, 0, 'the extra spend tried a row that already failed');
+  assert.equal(extra.candidateCount, 0, 'the failed rows were still counted as candidates');
+});
+
 console.log('the distillation prefill budget bounds the whole compaction');
 
 /**
@@ -1412,7 +1601,6 @@ function distillFailureFixture() {
  * An LLM context whose calls fail at the TRANSPORT layer (port 1 refuses the
  * connection immediately) — no network, no quota, no model.
  */
-const REFUSING_CTX = { baseUrl: 'http://127.0.0.1:1' };
 
 await checkAsync(
   'a failing distillation call keeps its message verbatim, and the pass goes on',

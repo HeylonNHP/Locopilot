@@ -89,11 +89,7 @@ export function estimateSerializedMessageTokens(
   if (text.length === 0) {
     return 0;
   }
-  return countCalibratedTextTokens(
-    `${text}${SERIALIZED_BLOCK_SEPARATOR}`,
-    model,
-    'summarise'
-  );
+  return countCalibratedTextTokens(`${text}${SERIALIZED_BLOCK_SEPARATOR}`, model, 'summarise');
 }
 
 /**

@@ -24,8 +24,9 @@ import {
   formatWindowTrimNotice,
   MIN_SUMMARISE_TOKENS,
   SUMMARY_PREAMBLE,
+  TOOL_DISTILL_EXTRA_CALLS_MAX,
 } from './constants';
-import { createDistillBudget, distillToolMessages } from './distill';
+import { createDistillBudget, distillToolMessages, remainingDistillBudgetTokens } from './distill';
 import { measureConversationTokens } from './measure';
 import {
   attachRecentFilesMessage,
@@ -462,7 +463,20 @@ async function compactHistoryPinned(
   // stub at all after the user had been told the files were re-attached; or the
   // trim paid for the stub's tokens out of the preserved window, dropping turns
   // to fund a convenience.
-  let newMessages: ChatMessage[] = [summaryMessage, ...preparedRecentMessages];
+  // The summary message the result carries, and the preserved window beside
+  // it. The result is always `[summary, ...window]`, and BOTH halves are
+  // reassembled whenever the window changes — the trimmer drops messages
+  // from it, the extra distillation pass replaces rows in it.
+  let resultSummary = summaryMessage;
+  let resultWindow = preparedRecentMessages;
+  // The index each row of `resultWindow` came from in the ORIGINAL preserved
+  // window. The trimmer cuts a PREFIX of the window (and may hoist the anchor
+  // to the front), so the two index spaces are NOT the same — and the extra
+  // distillation pass has to know which rows are already digests IN THE INDEX
+  // SPACE OF THE ARRAY IT IS ABOUT TO WALK.
+  let resultWindowSources: number[] = preparedRecentMessages.map((_, index) => index);
+
+  let newMessages: ChatMessage[] = [resultSummary, ...resultWindow];
 
   // The NEW count is a local estimate too — with ONE correction: the system
   // prompt is added to it. `newMessages` deliberately excludes the system
@@ -571,13 +585,13 @@ async function compactHistoryPinned(
     });
     const trimPlan = planWindowTrim(preparedRecentMessages, windowBudget, model);
     if (trimPlan.droppedCount > 0) {
-      newMessages = [
-        {
-          ...summaryMessage,
-          content: `${summaryMessage.content}${formatWindowTrimNotice(trimPlan.droppedCount)}`,
-        },
-        ...trimPlan.messages,
-      ];
+      resultSummary = {
+        ...summaryMessage,
+        content: `${summaryMessage.content}${formatWindowTrimNotice(trimPlan.droppedCount)}`,
+      };
+      resultWindow = trimPlan.messages;
+      resultWindowSources = trimPlan.keptIndices;
+      newMessages = [resultSummary, ...resultWindow];
       newTokenCount = countMessagesTokens(newMessages, model) + resolvedSystemPromptTokens;
       shouldRetry = numCtx > 0 && newTokenCount > acceptanceBudget;
       trim = trimPlan;
@@ -588,6 +602,153 @@ async function compactHistoryPinned(
               ? ` Still ${newTokenCount} tokens against a ${acceptanceBudget}-token target.`
               : ''
           }`
+      );
+    }
+  }
+
+  // ── Spend the leftover distillation budget BEFORE re-summarising ─────────
+  //
+  // WHY here, and nowhere else: this is the one point where the compaction
+  // KNOWS the result does not fit — the trim has been tried and was not
+  // enough — and the only lever left that does not cost FIDELITY. The retry
+  // recursion re-summarises the ALREADY-compacted array (a summary of a
+  // summary, the worst quality leak in the pipeline) and the trim has already
+  // dropped everything it may drop.
+  //
+  // WHY the WINDOW and not the older slice: the preserved window is kept
+  // VERBATIM in the result, so digesting its tool outputs shrinks the result
+  // DIRECTLY and needs NO extra summariser call. Digesting the older slice
+  // would shrink the SUMMARY's input instead — which would need a whole extra
+  // summarisation pass, the exact cost this block exists to avoid.
+  //
+  // WHY the leftover budget is worth spending: the call cap saturates at 8,
+  // but the prefill budget is ONE WINDOW. At a 262 144-token window the two
+  // bind together (eight calls at ~32 000 tokens each is the whole budget),
+  // but at a 1 048 576-token window the CAP binds FIRST — eight calls spend
+  // ~258 000 of 1 048 576 tokens, so ~790 000 tokens of the budget went
+  // UNSPENT while the oversized outputs that were not digested stayed
+  // VERBATIM in the window. A verbatim tool output in the result is exactly
+  // what makes it too big, so the leftover budget is worth more spent than
+  // idle.
+  //
+  // THE BUDGET IS THE SAME BUDGET: `distillBudget.usedTokens` is charged with
+  // the extra calls, so the total prefill of ONE compaction still respects
+  // `computeDistillPrefillBudgetTokens(numCtx)`. The call ceiling
+  // (`TOOL_DISTILL_EXTRA_CALLS_MAX`) is the other bound — it keeps the
+  // latency of the extra spend finite.
+  let extraDistillSummary: { distilledCount: number; prefillTokens: number } | undefined;
+  if (shouldRetry) {
+    // The rows the FIRST window pass already dealt with, in the index space
+    // of the window that is about to be walked:
+    //
+    // - the ones it turned into DIGESTS: a digest must never be distilled
+    //   again — a digest is the model's own answer about the output and can
+    //   be LONGER than the output it replaced, so distilling it again would
+    //   make the window BIGGER.
+    // - the ones whose call FAILED: a failure is not retried here. The
+    //   provider that just refused the request will refuse it again, and the
+    //   extra spend may make up to 32 calls — a failing provider would cost
+    //   32 more failures for nothing.
+    //
+    // What is left is exactly the set the extra spend targets: the oversized
+    // outputs the call cap or the prefill budget never ATTEMPTED.
+    const digestedRows = new Set<number>();
+    const failedRows = new Set<number>();
+    const sourcePositions = new Map<number, number>();
+    resultWindowSources.forEach((source, position) => {
+      sourcePositions.set(source, position);
+    });
+    for (const source of recentDistill.distilledIndices) {
+      const position = sourcePositions.get(source);
+      if (position !== undefined) {
+        digestedRows.add(position);
+      }
+    }
+    for (const source of recentDistill.failedIndices) {
+      const position = sourcePositions.get(source);
+      if (position !== undefined) {
+        failedRows.add(position);
+      }
+    }
+    const handledRows = new Set([...digestedRows, ...failedRows]);
+
+    const leftoverBudgetTokens = remainingDistillBudgetTokens(distillBudget);
+    const extraDistill = await distillToolMessages(
+      ctx,
+      resultWindow,
+      numCtx,
+      model,
+      TOOL_DISTILL_EXTRA_CALLS_MAX,
+      onProgress,
+      signal,
+      reasoningEffort,
+      onTps,
+      distillBudget,
+      handledRows
+    );
+    // The SAME budget: the extra calls are charged against it, so the total
+    // prefill of this compaction never exceeds
+    // `computeDistillPrefillBudgetTokens(numCtx)`.
+    distillBudget.usedTokens += extraDistill.prefillTokens;
+    extraDistillSummary = {
+      distilledCount: extraDistill.distilledCount,
+      prefillTokens: extraDistill.prefillTokens,
+    };
+
+    if (extraDistill.distilledCount > 0) {
+      // The digests are only KEPT when they made the result SMALLER: a digest
+      // is the model's own answer about the output, and on a small output it
+      // can be longer than the output itself. Spending the budget must never
+      // make the result bigger.
+      const digestedMessages = [resultSummary, ...extraDistill.messages];
+      const distilledTokens =
+        countMessagesTokens(digestedMessages, model) + resolvedSystemPromptTokens;
+      if (distilledTokens < newTokenCount) {
+        resultWindow = extraDistill.messages;
+        newMessages = digestedMessages;
+        newTokenCount = distilledTokens;
+        shouldRetry = numCtx > 0 && newTokenCount > acceptanceBudget;
+        onProgress?.(
+          `Spent the leftover distillation budget on ${extraDistill.distilledCount} more oversized tool ` +
+            `output(s) of the preserved window (~${extraDistill.prefillTokens} tokens of prefill) — the ` +
+            `compacted history is ${
+              shouldRetry
+                ? `still over budget (${newTokenCount} tokens against a ${acceptanceBudget}-token budget)`
+                : `now within budget (${newTokenCount} tokens against a ${acceptanceBudget}-token budget)`
+            }.`
+        );
+      } else {
+        onProgress?.(
+          `Spent the leftover distillation budget on ${extraDistill.distilledCount} more oversized tool ` +
+            `output(s) of the preserved window (~${extraDistill.prefillTokens} tokens of prefill) — but the ` +
+            `digests were no smaller than the outputs they replace, so the window is unchanged.`
+        );
+      }
+    } else if (extraDistill.candidateCount === 0) {
+      // NOTHING LEFT TO SPEND ON. Two shapes reach this line: the window has
+      // no oversized output at all, or every oversized output in it was
+      // already distilled or already attempted (and failed).
+      onProgress?.(
+        failedRows.size > 0
+          ? `No un-digested oversized tool output(s) left in the preserved window that the leftover ` +
+              `distillation budget (~${leftoverBudgetTokens} tokens) may spend on — the only oversized ` +
+              `output(s) left are ${failedRows.size} whose distillation call(s) failed, and a failure is not ` +
+              `retried here.`
+          : `No un-digested oversized tool output(s) left in the preserved window — the leftover ` +
+              `distillation budget (~${leftoverBudgetTokens} tokens) has nothing to spend on.`
+      );
+    } else if (extraDistill.attemptedCount === 0) {
+      // The leftover budget cannot pay for even ONE call — the candidates are
+      // all bigger than what is left of the budget.
+      onProgress?.(
+        `The leftover distillation budget (~${leftoverBudgetTokens} tokens) cannot pay for another ` +
+          `distillation call — ${extraDistill.candidateCount} un-digested oversized tool output(s) stay ` +
+          `verbatim in the preserved window.`
+      );
+    } else {
+      onProgress?.(
+        `All ${extraDistill.attemptedCount} extra distillation call(s) failed — ${extraDistill.candidateCount} ` +
+          `un-digested oversized tool output(s) stay verbatim in the preserved window.`
       );
     }
   }
@@ -763,6 +924,14 @@ async function compactHistoryPinned(
             droppedCount: trim.droppedCount,
             droppedTokens: trim.droppedTokens,
             stopReason: trim.stopReason,
+          },
+        }),
+    ...(extraDistillSummary === undefined
+      ? {}
+      : {
+          extraDistill: {
+            distilledCount: extraDistillSummary.distilledCount,
+            prefillTokens: extraDistillSummary.prefillTokens,
           },
         }),
     retried,

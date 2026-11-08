@@ -263,6 +263,78 @@ export function planDistillCalls(
 }
 
 /**
+ * The plan for ONE distillation pass: which rows to digest, what the calls
+ * cost, and what the caps left behind.
+ *
+ * WHY it is a single function: the candidate selection ({@link planDistillation})
+ * and the affordability ({@link planDistillCalls}) are two halves of ONE
+ * decision, and the EXTRA spend (the second pass over the preserved window,
+ * once the trim has proved not to be enough) has to make exactly the same
+ * decision with exactly the same rules — only over the rows the first pass
+ * never touched. A separate code path for the extra spend would be a second
+ * place for the two to drift apart, and the drift would be invisible: both
+ * would look right.
+ */
+export interface DistillPassPlan {
+  /** The calls to make, in the order the history is walked (ascending index). */
+  calls: DistillCall[];
+  /** How many eligible outputs the call cap left behind. */
+  capSkipped: number;
+  /** How many eligible outputs the prefill budget could not pay for. */
+  budgetSkipped: number;
+  /** How many eligible outputs there were in this slice. */
+  candidateCount: number;
+  /** How many oversized rows had no owning assistant row in this slice. */
+  orphanCount: number;
+  /** The prefill tokens the plan spends. */
+  prefillTokens: number;
+}
+
+/**
+ * Plans ONE distillation pass.
+ *
+ * The plan is PURE: it touches no model and no filesystem, and it is the
+ * whole of the extra-spend decision — how many calls are affordable, and
+ * which outputs they are spent on.
+ *
+ * @param historyMessages - the slice being distilled.
+ * @param maxCalls        - how many model calls the pass may make.
+ * @param perCallMaxChars - the largest number of characters one call may carry.
+ * @param budgetTokens    - the prefill tokens the pass may spend.
+ * @param thresholdChars  - the smallest output that is worth a call.
+ * @param excludeIndices  - rows an earlier pass already dealt with.
+ */
+export function planDistillPass(params: {
+  historyMessages: ChatMessage[];
+  maxCalls: number;
+  perCallMaxChars: number;
+  budgetTokens: number;
+  thresholdChars?: number;
+  excludeIndices?: ReadonlySet<number>;
+}): DistillPassPlan {
+  const selection = planDistillation(
+    params.historyMessages,
+    params.maxCalls,
+    params.thresholdChars,
+    params.excludeIndices
+  );
+  const callPlan = planDistillCalls(
+    params.historyMessages,
+    selection.selected,
+    params.perCallMaxChars,
+    params.budgetTokens
+  );
+  return {
+    calls: callPlan.calls,
+    capSkipped: selection.skipped,
+    budgetSkipped: callPlan.budgetSkipped,
+    candidateCount: selection.selected.length + selection.skipped,
+    orphanCount: selection.orphans,
+    prefillTokens: callPlan.prefillTokens,
+  };
+}
+
+/**
  * What a failed distillation call failed WITH, in words a progress line can
  * show.
  *
@@ -323,6 +395,13 @@ function countDistillRequestTokens(messages: ChatMessage[], model: string): numb
  * apart on purpose: the cap did not choose to leave an orphan (distillation
  * cannot legally touch it) and it did not choose to leave a failed row (the
  * call was made and did not return).
+ *
+ * `distilledIndices` and `failedIndices` are the ROWS the pass dealt with, in
+ * the index space of the array it was given. They are what lets a SECOND pass
+ * over the same slice know which rows are already digests (`distilledIndices`)
+ * and which rows already had their one attempt (`failedIndices`) — so the
+ * extra spend can target exactly the rows that were NEVER attempted, instead
+ * of re-digesting a digest or burning another call on a known failure.
  */
 export interface DistillResult {
   messages: ChatMessage[];
@@ -342,6 +421,10 @@ export interface DistillResult {
   candidateCount: number;
   /** The prefill tokens this pass charged against the budget. */
   prefillTokens: number;
+  /** The indices (in the input array) of the rows this pass replaced. */
+  distilledIndices: number[];
+  /** The indices (in the input array) of the rows whose call failed. */
+  failedIndices: number[];
 }
 
 /**
@@ -369,6 +452,12 @@ export interface DistillResult {
  * @param historyMessages - The slice that will be distilled.
  * @param maxCalls        - How many model calls the caller can afford.
  * @param thresholdChars  - Minimum content length that makes a row a candidate.
+ * @param excludeIndices  - Rows that must NOT be distilled again — the ones an
+ *                          earlier pass already turned into digests, and the
+ *                          ones whose one attempt already failed. They are
+ *                          neither selected nor counted as skipped: the cap
+ *                          did not leave them behind, an earlier pass dealt
+ *                          with them.
  * @returns the selected (ascending) indices, how many candidates the cap left
  *          behind, and how many oversized rows were orphans (not candidates at
  *          all).
@@ -376,7 +465,8 @@ export interface DistillResult {
 export function planDistillation(
   historyMessages: ChatMessage[],
   maxCalls: number,
-  thresholdChars: number = TOOL_DISTILL_CHAR_THRESHOLD
+  thresholdChars: number = TOOL_DISTILL_CHAR_THRESHOLD,
+  excludeIndices?: ReadonlySet<number>
 ): { selected: number[]; skipped: number; orphans: number } {
   const limit = Number.isFinite(maxCalls) ? Math.max(0, Math.floor(maxCalls)) : 0;
 
@@ -385,6 +475,9 @@ export function planDistillation(
   for (let index = 0; index < historyMessages.length; index += 1) {
     const message = historyMessages[index];
     if (!message || message.role !== 'tool') {
+      continue;
+    }
+    if (excludeIndices?.has(index)) {
       continue;
     }
     const length = message.content?.length ?? 0;
@@ -430,6 +523,11 @@ export function planDistillation(
  * @param maxCalls - How many distillation calls this pass may make.
  * @param budget   - The compaction's prefill budget; the calls this pass
  *                   cannot pay for are left verbatim.
+ * @param skipIndices - Rows this pass must not digest again: the ones an
+ *                   earlier pass already turned into digests, and the ones
+ *                   whose one attempt already failed. They are the rows the
+ *                   EXTRA spend skips, so the second pass never re-digests a
+ *                   digest and never spends another call on a known failure.
  */
 export async function distillToolMessages(
   ctx: LlmRequestContext,
@@ -441,14 +539,18 @@ export async function distillToolMessages(
   signal?: AbortSignal,
   reasoningEffort?: ReasoningEffort,
   onTps?: (tps: number) => void,
-  budget?: DistillBudget
+  budget?: DistillBudget,
+  skipIndices?: ReadonlySet<number>
 ): Promise<DistillResult> {
-  const plan = planDistillation(historyMessages, maxCalls);
   const distilledMessages: ChatMessage[] = [];
   let distilledCount = 0;
   let failedCount = 0;
   /** How many model calls this pass actually SENT. */
   let attemptedCount = 0;
+  /** The rows this pass replaced with a digest (input index). */
+  const distilledIndices: number[] = [];
+  /** The rows whose call failed and that therefore stayed verbatim. */
+  const failedIndices: number[] = [];
   /** Why the failed calls failed, so the progress line can name the reason. */
   const failureReasons = new Set<string>();
 
@@ -467,13 +569,14 @@ export async function distillToolMessages(
 
   // The calls that can be AFFORDED: the call cap chooses the candidates, the
   // prefill budget decides which of them this pass can actually pay for.
-  const callPlan = planDistillCalls(
+  const plan = planDistillPass({
     historyMessages,
-    plan.selected,
-    inputMaxChars,
-    remainingDistillBudgetTokens(budget)
-  );
-  const plannedCalls = new Map(callPlan.calls.map((call) => [call.index, call]));
+    maxCalls,
+    perCallMaxChars: inputMaxChars,
+    budgetTokens: remainingDistillBudgetTokens(budget),
+    ...(skipIndices === undefined ? {} : { excludeIndices: skipIndices }),
+  });
+  const plannedCalls = new Map(plan.calls.map((call) => [call.index, call]));
 
   for (let index = 0; index < historyMessages.length; index += 1) {
     const message = historyMessages[index];
@@ -584,6 +687,9 @@ export async function distillToolMessages(
       }
       failedCount += 1;
       failureReasons.add(describeDistillFailure(err));
+      // The row is remembered as ATTEMPTED: a second pass over the same slice
+      // must not spend another call on a failure that already happened.
+      failedIndices.push(index);
       distilledMessages.push(message);
       continue;
     }
@@ -638,8 +744,12 @@ export async function distillToolMessages(
       content: `${wrapper}\n${digest}`,
     });
     distilledCount += 1;
+    // The row is remembered as DIGESTED: a second pass over the same slice
+    // must not distil a digest again (a digest can be longer than the output
+    // it replaced, so re-distilling it would make the history BIGGER).
+    distilledIndices.push(index);
 
-    onProgress?.(`Distilled tool output ${distilledCount}/${callPlan.calls.length} (${toolName})`);
+    onProgress?.(`Distilled tool output ${distilledCount}/${plan.calls.length} (${toolName})`);
   }
 
   if (failedCount > 0) {
@@ -656,9 +766,9 @@ export async function distillToolMessages(
     );
   }
 
-  if (callPlan.budgetSkipped > 0) {
+  if (plan.budgetSkipped > 0) {
     onProgress?.(
-      `${callPlan.budgetSkipped} oversized tool output(s) were left verbatim: the compaction's ` +
+      `${plan.budgetSkipped} oversized tool output(s) were left verbatim: the compaction's ` +
         `distillation prefill budget ran out.`
     );
   }
@@ -666,12 +776,14 @@ export async function distillToolMessages(
   return {
     messages: distilledMessages,
     distilledCount,
-    skippedCount: plan.skipped,
-    orphanCount: plan.orphans,
+    skippedCount: plan.capSkipped,
+    orphanCount: plan.orphanCount,
     failedCount,
     attemptedCount,
-    budgetSkippedCount: callPlan.budgetSkipped,
-    candidateCount: plan.selected.length + plan.skipped,
-    prefillTokens: callPlan.prefillTokens,
+    budgetSkippedCount: plan.budgetSkipped,
+    candidateCount: plan.candidateCount,
+    prefillTokens: plan.prefillTokens,
+    distilledIndices,
+    failedIndices,
   };
 }
