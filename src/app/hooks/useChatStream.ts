@@ -273,6 +273,24 @@ export function useChatStream(
         dispatch(action);
       }
 
+      if (outcome.clearedSubagentId) {
+        // The server dropped a sub-agent's streamed output because its turn
+        // failed and is re-issued. The store action above REPLACED the
+        // bubble with the text the server kept, but the text that is still
+        // COALESCING for that agent lives here — so its pending flush timer
+        // has to be cancelled and the entry dropped, or the failed attempt's
+        // text would be appended to the bubble AFTER the clear.
+        //
+        // Dropping it loses nothing: the server's replacement content
+        // already includes those characters (the server counted them when
+        // it truncated its own bucket).
+        const pending = subagentBufferRef.current.get(outcome.clearedSubagentId);
+        if (pending) {
+          if (pending.timer) clearTimeout(pending.timer);
+          subagentBufferRef.current.delete(outcome.clearedSubagentId);
+        }
+      }
+
       if (outcome.subagentChunk) {
         const { agentId, text, owner } = outcome.subagentChunk;
         const buffer = subagentBufferRef.current.get(agentId);

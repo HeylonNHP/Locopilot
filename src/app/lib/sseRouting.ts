@@ -82,6 +82,14 @@ export interface SseRouteOutcome {
   actions: ChatAction[];
   /** Sub-agent text that must be coalesced and flushed by the caller. */
   subagentChunk?: { agentId: string; text: string; owner?: number };
+  /**
+   * The sub-agent whose streamed output was dropped by the server (its
+   * turn failed with a transient provider error and is re-issued). The
+   * caller owns the coalescing buffer, so it has to drop that agent's
+   * pending text too — otherwise the pending flush timer would append
+   * the failed attempt's text to the bubble the store just emptied.
+   */
+  clearedSubagentId?: string;
   /** The turn failed, so its retry payload must be preserved. */
   markFailed?: boolean;
   /** The live t/s read-out for the routed owner must be cleared. */
@@ -253,6 +261,36 @@ export function routeSseEvent(
           ...(subagentOwner === undefined ? {} : { owner: subagentOwner }),
         },
       };
+    }
+
+    case 'clear_subagent': {
+      // The sub-agent's turn failed with a transient provider error and is
+      // re-issued, so the text the failed attempt streamed must go — but the
+      // text of the agent's EARLIER turns must STAY (a sub-agent is a
+      // multi-turn loop and only the re-issued turn streams its text
+      // again).
+      //
+      // The server already worked out what remains and sends it in the
+      // event, so the client REPLACES the bubble's content with it. That
+      // also makes the live bubble byte-identical to the text the server
+      // persists for that agent.
+      const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
+      const content = typeof data.content === 'string' ? data.content : String(data.content ?? '');
+      actions.push(
+        {
+          type: 'CLEAR_SUBAGENT_CONTENT',
+          agentId,
+          content,
+          ...(targetSessionId === undefined ? {} : { targetSessionId }),
+        },
+        { type: 'SET_CONFIG', config: { activeSubagentId: agentId } }
+      );
+      // The caller owns the coalescing buffer, so it has to drop this
+      // agent's pending text — the store action alone would leave the
+      // failed attempt's partial text to be flushed AFTER the clear. The
+      // text that is dropped is part of the `content` the server sent, so
+      // nothing is lost by dropping it.
+      return { actions, clearedSubagentId: agentId };
     }
 
     case 'status': {

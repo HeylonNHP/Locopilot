@@ -13,6 +13,12 @@
  * by a different rule. These tests pin the action sequence for each event in
  * both the targeted and the untargeted (legacy "whatever is visible") shape,
  * so the ownership rules can be changed deliberately instead of accidentally.
+ *
+ * `clear_subagent` is the newest of them: the server dropped a sub-agent’s
+ * streamed output (its turn failed with a transient provider error and is
+ * re-issued), so the client has to REPLACE the agent’s bubble with the text
+ * the server kept AND drop the text that is still coalescing for that
+ * agent.
  */
 
 import assert from 'node:assert/strict';
@@ -143,6 +149,44 @@ check('subagent_chunk without an owner omits the owner', () => {
     }
   );
   assert.deepEqual(outcome.subagentChunk, { agentId: 'research', text: 'part' });
+});
+
+check('clear_subagent replaces the agent’s bubble with the text that remains', () => {
+  // A sub-agent’s turn that failed with a transient provider error is
+  // re-issued, so the text the failed attempt streamed has to go — but the
+  // text of the agent’s EARLIER turns stays, and the server is the one
+  // that knows what remains. It sends that text with the event, so the
+  // client REPLACES the bubble with it.
+  assert.deepEqual(actionsFor('clear_subagent', { agentId: 'research', content: 'KEPT' }), [
+    { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: 'KEPT', targetSessionId: 7 },
+    { type: 'SET_CONFIG', config: { activeSubagentId: 'research' } },
+  ]);
+});
+
+check('clear_subagent without an owner omits targetSessionId entirely', () => {
+  assert.deepEqual(
+    actionsFor('clear_subagent', { agentId: 'research', content: 'KEPT' }, UNOWNED),
+    [
+      { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: 'KEPT' },
+      { type: 'SET_CONFIG', config: { activeSubagentId: 'research' } },
+    ]
+  );
+});
+
+check('clear_subagent without content clears the bubble to nothing', () => {
+  // A frame from an older server carries no content: the bubble is emptied
+  // rather than left as it was.
+  assert.deepEqual(actionsFor('clear_subagent', { agentId: 'research' }), [
+    { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: '', targetSessionId: 7 },
+    { type: 'SET_CONFIG', config: { activeSubagentId: 'research' } },
+  ]);
+});
+
+check('clear_subagent reports the cleared agent so the caller can drop its buffer', () => {
+  // The caller owns the coalescing buffer: the store action alone would
+  // leave the failed attempt’s pending text to be flushed AFTER the clear.
+  const outcome = routeSseEvent('clear_subagent', { agentId: 'research', content: 'KEPT' }, OWNED);
+  assert.equal(outcome.clearedSubagentId, 'research');
 });
 
 // ── approvals ───────────────────────────────────────────────────────────────

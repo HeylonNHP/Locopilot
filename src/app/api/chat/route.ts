@@ -140,6 +140,7 @@ import { maybeInjectPromptTimestamp } from '@/services/userMessageStamp';
 import { recordDiscoveredNonVision } from '@/services/visionCache';
 import { filterGrantedMCPTools, isAutoApprovedMCPTarget } from '@/tools/impl/mcpTool';
 import { enterRequestScope } from '@/tools/impl/runCommandTool';
+import { appendSubagentLineText, canonicalSubagentId } from '@/tools/toolOutput';
 import {
   handleToolCall,
   type RequestContext,
@@ -1494,10 +1495,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               lastAuthoritativeTokens > 0
                 ? lastAuthoritativeTokens
                 : countMessagesTokens(currentMessages, model as string) +
-                  countCalibratedTextTokens(
-                    JSON.stringify(mergedTools ?? []),
-                    model as string
-                  );
+                  countCalibratedTextTokens(JSON.stringify(mergedTools ?? []), model as string);
             // `usagePct` is still computed: it feeds the post-compaction nudge
             // and the status events, which report how full the window is.
             const usagePct = (tokensUsed / effectiveNumCtx) * 100;
@@ -1651,10 +1649,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // request will carry: an upper bound is the safe direction.)
                 lastAuthoritativeTokens =
                   countMessagesTokens(currentMessages, model as string) +
-                  countCalibratedTextTokens(
-                    JSON.stringify(mergedTools ?? []),
-                    model as string
-                  );
+                  countCalibratedTextTokens(JSON.stringify(mergedTools ?? []), model as string);
                 if (compactResult.stats.newTokenCount > effectiveNumCtx) {
                   sendEvent('status', {
                     phase: 'compact_overflow',
@@ -2293,13 +2288,42 @@ export async function POST(req: NextRequest): Promise<Response> {
               // free of transport/display prefixes. Every line is also
               // accumulated so flushSessionState persists the bubbles for the
               // end-of-turn client reload.
+              // The key an agent's output is filed under. EVERY write for one
+              // agent uses this ONE spelling — the agent's own lines
+              // (`appendSubagentLine`) and the streamed model text
+              // (`writeAgentChunk`) alike — so one agent is ONE bucket, ONE
+              // client bubble and ONE persisted `subagent_log` row. (Two
+              // spellings used to send an id with surrounding whitespace to
+              // two buckets: the bubble showed the text twice and the
+              // persisted history grew two rows for one agent.)
+              //
+              // The canonicalisation lives in ONE shared function
+              // (`canonicalSubagentId`), because the sub-agent tool applies
+              // the SAME rule to the id it hands out: two spellings of the
+              // same rule would let an agent's bucket key and the id the
+              // client files the bubble under drift apart.
+              const subagentLogKey = (agentId: string): string => canonicalSubagentId(agentId);
               const appendSubagentLine = (agentId: string, message: string): void => {
-                const cleanAgentId = sanitize(agentId).trim() || '__subagent__';
+                const cleanAgentId = subagentLogKey(agentId);
                 const text = sanitize(message).trimEnd();
                 if (text.trim()) {
+                  // The CLIENT's rule, exactly: a newline BETWEEN two
+                  // entries, none before the first one. The server's bucket
+                  // and the client's bubble are two copies of the same text,
+                  // and the clear that drops a failed turn's output
+                  // REPLACES the bubble with the server's copy — so the two
+                  // copies have to be byte-identical at every point. The
+                  // server used to append a trailing newline instead, which
+                  // put the newline in a different place than the client
+                  // did: the same characters in a different order, so the
+                  // replacement visibly reordered the surviving text.
+                  //
+                  // The `subagent_output` event still carries the bare line
+                  // (`message: text`, no newline) — the client adds the
+                  // separator itself, with this very rule.
                   subagentLogContent.set(
                     cleanAgentId,
-                    `${subagentLogContent.get(cleanAgentId) ?? ''}${text}\n`
+                    appendSubagentLineText(subagentLogContent.get(cleanAgentId) ?? '', text)
                   );
                   sendEvent('subagent_output', { agentId: cleanAgentId, message: text });
                 }
@@ -2315,9 +2339,66 @@ export async function POST(req: NextRequest): Promise<Response> {
                 clearInline(): void {},
                 writeAgentChunk(agentId: string, type: 'thinking' | 'content', text: string): void {
                   if (text) {
-                    subagentLogContent.set(agentId, (subagentLogContent.get(agentId) ?? '') + text);
-                    sendEvent('subagent_chunk', { agentId, type, text });
+                    // The SAME key — and the SAME id in the event — as the
+                    // agent's own lines: one agent, one bucket, one bubble.
+                    const cleanAgentId = subagentLogKey(agentId);
+                    subagentLogContent.set(
+                      cleanAgentId,
+                      (subagentLogContent.get(cleanAgentId) ?? '') + text
+                    );
+                    sendEvent('subagent_chunk', { agentId: cleanAgentId, type, text });
                   }
+                },
+                clearAgentContent(agentId: string, dropChars: number): void {
+                  // A sub-agent's turn that fails with a transient provider
+                  // error is RE-ISSUED, and the chunks the failed attempt
+                  // already streamed would then be shown — and persisted —
+                  // TWICE. So the failed attempt's text is dropped here.
+                  //
+                  // The drop is a TRUNCATION, not a delete: only the last
+                  // `dropChars` characters go, and they are exactly the text
+                  // the turn that is being re-issued streamed (the tool
+                  // counts every character it writes). A sub-agent is a
+                  // MULTI-TURN loop and every turn streams into this same
+                  // bucket, so the text of the EARLIER turns has to survive:
+                  // only the re-issued turn streams its own text again,
+                  // never the earlier turns' text.
+                  //
+                  // The bucket is what the persisted row is built from
+                  // (`takeSubagentRow`), so truncating it fixes the
+                  // `subagent_log` row too — no database change is needed.
+                  const cleanAgentId = subagentLogKey(agentId);
+                  const current = subagentLogContent.get(cleanAgentId) ?? '';
+                  const drop = Math.max(0, Number.isFinite(dropChars) ? dropChars : 0);
+                  // NOTHING TO DROP. The failure happened before the turn
+                  // streamed a single character, so there is no text to
+                  // remove — and the replacement would be a no-op that
+                  // still REWRITES the client's bubble with the server's
+                  // copy of it. So the event is not sent at all and the
+                  // bucket is left untouched.
+                  if (drop === 0) {
+                    return;
+                  }
+                  const keep = Math.max(0, current.length - drop);
+                  const remaining = current.slice(0, keep);
+                  // The bucket did not change (it was shorter than the
+                  // drop), so there is nothing to replace either.
+                  if (remaining === current) {
+                    return;
+                  }
+                  if (remaining) {
+                    subagentLogContent.set(cleanAgentId, remaining);
+                  } else {
+                    subagentLogContent.delete(cleanAgentId);
+                  }
+                  // The client has to drop the text it already rendered for
+                  // the failed attempt — and it has to end up with EXACTLY
+                  // the text the server kept, so the event carries it: the
+                  // client REPLACES its bubble with `content`. That is also
+                  // what makes the event replay-safe: replaying it replaces
+                  // the bubble with the server's text again, instead of
+                  // bringing the failed attempt's chunks back.
+                  sendEvent('clear_subagent', { agentId: cleanAgentId, content: remaining });
                 },
                 reportTps(tps: number | null): void {
                   sendEvent('status', { phase: 'subagent', tps });

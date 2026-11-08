@@ -31,6 +31,7 @@ export const SSE_EVENT_NAMES = [
   'tool_progress',
   'subagent_output',
   'subagent_chunk',
+  'clear_subagent',
   'approval_request',
   'status',
   'compact_progress',

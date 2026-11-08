@@ -333,6 +333,18 @@ export type ChatAction =
   | { type: 'APPEND_TOOL_PROGRESS'; content: string; name?: string; targetSessionId?: number }
   | { type: 'SUBAGENT_OUTPUT'; agentId: string; message: string; targetSessionId?: number }
   | { type: 'SUBAGENT_CHUNK'; agentId: string; text: string; targetSessionId?: number }
+  | {
+      type: 'CLEAR_SUBAGENT_CONTENT';
+      agentId: string;
+      /**
+       * The text that must REMAIN for that agent — what the server kept
+       * after dropping the failed turn's output. The bubble is REPLACED
+       * with it (not emptied), so the agent's earlier turns survive and the
+       * live bubble matches the text the server persists.
+       */
+      content: string;
+      targetSessionId?: number;
+    }
   | { type: 'SET_SESSIONS'; sessions: Session[] }
   | { type: 'ADD_SESSION'; session: Session }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
@@ -726,6 +738,77 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         messages: [
           ...state.messages,
           withId({ role: 'subagent_log', content: action.text, subagentId: action.agentId }),
+        ],
+      };
+    }
+    case 'CLEAR_SUBAGENT_CONTENT': {
+      // A sub-agent's turn failed with a transient provider error and is
+      // re-issued, so the text the failed attempt streamed is dropped —
+      // while the text of the agent's EARLIER turns stays.
+      //
+      // The server already worked out what remains and sends it in the
+      // event, so the bubble is REPLACED with that text (not emptied): the
+      // bubble is not removed either, because the re-issued turn keeps
+      // streaming into the same bubble.
+      //
+      // The lookup mirrors SUBAGENT_CHUNK — the LAST bubble belonging to
+      // this agent, in the session the action targets.
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
+          const msgs = [...slot.messages];
+          for (let i = msgs.length - 1; i >= 0; i -= 1) {
+            const candidate = msgs[i];
+            if (!candidate || candidate.role !== 'subagent_log') {
+              continue;
+            }
+            if (candidate.subagentId !== action.agentId) {
+              continue;
+            }
+            msgs[i] = { ...candidate, content: action.content };
+            return { ...slot, messages: msgs };
+          }
+          // No bubble for this agent in that session — but the server says
+          // there IS text that has to remain, so it is created rather than
+          // dropped (mirrors SUBAGENT_CHUNK's create-if-missing branch).
+          if (!action.content) {
+            return slot;
+          }
+          return {
+            ...slot,
+            messages: [
+              ...slot.messages,
+              withId({ role: 'subagent_log', content: action.content, subagentId: action.agentId }),
+            ],
+          };
+        });
+        return nextState;
+      }
+      const msgs = [...state.messages];
+      for (let i = msgs.length - 1; i >= 0; i -= 1) {
+        const candidate = msgs[i];
+        if (!candidate || candidate.role !== 'subagent_log') {
+          continue;
+        }
+        if (candidate.subagentId !== action.agentId) {
+          continue;
+        }
+        msgs[i] = { ...candidate, content: action.content };
+        return { ...state, messages: msgs };
+      }
+      // No bubble for this agent — but the server says there IS text that
+      // has to remain, so it is created rather than dropped (mirrors
+      // SUBAGENT_CHUNK's create-if-missing branch).
+      if (!action.content) {
+        return state;
+      }
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          withId({ role: 'subagent_log', content: action.content, subagentId: action.agentId }),
         ],
       };
     }

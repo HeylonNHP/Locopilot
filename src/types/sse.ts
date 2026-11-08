@@ -49,6 +49,22 @@ export interface SseEventPayloadMap {
   tool_progress: { name: string; message: string };
   subagent_output: { agentId: string; message: string };
   subagent_chunk: { agentId: string; type: SubagentChunkType; text: string };
+  /**
+   * The server dropped the END of a sub-agent's streamed output because the
+   * agent's turn failed with a transient provider error and is re-issued —
+   * the failed attempt's text must not be shown (or persisted) twice.
+   *
+   * `content` is the text that has to REMAIN for that agent — what the
+   * server kept after dropping the failed turn's output. The client
+   * REPLACES the agent's bubble with it (the bubble is NOT removed: the
+   * re-issued turn keeps streaming into the same bubble) and drops the
+   * text that is still coalescing for that agent.
+   *
+   * Because the event carries the remaining text, replaying it is safe: the
+   * bubble ends up with the server's text again instead of the failed
+   * attempt's chunks.
+   */
+  clear_subagent: { agentId: string; content: string };
   approval_request: {
     requestId: string;
     toolName: string;

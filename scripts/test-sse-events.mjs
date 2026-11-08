@@ -40,12 +40,20 @@ function check(label, fn) {
  * The events the client replays when the user returns to a session it was
  * away from. This list is the behaviour the hand-written `Set` had; it is
  * pinned here so the classification table cannot quietly change it.
+ *
+ * `clear_subagent` IS replayed: the failed attempt's `subagent_chunk`s are
+ * replayed, so a client that was looking at another session when the clear
+ * arrived would bring those chunks back on switch-back — and the
+ * duplication the clear exists to prevent would return. The event is
+ * self-contained (it carries the text that must REMAIN), so replaying it
+ * leaves the transcript in the same state as having received it once.
  */
 const REPLAYED = [
   'chunk',
   'thinking',
   'tool_progress',
   'subagent_chunk',
+  'clear_subagent',
   'status',
   'compact_progress',
   'done',

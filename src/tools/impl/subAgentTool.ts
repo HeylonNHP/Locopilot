@@ -1,6 +1,6 @@
 import type { ToolSchema } from '@/tools/tools';
 
-import { debugLog } from '@/app/lib/debugLogger';
+import { debugLog, type DiagnosticPhase } from '@/app/lib/debugLogger';
 import { buildNamespacedName, parseMCPToolName } from '@/mcp';
 import { formatPromptDate, formatPromptDateTime } from '@/services/promptDate';
 import { discoverSkills, getEnabledSkills, loadSkillState } from '@/services/skillManager';
@@ -86,7 +86,7 @@ import { abortableSleep, isRetryableError, retryableErrorStatus } from '@/servic
 import { sanitizeChatMessage } from '@/services/textUtils';
 import { countMessagesTokens } from '@/services/tokenizer';
 import { LiveThroughputMeter } from '@/services/tokenThroughput';
-import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
+import { canonicalSubagentId, noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import {
   type IToolCommand,
   type RequestContext,
@@ -624,6 +624,48 @@ function validateAgentSpecs(agents: SubAgentSpec[] | undefined): string | null {
   return null;
 }
 
+/**
+ * Canonicalise the batch's agent ids and reject a batch whose ids would
+ * collapse two agents into ONE bucket.
+ *
+ * WHY THE IDS ARE CANONICALISED HERE, AT THE SOURCE. The chat route files
+ * every write for one sub-agent under ONE key — one bucket, one client
+ * bubble, one persisted `subagent_log` row — and it derives that key with
+ * `canonicalSubagentId` (src/tools/toolOutput.ts). Two agents whose ids
+ * differ only in surrounding whitespace ("research" and " research ")
+ * canonicalise to the SAME key, so their transcripts would merge into one
+ * bubble, one row and one bucket — and one agent's clear would truncate
+ * the OTHER agent's text.
+ *
+ * So the id is canonicalised ONCE, here, and the canonical id is what the
+ * tool uses for `writeAgentChunk`, `writeAgentLine` and `clearAgentContent`
+ * — and what the parent's report shows. A batch that contains two such ids
+ * is REJECTED rather than silently merged: the model has to give the two
+ * agents different ids, and the error says exactly which ones collide.
+ */
+function prepareAgentBatch(agents: Required<SubAgentSpec>[]): {
+  agents: Required<SubAgentSpec>[];
+  error: string | null;
+} {
+  const prepared: Required<SubAgentSpec>[] = [];
+  const firstIndexById = new Map<string, number>();
+  for (const [index, agent] of agents.entries()) {
+    const id = canonicalSubagentId(agent.id);
+    const firstIndex = firstIndexById.get(id);
+    if (firstIndex !== undefined) {
+      return {
+        agents: [],
+        error:
+          `[Error: invalid agent at index ${index} (duplicate agent id "${id}" — ` +
+          `it collides with the agent at index ${firstIndex}; agent ids must be unique)]`,
+      };
+    }
+    firstIndexById.set(id, index);
+    prepared.push({ ...agent, id });
+  }
+  return { agents: prepared, error: null };
+}
+
 // Exported alongside `formatAgentFailure` for the network-free sub-agent
 // failure-reporting regression checks.
 export function formatCombinedResults(results: CompletedSubAgent[], interrupted: boolean): string {
@@ -1116,6 +1158,60 @@ async function runSingleAgent(
       const turnStartedAt = Date.now();
       let chunkCount = 0;
       let lastChunkAt = turnStartedAt;
+      // The number of characters THIS turn has written to the sink through
+      // `writeAgentChunk`. The branches that re-issue a turn hand it to
+      // `clearAgentContent`, which drops exactly that many characters from
+      // the END of the agent's output — so the text of the turns that came
+      // BEFORE this one (a sub-agent is a multi-turn loop) survives.
+      let turnChunkChars = 0;
+      // Write one streamed chunk to the sink AND count it. The count has to
+      // match EXACTLY what the sink appended: the chat route only appends a
+      // NON-EMPTY chunk, so only those count — and a sink that does not
+      // stream chunks at all has nothing to clear, so it counts nothing.
+      const writeTurnChunk = (type: 'thinking' | 'content', text: string): void => {
+        if (!text) {
+          return;
+        }
+        output.writeAgentChunk?.(agent.id, type, text);
+        if (output.writeAgentChunk) {
+          turnChunkChars += text.length;
+        }
+      };
+      // Drop the text THIS turn streamed, so the turn that is re-issued does
+      // not show it (and persist it) a second time.
+      //
+      // The drop is a TRUNCATION of the END of the agent's output by exactly
+      // the number of characters this turn wrote, so the text of the agent's
+      // EARLIER turns — which is never re-streamed — survives.
+      //
+      // `clearAgentContent` is OPTIONAL: a sink that streams chunks but
+      // cannot clear them would silently re-duplicate the text, so that case
+      // is logged instead of passing unnoticed.
+      const clearTurnOutput = (phase: DiagnosticPhase): void => {
+        if (turnChunkChars === 0) {
+          // The turn streamed nothing, so there is nothing to drop: the
+          // agent's text is left exactly as it is.
+          return;
+        }
+        if (!output.clearAgentContent) {
+          if (output.writeAgentChunk) {
+            debugLog.diagnostic({
+              layer: 'subagent',
+              phase,
+              requestId: context?.requestId,
+              sessionId: context?.sessionId,
+              agentId: agent.id,
+              provider: config.provider,
+              model: config.model,
+              baseUrl: config.baseUrl,
+              result: 'clear_unsupported',
+              droppedChars: turnChunkChars,
+            });
+          }
+          return;
+        }
+        output.clearAgentContent(agent.id, turnChunkChars);
+      };
       debugLog.diagnostic({
         layer: 'subagent',
         phase: 'model_request_start',
@@ -1181,11 +1277,11 @@ async function runSingleAgent(
               });
             }
             if (chunk.message?.thinking) {
-              output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
+              writeTurnChunk('thinking', chunk.message.thinking);
               liveMeter.onText(chunk.message.thinking);
             }
             if (chunk.message?.content) {
-              output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
+              writeTurnChunk('content', chunk.message.content);
               liveMeter.onText(chunk.message.content);
             }
 
@@ -1268,6 +1364,14 @@ async function runSingleAgent(
 
           if (forceCompacted) {
             subAgentCompactions += 1;
+            // The failed attempt's streamed text has to go BEFORE the
+            // marker, exactly as in the transient branch below: the re-issued
+            // turn streams the same text again, so without the clear the
+            // agent's bubble (and the persisted `subagent_log` row) would
+            // show it twice. The marker is written AFTER the clear so it
+            // survives it: the user must still see WHY the turn is being
+            // re-issued.
+            clearTurnOutput('context_limit_recovery');
             agentOutput.writeLine('↻ Retrying this turn on the compacted history.');
             continue;
           }
@@ -1296,6 +1400,19 @@ async function runSingleAgent(
         ) {
           transientRetryAttempts += 1;
           const status = retryableErrorStatus(err);
+          // Drop the failed attempt's OUTPUT before the marker is written: the
+          // chunks that already streamed belong to the attempt that just died,
+          // and the re-issued turn will stream the same text again — without
+          // this the agent's bubble (and the persisted `subagent_log` row)
+          // would show it twice. The drop is a TRUNCATION of the END of the
+          // agent's output by exactly the number of characters THIS turn
+          // wrote (`turnChunkChars`), so the text of the agent's earlier
+          // turns — which is not re-streamed — stays where it is. The marker
+          // is written AFTER the clear so it survives it: the user must still
+          // see WHY the turn is being re-issued. The base sink, not
+          // `agentOutput`: the chunks go to the base sink (`makeAgentSink`
+          // does not forward `writeAgentChunk`).
+          clearTurnOutput('transient_retry');
           agentOutput.writeLine(
             `↻ Provider error${status === null ? '' : ` (${status})`} — retrying this turn ` +
               `(attempt ${transientRetryAttempts + 1}/${SUBAGENT_TRANSIENT_RETRY_ATTEMPTS}).`
@@ -1366,7 +1483,7 @@ async function runSingleAgent(
 
       // Emit a trailing newline so successive tool outputs and the next LLM
       // turn are visually separated from the streamed response text.
-      output.writeAgentChunk?.(agent.id, 'content', '\n');
+      writeTurnChunk('content', '\n');
 
       const assistantMessage = sanitizeChatMessage(response.message);
 
@@ -1532,6 +1649,14 @@ export class SubAgentTool implements IToolCommand {
       return { content: validationError };
     }
 
+    // Canonicalise the batch's agent ids ONCE, here, and refuse a batch
+    // whose ids would merge two agents into one bucket (see
+    // `prepareAgentBatch`).
+    const preparedBatch = prepareAgentBatch(subAgentArgs.agents as Required<SubAgentSpec>[]);
+    if (preparedBatch.error) {
+      return { content: preparedBatch.error };
+    }
+
     const config = context?.subAgent;
     if (
       !config ||
@@ -1584,7 +1709,7 @@ export class SubAgentTool implements IToolCommand {
     // this same `run_subagents` call.
     const shareSummaries = subAgentArgs.share_summaries !== false;
 
-    for (const agent of subAgentArgs.agents as Required<SubAgentSpec>[]) {
+    for (const agent of preparedBatch.agents) {
       if (isInterruptOrAbort(signal)) {
         break;
       }
