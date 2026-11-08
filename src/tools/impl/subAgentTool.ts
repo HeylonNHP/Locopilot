@@ -82,6 +82,7 @@ import {
   type ToolDefinition,
 } from '@/services/llm';
 import { parseContextLimitFromError } from '@/services/llmContextLimit';
+import { abortableSleep, isRetryableError, retryableErrorStatus } from '@/services/retryable';
 import { sanitizeChatMessage } from '@/services/textUtils';
 import { countMessagesTokens } from '@/services/tokenizer';
 import { LiveThroughputMeter } from '@/services/tokenThroughput';
@@ -157,6 +158,32 @@ const SUB_AGENT_AUTO_COMPACT_NOTICE_BASE =
     COMPACTION_INITIAL_DIRECTIVE.subAgent
   }`;
 const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
+
+/**
+ * HOW MANY TIMES a sub-agent turn may be RE-ISSUED after a transient provider
+ * failure (a gateway 500/502/503/504, a 429, a network blip).
+ *
+ * WHY this exists at all: a sub-agent's turn streams, and the adapter's retry
+ * layer (`withRetryAround`) wraps ONLY the initial request — once the stream
+ * has started, a failure is never retried. The main chat loop has its own
+ * second retry layer for exactly that reason; the sub-agent had none, so a
+ * gateway blip on the agent's LAST turn killed the agent. That is expensive:
+ * a sub-agent has no separate "write a summary" call (the summary IS the
+ * assistant text of its last turn), so the agent's file edits were already on
+ * disk but its REPORT was lost, and the parent was told the work was missing
+ * and to re-run the agent.
+ *
+ * The allowance is PER TURN and is reset by a successful turn, so a long
+ * agent that makes fifty turns may still survive a provider blip on any one
+ * of them — but one turn never retries forever.
+ */
+const SUBAGENT_TRANSIENT_RETRY_ATTEMPTS = 3;
+
+/** First backoff before a transient retry; doubles per attempt. */
+const SUBAGENT_TRANSIENT_RETRY_BASE_DELAY_MS = 1000;
+
+/** Ceiling for the transient-retry backoff. */
+const SUBAGENT_TRANSIENT_RETRY_MAX_DELAY_MS = 8000;
 
 /**
  * How many times one sub-agent may react to a provider context-limit 400 by
@@ -1038,6 +1065,12 @@ async function runSingleAgent(
     'You appear to be stuck in a loop. Try a fundamentally different approach. ' +
     'If the task is genuinely blocked, summarize what you have discovered so far and return that as your final answer.]';
 
+  // Transient-retry allowance for the CURRENT turn. It lives OUTSIDE the
+  // turn loop because a retry re-enters the loop (`continue`) — a counter
+  // declared inside the body would reset itself and retry forever. It is
+  // reset by a successful turn, so each turn gets a fresh allowance.
+  let transientRetryAttempts = 0;
+
   try {
     while (!isInterruptOrAbort(signal)) {
       // Pick up a mid-turn model switch before compaction so both this
@@ -1244,11 +1277,77 @@ async function runSingleAgent(
           );
         }
 
-        writeTerminalNotice(apiMessage);
-        throw err;
+        // ── Transient provider failure: re-issue the SAME turn ──────────────
+        // A gateway 500 (the `ref:` uuid in the message is the gateway's
+        // request id) is transient, and the turn is RE-ISSUED rather than
+        // killing the agent: nothing has been appended to `messages` on this
+        // path — the assistant message is appended only after the call
+        // returns — so the retry cannot violate the assistant/tool_call
+        // ordering contract. The context-limit branch above keeps priority
+        // because it is smarter than a plain retry: it compacts first.
+        //
+        // The counter is per TURN: a successful turn resets it, so a long
+        // agent survives a blip on any single turn, but no turn retries
+        // forever.
+        if (
+          !isInterruptOrAbort(signal) &&
+          transientRetryAttempts + 1 < SUBAGENT_TRANSIENT_RETRY_ATTEMPTS &&
+          isRetryableError(err)
+        ) {
+          transientRetryAttempts += 1;
+          const status = retryableErrorStatus(err);
+          agentOutput.writeLine(
+            `↻ Provider error${status === null ? '' : ` (${status})`} — retrying this turn ` +
+              `(attempt ${transientRetryAttempts + 1}/${SUBAGENT_TRANSIENT_RETRY_ATTEMPTS}).`
+          );
+          debugLog.diagnostic({
+            layer: 'subagent',
+            phase: 'transient_retry',
+            requestId: context?.requestId,
+            sessionId: context?.sessionId,
+            agentId: agent.id,
+            provider: config.provider,
+            model: config.model,
+            baseUrl: config.baseUrl,
+            attempt: transientRetryAttempts,
+            maxAttempts: SUBAGENT_TRANSIENT_RETRY_ATTEMPTS,
+            status,
+            error: err,
+          });
+          const delayMs = Math.min(
+            SUBAGENT_TRANSIENT_RETRY_MAX_DELAY_MS,
+            SUBAGENT_TRANSIENT_RETRY_BASE_DELAY_MS * 2 ** (transientRetryAttempts - 1)
+          );
+          // `abortableSleep` resolves TRUE when the wait was interrupted by
+          // the abort signal and FALSE when the full delay elapsed.
+          const abortedDuringWait = await abortableSleep(delayMs, signal);
+          if (!abortedDuringWait) {
+            // The turn is re-issued from the top of the loop: the per-turn
+            // accumulators (`chunkCount`, `turnStartedAt`, `lastChunkAt`) are
+            // re-declared inside the loop body, so the failed attempt leaves
+            // nothing behind.
+            continue;
+          }
+          // The wait was aborted — the user cancelled. Fall through to the
+          // failure path rather than starting another request.
+          agentOutput.writeLine('⚠ The retry was cancelled.');
+        }
+
+        const retryNote =
+          transientRetryAttempts > 0
+            ? ` (the turn was retried ${transientRetryAttempts} time(s) after a transient provider error and still failed)`
+            : '';
+        writeTerminalNotice(apiMessage + retryNote);
+        throw transientRetryAttempts > 0
+          ? new Error(`${apiMessage}${retryNote}`, { cause: err })
+          : err;
       } finally {
         clearInterval(stallTimer);
       }
+
+      // The turn succeeded: the next turn gets a fresh transient-retry
+      // allowance.
+      transientRetryAttempts = 0;
 
       debugLog.diagnostic({
         layer: 'subagent',

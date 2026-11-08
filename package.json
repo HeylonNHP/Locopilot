@@ -20,6 +20,7 @@
     "test:diagnostics": "npx tsx scripts/test-diagnostic-logging.mjs",
     "test:provider-persistence": "npx tsx scripts/test-provider-persistence.mjs",
     "test:subagent-shared-summaries": "npx tsx scripts/test-subagent-shared-summaries.mjs",
+    "test:subagent-transient-retry": "npx tsx scripts/test-subagent-transient-retry.mjs",
     "test:prompt-cache-stability": "npx tsx scripts/test-prompt-cache-stability.mjs",
     "test:subagent-output": "npx tsx scripts/test-subagent-output.mjs",
     "test:subagent-compaction-history": "npx tsx scripts/test-subagent-compaction-history.mjs",
