@@ -7,6 +7,7 @@
  * `createSystemPrompt`, used by the web UI's chat API route.
  */
 
+import { TEMP_FILE_GUIDANCE } from '@/tools/tempFileGuidance';
 import { getToolSystemPrompt } from '@/tools/tools';
 
 import { formatPromptDate } from './promptDate';
@@ -53,6 +54,10 @@ export function createSystemPrompt(
   return (
     `You are Locopilot, a helpful AI assistant running inside a web application.\n` +
     `Current date: ${dateStr}\n` +
+    // The scratch-file rule is its own paragraph, AFTER the date line: the
+    // prompt-cache stability test pins line 1 to the date, so nothing may be
+    // inserted between the intro line and it.
+    `\n${TEMP_FILE_GUIDANCE}\n` +
     `${alwaysApplySection}` +
     `${citeSources ? buildCitationDirective() : ''}` +
     `\n${getToolSystemPrompt(yoloMode, visionSupported)}${availableSkillsSection}` +

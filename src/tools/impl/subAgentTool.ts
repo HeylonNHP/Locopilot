@@ -9,6 +9,7 @@ import {
   isAutoApprovedMCPTarget,
   tryRunNamespacedMCPCall,
 } from '@/tools/impl/mcpTool';
+import { TEMP_FILE_GUIDANCE } from '@/tools/tempFileGuidance';
 
 /**
  * Guidance is intentionally shared by the schema and generated system prompt
@@ -279,6 +280,10 @@ export function buildSubAgentSystemPrompt(
     'When you are done, return one final concise, self-contained summary for the parent agent.\n' +
     'Do not ask the parent agent for missing context; instead, explain briefly what is missing if the task is blocked.\n' +
     'Do not mention internal chain-of-thought.\n' +
+    '\n' +
+    // The same paragraph the main chat prompt carries, from the one shared
+    // constant, so the two prompts cannot drift apart.
+    `${TEMP_FILE_GUIDANCE}\n` +
     '\n' +
     'When this sub-agent is part of a multi-agent `run_subagents` call (the default), prior sub-agents in the same call may have completed before you. Their final summaries are prepended to your user message under a `## Prior sub-agent results` header. Treat them as trusted context from sibling work — use what they concluded instead of re-deriving it, but your own task is whatever comes after the `---` separator.\n';
 
