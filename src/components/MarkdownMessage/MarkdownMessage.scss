@@ -158,6 +158,25 @@
     font-weight: 500;
   }
 
+  // Images in a reply (a `![alt](url)` the model wrote, or a raw <img> that
+  // survived sanitisation) are emitted by marked as a bare <img>, so they lay
+  // out at their intrinsic pixel width. The bubble is a block capped at
+  // max-width:80% and never grows to fit its content, so a 2x screenshot
+  // simply ran out of the box — and, because the message list is
+  // `overflow-y:auto`, the browser computed `overflow-x` as `auto` too, so
+  // the whole thread gained a horizontal scrollbar.
+  //
+  // `max-width` rather than `width`, so a small image is never upscaled;
+  // `height:auto`, so shrinking one keeps its ratio and also overrides any
+  // width/height attributes the model passed through as raw HTML. This is the
+  // same clamp the mermaid SVG renderer and the attachment thumbnails already
+  // use. Deliberately NOT a height cap: a tall screenshot would shrink until
+  // its text was unreadable, and there is no lightbox to recover it.
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+
   code {
     padding: 0.12rem 0.35rem;
     border-radius: var(--radius-chip);
