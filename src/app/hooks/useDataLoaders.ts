@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 
-import { useChat } from '@/app/lib/chatStore';
+import { hasLiveTranscript, useChat } from '@/app/lib/chatStore';
 
 import type { StableRefs } from './useStableRefs';
 
@@ -108,6 +108,26 @@ export function useDataLoaders(refs: StableRefs) {
         background
           ? backgroundLoadRequestIdRef.current.get(sessionId)
           : sessionLoadRequestIdRef.current;
+
+      // A session that is still streaming already has a live copy on the
+      // client — the top-level fields if it is on screen, its slot if it is
+      // not — that holds every event of the turn so far. The database only
+      // has the steps the server has flushed: reloading would duplicate the
+      // reply being typed, hide the tool call still running, and drop
+      // whatever streams in while the fetch is in flight. So the view is
+      // switched (the token above has already invalidated any older load)
+      // and nothing is fetched; the turn's end reloads it from the database.
+      //
+      // Covers every way in: the sidebar, browser back/forward, and clicking
+      // the conversation that is already on screen. The end-of-turn reload
+      // is a background load and is never skipped.
+      if (!background && hasLiveTranscript(stateRef.current, sessionId)) {
+        if (refs.sessionIdRef.current !== sessionId) {
+          refs.sessionIdRef.current = sessionId;
+          dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
+        }
+        return;
+      }
 
       try {
         const res = await fetch(`/api/sessions/${sessionId}`);

@@ -60,7 +60,7 @@ function HomeInner() {
   // ── URL param: restore session from ?session=<id> on mount; keep URL in sync ──
   useSessionUrlParam({ onLoadSessionMessages: loadSessionMessages });
 
-  const { sendChatMessage, retry, replayBufferedEvents, canRetry } = useChatStream(
+  const { sendChatMessage, retry, canRetry } = useChatStream(
     refs,
     abortControllersRef,
     loadSessions,
@@ -92,7 +92,6 @@ function HomeInner() {
     sessionIdRef: refs.sessionIdRef,
     loadSessions,
     loadSessionMessages,
-    replayBufferedEvents,
     model: state.model,
   });
 

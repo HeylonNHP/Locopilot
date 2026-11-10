@@ -28,7 +28,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-import { chatReducer, initialState } from '../src/app/lib/chatStore.ts';
+import { chatReducer, hasLiveTranscript, initialState } from '../src/app/lib/chatStore.ts';
+import { routeSseEvent } from '../src/app/lib/sseRouting.ts';
 import { appendSubagentLineText } from '../src/tools/toolOutput.ts';
 
 let pass = 0;
@@ -385,6 +386,243 @@ check('the clear’s replacement (the server’s copy) is the client’s bubble'
     content: server,
   });
   assert.equal(cleared.messages.at(-1).content, state.messages.at(-1).content);
+});
+
+// ── switching conversations while a turn streams ───────────────────────────
+// The client used to hold a background session's events in a buffer and
+// replay it on top of a fresh database copy when the user came back. The
+// database already had part of what the buffer held, so text was doubled;
+// what streamed in during the reload was lost; errors were never replayed;
+// and the tool call still running was invisible. Now every event is applied
+// to its own session as it arrives — these checks pin that a conversation
+// the user leaves and comes back to ends up EXACTLY as if they never left.
+
+/** Apply one SSE frame the way the chat-stream hook does, owned by `owner`. */
+function applyFrame(state, event, data, owner) {
+  const outcome = routeSseEvent(event, data, {
+    targetSessionId: owner,
+    approvalOwner: owner,
+    compactOwner: owner,
+    doneOwner: owner,
+    subagentOwner: owner,
+  });
+  let next = state;
+  for (const action of outcome.actions) next = chatReducer(next, action);
+  if (outcome.subagentChunk) {
+    // The hook coalesces these for 50 ms; the store action is the same.
+    const { agentId, text } = outcome.subagentChunk;
+    next = chatReducer(next, { type: 'SUBAGENT_CHUNK', agentId, text, targetSessionId: owner });
+  }
+  return next;
+}
+
+/** A turn with every kind of content a switch could disturb. */
+const TURN = [
+  ['status', { phase: 'responding', tokensUsed: 1200, tokenLimit: 32768 }],
+  ['thinking', { content: 'Need to read it.' }],
+  ['chunk', { content: 'Let me look. ' }],
+  ['tool_call', { name: 'run_command', arguments: { command: 'ls' } }],
+  ['approval_request', { requestId: 'req-1', toolName: 'run_command', args: { command: 'ls' } }],
+  ['tool_result', { name: 'run_command', result: 'a.txt', duration: 4, toolCallId: 'c1' }],
+  ['chunk', { content: 'First try' }],
+  ['clear_assistant', {}],
+  ['chunk', { content: 'Found a.txt.' }],
+  ['tool_call', { name: 'run_subagents', arguments: { agents: [] } }],
+  ['subagent_output', { agentId: 'researcher', message: 'starting' }],
+  ['subagent_chunk', { agentId: 'researcher', text: 'half' }],
+  ['clear_subagent', { agentId: 'researcher', content: 'starting' }],
+  ['subagent_chunk', { agentId: 'researcher', text: '\nredone' }],
+  ['compact_progress', { message: 'Compacting conversation...' }],
+  ['error', { message: 'provider fell over' }],
+];
+
+/** The parts of a session the user sees. Message ids are random, so dropped. */
+function visible(state) {
+  return {
+    messages: state.messages.map(({ id: _id, ...rest }) => rest),
+    error: state.error,
+    tokenStats: state.tokenStats,
+    compactingPhases: state.compactingPhases,
+    activeSubagentId: state.activeSubagentId,
+    pendingCommand: state.pendingCommand,
+    pendingApprovalId: state.pendingApprovalId,
+  };
+}
+
+/** Session 7 on screen with a user prompt, its turn streaming. */
+function startTurnIn7() {
+  let state = chatReducer(initialState, { type: 'SET_CURRENT_SESSION', id: 7 });
+  state = chatReducer(state, { type: 'START_STREAMING', sessionId: 7 });
+  return chatReducer(state, {
+    type: 'ADD_MESSAGE',
+    message: { role: 'user', content: 'what is here?' },
+    targetSessionId: 7,
+  });
+}
+
+for (let leaveAt = 0; leaveAt <= TURN.length; leaveAt += 1) {
+  check(`leaving after frame ${leaveAt} and coming back shows the same conversation`, () => {
+    let stayed = startTurnIn7();
+    for (const [event, data] of TURN) stayed = applyFrame(stayed, event, data, 7);
+
+    let left = startTurnIn7();
+    TURN.forEach(([event, data], index) => {
+      if (index === leaveAt) left = chatReducer(left, { type: 'SET_CURRENT_SESSION', id: 9 });
+      left = applyFrame(left, event, data, 7);
+    });
+    if (leaveAt === TURN.length) left = chatReducer(left, { type: 'SET_CURRENT_SESSION', id: 9 });
+    left = chatReducer(left, { type: 'SET_CURRENT_SESSION', id: 7 });
+
+    assert.deepEqual(visible(left), visible(stayed));
+  });
+}
+
+check('a background turn never touches the conversation on screen', () => {
+  let state = startTurnIn7();
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  state = chatReducer(state, {
+    type: 'ADD_MESSAGE',
+    message: { role: 'user', content: 'nine' },
+    targetSessionId: 9,
+  });
+  const before = visible(state);
+  for (const [event, data] of TURN) state = applyFrame(state, event, data, 7);
+  assert.deepEqual(visible(state), before);
+});
+
+check('a background error waits in its own conversation', () => {
+  let state = startTurnIn7();
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  state = applyFrame(state, 'error', { message: 'provider fell over' }, 7);
+  assert.equal(state.error, null);
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 7 });
+  assert.equal(state.error, 'provider fell over');
+});
+
+check('a background approval does not pop up over another conversation', () => {
+  let state = startTurnIn7();
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  state = applyFrame(
+    state,
+    'approval_request',
+    { requestId: 'req-1', toolName: 'run_command', args: { command: 'rm x' } },
+    7
+  );
+  assert.equal(state.showApproval, false);
+  assert.equal(state.pendingApprovalId, null);
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 7 });
+  assert.equal(state.showApproval, true);
+  assert.equal(state.pendingApprovalId, 'req-1');
+});
+
+check('a session with no approval never shows the new-chat mirror’s approval', () => {
+  let state = chatReducer(initialState, { type: 'START_STREAMING', sessionId: -1 });
+  state = chatReducer(state, {
+    type: 'SHOW_APPROVAL',
+    command: { name: 'run_command', args: { command: 'ls' } },
+    requestId: 'new-chat-req',
+    targetSessionId: -1,
+  });
+  assert.equal(state.showApproval, true);
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  assert.equal(state.showApproval, false);
+  assert.equal(state.pendingApprovalId, null);
+});
+
+check('one conversation’s running sub-agent is not another’s steer target', () => {
+  let state = startTurnIn7();
+  state = applyFrame(state, 'subagent_output', { agentId: 'researcher', message: 'go' }, 7);
+  assert.equal(state.activeSubagentId, 'researcher');
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  assert.equal(state.activeSubagentId, null);
+  state = applyFrame(state, 'subagent_chunk', { agentId: 'writer', text: 'x' }, 7);
+  assert.equal(state.activeSubagentId, null);
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 7 });
+  assert.equal(state.activeSubagentId, 'writer');
+});
+
+check('a turn ending clears only its own session’s sub-agent', () => {
+  let state = startTurnIn7();
+  state = chatReducer(state, { type: 'START_STREAMING', sessionId: 9 });
+  state = applyFrame(state, 'subagent_output', { agentId: 'seven', message: 'go' }, 7);
+  state = applyFrame(state, 'subagent_output', { agentId: 'nine', message: 'go' }, 9);
+  state = chatReducer(state, { type: 'STOP_STREAMING', sessionId: 9 });
+  assert.equal(state.activeSubagentId, 'seven');
+  state = chatReducer(state, { type: 'START_STREAMING', sessionId: 9 });
+  state = applyFrame(state, 'subagent_output', { agentId: 'nine', message: 'go' }, 9);
+  state = chatReducer(state, { type: 'STOP_STREAMING', sessionId: 7 });
+  assert.equal(state.activeSubagentId, null);
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  assert.equal(state.activeSubagentId, 'nine');
+});
+
+check('a new chat’s early frames are on screen while the new-chat view is', () => {
+  let state = chatReducer(initialState, { type: 'START_STREAMING', sessionId: -1 });
+  state = applyFrame(state, 'error', { message: 'no such model' }, -1);
+  state = applyFrame(state, 'chunk', { content: 'hi' }, -1);
+  assert.equal(state.error, 'no such model');
+  assert.equal(state.messages.at(-1).content, 'hi');
+  assert.equal(state.newSessionState.messages.length, 0);
+});
+
+check('a new chat left before it was saved keeps its transcript once it is', () => {
+  let state = chatReducer(initialState, { type: 'START_STREAMING', sessionId: -1 });
+  state = chatReducer(state, {
+    type: 'ADD_MESSAGE',
+    message: { role: 'user', content: 'opening prompt' },
+    targetSessionId: -1,
+  });
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  state = applyFrame(state, 'chunk', { content: 'early ' }, -1);
+  state = chatReducer(state, { type: 'RENAME_STREAMING', fromSessionId: -1, toSessionId: 12 });
+  state = applyFrame(state, 'chunk', { content: 'reply' }, 12);
+  assert.equal(state.newSessionState.messages.length, 0, 'the next New chat must open empty');
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 12 });
+  assert.deepEqual(
+    state.messages.map((m) => m.content),
+    ['opening prompt', 'early reply']
+  );
+});
+
+check('the new chat on screen keeps its transcript when the server saves it', () => {
+  let state = chatReducer(initialState, { type: 'START_STREAMING', sessionId: -1 });
+  state = chatReducer(state, {
+    type: 'ADD_MESSAGE',
+    message: { role: 'user', content: 'opening prompt' },
+    targetSessionId: -1,
+  });
+  state = chatReducer(state, { type: 'RENAME_STREAMING', fromSessionId: -1, toSessionId: 12 });
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 12, adoptNewChat: true });
+  assert.deepEqual(
+    state.messages.map((m) => m.content),
+    ['opening prompt']
+  );
+});
+
+check('opening another session from the new-chat view does not take the new chat with it', () => {
+  let state = chatReducer(initialState, { type: 'START_STREAMING', sessionId: -1 });
+  state = chatReducer(state, {
+    type: 'ADD_MESSAGE',
+    message: { role: 'user', content: 'opening prompt' },
+    targetSessionId: -1,
+  });
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  assert.deepEqual(state.messages, []);
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: null });
+  assert.deepEqual(
+    state.messages.map((m) => m.content),
+    ['opening prompt']
+  );
+});
+
+check('a streaming session the client tracks has a live transcript', () => {
+  let state = startTurnIn7();
+  assert.equal(hasLiveTranscript(state, 7), true, 'on screen');
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  assert.equal(hasLiveTranscript(state, 7), true, 'in its slot');
+  state = chatReducer(state, { type: 'STOP_STREAMING', sessionId: 7 });
+  assert.equal(hasLiveTranscript(state, 7), false, 'finished: reload from the database');
+  assert.equal(hasLiveTranscript(state, 9), false, 'never streamed');
 });
 
 // ── the ROUTE uses the shared helper ───────────────────────────────────────

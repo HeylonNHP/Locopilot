@@ -105,10 +105,10 @@ check('tool_result renders the result bubble', () => {
   ]);
 });
 
-check('a finished run_subagents batch clears the steer-target toggle', () => {
+check('a finished run_subagents batch clears the steer-target toggle of ITS session', () => {
   const actions = actionsFor('tool_result', { name: 'run_subagents', result: 'done', duration: 5 });
   assert.equal(actions.length, 2);
-  assert.deepEqual(actions[1], { type: 'SET_CONFIG', config: { activeSubagentId: null } });
+  assert.deepEqual(actions[1], { type: 'SET_ACTIVE_SUBAGENT', agentId: null, targetSessionId: 7 });
 });
 
 check('tool_progress appends to the running tool', () => {
@@ -121,7 +121,7 @@ check('tool_progress appends to the running tool', () => {
 check('subagent_output emits the output and marks the agent active', () => {
   assert.deepEqual(actionsFor('subagent_output', { agentId: 'research', message: 'done' }), [
     { type: 'SUBAGENT_OUTPUT', agentId: 'research', message: 'done', targetSessionId: 7 },
-    { type: 'SET_CONFIG', config: { activeSubagentId: 'research' } },
+    { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research', targetSessionId: 7 },
   ]);
 });
 
@@ -135,7 +135,7 @@ check('subagent_chunk is handed back for coalescing, not dispatched', () => {
     }
   );
   assert.deepEqual(outcome.actions, [
-    { type: 'SET_CONFIG', config: { activeSubagentId: 'research' } },
+    { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research', targetSessionId: 9 },
   ]);
   assert.deepEqual(outcome.subagentChunk, { agentId: 'research', text: 'part', owner: 9 });
 });
@@ -159,7 +159,7 @@ check('clear_subagent replaces the agent’s bubble with the text that remains',
   // client REPLACES the bubble with it.
   assert.deepEqual(actionsFor('clear_subagent', { agentId: 'research', content: 'KEPT' }), [
     { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: 'KEPT', targetSessionId: 7 },
-    { type: 'SET_CONFIG', config: { activeSubagentId: 'research' } },
+    { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research', targetSessionId: 7 },
   ]);
 });
 
@@ -168,7 +168,7 @@ check('clear_subagent without an owner omits targetSessionId entirely', () => {
     actionsFor('clear_subagent', { agentId: 'research', content: 'KEPT' }, UNOWNED),
     [
       { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: 'KEPT' },
-      { type: 'SET_CONFIG', config: { activeSubagentId: 'research' } },
+      { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research' },
     ]
   );
 });
@@ -178,7 +178,7 @@ check('clear_subagent without content clears the bubble to nothing', () => {
   // rather than left as it was.
   assert.deepEqual(actionsFor('clear_subagent', { agentId: 'research' }), [
     { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: '', targetSessionId: 7 },
-    { type: 'SET_CONFIG', config: { activeSubagentId: 'research' } },
+    { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research', targetSessionId: 7 },
   ]);
 });
 

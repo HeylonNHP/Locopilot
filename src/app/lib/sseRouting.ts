@@ -209,7 +209,11 @@ export function routeSseEvent(
       // is active" signal. Sub-agents run sequentially, so there is
       // never more than one to disambiguate.
       if (data.name === 'run_subagents') {
-        actions.push({ type: 'SET_CONFIG', config: { activeSubagentId: null } });
+        actions.push({
+          type: 'SET_ACTIVE_SUBAGENT',
+          agentId: null,
+          ...(targetSessionId === undefined ? {} : { targetSessionId }),
+        });
       }
       trace('tool_result event', {
         name: data.name,
@@ -242,7 +246,11 @@ export function routeSseEvent(
           message: typeof data.message === 'string' ? data.message : String(data.message ?? ''),
           ...(targetSessionId === undefined ? {} : { targetSessionId }),
         },
-        { type: 'SET_CONFIG', config: { activeSubagentId: outputAgentId } }
+        {
+          type: 'SET_ACTIVE_SUBAGENT',
+          agentId: outputAgentId,
+          ...(targetSessionId === undefined ? {} : { targetSessionId }),
+        }
       );
       break;
     }
@@ -250,7 +258,11 @@ export function routeSseEvent(
     case 'subagent_chunk': {
       const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
       const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
-      actions.push({ type: 'SET_CONFIG', config: { activeSubagentId: agentId } });
+      actions.push({
+        type: 'SET_ACTIVE_SUBAGENT',
+        agentId,
+        ...(subagentOwner === undefined ? {} : { targetSessionId: subagentOwner }),
+      });
       // The text itself is coalesced by the caller, which owns the buffer
       // and the flush timer.
       return {
@@ -283,7 +295,11 @@ export function routeSseEvent(
           content,
           ...(targetSessionId === undefined ? {} : { targetSessionId }),
         },
-        { type: 'SET_CONFIG', config: { activeSubagentId: agentId } }
+        {
+          type: 'SET_ACTIVE_SUBAGENT',
+          agentId,
+          ...(targetSessionId === undefined ? {} : { targetSessionId }),
+        }
       );
       // The caller owns the coalescing buffer, so it has to drop this
       // agent's pending text — the store action alone would leave the
@@ -448,8 +464,8 @@ export function routeSseEvent(
       // forcibly snap the UI back to session A against the user's will.
       // session_created already handles new-session ID assignment; for
       // existing sessions this dispatch was always a redundant no-op at best.
-      // This event is replayed when the user returns, applying the final
-      // tokenStats.
+      // A background session's final tokenStats land in its slot and are on
+      // screen when the user returns.
       if (data.tokenStats) {
         actions.push({
           type: 'SET_TOKEN_STATS',
@@ -478,7 +494,7 @@ export function routeSseEvent(
       // The live rough estimate is superseded by the authoritative
       // tokenStats just applied. Clear it scoped to the owning session —
       // an unscoped clear would wipe the VISIBLE session's badge when a
-      // background stream's buffer is replayed on switch-back.
+      // background stream finishes.
       //
       // Only the live read-out is cleared: the end-of-turn rates in
       // `tokenStats` were just delivered by the server and are the numbers

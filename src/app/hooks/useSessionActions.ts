@@ -34,7 +34,6 @@ interface UseSessionActionsOptions {
     allowEmptyWhileStreaming?: boolean,
     options?: { keepCurrentSession?: boolean }
   ) => Promise<void>;
-  replayBufferedEvents: (id: number) => void;
   model: string;
 }
 
@@ -49,19 +48,17 @@ interface UseSessionActionsResult {
 
 /**
  * Encapsulates session lifecycle actions: create, select, delete, and search.
- * Manages a `sessionSwitchIdRef` internally to cancel stale loads when the
- * user switches sessions rapidly, and tracks the latest search query so
- * deletions can refresh the correct filtered list.
+ * Tracks the latest search query so deletions can refresh the correct
+ * filtered list. Stale loads from rapid switching are discarded by
+ * `loadSessionMessages`' own "latest wins" token.
  */
 export function useSessionActions({
   dispatch,
   sessionIdRef,
   loadSessions,
   loadSessionMessages,
-  replayBufferedEvents,
   model,
 }: UseSessionActionsOptions): UseSessionActionsResult {
-  const sessionSwitchIdRef = useRef<number | null>(null);
   const currentSearchQueryRef = useRef('');
   const deletePromptRequestIdRef = useRef(0);
   const [isDeletingPrompt, setIsDeletingPrompt] = useState(false);
@@ -105,15 +102,14 @@ export function useSessionActions({
 
   const handleSelectSession = useCallback(
     async (sessionId: number) => {
-      sessionSwitchIdRef.current = sessionId;
       sessionIdRef.current = sessionId;
       dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
+      // A session that is still streaming is restored from its live slot by
+      // the switch above; `loadSessionMessages` leaves it alone rather than
+      // overwrite it with the database's partial copy.
       await loadSessionMessages(sessionId);
-      // Bail out if the user switched to a different session while this was loading
-      if (sessionSwitchIdRef.current !== sessionId) return;
-      replayBufferedEvents(sessionId);
     },
-    [dispatch, loadSessionMessages, replayBufferedEvents]
+    [dispatch, sessionIdRef, loadSessionMessages]
   );
 
   const handleDeleteSession = useCallback(

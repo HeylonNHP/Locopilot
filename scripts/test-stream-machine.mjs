@@ -18,16 +18,12 @@ import assert from 'node:assert/strict';
 
 import {
   beginRequest,
-  bufferEvent,
   createStreamState,
-  discardBufferedEvents,
   endRequest,
-  findBufferedDone,
   isRequestFailed,
   markRequestFailed,
   migrateSessionKey,
   ownerOf,
-  takeBufferedEvents,
 } from '../src/app/lib/streamMachine.ts';
 
 const PLACEHOLDER = -1;
@@ -50,13 +46,6 @@ function check(label, fn) {
 check('a new turn claims its session', () => {
   const state = beginRequest(createStreamState(), 1, 7);
   assert.equal(ownerOf(state, 1), 7);
-});
-
-check('a new turn drops whatever was left over from an earlier turn', () => {
-  let state = beginRequest(createStreamState(), 1, 7);
-  state = bufferEvent(state, 7, 'chunk', { content: 'stale' });
-  state = beginRequest(state, 2, 7);
-  assert.deepEqual(takeBufferedEvents(state, 7).events, []);
 });
 
 // ── finishing a turn ───────────────────────────────────────────────────────
@@ -120,46 +109,13 @@ check('the failure flag is gone from the state once the turn is ended', () => {
   assert.equal(isRequestFailed(after, 1), false);
 });
 
-// ── buffering ──────────────────────────────────────────────────────────────
-check('events are held per session', () => {
-  let state = createStreamState();
-  state = bufferEvent(state, 7, 'chunk', { content: 'a' });
-  state = bufferEvent(state, 7, 'chunk', { content: 'b' });
-  state = bufferEvent(state, 9, 'chunk', { content: 'c' });
-  assert.equal(state.buffers.get(7).length, 2);
-  assert.equal(state.buffers.get(9).length, 1);
-});
-
-check('taking the buffer leaves nothing behind', () => {
-  const state = bufferEvent(createStreamState(), 7, 'chunk', { content: 'a' });
-  const { state: after, events } = takeBufferedEvents(state, 7);
-  assert.equal(events.length, 1);
-  assert.equal(after.buffers.has(7), false);
-});
-
-check('taking an empty buffer yields nothing', () => {
-  const { events } = takeBufferedEvents(createStreamState(), 7);
-  assert.deepEqual(events, []);
-});
-
-check('discarding a buffer leaves nothing behind', () => {
-  let state = bufferEvent(createStreamState(), 7, 'chunk', { content: 'a' });
-  state = discardBufferedEvents(state, 7);
-  assert.equal(state.buffers.has(7), false);
-});
-
-check('the buffered terminal event is found', () => {
-  let state = createStreamState();
-  state = bufferEvent(state, 7, 'chunk', { content: 'a' });
-  state = bufferEvent(state, 7, 'done', { doneReason: 'stop' });
-  const done = findBufferedDone(state, 7);
-  assert.equal(done.event, 'done');
-  assert.equal(done.data.doneReason, 'stop');
-});
-
-check('a session with no buffered terminal event has none', () => {
-  const state = bufferEvent(createStreamState(), 7, 'chunk', { content: 'a' });
-  assert.equal(findBufferedDone(state, 7), undefined);
+// ── no buffering ───────────────────────────────────────────────────────────
+check('the machine holds no events, only the turns', () => {
+  // Events are applied to their session's slot as they arrive (see
+  // scripts/test-chat-store.mjs); a buffer replayed on switch-back duplicated
+  // what the database reload already had.
+  const state = beginRequest(createStreamState(), 1, 7);
+  assert.deepEqual(Object.keys(state), ['requests']);
 });
 
 // ── the placeholder migration ──────────────────────────────────────────────
@@ -169,33 +125,11 @@ check('a turn on the placeholder follows the session it is saved to', () => {
   assert.equal(ownerOf(state, 1), 7);
 });
 
-check('buffered events follow the session they are saved to', () => {
-  let state = beginRequest(createStreamState(), 1, PLACEHOLDER);
-  state = bufferEvent(state, PLACEHOLDER, 'chunk', { content: 'a' });
-  state = migrateSessionKey(state, 7);
-  assert.equal(state.buffers.has(PLACEHOLDER), false);
-  assert.equal(state.buffers.get(7).length, 1);
-});
-
-check('the placeholder buffer is merged into the real session buffer', () => {
-  let state = beginRequest(createStreamState(), 1, PLACEHOLDER);
-  state = bufferEvent(state, 7, 'chunk', { content: 'existing' });
-  state = bufferEvent(state, PLACEHOLDER, 'chunk', { content: 'held' });
-  state = migrateSessionKey(state, 7);
-  const { events } = takeBufferedEvents(state, 7);
-  assert.deepEqual(
-    events.map((event) => event.data.content),
-    ['existing', 'held']
-  );
-});
-
 check('other sessions are left alone by the migration', () => {
   let state = beginRequest(createStreamState(), 1, PLACEHOLDER);
   state = beginRequest(state, 2, 9);
-  state = bufferEvent(state, 9, 'chunk', { content: 'other' });
   state = migrateSessionKey(state, 7);
   assert.equal(ownerOf(state, 2), 9);
-  assert.equal(state.buffers.get(9).length, 1);
 });
 
 check('the migration is idempotent', () => {
@@ -203,9 +137,8 @@ check('the migration is idempotent', () => {
   state = migrateSessionKey(state, 7);
   state = migrateSessionKey(state, 7);
   assert.equal(ownerOf(state, 1), 7);
-  // One request, one buffer — the migration must not duplicate either.
+  // One request — the migration must not duplicate it.
   assert.equal(state.requests.size, 1);
-  assert.equal(state.buffers.size, 0);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

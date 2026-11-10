@@ -8,6 +8,7 @@ import type { ToolCallArguments } from '@/tools/tools';
 import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
 import { randomId } from '@/app/lib/randomId';
+import { NEW_SESSION_KEY } from '@/app/lib/streamKey';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
@@ -116,6 +117,14 @@ export interface SessionState {
     command: { name: string; args: ToolCallArguments } | null;
     requestId: string | null;
   } | null;
+  /**
+   * The sub-agent this session's `run_subagents` batch is running, or null.
+   * Per session, because two conversations can each be running a batch —
+   * and one conversation's sub-agent must never appear as the steer target
+   * of another. Mirrored into `ChatState.activeSubagentId` for the session
+   * on screen.
+   */
+  activeSubagentId: string | null;
 }
 
 export interface ChatState {
@@ -260,13 +269,16 @@ export interface ChatState {
    */
   modelSwitchPending: boolean;
   /**
-   * The agent id of the sub-agent a `run_subagents` batch is currently
-   * running, or null when no batch is in flight (or it's between agents).
-   * Sub-agents execute sequentially, so at most one id is ever active.
-   * Derived purely from SSE events the client already receives
-   * (`subagent_output`/`subagent_chunk` set it, the matching `tool_result`
-   * for `run_subagents` clears it) — no server round trip needed. Drives
-   * the steer-input's main/sub-agent target toggle.
+   * The agent id of the sub-agent the VISIBLE session's `run_subagents`
+   * batch is currently running, or null when no batch is in flight (or it's
+   * between agents). Sub-agents execute sequentially, so at most one id is
+   * ever active per session. Derived purely from SSE events the client
+   * already receives (`subagent_output`/`subagent_chunk` set it, the
+   * matching `tool_result` for `run_subagents` clears it) through
+   * `SET_ACTIVE_SUBAGENT`, which routes per session like every other
+   * per-session field — so a batch in a background conversation never shows
+   * up as the steer target here. Drives the steer-input's main/sub-agent
+   * target toggle.
    */
   activeSubagentId: string | null;
   /**
@@ -347,7 +359,18 @@ export type ChatAction =
     }
   | { type: 'SET_SESSIONS'; sessions: Session[] }
   | { type: 'ADD_SESSION'; session: Session }
-  | { type: 'SET_CURRENT_SESSION'; id: number | null }
+  | {
+      type: 'SET_CURRENT_SESSION';
+      id: number | null;
+      /**
+       * The server has just saved the new chat on screen under `id`, so the
+       * new-chat view's transcript becomes that session's. Only the
+       * `session_created` frame sets it: without the flag, ANY switch from
+       * the new-chat view to a session not opened yet carried the new
+       * chat's transcript, error and approval into that session.
+       */
+      adoptNewChat?: boolean;
+    }
   | { type: 'SET_MODELS'; models: LLmModel[] }
   | { type: 'SET_MODELS_LOADING'; modelsLoading: boolean }
   | { type: 'SET_PROVIDERS'; providers: ProviderConfig[] }
@@ -355,6 +378,7 @@ export type ChatAction =
   | { type: 'SET_MODEL'; model: string }
   | { type: 'SET_ERROR'; error: string | null; targetSessionId?: number }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
+  | { type: 'SET_ACTIVE_SUBAGENT'; agentId: string | null; targetSessionId?: number }
   | {
       type: 'SHOW_APPROVAL';
       command: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
@@ -398,7 +422,54 @@ function emptySessionState(): SessionState {
     compactingPhases: [],
     pendingApproval: null,
     lastDoneReason: undefined,
+    activeSubagentId: null,
   };
+}
+
+/**
+ * Whether an action aimed at `targetId` belongs to a session the user is NOT
+ * looking at, so it must land in that session's slot instead of the
+ * top-level fields the UI renders.
+ *
+ * The placeholder key (-1, a brand-new chat the server has not saved yet) is
+ * the visible session while the new-chat view is on screen. Treating it as a
+ * background session there sent everything a new chat received before its
+ * `session_created` frame — an early error, for one — into the hidden
+ * `newSessionState` mirror, where the user never saw it.
+ *
+ * `undefined` is the legacy "whatever is on screen" path.
+ */
+function targetsBackgroundSession(
+  state: ChatState,
+  targetId: number | undefined
+): targetId is number {
+  if (targetId === undefined || targetId === state.currentSessionId) {
+    return false;
+  }
+  return !(targetId === NEW_SESSION_KEY && state.currentSessionId === null);
+}
+
+/**
+ * Whether the client's own copy of a session is the live, authoritative one.
+ *
+ * Every event of a streaming turn is applied to its session as it arrives —
+ * to the top-level fields while the session is on screen, to its slot while
+ * it is not — so a streaming session the client has been tracking already
+ * holds exactly what the user would see had they never left. Reloading it
+ * from the database would be WORSE than that copy: the database only has
+ * the steps the server has flushed so far, never the reply being typed or
+ * the tool call that is still running, and anything that streams in while
+ * the reload is in flight would be overwritten by it.
+ *
+ * Once the turn ends its session is reloaded from the database anyway
+ * (`finishTurn`), which is what reconciles the client's ids with the
+ * persisted rows.
+ */
+export function hasLiveTranscript(state: ChatState, sessionId: number): boolean {
+  if (!state.streamingSessions.has(sessionId)) {
+    return false;
+  }
+  return state.currentSessionId === sessionId || state.sessionStates.has(sessionId);
 }
 
 /**
@@ -463,6 +534,23 @@ function applyToSession(
 }
 
 /**
+ * Hold an approval request in a background session's slot, leaving the
+ * modal on screen alone.
+ */
+function holdApprovalInSlot(
+  state: ChatState,
+  sessionId: number,
+  command: { name: string; args: ToolCallArguments; toolCallName?: string },
+  requestId: string | undefined
+): ChatState {
+  const { nextState } = applyToSession(state, sessionId, (slot) => ({
+    ...slot,
+    pendingApproval: { command, requestId: requestId ?? null },
+  }));
+  return nextState;
+}
+
+/**
  * The one reducer for the chat store. Exported so the per-session
  * routing rules (which session a targeted action lands in) can be tested
  * directly, without a browser.
@@ -479,18 +567,13 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       ) {
         return state;
       }
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
-        if (action.targetSessionId === -1) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
+        if (action.targetSessionId === NEW_SESSION_KEY) {
           // The placeholder transcript is the visible one only while no
-          // session is selected. `newSessionState` is a mirror that the
-          // next session switch overwrites, so writing into it would leak
-          // this copy into whatever chat is started later.
-          if (state.currentSessionId === null) {
-            return { ...state, messages };
-          }
+          // session is selected (that case never reaches this branch).
+          // `newSessionState` is a mirror that the next session switch
+          // overwrites, so writing a database copy into it would leak this
+          // copy into whatever chat is started later.
           return state;
         }
         // The session this belongs to is not the one on screen: write the
@@ -532,10 +615,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // the message to that session's slot. The current-session branch
       // preserves the original user-input side effects (inputDraft /
       // historyIndex reset).
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
           ...slot,
           messages: [...slot.messages, withId(action.message)],
@@ -569,10 +649,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'APPLY_ASSISTANT_DELTA': {
       // Non-current target: append to that session's slot without
       // touching the top-level state.
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
           const msgs = [...slot.messages];
           const last = msgs.at(-1);
@@ -621,10 +698,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, messages: msgs };
     }
     case 'APPEND_TOOL_PROGRESS': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
           const msgs = [...slot.messages];
           for (let i = msgs.length - 1; i >= 0; i -= 1) {
@@ -691,10 +765,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // to that session's slot.  The agentId keying is unchanged — two
       // sessions with the same agentId will both have a bubble each,
       // and a session's own sub-agent_id is unique within that run.
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
           const msgs = [...slot.messages];
           for (let i = msgs.length - 1; i >= 0; i -= 1) {
@@ -753,10 +824,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       //
       // The lookup mirrors SUBAGENT_CHUNK — the LAST bubble belonging to
       // this agent, in the session the action targets.
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
           const msgs = [...slot.messages];
           for (let i = msgs.length - 1; i >= 0; i -= 1) {
@@ -813,10 +881,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case 'SUBAGENT_OUTPUT': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
           const msgs = [...slot.messages];
           for (let i = msgs.length - 1; i >= 0; i -= 1) {
@@ -901,6 +966,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
               requestId: state.pendingApprovalId,
             }
           : null,
+        activeSubagentId: state.activeSubagentId,
       };
 
       let nextState = { ...state };
@@ -917,65 +983,46 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       nextState = { ...nextState, currentSessionId: action.id };
 
       // 3. Restore the new session's state into active fields
+      let restored: SessionState;
       if (action.id === null) {
-        nextState = {
-          ...nextState,
-          messages: nextState.newSessionState.messages,
-          error: nextState.newSessionState.error,
-          tokenStats: nextState.newSessionState.tokenStats,
-          currentTps: nextState.newSessionState.currentTps,
-          compactingPhases: nextState.newSessionState.compactingPhases,
-          lastDoneReason: nextState.newSessionState.lastDoneReason,
-        };
+        restored = nextState.newSessionState;
       } else {
         let session = nextState.sessionStates.get(action.id);
         // If we were on the new-session view and the server just assigned a
         // real ID, promote the newSessionState into sessionStates so the
         // locally-added first message (and any streaming chunks) survive.
-        if (!session && state.currentSessionId === null) {
+        if (!session && action.adoptNewChat === true && state.currentSessionId === null) {
           const newMap = new Map(nextState.sessionStates);
           const promoted = nextState.newSessionState;
           newMap.set(action.id, promoted);
           nextState = {
             ...nextState,
             sessionStates: newMap,
-            newSessionState: {
-              messages: [],
-              error: null,
-              tokenStats: null,
-              currentTps: null,
-              compactingPhases: [],
-              pendingApproval: null,
-              lastDoneReason: undefined,
-            },
+            newSessionState: emptySessionState(),
           };
           session = promoted;
         }
-        nextState = session
-          ? {
-              ...nextState,
-              messages: session.messages,
-              error: session.error,
-              tokenStats: session.tokenStats,
-              currentTps: session.currentTps,
-              compactingPhases: session.compactingPhases,
-              lastDoneReason: session.lastDoneReason,
-            }
-          : // Session not yet initialised — start fresh (don't auto-create slot)
-            {
-              ...nextState,
-              messages: [],
-              error: null,
-              tokenStats: null,
-              currentTps: null,
-              compactingPhases: [],
-            };
+        // Session not yet initialised — start fresh (don't auto-create slot).
+        // Every field is reset, so nothing of the session being left (a stale
+        // completion reason, a sub-agent toggle) leaks into this one.
+        restored = session ?? emptySessionState();
       }
 
-      // Restore pending approval state
-      const targetSession = action.id === null ? null : nextState.sessionStates.get(action.id);
-      const pendingApproval =
-        targetSession?.pendingApproval ?? nextState.newSessionState.pendingApproval;
+      nextState = {
+        ...nextState,
+        messages: restored.messages,
+        error: restored.error,
+        tokenStats: restored.tokenStats,
+        currentTps: restored.currentTps,
+        compactingPhases: restored.compactingPhases,
+        lastDoneReason: restored.lastDoneReason,
+        activeSubagentId: restored.activeSubagentId ?? null,
+      };
+
+      // Restore the session's OWN pending approval. It used to fall back to
+      // the new-chat mirror's approval whenever the target had none, which
+      // could pop one conversation's approval up inside another.
+      const pendingApproval = restored.pendingApproval;
       nextState = pendingApproval
         ? {
             ...nextState,
@@ -1008,10 +1055,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, model: action.model };
     }
     case 'SET_ERROR': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
           ...slot,
           error: action.error,
@@ -1026,7 +1070,25 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // updated by SET_TOKEN_STATS when the server reports back.
       return { ...state, ...action.config };
     }
+    case 'SET_ACTIVE_SUBAGENT': {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          activeSubagentId: action.agentId,
+        }));
+        return nextState;
+      }
+      return { ...state, activeSubagentId: action.agentId };
+    }
     case 'SHOW_APPROVAL': {
+      // ── A request for a session that is not on screen ────────────────
+      // It is held in that session's slot and the modal is left alone:
+      // popping it up here would ask the user to approve another
+      // conversation's command while they are reading this one. The
+      // session switch restores it from the slot when they go back.
+      if (action.command !== null && targetsBackgroundSession(state, action.targetSessionId)) {
+        return holdApprovalInSlot(state, action.targetSessionId, action.command, action.requestId);
+      }
       // ── Determine the session this approval request belongs to ──────
       // The SHOW_APPROVAL action has no `targetSessionId` field, but
       // the chat route only ever shows the modal for the request the
@@ -1103,21 +1165,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // session id — this is what fixes the "second stream's modal
       // stomps the first stream's modal" bug for the modal-display case.
       if (owningSessionId !== null && owningSessionId !== -1) {
-        let session = nextState.sessionStates.get(owningSessionId);
-        if (!session) {
-          const newMap = new Map(nextState.sessionStates);
-          session = {
-            messages: [],
-            error: null,
-            tokenStats: null,
-            currentTps: null,
-            compactingPhases: [],
-            pendingApproval: null,
-            lastDoneReason: undefined,
-          };
-          newMap.set(owningSessionId, session);
-          nextState = { ...nextState, sessionStates: newMap };
-        }
+        const session = nextState.sessionStates.get(owningSessionId) ?? emptySessionState();
         const newMap = new Map(nextState.sessionStates);
         newMap.set(owningSessionId, {
           ...session,
@@ -1149,10 +1197,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return nextState;
     }
     case 'CLEAR_MESSAGES': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
           ...slot,
           messages: [],
@@ -1162,10 +1207,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, messages: [] };
     }
     case 'REMOVE_LAST_ASSISTANT': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
           const msgs = slot.messages;
           if (msgs.length > 0) {
@@ -1188,10 +1230,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return state;
     }
     case 'SET_TOKEN_STATS': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
           // Merge with existing stats so durable fields like evalTps /
           // promptTps (sent once on the `done` event) survive transient
@@ -1233,10 +1272,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case 'SET_DONE_REASON': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
           ...slot,
           lastDoneReason: action.reason,
@@ -1246,10 +1282,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, lastDoneReason: action.reason };
     }
     case 'SET_CURRENT_TPS': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
           ...slot,
           currentTps: action.tps,
@@ -1259,10 +1292,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, currentTps: action.tps };
     }
     case 'CLEAR_TOKEN_STATS': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
           ...slot,
           tokenStats: null,
@@ -1272,10 +1302,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, tokenStats: null };
     }
     case 'COMPACT_PROGRESS': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
           ...slot,
           compactingPhases: [...slot.compactingPhases, action.message],
@@ -1310,51 +1337,68 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // exactly as stopping that session would have cleared them: the
       // "Compacting conversation…" notice must not outlive the turn it
       // belonged to.
-      const isVisibleSession =
-        (state.currentSessionId === null && action.fromSessionId === -1) ||
-        state.currentSessionId === action.fromSessionId;
-      return {
-        ...state,
-        streamingSessions: nextSet,
-        ...(isVisibleSession ? { compactingPhases: [] } : {}),
-      };
+      const isVisibleSession = !targetsBackgroundSession(state, action.fromSessionId);
+      if (isVisibleSession) {
+        return { ...state, streamingSessions: nextSet, compactingPhases: [] };
+      }
+      // A brand-new chat the user navigated away from before the server saved
+      // it: everything it received so far went into the new-chat mirror
+      // (`newSessionState`). It now has a real id, so that copy becomes its
+      // session's slot — otherwise the turn's opening message and live reply
+      // would be stranded in a mirror no session points at, and the next
+      // "New chat" would open with them in it.
+      if (action.fromSessionId === NEW_SESSION_KEY) {
+        const newMap = new Map(state.sessionStates);
+        newMap.set(action.toSessionId, { ...state.newSessionState, compactingPhases: [] });
+        return {
+          ...state,
+          streamingSessions: nextSet,
+          sessionStates: newMap,
+          newSessionState: emptySessionState(),
+        };
+      }
+      return { ...state, streamingSessions: nextSet };
     }
     case 'STOP_STREAMING': {
       const nextSet = new Set(state.streamingSessions);
       nextSet.delete(action.sessionId);
-      // Clear stale compaction phases when the visible session's stream
-      // ends, so old progress text doesn't linger into the next interaction
-      // or leak across session switches.  Skip the session_created
-      // placeholder migration (-1 → realId) where streaming continues
-      // under a new id — the currentSessionId has already been updated
-      // to the real id by that point, so the guard below naturally
-      // excludes it.
-      const isVisibleSession =
-        (state.currentSessionId === null && action.sessionId === -1) ||
-        state.currentSessionId === action.sessionId;
       // A steering message that never got a `steer_applied` ack before the
       // last streaming session ended is restored to `steerRestoreText`
       // rather than silently lost — mirrors the model-switch-pending reset
-      // just above, gated the same way on "nothing is streaming any more".
+      // just below, gated the same way on "nothing is streaming any more".
       const undraftedSteer = nextSet.size === 0 ? state.pendingSteerDraft : null;
-      return {
+      const base: ChatState = {
         ...state,
         streamingSessions: nextSet,
         // A switch that never got applied dies with the turn — the newly
         // picked model is already what the next turn will send.
         ...(nextSet.size === 0 ? { modelSwitchPending: false } : {}),
-        ...(nextSet.size === 0 ? { activeSubagentId: null } : {}),
         ...(undraftedSteer
           ? { pendingSteerDraft: null, steerRestoreText: undraftedSteer.text }
           : {}),
-        ...(isVisibleSession ? { compactingPhases: [] } : {}),
       };
+      // The turn's per-session leftovers die with it, in the session that
+      // ran it: the compaction phases (so old progress text doesn't linger
+      // into the next turn) and the running sub-agent (so the steer toggle
+      // doesn't offer an agent that is gone). Only THAT session is touched —
+      // another conversation may still be running its own batch.
+      if (!targetsBackgroundSession(state, action.sessionId)) {
+        return { ...base, compactingPhases: [], activeSubagentId: null };
+      }
+      const hasSlot =
+        action.sessionId === NEW_SESSION_KEY || state.sessionStates.has(action.sessionId);
+      if (!hasSlot) {
+        return base;
+      }
+      const { nextState } = applyToSession(base, action.sessionId, (slot) => ({
+        ...slot,
+        compactingPhases: [],
+        activeSubagentId: null,
+      }));
+      return nextState;
     }
     case 'CLEAR_COMPACT_PROGRESS': {
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
+      if (targetsBackgroundSession(state, action.targetSessionId)) {
         const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
           ...slot,
           compactingPhases: [],
@@ -1412,6 +1456,7 @@ export const initialState: ChatState = {
     compactingPhases: [],
     pendingApproval: null,
     lastDoneReason: undefined,
+    activeSubagentId: null,
   },
   streamingSessions: new Set<number>(),
   inputDraft: '',
