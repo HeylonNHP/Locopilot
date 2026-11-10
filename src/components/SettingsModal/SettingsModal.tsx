@@ -1,6 +1,8 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
+import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 import { useChat } from '@/app/lib/chatStore';
 import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
@@ -25,6 +27,7 @@ export default function SettingsModal({ onClose }: Props) {
   const [reasoningEffort, setReasoningEffort] = useState(state.reasoningEffort);
   const [promptTimestamps, setPromptTimestamps] = useState(state.promptTimestamps ?? true);
   const [citeSources, setCiteSources] = useState(state.citeSources ?? true);
+  const [redactSecrets, setRedactSecrets] = useState(state.redactSecrets ?? true);
   const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
   // The provider that owns the selected main model / compaction model. These
   // are tracked separately so the user can run the main chat on one provider
@@ -50,6 +53,21 @@ export default function SettingsModal({ onClose }: Props) {
   );
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  const titleId = useId();
+  const firstFieldRef = useRef<HTMLSelectElement>(null);
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+  const handleDismiss = useCallback(() => {
+    if (!isSaving) onClose();
+  }, [isSaving, onClose]);
+  const panelRef = useModalOverlay<HTMLDivElement>({
+    onClose: handleDismiss,
+    initialFocusRef: firstFieldRef,
+    enabled: isMounted,
+  });
 
   // The legacy `state.provider` field only tracks the original single-provider
   // config and is never updated when the user picks a different provider via
@@ -191,6 +209,7 @@ export default function SettingsModal({ onClose }: Props) {
       reasoningEffort,
       promptTimestamps,
       citeSources,
+      redactSecrets,
       compactionModel,
       chatTimeoutMs: parsedChatTimeoutMs,
       webSearch: {
@@ -245,6 +264,7 @@ export default function SettingsModal({ onClose }: Props) {
           reasoningEffort,
           promptTimestamps,
           citeSources,
+          redactSecrets,
           compactionModel,
           // Transient: captured here so the compaction route can resolve the
           // compaction provider even when it differs from the main model's.
@@ -280,10 +300,7 @@ export default function SettingsModal({ onClose }: Props) {
       // silently continuing to send requests to the stale provider.
       const providerChanged = mainProviderId !== state.activeProviderId;
       const compactionChanged = compactionModel !== state.compactionModel;
-      if (
-        streamingSessionId !== null &&
-        (modelChanged || providerChanged || compactionChanged)
-      ) {
+      if (streamingSessionId !== null && (modelChanged || providerChanged || compactionChanged)) {
         dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: true } });
         // providerId rides along whenever either the model or the
         // provider changed — not just modelChanged — so a pure
@@ -291,9 +308,7 @@ export default function SettingsModal({ onClose }: Props) {
         // /api/chat/switch-model already accepts providerId
         // independently of model.)
         const sendProviderId =
-          (modelChanged || providerChanged) && mainProviderId
-            ? mainProviderId
-            : undefined;
+          (modelChanged || providerChanged) && mainProviderId ? mainProviderId : undefined;
         const accepted = await requestMidTurnModelSwitch(
           streamingSessionId,
           {
@@ -324,27 +339,36 @@ export default function SettingsModal({ onClose }: Props) {
     }
   };
 
-  return (
+  if (!isMounted) return null;
+
+  return createPortal(
     <div
       className="settings-overlay"
       onClick={(e) => {
-        if (!isSaving && e.target === e.currentTarget) onClose();
+        if (!isSaving && e.target === e.currentTarget) handleDismiss();
       }}
     >
-      <div className="settings-panel">
+      <div
+        ref={panelRef}
+        className="settings-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-busy={isSaving || undefined}
+      >
         <div className="settings-scroll">
-          <h3 className="settings-heading">Settings</h3>
-
-          {saveError && (
-            <div className="settings-error" role="alert">
-              {saveError}
-            </div>
-          )}
+          <h3 id={titleId} className="settings-heading">
+            Settings
+          </h3>
 
           <div className="settings-grid">
             <div className="settings-row">
-              <label className="settings-label">Model</label>
+              <label className="settings-label" htmlFor="settings-model">
+                Model
+              </label>
               <select
+                id="settings-model"
+                ref={firstFieldRef}
                 value={selectedMainValue}
                 onChange={(e) => handleMainModelChange(e.target.value)}
                 className="settings-input"
@@ -355,8 +379,11 @@ export default function SettingsModal({ onClose }: Props) {
             </div>
 
             <div className="settings-row">
-              <label className="settings-label">Compaction Model</label>
+              <label className="settings-label" htmlFor="settings-compaction-model">
+                Compaction Model
+              </label>
               <select
+                id="settings-compaction-model"
                 value={selectedCompactionValue}
                 onChange={(e) => handleCompactionModelChange(e.target.value)}
                 className="settings-input"
@@ -369,8 +396,11 @@ export default function SettingsModal({ onClose }: Props) {
 
           <div className="settings-grid">
             <div className="settings-row">
-              <label className="settings-label">Context Size</label>
+              <label className="settings-label" htmlFor="settings-context-size">
+                Context Size
+              </label>
               <input
+                id="settings-context-size"
                 type="number"
                 value={numCtx}
                 onChange={(e) => setNumCtx(e.target.value)}
@@ -399,7 +429,7 @@ export default function SettingsModal({ onClose }: Props) {
               if (!isCapped) return <div />;
               return (
                 <div className="settings-row">
-                  <label className="settings-label">Effective Context Size</label>
+                  <span className="settings-label">Effective Context Size</span>
                   <span
                     className="settings-input text-secondary"
                     style={{ display: 'inline-flex', alignItems: 'center' }}
@@ -413,7 +443,7 @@ export default function SettingsModal({ onClose }: Props) {
 
           <div className="settings-grid">
             <div className="settings-row">
-              <label className="settings-label">Execution Mode</label>
+              <span className="settings-label">Execution Mode</span>
               <div className="flex items-center gap-12">
                 <input
                   id="yolo-toggle"
@@ -429,7 +459,7 @@ export default function SettingsModal({ onClose }: Props) {
 
             {isOllama && (
               <div className="settings-row">
-                <label className="settings-label">Thinking</label>
+                <span className="settings-label">Thinking</span>
                 <div className="flex items-center gap-12">
                   <input
                     id="thinking-toggle"
@@ -466,7 +496,7 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
 
           <div className="settings-row">
-            <label className="settings-label">Prompt Timestamps</label>
+            <span className="settings-label">Prompt Timestamps</span>
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-12">
                 <input
@@ -488,7 +518,7 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
 
           <div className="settings-row">
-            <label className="settings-label">Cite Web Sources</label>
+            <span className="settings-label">Cite Web Sources</span>
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-12">
                 <input
@@ -504,18 +534,43 @@ export default function SettingsModal({ onClose }: Props) {
               <span className="font-12 text-secondary">
                 After web research (web_search / fetch_url), the model must cite its sources as
                 numbered links with a Sources list at the end of its answer. The numbered source
-                list is always shown to the model; this toggle controls whether it is instructed
-                to cite them.
+                list is always shown to the model; this toggle controls whether it is instructed to
+                cite them.
               </span>
             </div>
           </div>
 
           <div className="settings-row">
-            <label className="settings-label">Chat Timeout</label>
+            <span className="settings-label">Redact Secrets in Command Output</span>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-12">
+                <input
+                  id="redact-secrets-toggle"
+                  type="checkbox"
+                  checked={redactSecrets}
+                  onChange={(e) => setRedactSecrets(e.target.checked)}
+                />
+                <label htmlFor="redact-secrets-toggle" className="font-14 text-primary">
+                  {redactSecrets ? 'On (redacted)' : 'Off (raw output)'}
+                </label>
+              </div>
+              <span className="font-12 text-secondary">
+                Command output is scanned for tokens, keys and passwords and replaced with
+                [REDACTED] before the model, the transcript or the browser see it. Turn
+                this off for verbatim output, with local models or when a false positive
+                mangles what you need. The text is also saved in this conversation's
+                history. Terminal escape codes are always stripped.
+              </span>
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-label">Chat Timeout</span>
             <div className="flex items-center gap-12">
               <input
                 type="number"
                 min="0"
+                aria-label="Timeout hours"
                 value={chatTimeoutHours}
                 onChange={(e) => setChatTimeoutHours(e.target.value)}
                 className="settings-input"
@@ -526,6 +581,7 @@ export default function SettingsModal({ onClose }: Props) {
                 type="number"
                 min="0"
                 max="59"
+                aria-label="Timeout minutes"
                 value={chatTimeoutMinutes}
                 onChange={(e) => setChatTimeoutMinutes(e.target.value)}
                 className="settings-input"
@@ -536,6 +592,7 @@ export default function SettingsModal({ onClose }: Props) {
                 type="number"
                 min="0"
                 max="59"
+                aria-label="Timeout seconds"
                 value={chatTimeoutSeconds}
                 onChange={(e) => setChatTimeoutSeconds(e.target.value)}
                 className="settings-input"
@@ -547,8 +604,11 @@ export default function SettingsModal({ onClose }: Props) {
 
           <div className="settings-grid">
             <div className="settings-row">
-              <label className="settings-label">Web Search: Max Queries</label>
+              <label className="settings-label" htmlFor="settings-web-max-queries">
+                Web Search: Max Queries
+              </label>
               <input
+                id="settings-web-max-queries"
                 type="number"
                 value={webMaxQueries}
                 onChange={(e) => setWebMaxQueries(e.target.value)}
@@ -557,8 +617,11 @@ export default function SettingsModal({ onClose }: Props) {
             </div>
 
             <div className="settings-row">
-              <label className="settings-label">Web Search: Results Per Query</label>
+              <label className="settings-label" htmlFor="settings-web-results-per-query">
+                Web Search: Results Per Query
+              </label>
               <input
+                id="settings-web-results-per-query"
                 type="number"
                 value={webResultsPerQuery}
                 onChange={(e) => setWebResultsPerQuery(e.target.value)}
@@ -568,14 +631,23 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
 
           <div className="settings-row">
-            <label className="settings-label">Web Search: Page Char Limit (0 = unlimited)</label>
+            <label className="settings-label" htmlFor="settings-web-page-char-limit">
+              Web Search: Page Char Limit (0 = unlimited)
+            </label>
             <input
+              id="settings-web-page-char-limit"
               type="number"
               value={webPerPageCharLimit}
               onChange={(e) => setWebPerPageCharLimit(e.target.value)}
               className="settings-input"
             />
           </div>
+
+          {saveError && (
+            <div className="settings-error" role="alert">
+              {saveError}
+            </div>
+          )}
 
           <div className="settings-actions">
             <button onClick={onClose} disabled={isSaving} className="settings-btn-cancel">
@@ -593,6 +665,7 @@ export default function SettingsModal({ onClose }: Props) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

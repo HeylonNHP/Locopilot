@@ -1,13 +1,27 @@
 'use client';
 
-import { EventSourceParserStream } from 'eventsource-parser/stream';
 import { useCallback, useRef, useState } from 'react';
 
-import type { SseEventPayloadMap } from '@/types/sse';
-
-import { type ChatMessage, type DoneReason, useChat } from '@/app/lib/chatStore';
+import { type ChatMessage, useChat } from '@/app/lib/chatStore';
+import { retryBodyForSession, streamChatTurn } from '@/app/lib/chatTurn';
+import { isReplayableEvent } from '@/app/lib/sseEvents';
+import { frameOwner, isDoneReason, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
+import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
+import {
+  beginRequest,
+  bufferEvent,
+  createStreamState,
+  discardBufferedEvents,
+  endRequest,
+  findBufferedDone,
+  markRequestFailed,
+  migrateSessionKey,
+  ownerOf,
+  type StreamState,
+  takeBufferedEvents,
+} from '@/app/lib/streamMachine';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
-import { DEFAULT_NUM_CTX, DEFAULT_SESSION_NAME } from '@/constants';
+import { DEFAULT_SESSION_NAME } from '@/constants';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
@@ -16,11 +30,6 @@ const trace = (label: string, data?: Record<string, unknown>) => {
     console.warn(`[trace] ${label}`, data ?? {});
   }
 };
-
-const DONE_REASONS = ['stop', 'length', 'load', 'unload', 'unknown'] as const;
-function isDoneReason(s: string): s is DoneReason {
-  return (DONE_REASONS as readonly string[]).includes(s);
-}
 
 interface StreamErrorDetails {
   name: string;
@@ -31,28 +40,6 @@ function getStreamErrorDetails(err: unknown): StreamErrorDetails | null {
   return err instanceof Error ? { name: err.name, message: err.message } : null;
 }
 
-/** Parsed SSE event payload. Defined as a union of the shared contract in
- *  src/types/sse.ts so the producer and consumer stay in sync. */
-type SseEventPayload = SseEventPayloadMap[keyof SseEventPayloadMap];
-
-type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (
-  k: infer I
-) => void
-  ? I
-  : never;
-
-type SseEventData = Partial<UnionToIntersection<SseEventPayload>>;
-
-/** Coerce an unknown parsed JSON value into the shared SSE payload union.
- *  Non-object values are wrapped as a chunk/thinking payload so malformed
- *  frames still have a defined shape. */
-function toSseEventData(value: unknown): SseEventData {
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    return value as SseEventData;
-  }
-  return { content: String(value) } as SseEventData;
-}
-
 /**
  * Owns the SSE event dispatcher and the sendChatMessage driver that runs a
  * full streaming chat turn (fetch → SSE parse → dispatch → finally loadSessions).
@@ -61,34 +48,44 @@ export function useChatStream(
   refs: StableRefs,
   abortControllersRef: WritableRef<Map<number, AbortController>>,
   loadSessions: () => Promise<void>,
-  loadSessionMessages: (id: number, allowEmptyWhileStreaming?: boolean) => Promise<void>
+  loadSessionMessages: (
+    id: number,
+    allowEmptyWhileStreaming?: boolean,
+    options?: { keepCurrentSession?: boolean }
+  ) => Promise<void>
 ) {
-  const { dispatch } = useChat();
+  const { state, dispatch } = useChat();
 
   // --- Background-stream buffering ------------------------------------------
   // When the user switches to a different session while a stream is active,
   // events are buffered instead of dispatched so they don't bleed into the
   // wrong session's message list.  Switching back replays the buffer on top
   // of the freshly-loaded DB messages so live output resumes seamlessly.
-  const [streamingSessions, setStreamingSessions] = useState<Set<number>>(new Set());
+  // Whether the turn that failed can be retried at all. There is a stored
+  // retry payload while a turn is in flight and after it fails, but a turn
+  // whose session has been deleted cannot be retried into anything — the
+  // banner must not offer a Retry that fails the same way.
+  const [canRetry, setCanRetry] = useState(false);
   const nextRequestIdRef = useRef(0);
-  const bufferOwnerMapRef = useRef<Map<number, number>>(new Map());
-  const bufferedEventsRef = useRef<Map<number, Array<{ event: string; data: SseEventData }>>>(
-    new Map()
-  );
+  // The ownership rules (which turn belongs to which session, what is held
+  // while the user is away, which turns failed) live in `streamMachine.ts`
+  // as pure functions over one state object.
+  const streamStateRef = useRef<StreamState>(createStreamState());
   const subagentBufferRef = useRef<
     Map<string, { text: string; timer: ReturnType<typeof setTimeout> | null; sessionId?: number }>
   >(new Map());
   const retryPayloadRef = useRef<{ body: string } | null>(null);
-  const requestFailedMapRef = useRef<Map<number, boolean>>(new Map());
+
   // --------------------------------------------------------------------------
 
   /**
-   * Clear a session's t/s read-out: both the live badge value and the
-   * end-of-turn rate fields inside tokenStats. Used on error/abort paths —
-   * without the tokenStats clear, the PREVIOUS turn's evalTps would keep
-   * displaying as if it belonged to the aborted/errored turn (the store's
-   * SET_TOKEN_STATS merge preserves tps fields that a payload omits).
+   * Clear a session's live t/s read-out — the number the status bar shows
+   * while a turn is running.
+   *
+   * The end-of-turn rates inside `tokenStats` are deliberately NOT touched
+   * here: they are delivered once, on the `done` event, and they are the
+   * numbers the user wants to see afterwards. A turn that ends successfully
+   * must not have them wiped a moment after they arrive.
    */
   const clearTpsReadout = useCallback(
     (targetSessionId?: number) => {
@@ -97,13 +94,28 @@ export function useChatStream(
         tps: null,
         ...(targetSessionId === undefined ? {} : { targetSessionId }),
       });
+    },
+    [dispatch]
+  );
+
+  /**
+   * Clear the live read-out AND the end-of-turn rate fields.
+   *
+   * Used on error and abort paths: the store's SET_TOKEN_STATS merge
+   * preserves rate fields that a payload omits, so without this the
+   * PREVIOUS turn's evalTps would keep displaying as if it belonged to the
+   * aborted or errored turn.
+   */
+  const clearTokenRates = useCallback(
+    (targetSessionId?: number) => {
+      clearTpsReadout(targetSessionId);
       dispatch({
         type: 'SET_TOKEN_STATS',
         stats: { evalTps: null, promptTps: null, evalTpsEstimated: false },
         ...(targetSessionId === undefined ? {} : { targetSessionId }),
       });
     },
-    [dispatch]
+    [clearTpsReadout, dispatch]
   );
 
   /**
@@ -117,9 +129,7 @@ export function useChatStream(
    */
   const flushBufferedDoneFor = useCallback(
     (sessionId: number): boolean => {
-      const buffered = bufferedEventsRef.current.get(sessionId);
-      if (!buffered) return false;
-      const doneEntry = [...buffered].reverse().find(({ event }) => event === 'done');
+      const doneEntry = findBufferedDone(streamStateRef.current, sessionId);
       if (!doneEntry) return false;
       const data = doneEntry.data as SseEventData;
       if (data.tokenStats) {
@@ -139,46 +149,28 @@ export function useChatStream(
   );
 
   const handleEvent = useCallback(
-    (
-      event: string,
-      data: SseEventData,
-      requestId?: number,
-      replayTargetSessionId?: number
-    ) => {
+    (event: string, data: SseEventData, requestId?: number, replayTargetSessionId?: number) => {
       // ── session_created must ALWAYS be processed first ──────────────────
-      // It syncs bufferOwnerMapRef and refs.sessionIdRef to the real
-      // session ID.  If the buffer guard below intercepted it, the guard
-      // would see size 0 (no active streams), buffer session_created, and
-      // the sync would never happen — causing ALL subsequent chunks to be
-      // buffered and ultimately discarded by the finally block.
+      // It moves the turn from the placeholder key to the real session id,
+      // in every registry at once: the abort controller, the streaming set,
+      // the ownership map and the visible session. If the buffer guard below
+      // intercepted it, the turn would stay filed under the placeholder and
+      // every later chunk would be buffered and ultimately discarded.
       if (event === 'session_created' && typeof data.sessionId === 'number') {
         const realId: number = data.sessionId;
-        if (abortControllersRef.current.has(-1)) {
-          const ctrl = abortControllersRef.current.get(-1)!;
-          abortControllersRef.current.delete(-1);
+        if (abortControllersRef.current.has(NEW_SESSION_KEY)) {
+          const ctrl = abortControllersRef.current.get(NEW_SESSION_KEY)!;
+          abortControllersRef.current.delete(NEW_SESSION_KEY);
           abortControllersRef.current.set(realId, ctrl);
-          setStreamingSessions((prev) => {
-            const next = new Set(prev);
-            next.delete(-1);
-            next.add(realId);
-            return next;
-          });
-          dispatch({ type: 'STOP_STREAMING', sessionId: -1 });
-          dispatch({ type: 'START_STREAMING', sessionId: realId });
+          // The store's streaming set is the single record of which
+          // sessions are streaming. The rename is one step: a STOP followed
+          // by a START would leave the set momentarily empty, and an empty
+          // set clears the steer-target toggle, the pending model switch
+          // and the held steer draft.
+          dispatch({ type: 'RENAME_STREAMING', fromSessionId: -1, toSessionId: realId });
         }
-        // Migrate any buffered events from placeholder -1 to the real session ID
-        const oldBuffer = bufferedEventsRef.current.get(-1);
-        if (oldBuffer && oldBuffer.length > 0) {
-          const existing = bufferedEventsRef.current.get(realId) ?? [];
-          bufferedEventsRef.current.set(realId, [...existing, ...oldBuffer]);
-          bufferedEventsRef.current.delete(-1);
-        }
-        // Update ALL map entries set with -1 (placeholder for new sessions) to the real ID
-        for (const [reqId, sessId] of bufferOwnerMapRef.current.entries()) {
-          if (sessId === -1) {
-            bufferOwnerMapRef.current.set(reqId, realId);
-          }
-        }
+        // Move every structure keyed by the placeholder over to the real id.
+        streamStateRef.current = migrateSessionKey(streamStateRef.current, realId);
         // Migrate subagent buffer entries from placeholder -1 to the real session ID
         for (const [_agentId, entry] of subagentBufferRef.current.entries()) {
           if (entry.sessionId === -1 || entry.sessionId === undefined) {
@@ -186,6 +178,16 @@ export function useChatStream(
           }
         }
         refs.sessionIdRef.current = realId;
+        // The stored retry payload has to point at the session this turn was
+        // saved to. It was sent without a session id — the server assigned
+        // one just now — so a retry would otherwise make the server create a
+        // second session for the same chat, and the client would end up
+        // looking at one session while the turn belonged to another.
+        if (retryPayloadRef.current) {
+          retryPayloadRef.current = {
+            body: retryBodyForSession(retryPayloadRef.current.body, realId),
+          };
+        }
         dispatch({ type: 'SET_CURRENT_SESSION', id: realId });
         dispatch({
           type: 'ADD_SESSION',
@@ -200,22 +202,32 @@ export function useChatStream(
         return;
       }
 
+      // The server stamps every frame with the session the turn belongs to,
+      // so that is where the owner comes from. The client's own record of
+      // which session a turn belongs to is only the fallback, for frames that
+      // arrive before the server has created the session.
+      const frameSessionId = data.sessionId;
+
       // If this event belongs to a stream whose session is NOT the visible
       // session, buffer it so it doesn't land in the wrong message list.
       if (requestId !== undefined) {
-        const ownerSessionId = bufferOwnerMapRef.current.get(requestId);
-        if (ownerSessionId !== undefined && ownerSessionId !== (refs.sessionIdRef.current ?? -1)) {
-          if (!bufferedEventsRef.current.has(ownerSessionId)) {
-            bufferedEventsRef.current.set(ownerSessionId, []);
-          }
-          bufferedEventsRef.current.get(ownerSessionId)!.push({ event, data });
+        const ownerSessionId = frameOwner(
+          frameSessionId,
+          ownerOf(streamStateRef.current, requestId)
+        );
+        if (
+          ownerSessionId !== undefined &&
+          ownerSessionId !== streamKeyFor(refs.sessionIdRef.current)
+        ) {
+          streamStateRef.current = bufferEvent(streamStateRef.current, ownerSessionId, event, data);
           return;
         }
       }
 
       // ── Compute the owning session id for every dispatch ──────────────
-      // The owning session is the request's `bufferOwnerMapRef` entry if
-      // known, otherwise the currently-visible session. The reducer's
+      // The owning session is the turn's session if the server named it,
+      // otherwise the client's record of it, otherwise the currently-visible
+      // session. The reducer's
       // `targetSessionId` guard then routes the action to the correct
       // session slot when two streams are live. Passing `targetSessionId`
       // on every dispatch (instead of relying on a no-target default
@@ -225,478 +237,115 @@ export function useChatStream(
       const ownerSessionId =
         requestId === undefined
           ? (refs.sessionIdRef.current ?? undefined)
-          : bufferOwnerMapRef.current.get(requestId);
+          : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId));
       const targetSessionId = ownerSessionId === undefined ? undefined : ownerSessionId;
 
-      switch (event) {
-        case 'thinking': {
-          dispatch({
-            type: 'APPLY_ASSISTANT_DELTA',
-            ...(typeof data.content === 'string' ? { thinking: data.content } : {}),
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          break;
-        }
+      // Routing an event into store actions is a pure function, so it can be
+      // characterised by tests (scripts/test-sse-routing.mjs). This callback
+      // keeps only the parts that need the ownership maps and the timers.
+      const outcome = routeSseEvent(event, data, {
+        targetSessionId,
+        approvalOwner:
+          requestId === undefined
+            ? (replayTargetSessionId ?? refs.sessionIdRef.current ?? undefined)
+            : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId)),
+        compactOwner:
+          requestId === undefined
+            ? undefined
+            : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId)),
+        doneOwner:
+          requestId === undefined
+            ? undefined
+            : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId)),
+        subagentOwner:
+          requestId === undefined
+            ? replayTargetSessionId
+            : frameOwner(frameSessionId, ownerOf(streamStateRef.current, requestId)),
+        requestedNumCtx: refs.requestedNumCtxRef.current,
+        pendingSteerDraft: refs.pendingSteerDraftRef.current,
+      });
 
-        case 'chunk': {
-          dispatch({
-            type: 'APPLY_ASSISTANT_DELTA',
-            ...(typeof data.content === 'string' ? { content: data.content } : {}),
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          break;
-        }
+      if (outcome.markFailed && requestId !== undefined) {
+        streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
+      }
 
-        case 'tool_call': {
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'tool',
-              content: `🔧 **${data.name ?? ''}**\n\`\`\`json\n${JSON.stringify(data.arguments, null, 2)}\n\`\`\``,
-              ...(data.name === undefined ? {} : { name: data.name }),
-            },
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          trace('tool_call event', { name: data.name, hasToolCallId: false });
-          break;
-        }
+      for (const action of outcome.actions) {
+        dispatch(action);
+      }
 
-        case 'approval_request': {
-          dispatch({
-            type: 'SHOW_APPROVAL',
-            command: {
-              name: data.toolName ?? data.name ?? '',
-              args: data.args ?? {},
-              ...(typeof data.toolCallName === 'string' ? { toolCallName: data.toolCallName } : {}),
-            },
-            ...(data.requestId === undefined ? {} : { requestId: data.requestId }),
-          });
-          break;
-        }
-
-        case 'tool_result': {
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'tool',
-              content: `✅ **${data.name ?? ''}** (${data.duration ?? 0}ms)\n\n\`\`\`\n${data.result ?? ''}\n\`\`\``,
-              ...(data.name === undefined ? {} : { name: data.name }),
-              ...(data.toolCallId === undefined ? {} : { tool_call_id: data.toolCallId }),
-            },
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          // The run_subagents batch this result closes out is no longer
-          // running anything — clear the steer-target toggle's "sub-agent
-          // is active" signal. Sub-agents run sequentially, so there is
-          // never more than one to disambiguate.
-          if (data.name === 'run_subagents') {
-            dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: null } });
-          }
-          trace('tool_result event', {
-            name: data.name,
-            toolCallId: data.toolCallId,
-            contentLength: (data.result ?? '').length,
-          });
-          break;
-        }
-
-        case 'tool_progress': {
-          dispatch({
-            type: 'APPEND_TOOL_PROGRESS',
-            ...(data.name === undefined ? {} : { name: data.name }),
-            content: data.message ?? data.content ?? String(data),
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          trace('tool_progress event', {
-            name: data.name,
-            contentPreview: (data.message ?? '').slice(0, 80),
-          });
-          break;
-        }
-        case 'subagent_output': {
-          const outputAgentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
-          dispatch({
-            type: 'SUBAGENT_OUTPUT',
-            agentId: outputAgentId,
-            message: typeof data.message === 'string' ? data.message : String(data.message ?? ''),
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: outputAgentId } });
-          break;
-        }
-
-         case 'subagent_chunk': {
-          const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
-          const text = typeof data.text === 'string' ? data.text : String(data.text ?? '');
-          dispatch({ type: 'SET_CONFIG', config: { activeSubagentId: agentId } });
-          // `requestId` is undefined on the replay path (when the user
-          // navigates back to a session whose events were buffered
-          // while another session was visible). Without a requestId we
-          // can't look up the owner via `bufferOwnerMapRef`, so fall
-          // back to `replayTargetSessionId` (set by
-          // `replayBufferedEvents`). This is what stops orphan
-          // `subagentBufferRef` entries (sessionId === undefined) from
-          // being flushed against an unrelated session in `finally`.
-          // `session_created` will later migrate any -1 placeholder
-          // entries to the real session id, so the buffer stays
-          // consistent across the new-session handoff.
-          const ownerSessionId =
-            requestId === undefined
-              ? replayTargetSessionId
-              : bufferOwnerMapRef.current.get(requestId);
-          const buffer = subagentBufferRef.current.get(agentId);
-          if (buffer) {
-            buffer.text += text;
-            if (buffer.timer) clearTimeout(buffer.timer);
-          } else {
-            subagentBufferRef.current.set(agentId, {
-              text,
-              timer: null,
-              ...(ownerSessionId === undefined ? {} : { sessionId: ownerSessionId }),
-            });
-          }
-          const entry = subagentBufferRef.current.get(agentId)!;
-          entry.timer = setTimeout(() => {
-            dispatch({
-              type: 'SUBAGENT_CHUNK',
-              agentId,
-              text: entry.text,
-              ...(ownerSessionId === undefined ? {} : { targetSessionId: ownerSessionId }),
-            });
-            subagentBufferRef.current.delete(agentId);
-          }, 50);
-          break;
-        }
-
-        case 'status': {
-          if (data.tokensUsed !== undefined && data.tokensUsed !== null) {
-            dispatch({
-              type: 'SET_TOKEN_STATS',
-              stats: {
-                totalTokens: data.tokensUsed,
-                tokenLimit: data.tokenLimit ?? 0,
-                promptEvalCount: 0,
-                evalCount: data.tokensUsed,
-                isEstimated: data.isEstimated ?? false,
-                // The server reports the model's runtime cap on every
-                // status event. Thread it through so the Settings
-                // modal can decide whether to show the "capped by
-                // model limit" row without conflating it with the
-                // client's default-effective value before any server
-                // response has arrived.
-                modelContextLimit: data.modelContextLimit ?? null,
-              },
-              ...(targetSessionId === undefined ? {} : { targetSessionId }),
-            });
-          }
-          if (data.tps !== undefined) {
-            dispatch({
-              type: 'SET_CURRENT_TPS',
-              tps: data.tps,
-              ...(targetSessionId === undefined ? {} : { targetSessionId }),
-            });
-          }
-          // The server emits a `vision_unsupported` status phase when
-          // a 400 indicates the active model rejected image input. The
-          // server has already folded the discovery into its
-          // per-(baseUrl, modelName) vision cache, so the client only
-          // needs to update its own display state for the warning UI.
-          // Any other phase is left alone — visionState is initialized
-          // to 'unknown' and updated only on this signal.
-          if (data.phase === 'vision_unsupported') {
-            dispatch({ type: 'SET_VISION_STATE', state: 'unsupported' });
-          }
-          // The running turn has taken a requested model switch on board.
-          // The server re-resolved vision support for the new model, so the
-          // previous model's verdict no longer applies — reset it to
-          // 'unknown' and let the next 400-driven discovery speak.
-          if (data.phase === 'model_switched') {
-            dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
-            dispatch({ type: 'SET_VISION_STATE', state: 'unknown' });
-          }
-          // The server has spliced a queued steering message into the
-          // conversation. Only now — not when the send was first accepted
-          // — do we echo it into the transcript and release the held
-          // draft, matching on `steerId` so a stale ack from an earlier
-          // draft (e.g. after a fast-follow second steer) can't clear the
-          // wrong one.
-          if (data.phase === 'steer_applied') {
-            const draft = refs.pendingSteerDraftRef.current;
-            if (draft && draft.id === data.steerId) {
-              dispatch({
-                type: 'ADD_MESSAGE',
-                message: { role: 'user', content: draft.text },
-                ...(targetSessionId === undefined ? {} : { targetSessionId }),
-              });
-              dispatch({ type: 'SET_CONFIG', config: { pendingSteerDraft: null } });
-            }
-          }
-          break;
-        }
-
-        case 'compact_progress': {
-          if (typeof data.message === 'string') {
-            dispatch({
-              type: 'COMPACT_PROGRESS',
-              message: data.message,
-              ...(targetSessionId === undefined ? {} : { targetSessionId }),
-            });
-          }
-          break;
-        }
-
-        case 'compact': {
-          // Clear stale compaction phases so the streaming indicator
-          // switches back to "Streaming..." once compaction finishes
-          // and the model resumes generating.
-          dispatch({
-            type: 'CLEAR_COMPACT_PROGRESS',
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-
-          // Guard SET_MESSAGES and SET_TOKEN_STATS with the owning session so a
-          // compaction that completes after the user has switched sessions cannot
-          // overwrite the newly-viewed session's message list or token stats.
-          const compactOwner =
-            requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
-          if (Array.isArray(data.messages)) {
-            dispatch({
-              type: 'SET_MESSAGES',
-              messages: data.messages,
-              ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
-            });
-          }
-          if (typeof data.stats?.newTokenCount === 'number') {
-            dispatch({
-              type: 'SET_TOKEN_STATS',
-              stats: {
-                promptEvalCount: data.stats.newTokenCount,
-                evalCount: 0,
-                totalTokens: data.stats.newTokenCount,
-                tokenLimit: data.tokenLimit ?? refs.requestedNumCtxRef.current ?? DEFAULT_NUM_CTX,
-              },
-              ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
-            });
-          } else {
-            dispatch({
-              type: 'CLEAR_TOKEN_STATS',
-              ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
-            });
-          }
-          dispatch({
-            type: 'ADD_MESSAGE',
-            message: {
-              role: 'system',
-              content: `⚡ Conversation auto-compacted (${data.stats?.oldTokenCount ?? '?'} → ${data.stats?.newTokenCount ?? '?'} tokens)`,
-            },
-            ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
-          });
-          break;
-        }
-
-        case 'done': {
-          // Do NOT call SET_CURRENT_SESSION here. If the user switched sessions
-          // while a stream was running, dispatching SET_CURRENT_SESSION(A) would
-          // forcibly snap the UI back to session A against the user's will.
-          // session_created already handles new-session ID assignment; for
-          // existing sessions this dispatch was always a redundant no-op at best.
-          // This event is in DELTA_EVENTS so it is buffered when the user is away
-          // and replayed (applying the final tokenStats) when they return.
-          if (data.tokenStats) {
-            dispatch({
-              type: 'SET_TOKEN_STATS',
-              stats: data.tokenStats,
-              ...(targetSessionId === undefined ? {} : { targetSessionId }),
-            });
-          }
-          const doneToolCalls = (data as { tool_calls?: Array<{ id?: string }> }).tool_calls;
-          trace('done event', {
-            hasToolCalls: !!doneToolCalls?.length,
-            toolCallCount: doneToolCalls?.length ?? 0,
-            toolCallIds: doneToolCalls?.map((tc) => tc.id),
-          });
-          if (typeof data.doneReason === 'string') {
-            // Normalize the server-side value to our DoneReason union. The server
-            // coerces missing values to 'stop' and is the source of truth for
-            // valid values; this is purely defensive.
-            const reason: DoneReason = isDoneReason(data.doneReason) ? data.doneReason : 'unknown';
-             const doneOwnerSessionId =
-              requestId === undefined ? undefined : bufferOwnerMapRef.current.get(requestId);
-            dispatch({
-              type: 'SET_DONE_REASON',
-              reason,
-              ...(doneOwnerSessionId === undefined ? {} : { targetSessionId: doneOwnerSessionId }),
-            });
-          }
-          // The live rough estimate is superseded by the authoritative
-          // tokenStats just applied. Clear it scoped to the owning session —
-          // an unscoped clear would wipe the VISIBLE session's badge when a
-          // background stream's buffer is replayed on switch-back.
-          clearTpsReadout(targetSessionId);
-          break;
-        }
-        case 'error': {
-          // LLM / network failure during streaming. Mark the request
-          // as failed (so the user's `retryPayloadRef` is preserved)
-          // and surface the message to the owning session.
-          if (requestId !== undefined) requestFailedMapRef.current.set(requestId, true);
-          const errorMessage = typeof data.message === 'string' ? data.message : 'Unknown error';
-          if (targetSessionId === undefined) {
-            dispatch({ type: 'SET_ERROR', error: errorMessage });
-          } else {
-            dispatch({ type: 'SET_ERROR', error: errorMessage, targetSessionId });
-          }
-          // An errored turn has no t/s of its own — clear both the live
-          // value and any previous turn's end-of-turn rate (the store merge
-          // would otherwise keep displaying the old rate).
-          clearTpsReadout(targetSessionId);
-          break;
-        }
-        case 'write_error': {
-          // Persistence failure for a session-messages write. Surface the
-          // message to the user; the DB and the LLM-observed in-memory
-          // state have diverged. Marking the request as failed prevents
-          // `retryPayloadRef` from being cleared so the user can retry.
-          if (requestId !== undefined) requestFailedMapRef.current.set(requestId, true);
-          const writeErrorMessage =
-            typeof data.message === 'string'
-              ? `Failed to save message to database: ${data.message}`
-              : 'Failed to save message to database: Unknown error';
-           if (targetSessionId === undefined) {
-            dispatch({ type: 'SET_ERROR', error: writeErrorMessage });
-          } else {
-            dispatch({ type: 'SET_ERROR', error: writeErrorMessage, targetSessionId });
-          }
-          // A persistence failure is still a failed turn as far as the t/s
-          // read-out is concerned — clear both the live value and any stale
-          // end-of-turn rate.
-          clearTpsReadout(targetSessionId);
-          break;
-        }
-        case 'clear_assistant': {
-          dispatch({
-            type: 'REMOVE_LAST_ASSISTANT',
-            ...(targetSessionId === undefined ? {} : { targetSessionId }),
-          });
-          break;
-        }
-
-         default: {
-          break;
+      if (outcome.clearedSubagentId) {
+        // The server dropped a sub-agent's streamed output because its turn
+        // failed and is re-issued. The store action above REPLACED the
+        // bubble with the text the server kept, but the text that is still
+        // COALESCING for that agent lives here — so its pending flush timer
+        // has to be cancelled and the entry dropped, or the failed attempt's
+        // text would be appended to the bubble AFTER the clear.
+        //
+        // Dropping it loses nothing: the server's replacement content
+        // already includes those characters (the server counted them when
+        // it truncated its own bucket).
+        const pending = subagentBufferRef.current.get(outcome.clearedSubagentId);
+        if (pending) {
+          if (pending.timer) clearTimeout(pending.timer);
+          subagentBufferRef.current.delete(outcome.clearedSubagentId);
         }
       }
+
+      if (outcome.subagentChunk) {
+        const { agentId, text, owner } = outcome.subagentChunk;
+        const buffer = subagentBufferRef.current.get(agentId);
+        if (buffer) {
+          buffer.text += text;
+          if (buffer.timer) clearTimeout(buffer.timer);
+        } else {
+          subagentBufferRef.current.set(agentId, {
+            text,
+            timer: null,
+            ...(owner === undefined ? {} : { sessionId: owner }),
+          });
+        }
+        const entry = subagentBufferRef.current.get(agentId)!;
+        entry.timer = setTimeout(() => {
+          dispatch({
+            type: 'SUBAGENT_CHUNK',
+            agentId,
+            text: entry.text,
+            ...(owner === undefined ? {} : { targetSessionId: owner }),
+          });
+          subagentBufferRef.current.delete(agentId);
+        }, 50);
+      }
+
+      if (outcome.clearRates) {
+        // Clears the live read-out as well.
+        clearTokenRates(targetSessionId);
+      } else if (outcome.clearTps) {
+        clearTpsReadout(targetSessionId);
+      }
     },
-    [dispatch, clearTpsReadout]
+    [dispatch, clearTokenRates, clearTpsReadout]
   );
 
   /**
-   * Retry a failed chat turn using the originally-stored request payload.
-   */  const retry = useCallback(async () => {
-    const sessionId = refs.sessionIdRef.current ?? -1;
-    if (!retryPayloadRef.current || streamingSessions.has(sessionId)) return;
+   * Finish a turn: release everything the turn held, reconcile the
+   * transcript with the database, and refresh the session list.
+   *
+   * Sending a message and retrying a failed one used to end with two copies
+   * of this block, and they had drifted: the send path reloaded the
+   * transcript and the retry path did not, and the retry path refreshed the
+   * title and the send path did not. The drift was not harmless — a retry
+   * whose previous attempt had failed left the two attempts' partial
+   * replies merged into a single bubble, and a retry of a turn that never
+   * reached the server showed the answer with no question above it.
+   *
+   * Both drivers call this, so the two cannot drift apart again.
+   */
+  const finishTurn = useCallback(
+    async (requestId: number) => {
+      const ownerId = ownerOf(streamStateRef.current, requestId);
 
-    const { body } = retryPayloadRef.current;
-    dispatch({ type: 'SET_ERROR', error: null });
-    dispatch({ type: 'SET_CURRENT_TPS', tps: null });
-    dispatch({ type: 'SET_DONE_REASON', reason: undefined });
-
-    const abortController = new AbortController();
-    abortControllersRef.current.set(sessionId, abortController);
-    setStreamingSessions((prev) => new Set(prev).add(sessionId));
-    dispatch({ type: 'START_STREAMING', sessionId });
-
-    const requestId = nextRequestIdRef.current++;
-    bufferOwnerMapRef.current.set(requestId, sessionId);
-    bufferedEventsRef.current.delete(sessionId);
-    requestFailedMapRef.current.set(requestId, false);
-
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        let parsedError: Record<string, unknown> | null = null;
-        try {
-          parsedError = JSON.parse(errorText) as Record<string, unknown>;
-        } catch {
-          const dataLines: string[] = [];
-          for (const line of errorText.split('\n')) {
-            if (line.startsWith('data:')) {
-              dataLines.push(line.slice(5).trim());
-            }
-          }
-          if (dataLines.length > 0) {
-            try {
-              parsedError = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-        if (parsedError) {
-          const msg = parsedError.message ?? parsedError.error;
-          if (typeof msg === 'string' && msg.length > 0) {
-            throw new Error(`HTTP ${response.status}: ${msg}`);
-          }
-        }
-        throw new Error(
-          `HTTP ${response.status}: ${errorText.length > 200 ? `${errorText.slice(0, 200)}...` : errorText}`
-        );
-      }
-
-      if (!response.body) throw new Error('No response body stream');
-
-      const eventStream = response.body
-        .pipeThrough(new TextDecoderStream())
-        .pipeThrough(new EventSourceParserStream());
-
-      const reader = eventStream.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        try {
-          const parsed = toSseEventData(JSON.parse(value.data));
-          handleEvent(value.event || 'message', parsed, requestId);
-        } catch {
-          handleEvent(value.event || 'message', { content: value.data }, requestId);
-        }
-      }
-    } catch (err: unknown) {
-      const details = getStreamErrorDetails(err);
-      if (!details) {
-        requestFailedMapRef.current.set(requestId, true);
-        dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
-       } else if (details.name === 'AbortError') {
-        // User clicked Stop — the turn never completed, so the t/s read-out
-        // must not keep displaying the previous turn's rate as if it
-        // belonged to this one.
-        clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
-      } else if (
-        details.message.includes('input stream') ||
-        details.message.includes('network') ||
-        details.message.includes('fetch') ||
-        details.name === 'TypeError'
-      ) {
-        requestFailedMapRef.current.set(requestId, true);
-        dispatch({
-          type: 'SET_ERROR',
-          error:
-            'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
-        });
-        clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
-      } else {
-        requestFailedMapRef.current.set(requestId, true);
-        dispatch({ type: 'SET_ERROR', error: details.message });
-        clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
-      }
-    } finally {      const ownerId = bufferOwnerMapRef.current.get(requestId);
-
-      // Only flush subagent buffers belonging to this session
+      // Flush the sub-agent text that is still coalescing, against the
+      // session that owns it.
       for (const [agentId, entry] of subagentBufferRef.current.entries()) {
         if (entry.sessionId === ownerId || entry.sessionId === undefined) {
           if (entry.timer) clearTimeout(entry.timer);
@@ -715,11 +364,15 @@ export function useChatStream(
 
       if (ownerId !== undefined) {
         abortControllersRef.current.delete(ownerId);
-        setStreamingSessions((prev) => {
-          const next = new Set(prev);
-          next.delete(ownerId);
-          return next;
-        });
+        // The database is the source of truth at the end of a turn: the
+        // server persists the messages it accepted, while the client's copy
+        // carries optimistic ids that the delete endpoint cannot use.
+        // Reloading also gives the next attempt a clean slate instead of
+        // appending to the failed attempt's bubble.
+        //
+        // The reload must not switch the view — the user may have moved to
+        // another session while this turn was running.
+        await loadSessionMessages(ownerId, true, { keepCurrentSession: true });
         dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
         // Apply a terminal `done` that was buffered while this stream's
         // owner was a background session: its tokenStats (including the
@@ -727,54 +380,146 @@ export function useChatStream(
         // discarded, otherwise the slot would keep displaying a frozen
         // live estimate after the user switches back.
         flushBufferedDoneFor(ownerId);
-        bufferOwnerMapRef.current.delete(requestId);
-        bufferedEventsRef.current.delete(ownerId);
+        streamStateRef.current = discardBufferedEvents(streamStateRef.current, ownerId);
       }
+
+      // The failure flag lives on the request record, so it has to be read
+      // while the record still exists. Reading it afterwards always says
+      // "did not fail", which would throw the turn's retry payload away and
+      // leave the Retry button doing nothing.
+      const { state: afterEnd, failed: requestFailed } = endRequest(
+        streamStateRef.current,
+        requestId
+      );
+      streamStateRef.current = afterEnd;
+
       // Clear the live value scoped to the OWNER (unscoped fallback when the
-      // owner is unknown) — never wipe a different session's badge.
-      clearTpsReadout(ownerId);
-      loadSessions();
-      // Delayed refresh to pick up auto-generated title from background task
-      setTimeout(() => loadSessions(), 2000);
-      if (!requestFailedMapRef.current.get(requestId)) {
-        retryPayloadRef.current = null;
+      // owner is unknown) — never wipe a different session's badge. A turn
+      // that failed also drops the stale end-of-turn rates; a turn that
+      // succeeded keeps the ones the server just delivered.
+      if (requestFailed) {
+        clearTokenRates(ownerId);
+      } else {
+        clearTpsReadout(ownerId);
       }
-      requestFailedMapRef.current.delete(requestId);
+      loadSessions();
+      // The server titles a new chat once its first turn ends; give it a
+      // moment to arrive before refreshing the list again.
+      setTimeout(() => loadSessions(), 2000);
+      if (!requestFailed) {
+        retryPayloadRef.current = null;
+        setCanRetry(false);
+      }
+    },
+    [
+      dispatch,
+      abortControllersRef,
+      clearTokenRates,
+      clearTpsReadout,
+      flushBufferedDoneFor,
+      loadSessionMessages,
+      loadSessions,
+    ]
+  );
+
+  /**
+   * Retry a failed chat turn using the originally-stored request payload.
+   */ const retry = useCallback(async () => {
+    const sessionId = streamKeyFor(refs.sessionIdRef.current);
+    if (!retryPayloadRef.current || state.streamingSessions.has(sessionId)) return;
+
+    const { body } = retryPayloadRef.current;
+    // The previous turn's rate described that turn — retire it (see the
+    // note in sendChatMessage).
+    clearTokenRates();
+    dispatch({ type: 'SET_DONE_REASON', reason: undefined });
+
+    const abortController = new AbortController();
+    abortControllersRef.current.set(sessionId, abortController);
+    dispatch({ type: 'START_STREAMING', sessionId });
+
+    const requestId = nextRequestIdRef.current++;
+    streamStateRef.current = beginRequest(streamStateRef.current, requestId, sessionId);
+
+    try {
+      await streamChatTurn({
+        body,
+        signal: abortController.signal,
+        onEvent: (event, data) => handleEvent(event, data, requestId),
+        // Clear the banner only once the retry has actually been accepted. If we
+        // cleared it optimistically the banner would unmount on click and its
+        // own in-flight state would never be visible (cold model loads take
+        // seconds). A failure re-dispatches SET_ERROR into the same instance.
+        onAccepted: () => dispatch({ type: 'SET_ERROR', error: null }),
+      });
+    } catch (err: unknown) {
+      const details = getStreamErrorDetails(err);
+      if (!details) {
+        streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
+        dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
+      } else if (details.name === 'AbortError') {
+        // User clicked Stop — the turn never completed, so the t/s read-out
+        // must not keep displaying the previous turn's rate as if it
+        // belonged to this one.
+        clearTokenRates(ownerOf(streamStateRef.current, requestId));
+      } else if (
+        details.message.includes('input stream') ||
+        details.message.includes('network') ||
+        details.message.includes('fetch') ||
+        details.name === 'TypeError'
+      ) {
+        streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
+        dispatch({
+          type: 'SET_ERROR',
+          error:
+            'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
+        });
+        clearTokenRates(ownerOf(streamStateRef.current, requestId));
+      } else {
+        streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
+        dispatch({ type: 'SET_ERROR', error: details.message });
+        clearTokenRates(ownerOf(streamStateRef.current, requestId));
+      }
+    } finally {
+      await finishTurn(requestId);
     }
-  }, [dispatch, handleEvent, clearTpsReadout, flushBufferedDoneFor, refs, abortControllersRef, loadSessions, streamingSessions]);
+  }, [
+    dispatch,
+    handleEvent,
+    clearTokenRates,
+    finishTurn,
+    refs,
+    abortControllersRef,
+    state.streamingSessions,
+  ]);
   /**
    * Call this after loading a session's messages to replay any SSE events that
    * were buffered while the user was viewing a different session.  No-op when
    * no stream is active or the target session doesn't own the active stream.
    */
-  // Events to replay when the user switches back to a buffered session.
-  // Includes:
+  // Which events are replayed when the user switches back to a buffered
+  // session is decided by `sseEvents.ts`, where every event the server can
+  // send is classified — so a new event cannot silently fall out of the
+  // replay set.
+  //
+  // Replayed:
   //   - Incremental content deltas (chunk, thinking, tool_progress, …)
   //   - done: applies the final authoritative token stats for the session
   //   - approval_request: re-surfaces the approval modal on return so the user
   //     can still approve/reject a pending run_command (the server waits up to
   //     120 s; if already timed out the POST to /api/approve is a harmless no-op)
-  // Excludes tool_call / tool_result / subagent_output / compact because those
-  // messages are flushed to SQLite mid-stream (Phase 2) and are reloaded from
-  // DB on session switch — replaying them here would create duplicates.
-  const DELTA_EVENTS = new Set([
-    'chunk',
-    'thinking',
-    'tool_progress',
-    'subagent_chunk',
-    'status',
-    'compact_progress',
-    'done',
-    'approval_request',
-  ]);
+  // Not replayed (tool_call / tool_result / subagent_output / compact): those
+  // messages are flushed to SQLite mid-stream and are reloaded from the
+  // database on a session switch — replaying them here would create
+  // duplicates.
 
-   const replayBufferedEvents = useCallback(
+  const replayBufferedEvents = useCallback(
     (targetSessionId: number | null) => {
-      const sessionKey = targetSessionId ?? -1;
-      const buffered = bufferedEventsRef.current.get(sessionKey) ?? [];
-      bufferedEventsRef.current.delete(sessionKey);
+      const sessionKey = streamKeyFor(targetSessionId);
+      const { state, events: buffered } = takeBufferedEvents(streamStateRef.current, sessionKey);
+      streamStateRef.current = state;
       for (const { event, data } of buffered) {
-        if (DELTA_EVENTS.has(event)) {
+        if (isReplayableEvent(event)) {
           // Pass `sessionKey` as `replayTargetSessionId` so the
           // `subagent_chunk` case can attribute its buffer entry to
           // the right session. Without this, replayed subagent chunks
@@ -906,8 +651,8 @@ export function useChatStream(
 
   const sendChatMessage = useCallback(
     async (message: string, attachments?: Attachment[]) => {
-      const sessionId = refs.sessionIdRef.current ?? -1;
-      if (streamingSessions.has(sessionId)) return;
+      const sessionId = streamKeyFor(refs.sessionIdRef.current);
+      if (state.streamingSessions.has(sessionId)) return;
 
       if (!refs.modelRef.current.trim()) {
         dispatch({ type: 'SET_ERROR', error: 'Please select a model first' });
@@ -932,18 +677,23 @@ export function useChatStream(
 
       dispatch({ type: 'ADD_MESSAGE', message: userMessage });
       dispatch({ type: 'SET_ERROR', error: null });
-      dispatch({ type: 'SET_CURRENT_TPS', tps: null });
+      // The previous turn's rate described THAT turn. It stays on screen
+      // between turns, but a new turn starting must retire it — otherwise
+      // the badge shows the last reply's rate as if it were live, for the
+      // whole prompt-processing phase.
+      clearTokenRates();
+      // A new turn must not inherit the previous turn's completion reason, or
+      // a stale 'length' would flash the truncation notice over the new reply.
+      dispatch({ type: 'SET_DONE_REASON', reason: undefined });
 
       const abortController = new AbortController();
       abortControllersRef.current.set(sessionId, abortController);
-      setStreamingSessions((prev) => new Set(prev).add(sessionId));
       dispatch({ type: 'START_STREAMING', sessionId });
 
       // Record which session owns this stream so events can be buffered when
       // the user navigates away and replayed when they switch back.
       const requestId = nextRequestIdRef.current++;
-      bufferOwnerMapRef.current.set(requestId, sessionId);
-      bufferedEventsRef.current.delete(sessionId);
+      streamStateRef.current = beginRequest(streamStateRef.current, requestId, sessionId);
 
       const allMessages = [...currentMessages, userMessage];
       const filteredMessages = allMessages.filter((m) => {
@@ -987,171 +737,56 @@ export function useChatStream(
         maxPromptLoopIterations: refs.maxPromptLoopIterationsRef.current,
       };
       retryPayloadRef.current = { body: JSON.stringify(bodyObj) };
-      requestFailedMapRef.current.set(requestId, false);
+      setCanRetry(true);
 
       try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        await streamChatTurn({
           body: retryPayloadRef.current!.body,
           signal: abortController.signal,
+          onEvent: (event, data) => handleEvent(event, data, requestId),
         });
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => 'Unknown error');
-
-          let parsedError: Record<string, unknown> | null = null;
-          try {
-            parsedError = JSON.parse(errorText) as Record<string, unknown>;
-          } catch {
-            // Not plain JSON — try SSE format
-          }
-
-          if (!parsedError) {
-            const dataLines: string[] = [];
-            for (const line of errorText.split('\n')) {
-              if (line.startsWith('data:')) {
-                dataLines.push(line.slice(5).trim());
-              }
-            }
-            if (dataLines.length > 0) {
-              try {
-                const sseData = dataLines.join('\n');
-                parsedError = JSON.parse(sseData) as Record<string, unknown>;
-              } catch {
-                // Invalid JSON in SSE data — fall through
-              }
-            }
-          }
-
-          if (parsedError) {
-            const msg =
-              parsedError.message ??
-              parsedError.error ??
-              parsedError.status ??
-              parsedError.detail ??
-              parsedError.title;
-            if (typeof msg === 'string' && msg.length > 0) {
-              throw new Error(`HTTP ${response.status}: ${msg}`);
-            }
-            const values = Object.values(parsedError).filter(
-              (v): v is string => typeof v === 'string'
-            );
-            if (values.length > 0) {
-              throw new Error(`HTTP ${response.status}: ${values[0]}`);
-            }
-          }
-
-          const truncated = errorText.length > 200 ? `${errorText.slice(0, 200)}...` : errorText;
-          throw new Error(`HTTP ${response.status}: ${truncated}`);
-        }
-
-        if (!response.body) throw new Error('No response body stream');
-
-        const eventStream = response.body
-          .pipeThrough(new TextDecoderStream())
-          .pipeThrough(new EventSourceParserStream());
-
-        const reader = eventStream.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          try {
-            const parsed = toSseEventData(JSON.parse(value.data));
-            handleEvent(value.event || 'message', parsed, requestId);
-          } catch {
-            handleEvent(value.event || 'message', { content: value.data }, requestId);
-          }
-        }
-       } catch (err: unknown) {
+      } catch (err: unknown) {
         const details = getStreamErrorDetails(err);
         if (!details) {
-          requestFailedMapRef.current.set(requestId, true);
+          streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
           dispatch({ type: 'SET_ERROR', error: 'Unknown error' });
-          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+          clearTokenRates(ownerOf(streamStateRef.current, requestId));
         } else if (details.name === 'AbortError') {
           // User clicked Stop — the turn never completed, so the t/s
           // read-out must not keep displaying the previous turn's rate as
           // if it belonged to this one.
-          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+          clearTokenRates(ownerOf(streamStateRef.current, requestId));
         } else if (
           details.message.includes('input stream') ||
           details.message.includes('network') ||
           details.message.includes('fetch') ||
           details.name === 'TypeError'
         ) {
-          requestFailedMapRef.current.set(requestId, true);
+          streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
           dispatch({
             type: 'SET_ERROR',
             error:
               'Connection lost. The stream was interrupted — try again if the response seems incomplete.',
           });
-          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+          clearTokenRates(ownerOf(streamStateRef.current, requestId));
         } else {
-          requestFailedMapRef.current.set(requestId, true);
+          streamStateRef.current = markRequestFailed(streamStateRef.current, requestId);
           dispatch({ type: 'SET_ERROR', error: details.message });
-          clearTpsReadout(bufferOwnerMapRef.current.get(requestId));
+          clearTokenRates(ownerOf(streamStateRef.current, requestId));
         }
       } finally {
-        const ownerId = bufferOwnerMapRef.current.get(requestId);
-
-        // Only flush subagent buffers belonging to this session
-        for (const [agentId, entry] of subagentBufferRef.current.entries()) {
-          if (entry.sessionId === ownerId || entry.sessionId === undefined) {
-            if (entry.timer) clearTimeout(entry.timer);
-            // Flush against the owning session so a background stream's
-            // pending sub-agent bubble is not appended to the visible
-            // session when the request lifecycle ends.
-            dispatch({
-              type: 'SUBAGENT_CHUNK',
-              agentId,
-              text: entry.text,
-              ...(ownerId === undefined ? {} : { targetSessionId: ownerId }),
-            });
-            subagentBufferRef.current.delete(agentId);
-          }
-        }
-
-        if (ownerId !== undefined) {
-          abortControllersRef.current.delete(ownerId);
-          await loadSessionMessages(ownerId, true);
-          setStreamingSessions((prev) => {
-            const next = new Set(prev);
-            next.delete(ownerId);
-            return next;
-          });
-          dispatch({ type: 'STOP_STREAMING', sessionId: ownerId });
-          // Apply a terminal `done` that was buffered while this stream's
-          // owner was a background session: its tokenStats (including the
-          // final t/s) must reach the owner slot before the buffer is
-          // discarded, otherwise the slot would keep displaying a frozen
-          // live estimate after the user switches back.
-          flushBufferedDoneFor(ownerId);
-          bufferOwnerMapRef.current.delete(requestId);
-          bufferedEventsRef.current.delete(ownerId);
-        }
-        // Clear the live value scoped to the OWNER (unscoped fallback when
-        // the owner is unknown) — never wipe a different session's badge.
-        clearTpsReadout(ownerId);
-        loadSessions();
-        if (!requestFailedMapRef.current.get(requestId)) {
-          retryPayloadRef.current = null;
-        }
-        requestFailedMapRef.current.delete(requestId);
+        await finishTurn(requestId);
       }
     },
     [
       dispatch,
       handleEvent,
-      clearTpsReadout,
-      flushBufferedDoneFor,
+      clearTokenRates,
+      finishTurn,
       refs,
       abortControllersRef,
-      loadSessions,
-      loadSessionMessages,
-      streamingSessions,
+      state.streamingSessions,
     ]
   );
-  return { sendChatMessage, retry, handleEvent, replayBufferedEvents };
+  return { sendChatMessage, retry, handleEvent, replayBufferedEvents, canRetry };
 }

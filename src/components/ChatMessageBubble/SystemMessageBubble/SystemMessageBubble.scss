@@ -19,7 +19,6 @@
   color: var(--color-text-system);
   white-space: pre-wrap;
   text-align: center;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(var(--blur-chip));
   box-shadow: 0 2px 8px rgba(var(--rgb-shadow-deep), 0.05);
 }

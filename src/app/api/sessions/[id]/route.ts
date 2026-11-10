@@ -3,6 +3,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { deleteSession, listSessions, loadSessionMessages } from '@/services/history';
+import { removeOutputsForSession } from '@/tools/runCommandOutputStore';
 
 export const dynamic = 'force-dynamic';
 import { type ChatMessage } from '@/services/llm';
@@ -67,6 +68,9 @@ export async function DELETE(
     }
 
     deleteSession(sessionId);
+    // The command output the session produced goes with it: an artifact of
+    // a conversation the user threw away must not outlive it.
+    removeOutputsForSession(sessionId);
     return NextResponse.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

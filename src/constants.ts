@@ -21,7 +21,6 @@ export const MODEL_LIST_TIMEOUT_MS = 60_000;
 export const DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES = 5;
 export const IMAGE_TOKEN_ESTIMATE = 1024;
 export const APPROX_CHARS_PER_TOKEN = 4;
-export const AUTO_COMPACT_THRESHOLD_PCT = 92;
 export const READ_FILE_TOKEN_WARN_PCT = 25;
 export const READ_FILE_TOKEN_CRITICAL_PCT = 50;
 export const READ_FILE_CHAR_WARN_THRESHOLD = 100_000; // ~25,000 tokens — warns when model/context size unknown
@@ -74,6 +73,22 @@ export const CAP_CACHE_TTL_MS = 5 * 60 * 1_000;
 /** Minimum message count before auto-compact will run. */
 export const MIN_MESSAGES_FOR_COMPACTION = 4;
 
+/**
+ * How many auto-compactions in a row may FAIL in one turn before the chat
+ * route stops trying for the rest of that turn.
+ *
+ * WHY a latch is needed: the trigger fires on a RESERVED MARGIN (see
+ * `computeCompactionTriggerTokens`), so it is reached earlier and stays
+ * reached — a compaction that throws leaves the history exactly as it was,
+ * which means the very next loop iteration would try again, and again, paying
+ * for the same summarisation each time. Two attempts keep a transient provider
+ * failure recoverable; a third against the same unchanged history is not going
+ * to fail differently. The sub-agent path is deliberately stateless: it is
+ * re-entered from scratch on each of its own iterations, and its history is
+ * short-lived.
+ */
+export const MAX_COMPACTION_FAILURES_PER_TURN = 2;
+
 /** Context floor for the compact split/measure routines (same value as in `compact/measure.ts`). */
 export const MEASUREMENT_CTX_FLOOR = 32_768;
 
@@ -95,6 +110,36 @@ export const RUN_COMMAND_TIMEOUT_MS = 30_000;
 
 /** Maximum captured UTF-8 bytes retained for each run_command output stream. */
 export const RUN_COMMAND_OUTPUT_MAX_BYTES = 256 * 1024;
+
+/** Bytes of a run_command stream that may be inlined into the tool result verbatim. */
+export const RUN_COMMAND_INLINE_MAX_BYTES = 8 * 1024;
+
+/** Bytes kept from the head of a run_command stream when the output is too large to inline. */
+export const RUN_COMMAND_HEAD_PREVIEW_BYTES = 32 * 1024;
+
+/** Bytes kept from the tail of a run_command stream when the output is too large to inline. */
+export const RUN_COMMAND_TAIL_PREVIEW_BYTES = 8 * 1024;
+
+/** Hard cap on the bytes written to a single run_command spool file. */
+export const RUN_COMMAND_MAX_SPOOL_BYTES = 10 * 1024 * 1024;
+
+/** How long a run_command artifact is kept before the sweeper evicts it. */
+export const RUN_OUTPUT_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** Maximum number of artifacts one session may keep. */
+export const RUN_OUTPUT_SESSION_MAX_FILES = 100;
+
+/** Maximum total size of the artifacts one session may keep. */
+export const RUN_OUTPUT_SESSION_MAX_BYTES = 250 * 1024 * 1024;
+
+/** Maximum number of artifacts kept across every session. */
+export const RUN_OUTPUT_GLOBAL_MAX_FILES = 1000;
+
+/** Maximum total size of the artifacts kept across every session. */
+export const RUN_OUTPUT_GLOBAL_MAX_BYTES = 1024 * 1024 * 1024;
+
+/** Minimum interval between two sweeps of the run output store. */
+export const RUN_OUTPUT_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 /** TTL after which the process registry forgets an entry. */
 export const PROCESS_REGISTRY_TTL_MS = 5 * 60 * 1_000;

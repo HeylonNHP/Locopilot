@@ -35,3 +35,13 @@ export interface SummaryBudget {
   minSummaryTokens: number;
   maxSummaryTokens: number;
 }
+
+/**
+ * Maps a tool-call id to the name of the tool that produced it.
+ *
+ * Built from the FULL conversation, not from the slice being summarised: a
+ * tool result can outlive the assistant row that issued it (the history split
+ * may bisect an assistant+tool block), so the name has to be resolvable even
+ * when the owning assistant is not part of the summarised slice.
+ */
+export type ToolNameMap = Map<string, string>;

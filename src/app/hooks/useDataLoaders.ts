@@ -14,7 +14,17 @@ import type { StableRefs } from './useStableRefs';
  */
 export function useDataLoaders(refs: StableRefs) {
   const { state, dispatch } = useChat();
+  // The loader's identity must stay stable (it is in dependency arrays), so
+  // it reads the store through a ref rather than closing over `state`.
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const sessionLoadRequestIdRef = useRef(0);
+  // View-neutral refreshes (the end-of-turn reload) get their own
+  // "latest wins" token, per session. Sharing the session-load token with
+  // them would let a background refresh discard the user's own in-flight
+  // session switch, and a single shared token would let two background
+  // refreshes discard each other.
+  const backgroundLoadRequestIdRef = useRef(new Map<number, number>());
   const sessionSearchRequestIdRef = useRef(0);
 
   const loadSessions = useCallback(
@@ -44,15 +54,66 @@ export function useDataLoaders(refs: StableRefs) {
   // useSessionUrlParam) is expected to have already optimistically updated
   // refs.sessionIdRef.current to sessionId so guard checks see the right
   // value during the in-flight request.
+  /**
+   * The token limit already known for a session.
+   *
+   * The server resolves the effective size (the requested size clamped to
+   * the model's ceiling) and reports it on every turn. A reload must not
+   * replace that with the user's REQUESTED size: the badge's denominator
+   * and the 75 %/90 % thresholds would then be computed against a limit the
+   * model does not have.
+   *
+   * Only server-resolved values are used. The client must not apply the
+   * clamp itself (`src/services/capResolver.ts`): a limit derived here from
+   * the CURRENT requested size could contradict the turn that actually ran
+   * — if the user lowers the context size while a turn is streaming, the
+   * denominator would drop below the token count that turn produced.
+   */
+  const knownTokenLimit = useCallback((sessionId: number): number | undefined => {
+    const current = stateRef.current;
+    const stats =
+      sessionId === current.currentSessionId
+        ? current.tokenStats
+        : current.sessionStates.get(sessionId)?.tokenStats;
+    const limit = stats?.tokenLimit;
+    if (typeof limit === 'number' && limit > 0) {
+      return limit;
+    }
+    // The server's effective size for the current model, which survives a
+    // session switch (the top-level token stats do not).
+    const effective = current.effectiveNumCtx;
+    return typeof effective === 'number' && effective > 0 ? effective : undefined;
+  }, []);
+
   const loadSessionMessages = useCallback(
-    async (sessionId: number, allowEmptyWhileStreaming = false) => {
-      const requestId = sessionLoadRequestIdRef.current + 1;
-      sessionLoadRequestIdRef.current = requestId;
+    async (
+      sessionId: number,
+      allowEmptyWhileStreaming = false,
+      options?: { keepCurrentSession?: boolean }
+    ) => {
+      const background = options?.keepCurrentSession === true;
+      const requestId = background
+        ? (backgroundLoadRequestIdRef.current.get(sessionId) ?? 0) + 1
+        : sessionLoadRequestIdRef.current + 1;
+      if (background) {
+        backgroundLoadRequestIdRef.current.set(sessionId, requestId);
+      } else {
+        sessionLoadRequestIdRef.current = requestId;
+      }
+      // The token this load is checked against. A view-neutral refresh has
+      // its own, per session, so it can neither discard the user's in-flight
+      // session switch nor be discarded by it, and two background refreshes
+      // of different sessions do not invalidate each other.
+      const latestRequestId = () =>
+        background
+          ? backgroundLoadRequestIdRef.current.get(sessionId)
+          : sessionLoadRequestIdRef.current;
 
       try {
         const res = await fetch(`/api/sessions/${sessionId}`);
-        // Stale check: another load has been requested since this one started.
-        if (sessionLoadRequestIdRef.current !== requestId) return;
+        // Stale check: another load of the same kind has been requested
+        // since this one started.
+        if (latestRequestId() !== requestId) return;
 
         if (!res.ok) {
           // Session was deleted (e.g. in another tab). Only clear if the
@@ -60,7 +121,11 @@ export function useDataLoaders(refs: StableRefs) {
           // caller's earlier click on session B will have updated
           // refs.sessionIdRef.current, so this guard prevents the A 404
           // from clobbering B's state.
-          if (res.status === 404 && refs.sessionIdRef.current === sessionId) {
+          //
+          // A view-neutral refresh never changes the view: it is a
+          // background reconciliation, and clearing the session the user is
+          // reading (and the error banner with it) is the caller's call.
+          if (!background && res.status === 404 && refs.sessionIdRef.current === sessionId) {
             refs.sessionIdRef.current = null;
             dispatch({ type: 'SET_CURRENT_SESSION', id: null });
             dispatch({ type: 'CLEAR_MESSAGES' });
@@ -68,12 +133,15 @@ export function useDataLoaders(refs: StableRefs) {
           return;
         }
         const data = await res.json();
-        if (sessionLoadRequestIdRef.current !== requestId) return;
+        if (latestRequestId() !== requestId) return;
 
         // Commit the session change now that we have data. The caller
         // typically already dispatched SET_CURRENT_SESSION optimistically,
         // so this is usually a no-op; the guard avoids a redundant dispatch.
-        if (refs.sessionIdRef.current !== sessionId) {
+        //
+        // `keepCurrentSession` skips it entirely: reloading a session that
+        // finished in the background must not pull the user back to it.
+        if (!options?.keepCurrentSession && refs.sessionIdRef.current !== sessionId) {
           refs.sessionIdRef.current = sessionId;
           dispatch({ type: 'SET_CURRENT_SESSION', id: sessionId });
         }
@@ -119,7 +187,7 @@ export function useDataLoaders(refs: StableRefs) {
           // the user's requested value as the tokenLimit. The
           // chat route's `resolveEffectiveNumCtx` will re-resolve the
           // real cap on the next request and emit it via SSE.
-          const tokenLimit = refs.requestedNumCtxRef.current;
+          const tokenLimit = knownTokenLimit(sessionId) ?? refs.requestedNumCtxRef.current;
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
@@ -132,7 +200,7 @@ export function useDataLoaders(refs: StableRefs) {
             targetSessionId: sessionId,
           });
         } else if (hasSessionStats) {
-          const tokenLimit = refs.requestedNumCtxRef.current;
+          const tokenLimit = knownTokenLimit(sessionId) ?? refs.requestedNumCtxRef.current;
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
@@ -151,7 +219,7 @@ export function useDataLoaders(refs: StableRefs) {
               promptEvalCount: 0,
               evalCount: data.estimatedTokens,
               totalTokens: data.estimatedTokens,
-              tokenLimit: refs.requestedNumCtxRef.current,
+              tokenLimit: knownTokenLimit(sessionId) ?? refs.requestedNumCtxRef.current,
               isEstimated: true,
             },
             targetSessionId: sessionId,
@@ -163,7 +231,7 @@ export function useDataLoaders(refs: StableRefs) {
         // Silently ignore
       }
     },
-    [dispatch]
+    [dispatch, knownTokenLimit]
   );
 
   // Called only on mount — no stability guarantee needed. Populates the
@@ -238,6 +306,7 @@ export function useDataLoaders(refs: StableRefs) {
               config.compactionReasoningEffort ?? state.compactionReasoningEffort,
             promptTimestamps: config.promptTimestamps ?? state.promptTimestamps,
             citeSources: config.citeSources ?? state.citeSources,
+            redactSecrets: config.redactSecrets ?? state.redactSecrets,
             compactionModel: config.compactionModel ?? state.compactionModel,
             chatTimeoutMs: config.chatTimeoutMs ?? state.chatTimeoutMs,
             webSearch: config.webSearch ?? state.webSearch,

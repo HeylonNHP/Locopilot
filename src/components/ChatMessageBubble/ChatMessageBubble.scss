@@ -7,6 +7,8 @@
 //  bubbles and CopyMarkdownButton each own their own SCSS file.
 // ================================================================
 
+@use '../../app/styles/mixins' as *;
+
 // ── AI / assistant bubble ────────────────────────────────────
 .bubble-ai {
   &-wrap {
@@ -17,17 +19,15 @@
   &-msg {
     max-width: 80%;
     padding: 12px 18px;
-    border-radius: 20px 20px 20px 4px;
-    background: var(--bubble-ai-bg);
-    border: 1px solid var(--glass-border);
+    // Matte, not glass: this is reading content (see matte-content).
+    @include matte-content(
+      var(--bubble-ai-bg),
+      var(--radius-bubble) var(--radius-bubble) var(--radius-bubble) var(--radius-chip),
+      var(--glass-border)
+    );
     font-size: 14px;
     line-height: 1.6;
     white-space: normal;
-    backdrop-filter: blur(12px) saturate(140%);
-    -webkit-backdrop-filter: blur(12px) saturate(140%);
-    box-shadow:
-      0 4px 16px rgba(var(--rgb-shadow-deep), 0.08),
-      inset 0 1px 0 rgba(255, 255, 255, 0.35);
     color: var(--text-primary);
   }
 }
@@ -63,12 +63,11 @@
   &-box {
     padding: 8px 12px;
     background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
+    border-radius: var(--radius-card);
     font-size: 13px;
     color: var(--text-secondary);
     border-left: 3px solid var(--accent);
     margin-top: 4px;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
   }
 }

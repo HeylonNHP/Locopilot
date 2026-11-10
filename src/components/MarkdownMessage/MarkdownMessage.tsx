@@ -264,7 +264,8 @@ function extractFrozenBlocks(frozen: string): FrozenBlock[] {
     const openerLen = opener.length;
     const openLineStart = match.index;
     const openLineEnd = match.index + match[0].length + 1; // past the newline
-    const language = match[0].slice(openerLen).trim().toLowerCase();
+    const infoString = match[0].slice(openerLen).trim();
+    const language = (infoString.split(/\s+/)[0] || '').toLowerCase();
 
     const closeRe = new RegExp(
       `^[ \\t]*${openerChar === '`' ? '`' : '~'}{${openerLen},}[ \\t]*$`,

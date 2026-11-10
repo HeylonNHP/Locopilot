@@ -49,6 +49,22 @@ export interface SseEventPayloadMap {
   tool_progress: { name: string; message: string };
   subagent_output: { agentId: string; message: string };
   subagent_chunk: { agentId: string; type: SubagentChunkType; text: string };
+  /**
+   * The server dropped the END of a sub-agent's streamed output because the
+   * agent's turn failed with a transient provider error and is re-issued —
+   * the failed attempt's text must not be shown (or persisted) twice.
+   *
+   * `content` is the text that has to REMAIN for that agent — what the
+   * server kept after dropping the failed turn's output. The client
+   * REPLACES the agent's bubble with it (the bubble is NOT removed: the
+   * re-issued turn keeps streaming into the same bubble) and drops the
+   * text that is still coalescing for that agent.
+   *
+   * Because the event carries the remaining text, replaying it is safe: the
+   * bubble ends up with the server's text again instead of the failed
+   * attempt's chunks.
+   */
+  clear_subagent: { agentId: string; content: string };
   approval_request: {
     requestId: string;
     toolName: string;
@@ -103,7 +119,18 @@ export interface SseEventPayloadMap {
     agentId?: string;
   };
   compact_progress: { message: string };
-  compact: { messages: ChatMessage[]; stats: CompactStats };
+  compact: {
+    messages: ChatMessage[];
+    stats: CompactStats;
+    /**
+     * The context window the compacted history now has to fit — the window the
+     * NEXT turn will run with, not the compaction model's. It lets the client
+     * warn when a compaction succeeded and still left the history over the
+     * limit (an outcome the user has to act on, and one the old payload could
+     * only guess from its own idea of the cap).
+     */
+    tokenLimit?: number;
+  };
   done: {
     content: string;
     thinking: string;
@@ -120,6 +147,13 @@ export interface SseEventPayloadMap {
      * failure (`llm_error`). Absent on the chat route's `error` events.
      */
     kind?: 'client_abort' | 'llm_error';
+    /**
+     * Set when the turn could not start because the session it belongs to no
+     * longer exists (deleted in another tab). Retrying cannot help — there
+     * is no session left to retry into — so the client drops the retry
+     * payload instead of offering a Retry that fails the same way.
+     */
+    sessionMissing?: boolean;
   };
   write_error: { message: string };
   clear_assistant: object;

@@ -1,6 +1,6 @@
 import type { ToolSchema } from '@/tools/tools';
 
-import { debugLog } from '@/app/lib/debugLogger';
+import { debugLog, type DiagnosticPhase } from '@/app/lib/debugLogger';
 import { buildNamespacedName, parseMCPToolName } from '@/mcp';
 import { formatPromptDate, formatPromptDateTime } from '@/services/promptDate';
 import { discoverSkills, getEnabledSkills, loadSkillState } from '@/services/skillManager';
@@ -9,6 +9,7 @@ import {
   isAutoApprovedMCPTarget,
   tryRunNamespacedMCPCall,
 } from '@/tools/impl/mcpTool';
+import { TEMP_FILE_GUIDANCE } from '@/tools/tempFileGuidance';
 
 /**
  * Guidance is intentionally shared by the schema and generated system prompt
@@ -16,12 +17,12 @@ import {
  * same default-on/explicit-opt-out semantics.
  */
 export const SHARED_SUMMARIES_GUIDANCE =
-  'Shared summaries are enabled by default and are usually preferred: for dependent workflows such as research → implementation → review, omit share_summaries or set it to true so later agents can build on completed work instead of repeating it. Set share_summaries to false only when agents must remain genuinely independent, such as blind reviews, parallel alternatives, or work where prior conclusions could create anchoring or cross-contamination.';
+  'Shared summaries are enabled by default and are usually preferred: for dependent workflows such as research → implementation → review, omit share_summaries or set it to true so later agents can build on completed work instead of repeating it. The agents run in the order you list them, so list a dependency chain in that order. Set share_summaries to false only when agents must remain genuinely independent, such as blind reviews, competing alternatives, or work where prior conclusions could create anchoring or cross-contamination.';
 
 export const subAgentToolSchema: ToolSchema = {
   name: 'run_subagents',
   description:
-    "YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window. Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost: they do the heavy work in isolation and return only the final answer — often saving thousands of tokens. USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for: • ANY task involving multiple tool calls (search → read → compare → decide) • Researching topics, comparing approaches, or auditing code • File edits and code changes (isolated from your thinking context) • Any information-dense work where intermediate results would clutter your reasoning • Breaking large requests into parallel research streams. Each sub-agent runs its own full tool-calling loop and returns only the final summary. Constraints: sequential; each sees only its own prompt (include ALL context inline); sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context. By default the completed summaries of earlier sub-agents in this call are appended to later sub-agents' prompts (so they can build on each other); set `share_summaries: false` only when each sub-agent's work must be truly independent.",
+    'YOUR MOST POWERFUL TOOL. Sub-agents multiply what you can accomplish within a single context window. Every web search, file read, and command output burns tokens in your context. Sub-agents absorb that cost: they do the heavy work in isolation and return only the final summary — often saving thousands of tokens. USE SUB-AGENTS PROACTIVELY. You do NOT need the user to ask. They are your default tool for: • ANY task involving multiple tool calls (search → read → compare → decide) • Researching topics, comparing approaches, or auditing code • File edits and code changes (isolated from your thinking context) • Any information-dense work where intermediate results would clutter your reasoning • Splitting a large request across several focused sub-agents, each with a narrow brief. Each sub-agent runs its own full tool-calling loop and returns only the final summary. BATCH THEM IN ONE CALL: several agents in a single run_subagents is strictly better than several separate calls — you get one combined result at the end, and the agents build on each other instead of each starting from zero. HOW A BATCH RUNS: the agents run one after another, in the order you list them, and by default each agent receives the final summaries of the agents before it. That is the point of a batch: it is a pipeline, not a queue of strangers — research → implement → review is ONE call, and each stage starts from what the previous stage already established. The trade-off is wall-clock time: a batch takes as long as the sum of its agents, so batch by dependency rather than by volume. Two or three sharply-scoped agents beat six thin ones, and a failed agent does not stop the rest (the next agent is told that work is missing). Set share_summaries: false when the agents must stay genuinely independent — blind reviews, competing alternatives, or anything where an earlier answer would bias a later one. Constraints: each sub-agent sees only its own prompt (include ALL context inline); sub-agents cannot spawn further sub-agents. Write prompts as if the sub-agent has no prior context — but do not write them as if it has no siblings: unless you opt out of sharing, later agents are told what earlier ones already concluded.',
   parameters: {
     type: 'object',
     properties: {
@@ -44,7 +45,7 @@ export const subAgentToolSchema: ToolSchema = {
           required: ['id', 'prompt'],
         },
         description:
-          'One or more sub-agents to run sequentially. Each one needs a short id and a fully self-contained prompt.',
+          "One or more sub-agents, executed one after another in the order listed. Each one needs a short id and a fully self-contained prompt. List them as a dependency chain when they build on each other; the default share_summaries passes each finished agent's summary to the next.",
       },
       share_summaries: {
         type: 'boolean',
@@ -55,13 +56,14 @@ export const subAgentToolSchema: ToolSchema = {
   },
 };
 
-import { AUTO_COMPACT_THRESHOLD_PCT, TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
+import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
 import { recordDiscoveredCap } from '@/services/capResolver';
 import {
   compactHistory,
   COMPACTION_ADAPTIVE_DIRECTIVE,
   COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD,
   COMPACTION_INITIAL_DIRECTIVE,
+  computeCompactionTriggerTokens,
   SYNTHETIC_NUDGE_END,
   SYNTHETIC_NUDGE_MARKER,
 } from '@/services/compact';
@@ -81,10 +83,11 @@ import {
   type ToolDefinition,
 } from '@/services/llm';
 import { parseContextLimitFromError } from '@/services/llmContextLimit';
+import { abortableSleep, isRetryableError, retryableErrorStatus } from '@/services/retryable';
 import { sanitizeChatMessage } from '@/services/textUtils';
 import { countMessagesTokens } from '@/services/tokenizer';
 import { LiveThroughputMeter } from '@/services/tokenThroughput';
-import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
+import { canonicalSubagentId, noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import {
   type IToolCommand,
   type RequestContext,
@@ -94,6 +97,7 @@ import {
   toolRegistry,
 } from '@/tools/toolRegistry';
 import { WorkingDirectoryScope } from '@/tools/workingDirectory';
+import { forwardableReasoningEffort } from '@/types/chatConfig';
 
 function isInterruptOrAbort(signal?: AbortSignal): boolean {
   return signal?.aborted === true;
@@ -157,13 +161,40 @@ const SUB_AGENT_AUTO_COMPACT_NOTICE_BASE =
 const SUBAGENT_STALL_LOG_INTERVAL_MS = 15_000;
 
 /**
+ * HOW MANY TIMES a sub-agent turn may be RE-ISSUED after a transient provider
+ * failure (a gateway 500/502/503/504, a 429, a network blip).
+ *
+ * WHY this exists at all: a sub-agent's turn streams, and the adapter's retry
+ * layer (`withRetryAround`) wraps ONLY the initial request — once the stream
+ * has started, a failure is never retried. The main chat loop has its own
+ * second retry layer for exactly that reason; the sub-agent had none, so a
+ * gateway blip on the agent's LAST turn killed the agent. That is expensive:
+ * a sub-agent has no separate "write a summary" call (the summary IS the
+ * assistant text of its last turn), so the agent's file edits were already on
+ * disk but its REPORT was lost, and the parent was told the work was missing
+ * and to re-run the agent.
+ *
+ * The allowance is PER TURN and is reset by a successful turn, so a long
+ * agent that makes fifty turns may still survive a provider blip on any one
+ * of them — but one turn never retries forever.
+ */
+const SUBAGENT_TRANSIENT_RETRY_ATTEMPTS = 3;
+
+/** First backoff before a transient retry; doubles per attempt. */
+const SUBAGENT_TRANSIENT_RETRY_BASE_DELAY_MS = 1000;
+
+/** Ceiling for the transient-retry backoff. */
+const SUBAGENT_TRANSIENT_RETRY_MAX_DELAY_MS = 8000;
+
+/**
  * How many times one sub-agent may react to a provider context-limit 400 by
  * force-compacting its history and retrying the same turn. One is deliberate:
  * the first 400 discloses the server's real window, after which the corrected
- * `config.numCtx` makes the ordinary `AUTO_COMPACT_THRESHOLD_PCT` gate fire on
- * its own. A second 400 *after* a successful compaction therefore means
- * something else is wrong (auth, a malformed tool call, or a single prompt
- * larger than the whole window) and retrying would only burn the batch.
+ * `config.numCtx` makes the ordinary margin-based auto-compaction gate
+ * (`computeCompactionTriggerTokens`) fire on its own. A second 400 *after* a
+ * successful compaction therefore means something else is wrong (auth, a
+ * malformed tool call, or a single prompt larger than the whole window) and
+ * retrying would only burn the batch.
  */
 const MAX_CONTEXT_LIMIT_FORCED_COMPACT_ATTEMPTS = 1;
 
@@ -249,6 +280,10 @@ export function buildSubAgentSystemPrompt(
     'When you are done, return one final concise, self-contained summary for the parent agent.\n' +
     'Do not ask the parent agent for missing context; instead, explain briefly what is missing if the task is blocked.\n' +
     'Do not mention internal chain-of-thought.\n' +
+    '\n' +
+    // The same paragraph the main chat prompt carries, from the one shared
+    // constant, so the two prompts cannot drift apart.
+    `${TEMP_FILE_GUIDANCE}\n` +
     '\n' +
     'When this sub-agent is part of a multi-agent `run_subagents` call (the default), prior sub-agents in the same call may have completed before you. Their final summaries are prepended to your user message under a `## Prior sub-agent results` header. Treat them as trusted context from sibling work — use what they concluded instead of re-deriving it, but your own task is whatever comes after the `---` separator.\n';
 
@@ -393,11 +428,12 @@ async function autoCompactSubAgentIfNeeded(
   compactionsSinceTaskStart: number,
   signal?: AbortSignal,
   /**
-   * Skip the proactive `AUTO_COMPACT_THRESHOLD_PCT` gate. Set by the reactive
+   * Skip the proactive auto-compaction gate. Set by the reactive
    * context-limit path in `runSingleAgent` after a provider 400: the provider
    * has already told us this request was too big, so waiting for the
-   * percentage gate — which is measured against a `numCtx` that was still wrong
-   * when the request was sent — would just reproduce the same rejection. The
+   * margin-based trigger (`computeCompactionTriggerTokens`) — which is
+   * measured against a `numCtx` that was still wrong when the request was sent
+   * — would just reproduce the same rejection. The
    * `numCtx <= 0` and `messages.length < 4` guards still apply: they exist so
    * `compactHistory` can never be handed a history whose split logic turns into
    * an empty `messagesToSummarise`.
@@ -434,10 +470,15 @@ async function autoCompactSubAgentIfNeeded(
   }
 
   const tokensUsed = countMessagesTokens(messages, config.model);
-  const pct = (tokensUsed / config.numCtx) * 100;
-  if (!force && pct < AUTO_COMPACT_THRESHOLD_PCT) {
+  // Gate on the RESERVED MARGIN (numCtx minus the room a reply needs), not on
+  // a flat percentage: the sub-agent has to be able to finish its turn after
+  // the compaction, and the margin is what guarantees that. Measured against
+  // the SUB-AGENT's own window (`config.numCtx`), never the compaction model's
+  // (`compactionNumCtx`) — the history is what has to fit.
+  if (!force && tokensUsed < computeCompactionTriggerTokens(config.numCtx)) {
     return false;
   }
+  const pct = (tokensUsed / config.numCtx) * 100;
 
   const agentOutput = makeAgentSink(output, agentId);
   const compactionRequestId = config.compactionLlmRequestContext?.requestId;
@@ -482,12 +523,27 @@ async function autoCompactSubAgentIfNeeded(
           2,
           undefined,
           signal,
-          undefined,
+          // The compaction model's own reasoning effort, inherited from the
+          // parent's compaction setting (NOT the sub-agent's `reasoningEffort`,
+          // which is the main model's level). 'off' is normalised away here.
+          forwardableReasoningEffort(config.compactionReasoningEffort),
           // Live compaction speed — the route forwards reportTps to the client,
           // so the t/s badge keeps updating while the sub-agent compacts.
           (tps: number) => {
             output.reportTps?.(tps);
-          }
+          },
+          // The sub-agent inherits the parent's redaction setting, so its
+          // compaction summaries are redacted exactly like the main
+          // session's.
+          config.redactSecrets ?? true
+          // `recentFiles` is deliberately NOT passed. The stub names the files
+          // a session touched, and a sub-agent records none of its own: its
+          // tool calls go straight to `command.execute`, bypassing the
+          // `handleToolCall` dispatch point where `recordToolFileTouch` lives
+          // (see `fileTouchRecorder.ts`). The only session id in reach here is
+          // the PARENT's, so attaching its rows would tell this agent it has
+          // been working on files it has never opened — a confident lie is
+          // worse than the re-read the stub exists to prevent.
         );
         return {
           newMessages: compactionResult.newMessages,
@@ -571,6 +627,48 @@ function validateAgentSpecs(agents: SubAgentSpec[] | undefined): string | null {
   }
 
   return null;
+}
+
+/**
+ * Canonicalise the batch's agent ids and reject a batch whose ids would
+ * collapse two agents into ONE bucket.
+ *
+ * WHY THE IDS ARE CANONICALISED HERE, AT THE SOURCE. The chat route files
+ * every write for one sub-agent under ONE key — one bucket, one client
+ * bubble, one persisted `subagent_log` row — and it derives that key with
+ * `canonicalSubagentId` (src/tools/toolOutput.ts). Two agents whose ids
+ * differ only in surrounding whitespace ("research" and " research ")
+ * canonicalise to the SAME key, so their transcripts would merge into one
+ * bubble, one row and one bucket — and one agent's clear would truncate
+ * the OTHER agent's text.
+ *
+ * So the id is canonicalised ONCE, here, and the canonical id is what the
+ * tool uses for `writeAgentChunk`, `writeAgentLine` and `clearAgentContent`
+ * — and what the parent's report shows. A batch that contains two such ids
+ * is REJECTED rather than silently merged: the model has to give the two
+ * agents different ids, and the error says exactly which ones collide.
+ */
+function prepareAgentBatch(agents: Required<SubAgentSpec>[]): {
+  agents: Required<SubAgentSpec>[];
+  error: string | null;
+} {
+  const prepared: Required<SubAgentSpec>[] = [];
+  const firstIndexById = new Map<string, number>();
+  for (const [index, agent] of agents.entries()) {
+    const id = canonicalSubagentId(agent.id);
+    const firstIndex = firstIndexById.get(id);
+    if (firstIndex !== undefined) {
+      return {
+        agents: [],
+        error:
+          `[Error: invalid agent at index ${index} (duplicate agent id "${id}" — ` +
+          `it collides with the agent at index ${firstIndex}; agent ids must be unique)]`,
+      };
+    }
+    firstIndexById.set(id, index);
+    prepared.push({ ...agent, id });
+  }
+  return { agents: prepared, error: null };
 }
 
 // Exported alongside `formatAgentFailure` for the network-free sub-agent
@@ -1014,6 +1112,12 @@ async function runSingleAgent(
     'You appear to be stuck in a loop. Try a fundamentally different approach. ' +
     'If the task is genuinely blocked, summarize what you have discovered so far and return that as your final answer.]';
 
+  // Transient-retry allowance for the CURRENT turn. It lives OUTSIDE the
+  // turn loop because a retry re-enters the loop (`continue`) — a counter
+  // declared inside the body would reset itself and retry forever. It is
+  // reset by a successful turn, so each turn gets a fresh allowance.
+  let transientRetryAttempts = 0;
+
   try {
     while (!isInterruptOrAbort(signal)) {
       // Pick up a mid-turn model switch before compaction so both this
@@ -1059,6 +1163,60 @@ async function runSingleAgent(
       const turnStartedAt = Date.now();
       let chunkCount = 0;
       let lastChunkAt = turnStartedAt;
+      // The number of characters THIS turn has written to the sink through
+      // `writeAgentChunk`. The branches that re-issue a turn hand it to
+      // `clearAgentContent`, which drops exactly that many characters from
+      // the END of the agent's output — so the text of the turns that came
+      // BEFORE this one (a sub-agent is a multi-turn loop) survives.
+      let turnChunkChars = 0;
+      // Write one streamed chunk to the sink AND count it. The count has to
+      // match EXACTLY what the sink appended: the chat route only appends a
+      // NON-EMPTY chunk, so only those count — and a sink that does not
+      // stream chunks at all has nothing to clear, so it counts nothing.
+      const writeTurnChunk = (type: 'thinking' | 'content', text: string): void => {
+        if (!text) {
+          return;
+        }
+        output.writeAgentChunk?.(agent.id, type, text);
+        if (output.writeAgentChunk) {
+          turnChunkChars += text.length;
+        }
+      };
+      // Drop the text THIS turn streamed, so the turn that is re-issued does
+      // not show it (and persist it) a second time.
+      //
+      // The drop is a TRUNCATION of the END of the agent's output by exactly
+      // the number of characters this turn wrote, so the text of the agent's
+      // EARLIER turns — which is never re-streamed — survives.
+      //
+      // `clearAgentContent` is OPTIONAL: a sink that streams chunks but
+      // cannot clear them would silently re-duplicate the text, so that case
+      // is logged instead of passing unnoticed.
+      const clearTurnOutput = (phase: DiagnosticPhase): void => {
+        if (turnChunkChars === 0) {
+          // The turn streamed nothing, so there is nothing to drop: the
+          // agent's text is left exactly as it is.
+          return;
+        }
+        if (!output.clearAgentContent) {
+          if (output.writeAgentChunk) {
+            debugLog.diagnostic({
+              layer: 'subagent',
+              phase,
+              requestId: context?.requestId,
+              sessionId: context?.sessionId,
+              agentId: agent.id,
+              provider: config.provider,
+              model: config.model,
+              baseUrl: config.baseUrl,
+              result: 'clear_unsupported',
+              droppedChars: turnChunkChars,
+            });
+          }
+          return;
+        }
+        output.clearAgentContent(agent.id, turnChunkChars);
+      };
       debugLog.diagnostic({
         layer: 'subagent',
         phase: 'model_request_start',
@@ -1124,11 +1282,11 @@ async function runSingleAgent(
               });
             }
             if (chunk.message?.thinking) {
-              output.writeAgentChunk?.(agent.id, 'thinking', chunk.message.thinking);
+              writeTurnChunk('thinking', chunk.message.thinking);
               liveMeter.onText(chunk.message.thinking);
             }
             if (chunk.message?.content) {
-              output.writeAgentChunk?.(agent.id, 'content', chunk.message.content);
+              writeTurnChunk('content', chunk.message.content);
               liveMeter.onText(chunk.message.content);
             }
 
@@ -1211,6 +1369,14 @@ async function runSingleAgent(
 
           if (forceCompacted) {
             subAgentCompactions += 1;
+            // The failed attempt's streamed text has to go BEFORE the
+            // marker, exactly as in the transient branch below: the re-issued
+            // turn streams the same text again, so without the clear the
+            // agent's bubble (and the persisted `subagent_log` row) would
+            // show it twice. The marker is written AFTER the clear so it
+            // survives it: the user must still see WHY the turn is being
+            // re-issued.
+            clearTurnOutput('context_limit_recovery');
             agentOutput.writeLine('↻ Retrying this turn on the compacted history.');
             continue;
           }
@@ -1220,11 +1386,90 @@ async function runSingleAgent(
           );
         }
 
-        writeTerminalNotice(apiMessage);
-        throw err;
+        // ── Transient provider failure: re-issue the SAME turn ──────────────
+        // A gateway 500 (the `ref:` uuid in the message is the gateway's
+        // request id) is transient, and the turn is RE-ISSUED rather than
+        // killing the agent: nothing has been appended to `messages` on this
+        // path — the assistant message is appended only after the call
+        // returns — so the retry cannot violate the assistant/tool_call
+        // ordering contract. The context-limit branch above keeps priority
+        // because it is smarter than a plain retry: it compacts first.
+        //
+        // The counter is per TURN: a successful turn resets it, so a long
+        // agent survives a blip on any single turn, but no turn retries
+        // forever.
+        if (
+          !isInterruptOrAbort(signal) &&
+          transientRetryAttempts + 1 < SUBAGENT_TRANSIENT_RETRY_ATTEMPTS &&
+          isRetryableError(err)
+        ) {
+          transientRetryAttempts += 1;
+          const status = retryableErrorStatus(err);
+          // Drop the failed attempt's OUTPUT before the marker is written: the
+          // chunks that already streamed belong to the attempt that just died,
+          // and the re-issued turn will stream the same text again — without
+          // this the agent's bubble (and the persisted `subagent_log` row)
+          // would show it twice. The drop is a TRUNCATION of the END of the
+          // agent's output by exactly the number of characters THIS turn
+          // wrote (`turnChunkChars`), so the text of the agent's earlier
+          // turns — which is not re-streamed — stays where it is. The marker
+          // is written AFTER the clear so it survives it: the user must still
+          // see WHY the turn is being re-issued. The base sink, not
+          // `agentOutput`: the chunks go to the base sink (`makeAgentSink`
+          // does not forward `writeAgentChunk`).
+          clearTurnOutput('transient_retry');
+          agentOutput.writeLine(
+            `↻ Provider error${status === null ? '' : ` (${status})`} — retrying this turn ` +
+              `(attempt ${transientRetryAttempts + 1}/${SUBAGENT_TRANSIENT_RETRY_ATTEMPTS}).`
+          );
+          debugLog.diagnostic({
+            layer: 'subagent',
+            phase: 'transient_retry',
+            requestId: context?.requestId,
+            sessionId: context?.sessionId,
+            agentId: agent.id,
+            provider: config.provider,
+            model: config.model,
+            baseUrl: config.baseUrl,
+            attempt: transientRetryAttempts,
+            maxAttempts: SUBAGENT_TRANSIENT_RETRY_ATTEMPTS,
+            status,
+            error: err,
+          });
+          const delayMs = Math.min(
+            SUBAGENT_TRANSIENT_RETRY_MAX_DELAY_MS,
+            SUBAGENT_TRANSIENT_RETRY_BASE_DELAY_MS * 2 ** (transientRetryAttempts - 1)
+          );
+          // `abortableSleep` resolves TRUE when the wait was interrupted by
+          // the abort signal and FALSE when the full delay elapsed.
+          const abortedDuringWait = await abortableSleep(delayMs, signal);
+          if (!abortedDuringWait) {
+            // The turn is re-issued from the top of the loop: the per-turn
+            // accumulators (`chunkCount`, `turnStartedAt`, `lastChunkAt`) are
+            // re-declared inside the loop body, so the failed attempt leaves
+            // nothing behind.
+            continue;
+          }
+          // The wait was aborted — the user cancelled. Fall through to the
+          // failure path rather than starting another request.
+          agentOutput.writeLine('⚠ The retry was cancelled.');
+        }
+
+        const retryNote =
+          transientRetryAttempts > 0
+            ? ` (the turn was retried ${transientRetryAttempts} time(s) after a transient provider error and still failed)`
+            : '';
+        writeTerminalNotice(apiMessage + retryNote);
+        throw transientRetryAttempts > 0
+          ? new Error(`${apiMessage}${retryNote}`, { cause: err })
+          : err;
       } finally {
         clearInterval(stallTimer);
       }
+
+      // The turn succeeded: the next turn gets a fresh transient-retry
+      // allowance.
+      transientRetryAttempts = 0;
 
       debugLog.diagnostic({
         layer: 'subagent',
@@ -1243,7 +1488,7 @@ async function runSingleAgent(
 
       // Emit a trailing newline so successive tool outputs and the next LLM
       // turn are visually separated from the streamed response text.
-      output.writeAgentChunk?.(agent.id, 'content', '\n');
+      writeTurnChunk('content', '\n');
 
       const assistantMessage = sanitizeChatMessage(response.message);
 
@@ -1409,6 +1654,14 @@ export class SubAgentTool implements IToolCommand {
       return { content: validationError };
     }
 
+    // Canonicalise the batch's agent ids ONCE, here, and refuse a batch
+    // whose ids would merge two agents into one bucket (see
+    // `prepareAgentBatch`).
+    const preparedBatch = prepareAgentBatch(subAgentArgs.agents as Required<SubAgentSpec>[]);
+    if (preparedBatch.error) {
+      return { content: preparedBatch.error };
+    }
+
     const config = context?.subAgent;
     if (
       !config ||
@@ -1461,7 +1714,7 @@ export class SubAgentTool implements IToolCommand {
     // this same `run_subagents` call.
     const shareSummaries = subAgentArgs.share_summaries !== false;
 
-    for (const agent of subAgentArgs.agents as Required<SubAgentSpec>[]) {
+    for (const agent of preparedBatch.agents) {
       if (isInterruptOrAbort(signal)) {
         break;
       }
@@ -1551,6 +1804,7 @@ export function getToolPrompt(): string {
     `   ${schema.description}\n\n` +
     `   - agents[].id: ${agentProps.id?.description ?? ''}\n` +
     `   - agents[].prompt: ${agentProps.prompt?.description ?? ''}\n` +
-    `   - share_summaries: ${shareSummariesDescription}\n`
+    `   - share_summaries: ${shareSummariesDescription}\n` +
+    `   - batching: one call with several agents beats several calls — agents run in list order, later agents receive earlier summaries unless share_summaries is false`
   );
 }

@@ -40,8 +40,7 @@ export default function ChatMessageBubble({
   // already render the tool output for tool-call carriers, and an empty
   // reply produces an empty "..." box otherwise. In either case we want
   // to render nothing.
-  const isEmptyAssistantPlaceholder =
-    message.role === 'assistant' && !hasContent && !hasThinking;
+  const isEmptyAssistantPlaceholder = message.role === 'assistant' && !hasContent && !hasThinking;
 
   useEffect(() => {
     if (hasThinking && !hasContent) {
@@ -49,17 +48,23 @@ export default function ChatMessageBubble({
     }
   }, [hasThinking, hasContent]);
 
-  if (isEmptyAssistantPlaceholder) {
-    return null;
-  }
-
   // Two-pass rendering: server and initial client render both output the
   // same placeholder (null), so React hydration never sees a mismatch.
   // After mount the client swaps in the real MarkdownMessage.
+  //
+  // This hook MUST stay above the empty-placeholder return below. A
+  // placeholder bubble becomes a real one when the first token arrives
+  // (same key, same instance), so calling this hook only in the real branch
+  // changes the hook count between renders and React throws "Rendered more
+  // hooks than during the previous render" mid-stream.
   const [markdownMounted, setMarkdownMounted] = useState(false);
   useEffect(() => {
     setMarkdownMounted(true);
   }, []);
+
+  if (isEmptyAssistantPlaceholder) {
+    return null;
+  }
 
   switch (message.role) {
     case 'user': {

@@ -47,7 +47,6 @@ export default function MCPTab() {
   const fetchServers = useCallback(async (opts: { eager?: boolean; force?: boolean } = {}) => {
     try {
       setLoading(true);
-      setError(null);
       // F7: only ask the API to dial when we explicitly mean to
       // (first-load discovery / explicit retry). A passive refetch
       // must stay side-effect free so a broken server can't be
@@ -63,6 +62,10 @@ export default function MCPTab() {
       }
       const data = (await res.json()) as { servers: MCPStatusEntry[] };
       setServers(data.servers ?? []);
+      // Clear on success rather than at the start of the request: clearing it
+      // up-front wiped the error a failed toggle had just set, because the
+      // toggle's recovery path re-fetches.
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load MCP servers');
     } finally {
@@ -260,9 +263,11 @@ export default function MCPTab() {
         const data = (await res.json()) as { servers: MCPStatusEntry[] };
         setServers(data.servers ?? []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update MCP server');
-        // Revert by re-fetching authoritative state.
+        // Revert by re-fetching authoritative state, then surface the
+        // failure — the refetch clears `error`, so setting it first would
+        // be wiped immediately.
         await fetchServers();
+        setError(err instanceof Error ? err.message : 'Failed to update MCP server');
       } finally {
         togglingRef.current = false;
       }

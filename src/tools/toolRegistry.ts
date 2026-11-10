@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { ChatMessage, LlmRequestContext, ToolDefinition } from '@/services/llm';
 import type { ReasoningEffort } from '@/types/chatConfig';
 
+import { normalizeSkillName, validateSkillName } from '@/app/lib/skillName';
 import {
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
@@ -78,7 +79,10 @@ export interface RequestContext {
    * `Config.citeSources`; threaded here so the web_search/fetch_url tool-result
    * reminder and the sub-agent system prompt can gate on it.
    */
+  /** `Config.citeSources`; ... */
   citeSources?: boolean;
+  /** `Config.redactSecrets` ... */
+  redactSecrets?: boolean;
   webSearch: WebSearchSettings;
   subAgent: SubAgentConfig;
   /** Tool names allowed by active always-apply skills; undefined = no restriction */
@@ -135,6 +139,18 @@ export interface SubAgentConfig {
   /** Context window size for the compaction model/provider. */
   compactionNumCtx?: number;
   /**
+   * Reasoning effort for the sub-agent's own COMPACTION calls, inherited from
+   * the parent session's `compactionReasoningEffort`.
+   *
+   * Distinct from `reasoningEffort` below, which is the MAIN model's level and
+   * governs the sub-agent's ordinary LLM calls. A session can run its chat
+   * model at 'high' while its compaction model runs at 'off' (the default), and
+   * forwarding the chat level to the summariser would quietly change what the
+   * user chose. 'off' means "no explicit level": callers normalise it away with
+   * `forwardableReasoningEffort` before it reaches the adapter.
+   */
+  compactionReasoningEffort?: ReasoningEffort;
+  /**
    * Applies any model switch the user has requested mid-turn, mutating this
    * config in place. Called at the top of each sub-agent iteration so a
    * long-running `run_subagents` batch — which parks the main tool-call
@@ -164,6 +180,15 @@ export interface SubAgentConfig {
    * Inherited from the parent session's setting.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * `Config.redactSecrets`, inherited from the parent session.
+   *
+   * It decides whether the secrets in the tool arguments AND the tool
+   * results are redacted out of the sub-agent's compaction summaries — the
+   * same switch the main session's compaction honours, so a sub-agent cannot
+   * quietly apply a different policy to the same conversation.
+   */
+  redactSecrets?: boolean;
   tools: ToolDefinition[];
   /**
    * Sub-agent-local approval ledger for `mcp_call`. The chat route
@@ -491,7 +516,9 @@ export const toolRegistry = new Map<string, IToolCommand>([
             output,
             context?.workingDirectoryScope,
             context?.yoloMode ?? false,
-            signal
+            signal,
+            context?.sessionId,
+            context?.redactSecrets ?? true
           ),
         };
       },
@@ -757,7 +784,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
           return { content: '[Error: missing required argument "body"]' };
         }
 
-        const sanitizedName = args.name.trim().toLowerCase().replaceAll(/\s+/g, '-');
+        const sanitizedName = normalizeSkillName(args.name);
 
         const skillsBaseDir = await resolveCreateSkillBaseDir(args.location);
         if (skillsBaseDir === null) {
@@ -766,21 +793,9 @@ export const toolRegistry = new Map<string, IToolCommand>([
           };
         }
 
-        // Validate skill name to prevent path traversal
-        if (
-          sanitizedName.length === 0 ||
-          sanitizedName.length > 64 ||
-          /^[.-]/.test(sanitizedName)
-        ) {
-          return {
-            content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]`,
-          };
-        }
-        if (
-          sanitizedName.includes('\0') ||
-          /[/\\]/.test(sanitizedName) ||
-          sanitizedName.includes('..')
-        ) {
+        // Validate skill name to prevent path traversal. Shared with the UI so
+        // the client cannot accept a name the server will silently rewrite.
+        if (validateSkillName(args.name)) {
           return {
             content: `[Error: invalid skill name "${sanitizedName}". Names must be kebab-case, 1-64 chars, and may not contain path separators or "..".]`,
           };

@@ -57,6 +57,27 @@ export function isReasoningEffort(value: unknown): value is ReasoningEffort {
 }
 
 /**
+ * Normalises a configured reasoning effort into the value that may be
+ * forwarded to a provider adapter.
+ *
+ * WHY: 'off' is the UI default and means "no explicit level" — the adapter
+ * should apply its own default mapping rather than being told 'none'. Sending
+ * an explicit level for a default would also change the request bytes (and
+ * with them the prompt cache) for every user who never touched the setting.
+ * `undefined` and 'off' both collapse to `undefined`; every other level is
+ * forwarded unchanged.
+ *
+ * This is a function rather than an inline ternary because the same
+ * normalisation is repeated at every compaction call site, and three copies of
+ * a rule are three chances for one of them to drift.
+ */
+export function forwardableReasoningEffort(
+  value: ReasoningEffort | undefined
+): ReasoningEffort | undefined {
+  return value === undefined || value === 'off' ? undefined : value;
+}
+
+/**
  * Configuration for the openai-compatible adapter's transient-error
  * retry layer (429, 408, 409, 5xx, network). Retry runs INSIDE the
  * adapter so every caller — main chat, sub-agents, compaction,
@@ -189,6 +210,14 @@ export interface Config {
    * to cite (system-prompt directive + tool-result reminder).
    */
   citeSources?: boolean;
+  /**
+   * Whether secrets detected in `run_command` output are replaced with
+   * `[REDACTED]` before the output reaches the model, transcript and disk.
+   * Defaults to true. Setting false accepts raw output — known
+   * secret-bearing data leaves the machine. Terminal escape sequences are
+   * stripped either way.
+   */
+  redactSecrets?: boolean;
   webSearch?: {
     maxQueries: number;
     resultsPerQuery: number;

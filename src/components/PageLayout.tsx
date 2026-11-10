@@ -8,6 +8,7 @@ interface PageLayoutProps {
   approvalModal: ReactNode;
   skillsPanel: ReactNode;
   settingsModal: ReactNode;
+  confirmDialog?: ReactNode;
 }
 
 /**
@@ -20,6 +21,7 @@ export function PageLayout({
   approvalModal,
   skillsPanel,
   settingsModal,
+  confirmDialog,
 }: PageLayoutProps) {
   return (
     <div className="app-root">
@@ -28,6 +30,7 @@ export function PageLayout({
       {approvalModal}
       {skillsPanel}
       {settingsModal}
+      {confirmDialog}
     </div>
   );
 }

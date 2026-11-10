@@ -16,7 +16,7 @@ import {
   sendLlmChatStream,
   type StreamChatParams,
 } from '@/services/llm';
-import { countMessagesTokens, countTextTokens } from '@/services/tokenizer';
+import { countCalibratedTextTokens, countMessagesTokens } from '@/services/tokenizer';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import { type WebExtractionSettings } from '@/tools/web/htmlExtractor';
 
@@ -136,8 +136,22 @@ function buildCompactionPrompt(content: string, charLimit: number, attempt: numb
     .replace('{content}', content);
 }
 
+/**
+ * How many characters a token of THIS model's text is worth.
+ *
+ * ONE UNIT SYSTEM: the count is the CALIBRATED one, because the number this
+ * feeds (the output budget, `numPredict`) is compared against a token budget
+ * — the context window the provider enforces. A raw count is 25–40 % smaller
+ * than the provider's own count of the same text, so a raw count here makes
+ * the model believe a token is worth more characters than it is, asks for too
+ * few output tokens, and the compacted page comes back truncated.
+ *
+ * The class is `summarise`: a web compaction request is a system prompt and
+ * ONE big user message, which is the shape the `summarise` factor is
+ * measured from.
+ */
 function estimateCharsPerToken(content: string, model: string): number {
-  const tokenCount = countTextTokens(content, model);
+  const tokenCount = countCalibratedTextTokens(content, model, 'summarise');
   if (tokenCount <= 0) {
     return APPROX_CHARS_PER_TOKEN;
   }
@@ -152,7 +166,11 @@ function estimateCompactionContext(
   charLimit: number,
   attempt: number
 ): { numCtx: number; numPredict: number } {
-  const promptTokens = countMessagesTokens(messages, model);
+  // ONE UNIT SYSTEM: the prompt count and the chars-per-token ratio are both
+  // calibrated counts of the SAME request shape, so `promptTokens +
+  // numPredict` is a number of provider tokens — the unit the context window
+  // is denominated in.
+  const promptTokens = countMessagesTokens(messages, model, 'summarise');
   const charsPerToken = estimateCharsPerToken(content, model);
 
   // Size numPredict against the SAME prompted upper bound the model sees
@@ -296,7 +314,7 @@ export class ContentCompactor {
     const minCharLimit = Math.max(1, Math.floor(effectiveCharLimit * 0.85));
 
     this.output.writeLine(
-      `Web content compaction prompt: model=${model} numCtx=${numCtx} maxOutputTokens=${numPredict} (~${numPredict * 4} chars) promptTokens=${countMessagesTokens(messages, model)} targetBand=${minCharLimit}..${effectiveCharLimit} chars (hardLimit=${charLimit})`
+      `Web content compaction prompt: model=${model} numCtx=${numCtx} maxOutputTokens=${numPredict} (~${numPredict * 4} chars) promptTokens=${countMessagesTokens(messages, model, 'summarise')} targetBand=${minCharLimit}..${effectiveCharLimit} chars (hardLimit=${charLimit})`
     );
 
     return await this.streamCompactionResponse(params);

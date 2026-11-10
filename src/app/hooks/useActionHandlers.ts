@@ -4,6 +4,8 @@ import { type Dispatch, useCallback } from 'react';
 
 import type { ChatAction } from '@/app/lib/chatStore';
 
+import { streamKeyFor } from '@/app/lib/streamKey';
+
 import type { SendHandler } from './useSendHandler';
 import type { WritableRef } from './useStableRefs';
 
@@ -39,9 +41,14 @@ export function useActionHandlers(
     // session's stream and the reserved keys, which used to be the
     // pre-fix behaviour and was the root cause of bug #1 (Stop in
     // tab A killing tab B's in-flight chat).
-    if (visibleSessionId === null || visibleSessionId === undefined) return;
-    if (reservedKeys.has(visibleSessionId)) return;
-    const controller = abortControllersRef.current.get(visibleSessionId);
+    //
+    // The key is derived with `streamKeyFor` because a turn started from a
+    // brand-new chat is registered under NEW_SESSION_KEY (-1) until the
+    // server reports the real session id; a plain `null` lookup would miss
+    // it and leave the visible Stop button dead.
+    const key = streamKeyFor(visibleSessionId);
+    if (reservedKeys.has(key)) return;
+    const controller = abortControllersRef.current.get(key);
     if (controller) {
       controller.abort();
     }

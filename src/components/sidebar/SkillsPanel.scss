@@ -10,8 +10,7 @@
   flex-shrink: 0;
   overflow: hidden;
   background: var(--glass-panel);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(160%);
   border-left: 1px solid var(--glass-border);
   box-shadow: -4px 0 24px rgba(var(--rgb-shadow-navy), 0.08);
   transition: width 0.25s ease;
@@ -210,8 +209,7 @@
     border-radius: 12px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid var(--glass-border-soft);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
     transition:
       background 0.2s ease,
       box-shadow 0.2s ease,
@@ -314,11 +312,16 @@
       height: 0;
 
       &:checked + .skills-panel-toggle-switch-slider {
-        background: linear-gradient(180deg, #33d1ff 0%, #00a8e8 60%, #0077b6 100%);
+        background: linear-gradient(
+          180deg,
+          var(--gradient-primary-0) 0%,
+          var(--gradient-primary-1) 60%,
+          var(--gradient-primary-2) 100%
+        );
         border-color: rgba(0, 168, 232, 0.4);
         box-shadow:
           0 2px 6px rgba(0, 120, 180, 0.25),
-          inset 0 1px 0 rgba(255, 255, 255, 0.4);
+          inset 0 1px 0 var(--glass-inset-highlight);
 
         &::before {
           transform: translateX(16px);
@@ -339,8 +342,7 @@
       transition:
         background 0.2s ease,
         box-shadow 0.2s ease;
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(var(--blur-chip));
 
       &::before {
         content: '';
@@ -377,27 +379,29 @@
     }
 
     &-code {
-      font-family: monospace;
+      font-family: var(--font-mono);
       font-size: 11px;
-      background: rgba(255, 255, 255, 0.25);
-      padding: 1px 4px;
-      border-radius: 4px;
+      background: var(--glass-white);
+      padding: 2px 6px;
+      border-radius: var(--radius-chip);
       color: var(--text-primary);
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
   }
 
   &-error {
     padding: 10px 12px;
     border-radius: 12px;
-    border: 1px solid rgba(220, 80, 80, 0.35);
-    background: rgba(255, 200, 200, 0.3);
+    border: 1px solid var(--border-error-soft);
+    background: var(--bg-error-soft);
     display: flex;
     flex-direction: column;
     gap: 8px;
 
     &-text {
       font-size: 12px;
-      color: #a03030;
+      color: var(--color-text-error);
       line-height: 1.5;
     }
 
@@ -407,12 +411,11 @@
       border-radius: 50px;
       border: 1px solid rgba(220, 80, 80, 0.4);
       background: rgba(255, 255, 255, 0.3);
-      color: #a03030;
+      color: var(--color-text-error);
       font-size: 12px;
       cursor: pointer;
       transition: all 0.2s ease;
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(var(--blur-chip));
 
       &:hover {
         background: rgba(255, 255, 255, 0.5);
@@ -434,7 +437,7 @@
       line-height: 1.4;
 
       code {
-        font-family: monospace;
+        font-family: var(--font-mono);
         font-size: 10px;
         background: rgba(255, 255, 255, 0.25);
         padding: 1px 3px;
@@ -466,6 +469,30 @@
       font-size: 12px;
       color: var(--text-secondary);
     }
+
+    // Escape hatch while the (bounded) creation wait is running.
+    &-dismiss {
+      margin-left: auto;
+      padding: 2px 8px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--glass-border-soft);
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+
+      &:hover {
+        background: var(--glass-white);
+        border-color: var(--glass-border);
+        color: var(--text-primary);
+      }
+
+      &:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+    }
   }
 
   // ── Inline create form ──────────────────────────────────────
@@ -476,8 +503,7 @@
     gap: 8px;
     border-bottom: 1px solid var(--glass-border-soft);
     background: rgba(255, 255, 255, 0.06);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
 
     &-input {
       @include glass-input;
@@ -533,8 +559,7 @@
       cursor: pointer;
       font-size: 12px;
       transition: all 0.2s ease;
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(var(--blur-chip));
       font-family: inherit;
 
       &:hover {
@@ -555,7 +580,7 @@
     }
 
     &-error {
-      color: #c41e3a;
+      color: var(--status-error);
       font-size: 12px;
       line-height: 1.4;
     }
@@ -571,8 +596,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
   }
 
   // ── MCP server card (MCP tab) ───────────────────────────────
@@ -581,8 +605,7 @@
     border-radius: 12px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid var(--glass-border-soft);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
     transition:
       background 0.2s ease,
       box-shadow 0.2s ease;
@@ -637,8 +660,8 @@
       font-size: 11px;
       line-height: 1.4;
       color: var(--color-text-error);
-      font-family: monospace;
-      background: rgba(255, 200, 200, 0.3);
+      font-family: var(--font-mono);
+      background: var(--bg-error-soft);
       border: 1px solid rgba(220, 80, 80, 0.25);
       border-radius: 6px;
       padding: 4px 6px;
@@ -729,8 +752,8 @@
       color: var(--text-secondary);
     }
     &--error {
-      border-color: rgba(220, 80, 80, 0.35);
-      background: rgba(255, 200, 200, 0.3);
+      border-color: var(--border-error-soft);
+      background: var(--bg-error-soft);
       color: var(--color-text-error);
     }
     &--not_loaded {
@@ -740,8 +763,8 @@
     }
     &--auth_required {
       border-color: rgba(168, 85, 247, 0.35);
-      background: rgba(168, 85, 247, 0.12);
-      color: rgb(168, 85, 247);
+      background: rgba(var(--rgb-purple), 0.12);
+      color: var(--color-purple);
     }
   }
 
@@ -750,9 +773,9 @@
     flex-shrink: 0;
     padding: 4px 10px;
     border-radius: 6px;
-    border: 1px solid rgba(168, 85, 247, 0.4);
-    background: rgba(168, 85, 247, 0.18);
-    color: rgb(168, 85, 247);
+    border: 1px solid rgba(var(--rgb-purple), 0.4);
+    background: rgba(var(--rgb-purple), 0.18);
+    color: var(--color-purple);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -760,13 +783,13 @@
     transition: background 0.15s ease;
 
     &:hover {
-      background: rgba(168, 85, 247, 0.28);
+      background: rgba(var(--rgb-purple), 0.28);
     }
     &:active {
-      background: rgba(168, 85, 247, 0.4);
+      background: rgba(var(--rgb-purple), 0.4);
     }
     &:focus-visible {
-      outline: 2px solid rgba(168, 85, 247, 0.6);
+      outline: 2px solid rgba(var(--rgb-purple), 0.6);
       outline-offset: 2px;
     }
   }

@@ -107,9 +107,11 @@ export type DiagnosticPhase =
   | 'nested_tool_start'
   | 'nested_tool_end'
   | 'compaction_start'
+  | 'compaction_size'
   | 'compaction_end'
   | 'empty_response_recovery'
   | 'context_limit_recovery'
+  | 'transient_retry'
   | 'abort'
   | 'error'
   | 'model_switched'
@@ -121,7 +123,7 @@ export type DiagnosticPhase =
   | 'oauth_error';
 
 export interface DiagnosticTraceEntry {
-  layer: 'route' | 'subagent' | 'adapter' | 'mcp';
+  layer: 'route' | 'subagent' | 'adapter' | 'mcp' | 'compact';
   phase: DiagnosticPhase;
   requestId?: string | undefined;
   sessionId?: number | undefined;

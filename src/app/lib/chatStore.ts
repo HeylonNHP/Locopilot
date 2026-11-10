@@ -7,6 +7,7 @@ import type { VisionSupportState } from '@/services/visionCache';
 import type { ToolCallArguments } from '@/tools/tools';
 import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
+import { randomId } from '@/app/lib/randomId';
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
@@ -40,24 +41,6 @@ export interface ChatMessage {
    * promptTimestamps toggle); the toggle controls LLM visibility only.
    */
   createdAt?: string;
-}
-
-/**
- * Generate a UUID v4 string that works in all browser contexts.
- * `crypto.randomUUID()` throws in non-secure contexts (plain HTTP),
- * so we fall back to a Math.random()-based v4 UUID when needed.
- */
-function randomId(): string {
-  try {
-    return crypto.randomUUID();
-  } catch {
-    // Fallback for non-secure contexts (plain HTTP) where
-    // crypto.randomUUID() throws a TypeError.
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replaceAll(/[xy]/g, (c) => {
-      const r = Math.trunc(Math.random() * 16);
-      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-    });
-  }
 }
 
 /**
@@ -222,7 +205,10 @@ export interface ChatState {
    * numbered links with a trailing Sources list. Toggled in Settings. See
    * `Config.citeSources` for the persisted counterpart.
    */
+  /** `Config.citeSources` for the persisted counterpart. */
   citeSources: boolean;
+  /** `Config.redactSecrets` for the persisted counterpart. */
+  redactSecrets: boolean;
   compactionModel: string;
   /**
    * Transient: which provider the compaction model belongs to. Captured
@@ -291,7 +277,12 @@ export interface ChatState {
    * the input if the turn ends, aborts, or errors before the ack arrives
    * (see the `STOP_STREAMING` case below).
    */
-  pendingSteerDraft: { id: string; text: string; target: 'main' | 'subagent'; agentId?: string } | null;
+  pendingSteerDraft: {
+    id: string;
+    text: string;
+    target: 'main' | 'subagent';
+    agentId?: string;
+  } | null;
   /**
    * Text a steering message send never got acknowledged for and was
    * restored for the user to see again. Consumed once by `ChatInput` on
@@ -342,6 +333,18 @@ export type ChatAction =
   | { type: 'APPEND_TOOL_PROGRESS'; content: string; name?: string; targetSessionId?: number }
   | { type: 'SUBAGENT_OUTPUT'; agentId: string; message: string; targetSessionId?: number }
   | { type: 'SUBAGENT_CHUNK'; agentId: string; text: string; targetSessionId?: number }
+  | {
+      type: 'CLEAR_SUBAGENT_CONTENT';
+      agentId: string;
+      /**
+       * The text that must REMAIN for that agent — what the server kept
+       * after dropping the failed turn's output. The bubble is REPLACED
+       * with it (not emptied), so the agent's earlier turns survive and the
+       * live bubble matches the text the server persists.
+       */
+      content: string;
+      targetSessionId?: number;
+    }
   | { type: 'SET_SESSIONS'; sessions: Session[] }
   | { type: 'ADD_SESSION'; session: Session }
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
@@ -356,6 +359,7 @@ export type ChatAction =
       type: 'SHOW_APPROVAL';
       command: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
       requestId?: string;
+      targetSessionId?: number;
     }
   | { type: 'CLEAR_MESSAGES'; targetSessionId?: number }
   | { type: 'REMOVE_LAST_ASSISTANT'; targetSessionId?: number }
@@ -372,6 +376,7 @@ export type ChatAction =
   | { type: 'CLEAR_COMPACT_PROGRESS'; targetSessionId?: number }
   | { type: 'START_STREAMING'; sessionId: number }
   | { type: 'STOP_STREAMING'; sessionId: number }
+  | { type: 'RENAME_STREAMING'; fromSessionId: number; toSessionId: number }
   | { type: 'SAVE_INPUT_DRAFT'; draft: string }
   | { type: 'SET_HISTORY_INDEX'; index: number | null }
   | { type: 'CLEAR_HISTORY_NAVIGATION' }
@@ -457,29 +462,51 @@ function applyToSession(
   };
 }
 
-function chatReducer(state: ChatState, action: ChatAction): ChatState {
+/**
+ * The one reducer for the chat store. Exported so the per-session
+ * routing rules (which session a targeted action lands in) can be tested
+ * directly, without a browser.
+ */
+export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case 'SET_MESSAGES': {
-      // Ignore the dispatch if it was meant for a different session.
-      // This prevents stale async responses from loadSessionMessages
-      // from overwriting the currently-viewed session's messages.
-      if (
-        action.targetSessionId !== undefined &&
-        action.targetSessionId !== state.currentSessionId
-      ) {
-        return state;
-      }
+      const messages = action.messages.filter((m: ChatMessage) => m.role !== 'system').map(withId);
       if (
         !action.allowEmptyWhileStreaming &&
-        action.messages.length === 0 &&
+        messages.length === 0 &&
         action.targetSessionId !== undefined &&
         state.streamingSessions.has(action.targetSessionId)
       ) {
         return state;
       }
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        if (action.targetSessionId === -1) {
+          // The placeholder transcript is the visible one only while no
+          // session is selected. `newSessionState` is a mirror that the
+          // next session switch overwrites, so writing into it would leak
+          // this copy into whatever chat is started later.
+          if (state.currentSessionId === null) {
+            return { ...state, messages };
+          }
+          return state;
+        }
+        // The session this belongs to is not the one on screen: write the
+        // copy into that session's slot instead of dropping it. The visible
+        // session is left untouched, which is what the old guard protected
+        // against — but the copy itself was lost, so a turn that finished in
+        // the background never reconciled its transcript.
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => ({
+          ...slot,
+          messages,
+        }));
+        return nextState;
+      }
       return {
         ...state,
-        messages: action.messages.filter((m: ChatMessage) => m.role !== 'system').map(withId),
+        messages,
       };
     }
     case 'SAVE_INPUT_DRAFT': {
@@ -714,6 +741,77 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ],
       };
     }
+    case 'CLEAR_SUBAGENT_CONTENT': {
+      // A sub-agent's turn failed with a transient provider error and is
+      // re-issued, so the text the failed attempt streamed is dropped —
+      // while the text of the agent's EARLIER turns stays.
+      //
+      // The server already worked out what remains and sends it in the
+      // event, so the bubble is REPLACED with that text (not emptied): the
+      // bubble is not removed either, because the re-issued turn keeps
+      // streaming into the same bubble.
+      //
+      // The lookup mirrors SUBAGENT_CHUNK — the LAST bubble belonging to
+      // this agent, in the session the action targets.
+      if (
+        action.targetSessionId !== undefined &&
+        action.targetSessionId !== state.currentSessionId
+      ) {
+        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
+          const msgs = [...slot.messages];
+          for (let i = msgs.length - 1; i >= 0; i -= 1) {
+            const candidate = msgs[i];
+            if (!candidate || candidate.role !== 'subagent_log') {
+              continue;
+            }
+            if (candidate.subagentId !== action.agentId) {
+              continue;
+            }
+            msgs[i] = { ...candidate, content: action.content };
+            return { ...slot, messages: msgs };
+          }
+          // No bubble for this agent in that session — but the server says
+          // there IS text that has to remain, so it is created rather than
+          // dropped (mirrors SUBAGENT_CHUNK's create-if-missing branch).
+          if (!action.content) {
+            return slot;
+          }
+          return {
+            ...slot,
+            messages: [
+              ...slot.messages,
+              withId({ role: 'subagent_log', content: action.content, subagentId: action.agentId }),
+            ],
+          };
+        });
+        return nextState;
+      }
+      const msgs = [...state.messages];
+      for (let i = msgs.length - 1; i >= 0; i -= 1) {
+        const candidate = msgs[i];
+        if (!candidate || candidate.role !== 'subagent_log') {
+          continue;
+        }
+        if (candidate.subagentId !== action.agentId) {
+          continue;
+        }
+        msgs[i] = { ...candidate, content: action.content };
+        return { ...state, messages: msgs };
+      }
+      // No bubble for this agent — but the server says there IS text that
+      // has to remain, so it is created rather than dropped (mirrors
+      // SUBAGENT_CHUNK's create-if-missing branch).
+      if (!action.content) {
+        return state;
+      }
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          withId({ role: 'subagent_log', content: action.content, subagentId: action.agentId }),
+        ],
+      };
+    }
     case 'SUBAGENT_OUTPUT': {
       if (
         action.targetSessionId !== undefined &&
@@ -939,6 +1037,10 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // owning session. Falls back to `currentSessionId` for callers
       // that omit `requestId` (e.g. local test code).
       const owningSessionId = (() => {
+        // A explicitly targeted session (e.g. a foreground approval request
+        // dispatched for a background stream that was tagged on dispatch)
+        // wins over inference.
+        if (action.targetSessionId !== undefined) return action.targetSessionId;
         if (action.command === null && action.requestId !== undefined) {
           for (const [id, sess] of state.sessionStates) {
             if (sess.pendingApproval?.requestId === action.requestId) return id;
@@ -965,29 +1067,34 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // approval silently disappear the moment they approved or
       // rejected the foreground request.
       if (action.command === null) {
-        if (owningSessionId === null) {
+        // A hide must only close the modal if it resolves the request that is
+        // currently on screen. Two streams can await approval at once; before
+        // this guard, answering A cleared B's freshly-shown modal (and its
+        // session slot) instead of just A's.
+        const closesVisibleModal =
+          action.requestId === undefined ||
+          state.pendingApprovalId === null ||
+          state.pendingApprovalId === action.requestId;
+
+        const base: ChatState = closesVisibleModal ? nextState : state;
+
+        if (owningSessionId === null || owningSessionId === -1) {
           // No owning session (no current session, no requestId match).
           // Old behaviour: clear both. This is the rare case where the
           // server's `command: null` dispatch lands with no other
           // context, so the safe option is to clear the
           // not-yet-claimed session slot.
           return {
-            ...nextState,
-            newSessionState: { ...nextState.newSessionState, pendingApproval: null },
+            ...base,
+            newSessionState: { ...base.newSessionState, pendingApproval: null },
           };
         }
-        if (owningSessionId === -1) {
-          return {
-            ...nextState,
-            newSessionState: { ...nextState.newSessionState, pendingApproval: null },
-          };
-        }
-        const newMap = new Map(nextState.sessionStates);
+        const newMap = new Map(base.sessionStates);
         const sess = newMap.get(owningSessionId);
         if (sess && sess.pendingApproval !== null) {
           newMap.set(owningSessionId, { ...sess, pendingApproval: null });
         }
-        return { ...nextState, sessionStates: newMap };
+        return { ...base, sessionStates: newMap };
       }
 
       // Also persist into the owning session's state so it survives switching.
@@ -1190,6 +1297,28 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
         streamingSessions: new Set(state.streamingSessions).add(action.sessionId),
       };
     }
+    case 'RENAME_STREAMING': {
+      // Move a streaming session from one id to another in one step. The
+      // placeholder (-1) becomes the real id when the server creates the
+      // session; doing that with a STOP followed by a START leaves the set
+      // momentarily empty, and an empty set clears the steer-target toggle,
+      // the pending model switch and the held steer draft.
+      const nextSet = new Set(state.streamingSessions);
+      nextSet.delete(action.fromSessionId);
+      nextSet.add(action.toSessionId);
+      // The compaction phases of the session being renamed away are cleared,
+      // exactly as stopping that session would have cleared them: the
+      // "Compacting conversation…" notice must not outlive the turn it
+      // belonged to.
+      const isVisibleSession =
+        (state.currentSessionId === null && action.fromSessionId === -1) ||
+        state.currentSessionId === action.fromSessionId;
+      return {
+        ...state,
+        streamingSessions: nextSet,
+        ...(isVisibleSession ? { compactingPhases: [] } : {}),
+      };
+    }
     case 'STOP_STREAMING': {
       const nextSet = new Set(state.streamingSessions);
       nextSet.delete(action.sessionId);
@@ -1240,7 +1369,8 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
   }
 }
 
-const initialState: ChatState = {
+/** The store's starting state. Exported for the reducer tests. */
+export const initialState: ChatState = {
   messages: [],
   sessions: [],
   currentSessionId: null,
@@ -1263,6 +1393,7 @@ const initialState: ChatState = {
   compactionReasoningEffort: 'off',
   promptTimestamps: true,
   citeSources: true,
+  redactSecrets: true,
   compactionModel: '',
   compactionProviderId: null,
   chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,

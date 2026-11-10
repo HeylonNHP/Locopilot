@@ -42,7 +42,6 @@ import {
 import { enqueueSessionRename, enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
 import { clearSteerMessages, drainSteerMessages } from '@/app/lib/steerRegistry';
 import {
-  AUTO_COMPACT_THRESHOLD_PCT,
   DEFAULT_NUM_CTX,
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_SESSION_NAME,
@@ -50,6 +49,7 @@ import {
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
   HTTP_BAD_REQUEST,
+  MAX_COMPACTION_FAILURES_PER_TURN,
   MAX_MERMAID_RECOVERY_ATTEMPTS,
   MCP_TOOL_SEARCH_THRESHOLD,
   SSE_CONTENT_TYPE,
@@ -63,9 +63,11 @@ import {
   COMPACTION_ADAPTIVE_DIRECTIVE,
   COMPACTION_ADAPTIVE_DIRECTIVE_THRESHOLD,
   COMPACTION_INITIAL_DIRECTIVE,
+  computeCompactionTriggerTokens,
   SYNTHETIC_NUDGE_END,
   SYNTHETIC_NUDGE_MARKER,
 } from '@/services/compact';
+import { RECENT_FILES_LOAD_LIMIT } from '@/services/compact/constants';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_OLLAMA_BASE_URL,
@@ -77,7 +79,13 @@ import {
   hasMeaningfulAssistantContent,
   sanitizeAssistantTextFragment,
 } from '@/services/emptyResponseRecovery';
-import { createSession, getSessionName, renameSession, sessionExists } from '@/services/history';
+import {
+  createSession,
+  getSessionName,
+  loadRecentFiles,
+  renameSession,
+  sessionExists,
+} from '@/services/history';
 import {
   buildLlmRequestContext,
   type ChatMessage,
@@ -116,7 +124,12 @@ import {
 import { sanitizeChatMessage } from '@/services/textUtils';
 import { generateSessionTitle, sanitizeContentForTitle } from '@/services/titleGeneration';
 import { generateFallbackTitle } from '@/services/titleUtils';
-import { countMessagesTokens } from '@/services/tokenizer';
+import { recordTokenCalibrationSample } from '@/services/tokenCalibration';
+import {
+  countCalibratedTextTokens,
+  countMessagesTokens,
+  countRawMessagesTokens,
+} from '@/services/tokenizer';
 import {
   type CleanTurnStats,
   extractTurnStats,
@@ -127,6 +140,7 @@ import { maybeInjectPromptTimestamp } from '@/services/userMessageStamp';
 import { recordDiscoveredNonVision } from '@/services/visionCache';
 import { filterGrantedMCPTools, isAutoApprovedMCPTarget } from '@/tools/impl/mcpTool';
 import { enterRequestScope } from '@/tools/impl/runCommandTool';
+import { appendSubagentLineText, canonicalSubagentId } from '@/tools/toolOutput';
 import {
   handleToolCall,
   type RequestContext,
@@ -134,9 +148,10 @@ import {
   type ToolOutputSink,
   TOOLS,
 } from '@/tools/tools';
-import { WorkingDirectoryScope } from '@/tools/workingDirectory';
+import { getAgentWorkingDirectory, WorkingDirectoryScope } from '@/tools/workingDirectory';
 import {
   type Config,
+  forwardableReasoningEffort,
   isReasoningEffort,
   type ProviderConfig,
   type ReasoningEffort,
@@ -366,13 +381,24 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   // ── SSE streaming setup ───────────────────────────────────────────
 
+  // Identity stamped on every SSE frame of this turn. `streamId` is the
+  // per-request correlation id; `sessionId` starts as the session the client
+  // asked for and is filled in when a brand-new chat is assigned one.
+  const frameIdentity = {
+    streamId: requestId,
+    sessionId: parsedSessionId ?? null,
+  };
+
   const stream = new ReadableStream({
     async start(controller): Promise<void> {
       // Create a per-request process registry so concurrent requests
       // cannot see each other's running commands.
       enterRequestScope();
 
-      const { sendEvent, startKeepalive, stopKeepalive } = createSseStream(controller);
+      const { sendEvent, startKeepalive, stopKeepalive } = createSseStream(
+        controller,
+        () => frameIdentity
+      );
       debugLog.diagnostic({
         layer: 'route',
         phase: 'request_start',
@@ -400,6 +426,12 @@ export async function POST(req: NextRequest): Promise<Response> {
       // Last authoritative token count from Ollama; used by the auto-compact
       // check so it stays anchored to the latest exact provider count.
       let lastAuthoritativeTokens = 0;
+      // Auto-compaction failures in a row within this turn. With the wider
+      // retry window a compaction that keeps failing would otherwise re-fire
+      // on EVERY loop iteration — re-summarising the same history, burning the
+      // same tokens, and pushing the turn further from a usable reply. Bounded
+      // by MAX_COMPACTION_FAILURES_PER_TURN; reset on any success.
+      let compactionFailureStreak = 0;
       // Whether YOLO mode is active (set from config below). When true,
       // run_command skips the approval gate and executes unconditionally.
       let effectiveYolo = false;
@@ -693,6 +725,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       if (activeSessionId !== undefined && !sessionExists(activeSessionId)) {
         sendEvent('error', {
           message: 'Session not found. It may have been deleted in another tab.',
+          sessionMissing: true,
         });
         controller.close();
         return;
@@ -787,6 +820,8 @@ export async function POST(req: NextRequest): Promise<Response> {
       try {
         if (!activeSessionId) {
           activeSessionId = createSession(DEFAULT_SESSION_NAME, model as string);
+          // From here on every frame names the session the turn belongs to.
+          frameIdentity.sessionId = activeSessionId;
           sendEvent('session_created', { sessionId: activeSessionId });
         }
         // Accept mid-turn model switches for this session from now until the
@@ -857,9 +892,13 @@ export async function POST(req: NextRequest): Promise<Response> {
           return {
             yoloMode: config?.yolo ?? false,
             citeSources: config?.citeSources ?? true,
+            redactSecrets: config?.redactSecrets ?? true,
             allowedTools: undefined,
             disabledMainTools: disabledMain,
             mcpApprovals: [...mcpApprovalsSet],
+            // The session owns the artifacts of the commands this turn runs,
+            // so deleting the session can delete them with it.
+            ...(activeSessionId === undefined ? {} : { sessionId: activeSessionId }),
             model: model as string,
             numCtx: effectiveNumCtx,
             workingDirectoryScope,
@@ -883,6 +922,18 @@ export async function POST(req: NextRequest): Promise<Response> {
               compactionModel: effectiveCompactionModel,
               compactionLlmRequestContext,
               compactionNumCtx,
+              // The sub-agent inherits the parent's redaction setting, so its
+              // compaction summaries are redacted exactly like the main
+              // session's.
+              redactSecrets: config?.redactSecrets ?? true,
+              // The COMPACTION model's reasoning effort, not the sub-agent's own
+              // (`reasoningEffort` above, inherited from the parent's main
+              // model). The sub-agent's own compaction must run at the level the
+              // user picked for compaction; 'off' is normalised away when it is
+              // forwarded to the pipeline.
+              ...(config?.compactionReasoningEffort === undefined
+                ? {}
+                : { compactionReasoningEffort: config.compactionReasoningEffort }),
               ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
               tools: TOOLS.filter(
                 (tool) =>
@@ -1422,21 +1473,49 @@ export async function POST(req: NextRequest): Promise<Response> {
             }
           }
 
-          // Auto-compact when approaching the context limit, mirroring the
-          // server-side autoCompactIfNeeded() logic in services/chatSession.ts.
+          // Auto-compact when the history no longer fits alongside the reply.
+          //
+          // The gate is a RESERVED MARGIN, not a flat percentage: the trigger
+          // is `numCtx - reserve` (see computeCompactionTriggerTokens), so the
+          // room the model still needs to answer is what decides, rather than
+          // how full the window happens to look. A flat 92 % gate left 640
+          // tokens on an 8k window — less than one reply.
           if (effectiveNumCtx > 0) {
+            // ONE UNIT SYSTEM: both sides of this comparison are in PROVIDER
+            // tokens. The authoritative count is the provider's own prompt
+            // count (it INCLUDES the tool schemas), and the fallback estimate
+            // is our calibrated count of the history PLUS our calibrated
+            // estimate of the tool schemas — because the history estimate
+            // alone omits them, and an estimate that is missing a few
+            // thousand tokens of tool schemas fires the trigger late. The
+            // tool schemas are measured with the CALIBRATED counter for the
+            // same reason the history is: the raw count is in tokenizer
+            // tokens and the window is in provider tokens.
             const tokensUsed =
               lastAuthoritativeTokens > 0
                 ? lastAuthoritativeTokens
-                : countMessagesTokens(currentMessages, model as string);
+                : countMessagesTokens(currentMessages, model as string) +
+                  countCalibratedTextTokens(JSON.stringify(mergedTools ?? []), model as string);
+            // `usagePct` is still computed: it feeds the post-compaction nudge
+            // and the status events, which report how full the window is.
             const usagePct = (tokensUsed / effectiveNumCtx) * 100;
+            const compactionTriggerTokens = computeCompactionTriggerTokens(effectiveNumCtx);
 
             // Only compact when there is enough history for the split logic to
             // produce a non-empty messagesToSummarise. With fewer than 4 messages,
             // the anchor-rescue fallback can return an empty array, which would
             // otherwise trip the too-short guard with a confusing near-zero token
             // estimate (see tools/impl/subAgentTool.ts and services/compact.ts).
-            if (usagePct >= AUTO_COMPACT_THRESHOLD_PCT && currentMessages.length >= 4) {
+            //
+            // The failure-streak latch bounds a compaction that keeps throwing:
+            // without it the wider trigger window re-fires it on every loop
+            // iteration, which never shrinks the history and never finishes the
+            // turn.
+            if (
+              tokensUsed >= compactionTriggerTokens &&
+              currentMessages.length >= 4 &&
+              compactionFailureStreak < MAX_COMPACTION_FAILURES_PER_TURN
+            ) {
               sendEvent('status', {
                 phase: 'compacting',
                 tokensUsed,
@@ -1475,11 +1554,36 @@ export async function POST(req: NextRequest): Promise<Response> {
                   2,
                   undefined,
                   req.signal,
-                  undefined,
+                  // The compaction model's own reasoning effort — NOT this
+                  // route's `reasoningEffort`, which is the MAIN model's level
+                  // from the request body. 'off' means "no explicit level", so
+                  // it is normalised away before it reaches the adapter.
+                  forwardableReasoningEffort(config?.compactionReasoningEffort),
                   // Live compaction speed for the t/s badge.
                   (tps: number) => {
                     sendEvent('status', { phase: 'compacting', tps });
-                  }
+                  },
+                  // The user's redaction setting: with it OFF the summariser
+                  // sees the raw tool arguments and tool results, with it ON
+                  // both are redacted.
+                  config?.redactSecrets ?? true,
+                  // No `/compact` focus note on the automatic path, and no
+                  // borrowed system prompt either: `currentMessages` still has
+                  // its `system` row here, so `compactHistory` measures it.
+                  undefined,
+                  undefined,
+                  // The files this session touched most recently — recorded by
+                  // `recordToolFileTouch` at the single tool dispatch point —
+                  // re-attached after the compaction so the model does not
+                  // re-read what it was already working on. A few more rows
+                  // than the stub shows, so an unreadable file cannot starve
+                  // the list.
+                  loadRecentFiles(activeSessionId, RECENT_FILES_LOAD_LIMIT),
+                  // The reader is confined to THIS request's working directory:
+                  // `run_command`'s `cd` tracking lives on the scope, so the
+                  // containment root has to follow it (a path outside it is not
+                  // read, and the stub degrades to its path list).
+                  getAgentWorkingDirectory(requestContext.workingDirectoryScope)
                 );
                 // Replace server-side history with the compacted result.
                 const preservedSystemMessage = currentMessages[0];
@@ -1492,6 +1596,10 @@ export async function POST(req: NextRequest): Promise<Response> {
                   preservedSystemMessage,
                   ...compactResult.newMessages
                 );
+                // The compaction worked, so the failure latch is released: the
+                // history can grow past the trigger again later in the same
+                // turn, and that compaction gets a full budget of attempts.
+                compactionFailureStreak = 0;
                 // Persist compacted history so the frontend sees the reduced state.
                 pendingReplace = [...currentMessages];
                 // LLM-only nudge – not sent to the client and not persisted.
@@ -1524,8 +1632,24 @@ export async function POST(req: NextRequest): Promise<Response> {
                 sendEvent('compact', {
                   messages: compactResult.newMessages,
                   stats: compactResult.stats,
+                  // The MAIN window: a compaction that ran on a separate
+                  // provider with a bigger context does not make THIS turn's
+                  // history fit here, and this is the number the receipt's
+                  // "still over the context window" warning is about.
+                  ...(effectiveNumCtx > 0 ? { tokenLimit: effectiveNumCtx } : {}),
                 });
-                lastAuthoritativeTokens = countMessagesTokens(currentMessages, model as string);
+                // The authoritative count is stale after a compaction: it
+                // measured the history BEFORE the compaction, and it is in the
+                // provider's units. Replacing it with a bare estimate of the
+                // new history would compare two DIFFERENT quantities — the
+                // provider's count included the tool schemas, the estimate
+                // does not — so the replacement adds the tool schemas back,
+                // in the same calibrated unit as the history estimate. (The
+                // tool list is the whole list, not the filtered one the
+                // request will carry: an upper bound is the safe direction.)
+                lastAuthoritativeTokens =
+                  countMessagesTokens(currentMessages, model as string) +
+                  countCalibratedTextTokens(JSON.stringify(mergedTools ?? []), model as string);
                 if (compactResult.stats.newTokenCount > effectiveNumCtx) {
                   sendEvent('status', {
                     phase: 'compact_overflow',
@@ -1547,8 +1671,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                   result: 'completed',
                 });
               } catch (err) {
-                // Non-fatal — log and continue with existing messages.
+                // Non-fatal — log and continue with existing messages. The
+                // streak is what stops a broken compaction from re-firing on
+                // every remaining iteration of this turn.
                 compactFailed = true;
+                compactionFailureStreak += 1;
                 debugLog.diagnostic({
                   layer: 'route',
                   phase: 'compaction_end',
@@ -1863,6 +1990,51 @@ export async function POST(req: NextRequest): Promise<Response> {
           // the next loop iteration's auto-compact check is accurate.
           lastAuthoritativeTokens = promptEvalCount + evalCount;
 
+          // ── Calibration sample (the main turn) ──
+          //
+          // WHY HERE: this is the one request whose PROMPT count the provider
+          // reports for exactly the array we sent, so it is the measurement
+          // the calibration is built on. The PROMPT count only — the reply's
+          // `eval_count` is a DIFFERENT quantity (tokens generated) and
+          // adding it would teach the calibration that a request costs more
+          // than it does.
+          //
+          // WHAT IS COMPARED: our RAW count of `llmMessages` (the exact array
+          // that was sent — system prompt, the `[Sent …]` prefix and the
+          // images included) against the provider's prompt count. The
+          // provider's count ALSO carries the tool schemas and its own
+          // chat-template framing, and NOTHING is subtracted from it: the
+          // old build subtracted our own cl100k estimate of the tool schemas,
+          // which could push the ratio below 1 — the direction in which the
+          // app believes it has room it does not have. The tool schemas now
+          // inflate the numerator instead, so the learned factor is
+          // CONSERVATIVE (it over-states what a conversation costs).
+          //
+          // The class is `chat`: a chatty request pays the provider's
+          // per-message framing on every message, and that framing is what
+          // makes a chat request bigger than its text. The summariser's and
+          // the distiller's requests are one big blob each, and they have
+          // their own factors.
+          //
+          // A request with IMAGES is never sampled: our `IMAGE_TOKEN_ESTIMATE`
+          // is a flat guess, not the provider's real image cost, so the ratio
+          // would be measuring the wrong thing. The sampler rejects it.
+          //
+          // Best-effort by design: a calibration that cannot be recorded must
+          // never break a turn.
+          try {
+            recordTokenCalibrationSample({
+              model: model as string,
+              provider: llmRequestContext.provider ?? 'ollama',
+              class: 'chat',
+              estimatedTokens: countRawMessagesTokens(llmMessages, model as string),
+              authoritativeTokens: promptEvalCount,
+              hasImages: llmMessages.some((message) => message.images?.length),
+            });
+          } catch {
+            // Calibration is best-effort: a failure here must not fail the turn.
+          }
+
           // -- Build the assistant message --------------------------
           const assistantMessage = sanitizeChatMessage({
             role: 'assistant',
@@ -2116,13 +2288,42 @@ export async function POST(req: NextRequest): Promise<Response> {
               // free of transport/display prefixes. Every line is also
               // accumulated so flushSessionState persists the bubbles for the
               // end-of-turn client reload.
+              // The key an agent's output is filed under. EVERY write for one
+              // agent uses this ONE spelling — the agent's own lines
+              // (`appendSubagentLine`) and the streamed model text
+              // (`writeAgentChunk`) alike — so one agent is ONE bucket, ONE
+              // client bubble and ONE persisted `subagent_log` row. (Two
+              // spellings used to send an id with surrounding whitespace to
+              // two buckets: the bubble showed the text twice and the
+              // persisted history grew two rows for one agent.)
+              //
+              // The canonicalisation lives in ONE shared function
+              // (`canonicalSubagentId`), because the sub-agent tool applies
+              // the SAME rule to the id it hands out: two spellings of the
+              // same rule would let an agent's bucket key and the id the
+              // client files the bubble under drift apart.
+              const subagentLogKey = (agentId: string): string => canonicalSubagentId(agentId);
               const appendSubagentLine = (agentId: string, message: string): void => {
-                const cleanAgentId = sanitize(agentId).trim() || '__subagent__';
+                const cleanAgentId = subagentLogKey(agentId);
                 const text = sanitize(message).trimEnd();
                 if (text.trim()) {
+                  // The CLIENT's rule, exactly: a newline BETWEEN two
+                  // entries, none before the first one. The server's bucket
+                  // and the client's bubble are two copies of the same text,
+                  // and the clear that drops a failed turn's output
+                  // REPLACES the bubble with the server's copy — so the two
+                  // copies have to be byte-identical at every point. The
+                  // server used to append a trailing newline instead, which
+                  // put the newline in a different place than the client
+                  // did: the same characters in a different order, so the
+                  // replacement visibly reordered the surviving text.
+                  //
+                  // The `subagent_output` event still carries the bare line
+                  // (`message: text`, no newline) — the client adds the
+                  // separator itself, with this very rule.
                   subagentLogContent.set(
                     cleanAgentId,
-                    `${subagentLogContent.get(cleanAgentId) ?? ''}${text}\n`
+                    appendSubagentLineText(subagentLogContent.get(cleanAgentId) ?? '', text)
                   );
                   sendEvent('subagent_output', { agentId: cleanAgentId, message: text });
                 }
@@ -2138,9 +2339,66 @@ export async function POST(req: NextRequest): Promise<Response> {
                 clearInline(): void {},
                 writeAgentChunk(agentId: string, type: 'thinking' | 'content', text: string): void {
                   if (text) {
-                    subagentLogContent.set(agentId, (subagentLogContent.get(agentId) ?? '') + text);
-                    sendEvent('subagent_chunk', { agentId, type, text });
+                    // The SAME key — and the SAME id in the event — as the
+                    // agent's own lines: one agent, one bucket, one bubble.
+                    const cleanAgentId = subagentLogKey(agentId);
+                    subagentLogContent.set(
+                      cleanAgentId,
+                      (subagentLogContent.get(cleanAgentId) ?? '') + text
+                    );
+                    sendEvent('subagent_chunk', { agentId: cleanAgentId, type, text });
                   }
+                },
+                clearAgentContent(agentId: string, dropChars: number): void {
+                  // A sub-agent's turn that fails with a transient provider
+                  // error is RE-ISSUED, and the chunks the failed attempt
+                  // already streamed would then be shown — and persisted —
+                  // TWICE. So the failed attempt's text is dropped here.
+                  //
+                  // The drop is a TRUNCATION, not a delete: only the last
+                  // `dropChars` characters go, and they are exactly the text
+                  // the turn that is being re-issued streamed (the tool
+                  // counts every character it writes). A sub-agent is a
+                  // MULTI-TURN loop and every turn streams into this same
+                  // bucket, so the text of the EARLIER turns has to survive:
+                  // only the re-issued turn streams its own text again,
+                  // never the earlier turns' text.
+                  //
+                  // The bucket is what the persisted row is built from
+                  // (`takeSubagentRow`), so truncating it fixes the
+                  // `subagent_log` row too — no database change is needed.
+                  const cleanAgentId = subagentLogKey(agentId);
+                  const current = subagentLogContent.get(cleanAgentId) ?? '';
+                  const drop = Math.max(0, Number.isFinite(dropChars) ? dropChars : 0);
+                  // NOTHING TO DROP. The failure happened before the turn
+                  // streamed a single character, so there is no text to
+                  // remove — and the replacement would be a no-op that
+                  // still REWRITES the client's bubble with the server's
+                  // copy of it. So the event is not sent at all and the
+                  // bucket is left untouched.
+                  if (drop === 0) {
+                    return;
+                  }
+                  const keep = Math.max(0, current.length - drop);
+                  const remaining = current.slice(0, keep);
+                  // The bucket did not change (it was shorter than the
+                  // drop), so there is nothing to replace either.
+                  if (remaining === current) {
+                    return;
+                  }
+                  if (remaining) {
+                    subagentLogContent.set(cleanAgentId, remaining);
+                  } else {
+                    subagentLogContent.delete(cleanAgentId);
+                  }
+                  // The client has to drop the text it already rendered for
+                  // the failed attempt — and it has to end up with EXACTLY
+                  // the text the server kept, so the event carries it: the
+                  // client REPLACES its bubble with `content`. That is also
+                  // what makes the event replay-safe: replaying it replaces
+                  // the bubble with the server's text again, instead of
+                  // bringing the failed attempt's chunks back.
+                  sendEvent('clear_subagent', { agentId: cleanAgentId, content: remaining });
                 },
                 reportTps(tps: number | null): void {
                   sendEvent('status', { phase: 'subagent', tps });
@@ -2297,8 +2555,8 @@ export async function POST(req: NextRequest): Promise<Response> {
             // send back). Invalidate it so the next loop iteration does
             // a fresh `countMessagesTokens` recount — this is the
             // auto-compact gate, and trusting the stale anchor would let
-            // a large tool result push us past the 92% threshold without
-            // triggering compaction.
+            // a large tool result push us past the compaction trigger
+            // without triggering compaction.
             lastAuthoritativeTokens = 0;
 
             // Signal we are switching back to the LLM with tool results.
@@ -2643,7 +2901,9 @@ export async function POST(req: NextRequest): Promise<Response> {
               modelContextLimit,
               promptTps: tpsSnapshot.promptTps,
               evalTps: tpsSnapshot.evalTps,
-              ...(tpsSnapshot.evalTpsEstimated ? { evalTpsEstimated: true } : {}),
+              // Always sent, so the client's merge cannot keep a previous
+              // turn's "estimated" tag on a rate that was measured.
+              evalTpsEstimated: tpsSnapshot.evalTpsEstimated,
             },
             doneReason: lastDoneReason && lastDoneReason !== 'unknown' ? lastDoneReason : 'stop',
           });
@@ -2768,6 +3028,9 @@ export async function POST(req: NextRequest): Promise<Response> {
       'Content-Type': SSE_CONTENT_TYPE,
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
+      // The id of this turn, so the client can correlate its own logs with
+      // the server's without reading the first frame.
+      'X-Stream-Id': requestId,
     },
   });
 }

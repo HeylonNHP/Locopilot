@@ -2,6 +2,8 @@
 //  Component: MarkdownMessage
 // ================================================================
 
+@use '../../app/styles/mixins' as *;
+
 @mixin mermaid-error-panel-styles {
   padding: 0.9rem 1rem;
   border-radius: 12px;
@@ -73,7 +75,7 @@
   }
 
   .mermaid-error-source {
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.55;
     padding: 0;
@@ -104,7 +106,7 @@
     }
 
     pre {
-      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-family: var(--font-mono);
       font-size: 11px;
       white-space: pre-wrap;
       word-break: break-word;
@@ -150,30 +152,46 @@
   }
 
   a {
-    color: #0066cc;
+    color: var(--color-link);
     text-decoration: underline;
     text-underline-offset: 0.12em;
     font-weight: 500;
   }
 
+  // Images in a reply (a `![alt](url)` the model wrote, or a raw <img> that
+  // survived sanitisation) are emitted by marked as a bare <img>, so they lay
+  // out at their intrinsic pixel width. The bubble is a block capped at
+  // max-width:80% and never grows to fit its content, so a 2x screenshot
+  // simply ran out of the box — and, because the message list is
+  // `overflow-y:auto`, the browser computed `overflow-x` as `auto` too, so
+  // the whole thread gained a horizontal scrollbar.
+  //
+  // `max-width` rather than `width`, so a small image is never upscaled;
+  // `height:auto`, so shrinking one keeps its ratio and also overrides any
+  // width/height attributes the model passed through as raw HTML. This is the
+  // same clamp the mermaid SVG renderer and the attachment thumbnails already
+  // use. Deliberately NOT a height cap: a tall screenshot would shrink until
+  // its text was unreadable, and there is no lightbox to recover it.
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+
   code {
     padding: 0.12rem 0.35rem;
-    border-radius: 6px;
+    border-radius: var(--radius-chip);
     background: var(--code-inline-bg);
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.94em;
     color: var(--code-inline-text);
   }
 
   pre {
     margin: 0 0 0.85rem;
-    border-radius: 12px;
-    background: var(--code-block-bg);
-    border: 1px solid var(--glass-border-soft);
+    // Matte, not frosted — code is the one place legibility must win outright.
+    @include matte-content(var(--code-block-bg), var(--radius-panel));
     overflow: hidden;
     position: relative;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
 
     code {
       display: block;
@@ -191,7 +209,7 @@
     top: 8px;
     right: 8px;
     padding: 4px 10px;
-    border-radius: 6px;
+    border-radius: var(--radius-chip);
     border: 1px solid var(--glass-border-soft);
     background: var(--code-copy-bg);
     color: var(--text-secondary);
@@ -203,8 +221,7 @@
       opacity 0.2s ease,
       background 0.2s ease,
       color 0.2s ease;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
     line-height: 1.4;
 
     &:hover {
@@ -238,10 +255,15 @@
     color: var(--text-primary);
   }
 
+  // Wide tables must be able to scroll horizontally instead of breaking
+  // out of the bubble (the bubble's overflow:hidden would clip them).
   table {
     width: 100%;
     border-collapse: collapse;
     margin: 0 0 0.85rem;
+    overflow-x: auto;
+    max-width: 100%;
+    display: block;
   }
 
   th,
@@ -267,7 +289,7 @@
     color: var(--text-secondary);
 
     a {
-      color: #0066cc;
+      color: var(--color-link);
     }
   }
 
@@ -343,7 +365,7 @@
   [data-markdown-streaming-tail] {
     white-space: pre-wrap;
     word-break: break-word;
-    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     padding: 8px;
     border-radius: 6px;

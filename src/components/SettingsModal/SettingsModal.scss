@@ -8,10 +8,11 @@
   &-overlay {
     position: fixed;
     inset: 0;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
     background: var(--overlay-modal);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    z-index: 1000;
+    backdrop-filter: blur(var(--blur-chrome));
+    z-index: var(--z-modal);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -19,19 +20,18 @@
 
   &-panel {
     background: var(--glass-panel);
-    border-radius: 24px;
+    border-radius: var(--radius-overlay);
     width: 640px;
     max-width: 90%;
-    max-height: 90vh;
+    max-height: 90dvh;
     border: 1px solid var(--glass-border);
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(var(--blur-overlay)) saturate(180%);
     box-shadow:
       var(--shadow-lift),
-      inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      inset 0 1px 0 var(--glass-inset-highlight);
   }
 
   &-scroll {
@@ -57,8 +57,7 @@
     color: var(--color-text-error);
     font-size: 13px;
     line-height: 1.5;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
   }
 
   &-row {
@@ -112,8 +111,7 @@
     cursor: pointer;
     font-size: 14px;
     transition: all 0.2s ease;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(var(--blur-chip));
 
     &:hover {
       background: rgba(255, 255, 255, 0.3);
