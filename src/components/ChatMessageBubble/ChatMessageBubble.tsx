@@ -1,6 +1,6 @@
 'use client';
 import dynamic from 'next/dynamic';
-import React, { useEffect, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 
 import { type ChatMessage } from '@/app/lib/chatStore';
 
@@ -21,16 +21,28 @@ const MarkdownMessage = dynamic(() => import('@/components/MarkdownMessage'), {
 interface Props {
   message: ChatMessage;
   onDeletePrompt?: ((messageId: number) => void) | undefined;
-  canDelete?: boolean;
+  canDelete?: boolean | undefined;
   isDeletingPrompt?: boolean | undefined;
 }
 
-export default function ChatMessageBubble({
-  message,
-  onDeletePrompt,
-  canDelete,
-  isDeletingPrompt,
-}: Props) {
+/**
+ * One message of the conversation on screen.
+ *
+ * Exported through `memo`: every store update (each streamed chunk, each
+ * background flush, each status event) re-renders the page, and without memo
+ * that redrew EVERY bubble — so the cost of a chunk grew with the length of
+ * the conversation. With the default shallow comparison a bubble redraws only
+ * when its own props change. That depends on two things, both pinned by
+ * scripts/test-message-memo.mjs:
+ *   - the reducer replaces only the message that changed and keeps every other
+ *     message the SAME object (a reload from the database is the exception:
+ *     every bubble redraws once, at the end of a turn);
+ *   - MessagesArea passes no prop that is created fresh on every render, and
+ *     the delete props only to user bubbles (the only ones that use them).
+ * Nothing in here may read the chat context (`useChat`): a context read
+ * re-renders the bubble on every update and silently undoes the memo.
+ */
+function ChatMessageBubble({ message, onDeletePrompt, canDelete, isDeletingPrompt }: Props) {
   const [showThinking, setShowThinking] = useState(false);
   const hasThinking = Boolean(message.thinking?.trim());
   const hasContent = Boolean(message.content?.trim());
@@ -161,3 +173,5 @@ export default function ChatMessageBubble({
     }
   }
 }
+
+export default memo(ChatMessageBubble);

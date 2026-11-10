@@ -51,15 +51,22 @@ export function MessagesArea({
         {messages.length === 0 ? (
           <EmptyState modelCount={modelCount} />
         ) : (
-          messages.map((msg, i) => (
-            <ChatMessageBubble
-              key={msg.id ?? i}
-              message={msg}
-              onDeletePrompt={onDeletePrompt}
-              isDeletingPrompt={isDeletingPrompt}
-              canDelete={!isCurrentSessionStreaming}
-            />
-          ))
+          messages.map((msg, i) => {
+            // The bubble is memoised. The delete props change at the start and
+            // end of every turn, so they go to user bubbles only (the only ones
+            // that use them) — otherwise every assistant bubble would redraw
+            // twice per turn for nothing.
+            const isUser = msg.role === 'user';
+            return (
+              <ChatMessageBubble
+                key={msg.id ?? i}
+                message={msg}
+                onDeletePrompt={isUser ? onDeletePrompt : undefined}
+                isDeletingPrompt={isUser ? isDeletingPrompt : undefined}
+                canDelete={isUser ? !isCurrentSessionStreaming : undefined}
+              />
+            );
+          })
         )}
 
         {error && <ErrorBanner error={error} onRetry={onRetry} onDismiss={onDismissError} />}
