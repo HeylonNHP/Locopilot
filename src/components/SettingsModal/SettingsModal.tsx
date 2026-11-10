@@ -301,7 +301,11 @@ export default function SettingsModal({ onClose }: Props) {
       const providerChanged = mainProviderId !== state.activeProviderId;
       const compactionChanged = compactionModel !== state.compactionModel;
       if (streamingSessionId !== null && (modelChanged || providerChanged || compactionChanged)) {
-        dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: true } });
+        dispatch({
+          type: 'SET_MODEL_SWITCH_PENDING',
+          sessionId: streamingSessionId,
+          pending: true,
+        });
         // providerId rides along whenever either the model or the
         // provider changed — not just modelChanged — so a pure
         // provider-only switch reaches the server. (The server's
@@ -326,7 +330,11 @@ export default function SettingsModal({ onClose }: Props) {
           abortControllersRef.current.get(streamingSessionId)?.signal
         );
         if (!accepted) {
-          dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
+          dispatch({
+            type: 'SET_MODEL_SWITCH_PENDING',
+            sessionId: streamingSessionId,
+            pending: false,
+          });
         }
       }
 
@@ -556,10 +564,10 @@ export default function SettingsModal({ onClose }: Props) {
               </div>
               <span className="font-12 text-secondary">
                 Command output is scanned for tokens, keys and passwords and replaced with
-                [REDACTED] before the model, the transcript or the browser see it. Turn
-                this off for verbatim output, with local models or when a false positive
-                mangles what you need. The text is also saved in this conversation's
-                history. Terminal escape codes are always stripped.
+                [REDACTED] before the model, the transcript or the browser see it. Turn this off for
+                verbatim output, with local models or when a false positive mangles what you need.
+                The text is also saved in this conversation's history. Terminal escape codes are
+                always stripped.
               </span>
             </div>
           </div>

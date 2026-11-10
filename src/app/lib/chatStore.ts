@@ -1,6 +1,13 @@
 'use client';
 
-import React, { createContext, type ReactNode, useContext, useReducer, useRef } from 'react';
+import React, {
+  createContext,
+  type ReactNode,
+  useContext,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 
 import type { ToolCall } from '@/services/llm';
 import type { VisionSupportState } from '@/services/visionCache';
@@ -9,7 +16,12 @@ import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/ch
 
 import { randomId } from '@/app/lib/randomId';
 import { NEW_SESSION_KEY } from '@/app/lib/streamKey';
-import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+import { createBatchedDispatcher } from '@/app/lib/updateBatcher';
+import {
+  BACKGROUND_UPDATE_INTERVAL_MS,
+  DEFAULT_NUM_CTX,
+  DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+} from '@/constants';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_OLLAMA_BASE_URL,
@@ -86,6 +98,25 @@ export interface WebSearchConfig {
 }
 
 export type DoneReason = 'stop' | 'length' | 'load' | 'unload' | 'unknown';
+
+/**
+ * A steering message that has been accepted by `/api/chat/steer` but not yet
+ * confirmed applied by a `steer_applied` status event.
+ */
+export interface PendingSteerDraft {
+  id: string;
+  text: string;
+  target: 'main' | 'subagent';
+  agentId?: string;
+  /**
+   * How many user messages in the transcript already carried exactly this
+   * text when the steer was sent. At the end of the turn the saved history is
+   * compared against it: one more copy than this means the server saved the
+   * steer itself (it does, when the turn ends before a tool step could pick
+   * it up), so the text must NOT be put back in the composer.
+   */
+  copiesAtSend: number;
+}
 
 export interface SessionState {
   messages: ChatMessage[];
@@ -260,14 +291,16 @@ export interface ChatState {
    */
   visionState: VisionSupportState;
   /**
-   * True between requesting a mid-turn model switch via
-   * `/api/chat/switch-model` and the server confirming it with a
+   * The sessions with a mid-turn model switch that has been requested via
+   * `/api/chat/switch-model` and not yet confirmed by the server's
    * `model_switched` status event. `model` / `compactionModel` already hold
    * the newly picked values (they govern the next turn regardless), so this
-   * flag exists purely so the UI can say the running turn has not taken the
-   * new model on board yet, instead of implying the swap was instant.
+   * exists purely so the UI can say the running turn has not taken the new
+   * model on board yet, instead of implying the swap was instant. It is kept
+   * per session: a switch requested in one conversation must not show as
+   * pending in another.
    */
-  modelSwitchPending: boolean;
+  modelSwitchPendingSessions: Set<number>;
   /**
    * The agent id of the sub-agent the VISIBLE session's `run_subagents`
    * batch is currently running, or null when no batch is in flight (or it's
@@ -282,26 +315,23 @@ export interface ChatState {
    */
   activeSubagentId: string | null;
   /**
-   * A steering message that has been sent to `/api/chat/steer` and
-   * accepted (the server returned an id) but not yet confirmed applied by
-   * a matching `steer_applied` status event. Held here — rather than
-   * clearing the composer immediately — so the text can be restored to
-   * the input if the turn ends, aborts, or errors before the ack arrives
-   * (see the `STOP_STREAMING` case below).
+   * Steering messages that have been sent to `/api/chat/steer` and accepted
+   * (the server returned an id) but not yet confirmed applied by a matching
+   * `steer_applied` status event, by session. Held here — rather than
+   * clearing the composer immediately — so the text can be restored to the
+   * input if the turn ends, aborts, or errors before the ack arrives (see the
+   * `STOP_STREAMING` case below). Per session: one conversation's pending
+   * steer must not lock another conversation's steer box.
    */
-  pendingSteerDraft: {
-    id: string;
-    text: string;
-    target: 'main' | 'subagent';
-    agentId?: string;
-  } | null;
+  steerDrafts: Map<number, PendingSteerDraft>;
   /**
-   * Text a steering message send never got acknowledged for and was
-   * restored for the user to see again. Consumed once by `ChatInput` on
-   * mount (it seeds its input from this and clears it) — separate from
+   * Text of a steering message that never got an acknowledgement AND is not
+   * in the saved history, kept for the user to see again, by the session it
+   * came from. `ChatInput` puts a session's entry in that session's composer
+   * and clears it — never in another conversation's. Separate from
    * `inputDraft`, which has its own lifecycle for history navigation.
    */
-  steerRestoreText: string | null;
+  steerRestoreTexts: Map<number, string>;
   tokenStats: {
     promptEvalCount: number;
     evalCount: number;
@@ -379,6 +409,9 @@ export type ChatAction =
   | { type: 'SET_ERROR'; error: string | null; targetSessionId?: number }
   | { type: 'SET_CONFIG'; config: Partial<ChatState> }
   | { type: 'SET_ACTIVE_SUBAGENT'; agentId: string | null; targetSessionId?: number }
+  | { type: 'SET_STEER_DRAFT'; sessionId: number; draft: PendingSteerDraft | null }
+  | { type: 'CLEAR_STEER_RESTORE'; sessionId: number }
+  | { type: 'SET_MODEL_SWITCH_PENDING'; sessionId: number; pending: boolean }
   | {
       type: 'SHOW_APPROVAL';
       command: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
@@ -439,10 +472,7 @@ function emptySessionState(): SessionState {
  *
  * `undefined` is the legacy "whatever is on screen" path.
  */
-function targetsBackgroundSession(
-  state: ChatState,
-  targetId: number | undefined
-): targetId is number {
+function targetsBackgroundSession(state: ChatState, targetId: number | undefined): boolean {
   if (targetId === undefined || targetId === state.currentSessionId) {
     return false;
   }
@@ -548,6 +578,57 @@ function holdApprovalInSlot(
     pendingApproval: { command, requestId: requestId ?? null },
   }));
   return nextState;
+}
+
+/** The transcript the client holds for a session, wherever it lives. */
+function messagesOfSession(state: ChatState, sessionId: number): ChatMessage[] {
+  return sessionId === state.currentSessionId
+    ? state.messages
+    : (state.sessionStates.get(sessionId)?.messages ?? []);
+}
+
+function countUserCopies(messages: ChatMessage[], text: string): number {
+  return messages.filter((m) => m.role === 'user' && m.content === text).length;
+}
+
+/** A copy of `set` without `value` — the same set when it never had it. */
+function withoutValue(set: Set<number>, value: number): Set<number> {
+  if (!set.has(value)) {
+    return set;
+  }
+  const next = new Set(set);
+  next.delete(value);
+  return next;
+}
+
+/**
+ * Settle a session's steering draft when its turn ends.
+ *
+ * A draft that was never acknowledged is put back for the user — unless the
+ * saved history already holds it. The server saves a steer itself when the
+ * turn ends before a tool step could pick it up (and when the acknowledgement
+ * raced the draft), and putting the same text back in the composer made the
+ * user send it twice. The turn's end reloads the transcript from the
+ * database before this runs, so the history compared here is the saved one.
+ */
+function settleSteerDraft(
+  state: ChatState,
+  sessionId: number
+): Partial<Pick<ChatState, 'steerDrafts' | 'steerRestoreTexts'>> {
+  const draft = state.steerDrafts.get(sessionId);
+  if (!draft) {
+    return {};
+  }
+  const steerDrafts = new Map(state.steerDrafts);
+  steerDrafts.delete(sessionId);
+  const alreadySaved =
+    countUserCopies(messagesOfSession(state, sessionId), draft.text) > draft.copiesAtSend;
+  if (alreadySaved) {
+    return { steerDrafts };
+  }
+  const steerRestoreTexts = new Map(state.steerRestoreTexts);
+  steerRestoreTexts.set(sessionId, draft.text);
+  return { steerDrafts, steerRestoreTexts };
 }
 
 /**
@@ -1080,14 +1161,51 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       }
       return { ...state, activeSubagentId: action.agentId };
     }
+    case 'SET_STEER_DRAFT': {
+      if (action.draft === null && !state.steerDrafts.has(action.sessionId)) {
+        return state;
+      }
+      const steerDrafts = new Map(state.steerDrafts);
+      if (action.draft === null) {
+        steerDrafts.delete(action.sessionId);
+      } else {
+        steerDrafts.set(action.sessionId, action.draft);
+      }
+      return { ...state, steerDrafts };
+    }
+    case 'CLEAR_STEER_RESTORE': {
+      if (!state.steerRestoreTexts.has(action.sessionId)) {
+        return state;
+      }
+      const steerRestoreTexts = new Map(state.steerRestoreTexts);
+      steerRestoreTexts.delete(action.sessionId);
+      return { ...state, steerRestoreTexts };
+    }
+    case 'SET_MODEL_SWITCH_PENDING': {
+      if (state.modelSwitchPendingSessions.has(action.sessionId) === action.pending) {
+        return state;
+      }
+      const modelSwitchPendingSessions = new Set(state.modelSwitchPendingSessions);
+      if (action.pending) {
+        modelSwitchPendingSessions.add(action.sessionId);
+      } else {
+        modelSwitchPendingSessions.delete(action.sessionId);
+      }
+      return { ...state, modelSwitchPendingSessions };
+    }
     case 'SHOW_APPROVAL': {
       // ── A request for a session that is not on screen ────────────────
       // It is held in that session's slot and the modal is left alone:
       // popping it up here would ask the user to approve another
       // conversation's command while they are reading this one. The
       // session switch restores it from the slot when they go back.
-      if (action.command !== null && targetsBackgroundSession(state, action.targetSessionId)) {
-        return holdApprovalInSlot(state, action.targetSessionId, action.command, action.requestId);
+      const approvalTarget = action.targetSessionId;
+      if (
+        action.command !== null &&
+        approvalTarget !== undefined &&
+        targetsBackgroundSession(state, approvalTarget)
+      ) {
+        return holdApprovalInSlot(state, approvalTarget, action.command, action.requestId);
       }
       // ── Determine the session this approval request belongs to ──────
       // The SHOW_APPROVAL action has no `targetSessionId` field, but
@@ -1316,7 +1434,21 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       newMap.delete(action.sessionId);
       const newStreaming = new Set(state.streamingSessions);
       newStreaming.delete(action.sessionId);
-      return { ...state, sessionStates: newMap, streamingSessions: newStreaming };
+      const steerDrafts = new Map(state.steerDrafts);
+      steerDrafts.delete(action.sessionId);
+      const steerRestoreTexts = new Map(state.steerRestoreTexts);
+      steerRestoreTexts.delete(action.sessionId);
+      return {
+        ...state,
+        sessionStates: newMap,
+        streamingSessions: newStreaming,
+        steerDrafts,
+        steerRestoreTexts,
+        modelSwitchPendingSessions: withoutValue(
+          state.modelSwitchPendingSessions,
+          action.sessionId
+        ),
+      };
     }
     case 'START_STREAMING': {
       return {
@@ -1362,20 +1494,19 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'STOP_STREAMING': {
       const nextSet = new Set(state.streamingSessions);
       nextSet.delete(action.sessionId);
-      // A steering message that never got a `steer_applied` ack before the
-      // last streaming session ended is restored to `steerRestoreText`
-      // rather than silently lost — mirrors the model-switch-pending reset
-      // just below, gated the same way on "nothing is streaming any more".
-      const undraftedSteer = nextSet.size === 0 ? state.pendingSteerDraft : null;
       const base: ChatState = {
         ...state,
         streamingSessions: nextSet,
         // A switch that never got applied dies with the turn — the newly
         // picked model is already what the next turn will send.
-        ...(nextSet.size === 0 ? { modelSwitchPending: false } : {}),
-        ...(undraftedSteer
-          ? { pendingSteerDraft: null, steerRestoreText: undraftedSteer.text }
-          : {}),
+        modelSwitchPendingSessions: withoutValue(
+          state.modelSwitchPendingSessions,
+          action.sessionId
+        ),
+        // A steering message that never got a `steer_applied` ack is put back
+        // for the user, in the session it came from, unless the saved
+        // history already holds it (see `settleSteerDraft`).
+        ...settleSteerDraft(state, action.sessionId),
       };
       // The turn's per-session leftovers die with it, in the session that
       // ran it: the compaction phases (so old progress text doesn't linger
@@ -1466,10 +1597,10 @@ export const initialState: ChatState = {
   // first chat turn reports the resolved state. See the field's
   // JSDoc above for the full state machine.
   visionState: 'unknown',
-  modelSwitchPending: false,
+  modelSwitchPendingSessions: new Set<number>(),
   activeSubagentId: null,
-  pendingSteerDraft: null,
-  steerRestoreText: null,
+  steerDrafts: new Map<number, PendingSteerDraft>(),
+  steerRestoreTexts: new Map<number, string>(),
 };
 
 export function selectUserMessages(state: ChatState): ChatMessage[] {
@@ -1478,7 +1609,19 @@ export function selectUserMessages(state: ChatState): ChatMessage[] {
 
 const ChatContext = createContext<{
   state: ChatState;
+  /**
+   * Applies an action now, AFTER any background updates that are still
+   * queued (see `dispatchBackground`). Stable identity.
+   */
   dispatch: React.Dispatch<ChatAction>;
+  /**
+   * Queues an action for a conversation that is not on screen. Queued
+   * actions are applied together at most once per
+   * `BACKGROUND_UPDATE_INTERVAL_MS`, and every `dispatch` applies them first,
+   * so ordering is preserved and a session switch, a reload or a turn's end
+   * always sees everything that arrived. Only the stream hook uses it.
+   */
+  dispatchBackground: React.Dispatch<ChatAction>;
   /**
    * Per-session map of AbortControllers — the SAME instance `page.tsx`
    * passes into `useChatStream` / `useActionHandlers` / `useSlashCommands`.
@@ -1501,11 +1644,20 @@ const ChatContext = createContext<{
 }>({
   state: initialState,
   dispatch: () => {},
+  dispatchBackground: () => {},
   abortControllersRef: { current: new Map() },
 });
 
 export function ChatProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(chatReducer, initialState);
+  const [state, rawDispatch] = useReducer(chatReducer, initialState);
+  // The ordering rule for background updates lives in one place: every
+  // `dispatch` applies the queued ones first. Created once (the initialiser
+  // starts no timer, so a StrictMode double run is harmless).
+  const [batched] = useState(() =>
+    createBatchedDispatcher<ChatAction>(rawDispatch, {
+      intervalMs: BACKGROUND_UPDATE_INTERVAL_MS,
+    })
+  );
   // The per-session abort map's single source of truth. `page.tsx` (HomeInner)
   // takes it from this context and passes it down to `useChatStream`,
   // `useActionHandlers` and `useSlashCommands`, so the controller a mid-turn
@@ -1515,7 +1667,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const abortControllersRef = useRef<Map<number, AbortController>>(new Map());
   return React.createElement(
     ChatContext.Provider,
-    { value: { state, dispatch, abortControllersRef } },
+    {
+      value: {
+        state,
+        dispatch: batched.dispatch,
+        dispatchBackground: batched.dispatchBackground,
+        abortControllersRef,
+      },
+    },
     children
   );
 }

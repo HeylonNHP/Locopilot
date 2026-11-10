@@ -273,7 +273,11 @@ export default function ModelSelector({
   const switchMidTurn = useCallback(
     async (payload: MidTurnModelSwitch) => {
       if (streamingSessionId === null) return;
-      dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: true } });
+      dispatch({
+        type: 'SET_MODEL_SWITCH_PENDING',
+        sessionId: streamingSessionId,
+        pending: true,
+      });
       // Attach the mid-turn fetch to the signal of the turn it is switching
       // — looked up per session from the shared abort map, i.e. the SAME
       // controller the Stop button aborts. If the user clicks Stop while the
@@ -287,7 +291,11 @@ export default function ModelSelector({
         abortControllersRef.current.get(streamingSessionId)?.signal
       );
       if (!accepted) {
-        dispatch({ type: 'SET_CONFIG', config: { modelSwitchPending: false } });
+        dispatch({
+          type: 'SET_MODEL_SWITCH_PENDING',
+          sessionId: streamingSessionId,
+          pending: false,
+        });
       }
     },
     [dispatch, streamingSessionId, abortControllersRef]
@@ -542,17 +550,17 @@ export default function ModelSelector({
           <div className="model-selector-empty">No models found</div>
         ) : (
           groupModelsByProvider(filteredModels).map(([providerName, providerModels]) => (
-              <ProviderSection
-                key={providerName}
-                providerName={providerName}
-                models={providerModels}
-                collapsed={collapsedProviders[providerName] === true}
-                searching={searching}
-                isModelActive={isModelActive}
-                onSelect={handleSelect}
-                onToggle={toggleProviderCollapsed}
-              />
-            ))
+            <ProviderSection
+              key={providerName}
+              providerName={providerName}
+              models={providerModels}
+              collapsed={collapsedProviders[providerName] === true}
+              searching={searching}
+              isModelActive={isModelActive}
+              onSelect={handleSelect}
+              onToggle={toggleProviderCollapsed}
+            />
+          ))
         )}
       </div>
     </div>,

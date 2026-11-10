@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 
-import { type ChatMessage, useChat } from '@/app/lib/chatStore';
+import { type ChatAction, type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { retryBodyForSession, streamChatTurn } from '@/app/lib/chatTurn';
 import { frameOwner, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
@@ -83,7 +83,7 @@ export function useChatStream(
     options?: { keepCurrentSession?: boolean }
   ) => Promise<void>
 ) {
-  const { state, dispatch } = useChat();
+  const { state, dispatch, dispatchBackground } = useChat();
 
   const nextRequestIdRef = useRef(0);
   // The ownership rules (which turn belongs to which session, which turns
@@ -116,6 +116,29 @@ export function useChatStream(
   // --------------------------------------------------------------------------
 
   /**
+   * Apply an action that belongs to `owner`'s turn.
+   *
+   * A conversation that is not on screen is updated through the background
+   * queue — its updates are applied together once per interval instead of
+   * re-rendering the conversation the user is reading for every piece of
+   * text that arrives behind it. Everything else is dispatched now, which
+   * applies whatever is queued first, so order is preserved either way. The
+   * reducer routes by the session on screen at APPLY time, so a conversation
+   * that was in the background when its update was queued and on screen by
+   * the time it is applied still lands in the right place.
+   */
+  const dispatchOwned = useCallback(
+    (action: ChatAction, owner: number | undefined) => {
+      if (owner !== undefined && owner !== streamKeyFor(refs.sessionIdRef.current)) {
+        dispatchBackground(action);
+      } else {
+        dispatch(action);
+      }
+    },
+    [dispatch, dispatchBackground, refs]
+  );
+
+  /**
    * Clear a session's live t/s read-out — the number the status bar shows
    * while a turn is running.
    *
@@ -126,13 +149,16 @@ export function useChatStream(
    */
   const clearTpsReadout = useCallback(
     (targetSessionId?: number) => {
-      dispatch({
-        type: 'SET_CURRENT_TPS',
-        tps: null,
-        ...(targetSessionId === undefined ? {} : { targetSessionId }),
-      });
+      dispatchOwned(
+        {
+          type: 'SET_CURRENT_TPS',
+          tps: null,
+          ...(targetSessionId === undefined ? {} : { targetSessionId }),
+        },
+        targetSessionId
+      );
     },
-    [dispatch]
+    [dispatchOwned]
   );
 
   /**
@@ -146,13 +172,16 @@ export function useChatStream(
   const clearTokenRates = useCallback(
     (targetSessionId?: number) => {
       clearTpsReadout(targetSessionId);
-      dispatch({
-        type: 'SET_TOKEN_STATS',
-        stats: { evalTps: null, promptTps: null, evalTpsEstimated: false },
-        ...(targetSessionId === undefined ? {} : { targetSessionId }),
-      });
+      dispatchOwned(
+        {
+          type: 'SET_TOKEN_STATS',
+          stats: { evalTps: null, promptTps: null, evalTpsEstimated: false },
+          ...(targetSessionId === undefined ? {} : { targetSessionId }),
+        },
+        targetSessionId
+      );
     },
-    [clearTpsReadout, dispatch]
+    [clearTpsReadout, dispatchOwned]
   );
 
   /** Push a session's coalesced sub-agent text into the store. */
@@ -160,14 +189,17 @@ export function useChatStream(
     (entry: PendingSubagentText) => {
       if (entry.timer) clearTimeout(entry.timer);
       subagentBufferRef.current.delete(subagentBufferKey(entry.sessionId, entry.agentId));
-      dispatch({
-        type: 'SUBAGENT_CHUNK',
-        agentId: entry.agentId,
-        text: entry.text,
-        ...(entry.sessionId === undefined ? {} : { targetSessionId: entry.sessionId }),
-      });
+      dispatchOwned(
+        {
+          type: 'SUBAGENT_CHUNK',
+          agentId: entry.agentId,
+          text: entry.text,
+          ...(entry.sessionId === undefined ? {} : { targetSessionId: entry.sessionId }),
+        },
+        entry.sessionId
+      );
     },
-    [dispatch]
+    [dispatchOwned]
   );
 
   const handleEvent = useCallback(
@@ -247,7 +279,9 @@ export function useChatStream(
         doneOwner: owner,
         subagentOwner: owner,
         requestedNumCtx: refs.requestedNumCtxRef.current,
-        pendingSteerDraft: refs.pendingSteerDraftRef.current,
+        // The draft of the session this frame belongs to — never another
+        // conversation's, so an ack cannot release the wrong draft.
+        pendingSteerDraft: owner === undefined ? undefined : refs.steerDraftsRef.current.get(owner),
       });
 
       if (outcome.markFailed) {
@@ -255,7 +289,7 @@ export function useChatStream(
       }
 
       for (const action of outcome.actions) {
-        dispatch(action);
+        dispatchOwned(action, owner);
       }
 
       if (outcome.clearedSubagentId) {
@@ -302,7 +336,7 @@ export function useChatStream(
         clearTpsReadout(owner);
       }
     },
-    [dispatch, clearTokenRates, clearTpsReadout, flushSubagentText, setRetryPayload]
+    [dispatch, dispatchOwned, clearTokenRates, clearTpsReadout, flushSubagentText, setRetryPayload]
   );
 
   /**

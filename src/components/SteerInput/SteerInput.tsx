@@ -20,7 +20,7 @@ import { NEW_SESSION_KEY } from '@/app/lib/streamKey';
  */
 export default function SteerInput() {
   const { state, dispatch, abortControllersRef } = useChat();
-  const { currentSessionId, streamingSessions, activeSubagentId, pendingSteerDraft } = state;
+  const { currentSessionId, streamingSessions, activeSubagentId, steerDrafts, messages } = state;
 
   const streamingSessionId =
     currentSessionId !== null && streamingSessions.has(currentSessionId) ? currentSessionId : null;
@@ -34,13 +34,19 @@ export default function SteerInput() {
     setTarget(activeSubagentId ? 'subagent' : 'main');
   }, [activeSubagentId]);
 
-  const sending = pendingSteerDraft !== null;
+  // Only THIS conversation's own pending steer locks the box; another
+  // conversation's steer waiting for its acknowledgement does not.
+  const sending = streamingSessionId !== null && steerDrafts.has(streamingSessionId);
 
   const handleSend = useCallback(async () => {
     const trimmed = text.trim();
     if (!trimmed || streamingSessionId === null || sending) return;
 
     const chosenTarget = activeSubagentId ? target : 'main';
+    // How many copies of this text the transcript already holds, taken now:
+    // at the end of the turn the saved history is compared against it to see
+    // whether the server saved the steer itself.
+    const copiesAtSend = messages.filter((m) => m.role === 'user' && m.content === trimmed).length;
     const signal = abortControllersRef.current.get(streamingSessionId)?.signal;
     const id = await requestSteerMessage(
       streamingSessionId,
@@ -58,19 +64,30 @@ export default function SteerInput() {
       return;
     }
 
+    // Bound to the conversation the request was sent for, not to whichever
+    // conversation is on screen when the answer arrives.
     dispatch({
-      type: 'SET_CONFIG',
-      config: {
-        pendingSteerDraft: {
-          id,
-          text: trimmed,
-          target: chosenTarget,
-          ...(chosenTarget === 'subagent' && activeSubagentId ? { agentId: activeSubagentId } : {}),
-        },
+      type: 'SET_STEER_DRAFT',
+      sessionId: streamingSessionId,
+      draft: {
+        id,
+        text: trimmed,
+        target: chosenTarget,
+        ...(chosenTarget === 'subagent' && activeSubagentId ? { agentId: activeSubagentId } : {}),
+        copiesAtSend,
       },
     });
     setText('');
-  }, [text, streamingSessionId, sending, activeSubagentId, target, abortControllersRef, dispatch]);
+  }, [
+    text,
+    streamingSessionId,
+    sending,
+    activeSubagentId,
+    target,
+    messages,
+    abortControllersRef,
+    dispatch,
+  ]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {

@@ -72,7 +72,7 @@ export interface SseRouteContext {
   subagentOwner?: number | undefined;
   /** Context size to fall back to when the server omits one. */
   requestedNumCtx?: number | undefined;
-  /** The steer draft the server may have applied. */
+  /** The steer draft of the OWNING session, which the server may have applied. */
   pendingSteerDraft?: { id: string; text: string } | null | undefined;
 }
 
@@ -353,10 +353,15 @@ export function routeSseEvent(
       // previous model's verdict no longer applies — reset it to
       // 'unknown' and let the next 400-driven discovery speak.
       if (phase === 'model_switched') {
-        actions.push(
-          { type: 'SET_CONFIG', config: { modelSwitchPending: false } },
-          { type: 'SET_VISION_STATE', state: 'unknown' }
-        );
+        // The pending flag belongs to the session whose turn took the switch.
+        if (targetSessionId !== undefined) {
+          actions.push({
+            type: 'SET_MODEL_SWITCH_PENDING',
+            sessionId: targetSessionId,
+            pending: false,
+          });
+        }
+        actions.push({ type: 'SET_VISION_STATE', state: 'unknown' });
       }
       // The server has spliced a queued steering message into the
       // conversation. Only now — not when the send was first accepted
@@ -366,14 +371,20 @@ export function routeSseEvent(
       // wrong one.
       if (phase === 'steer_applied') {
         const { steerId } = data;
-        if (pendingSteerDraft && pendingSteerDraft.id === steerId) {
+        // The draft is the owning session's, so an ack can only ever release
+        // the draft of the conversation whose turn sent it.
+        if (
+          pendingSteerDraft &&
+          pendingSteerDraft.id === steerId &&
+          targetSessionId !== undefined
+        ) {
           actions.push(
             {
               type: 'ADD_MESSAGE',
               message: { role: 'user', content: pendingSteerDraft.text },
-              ...(targetSessionId === undefined ? {} : { targetSessionId }),
+              targetSessionId,
             },
-            { type: 'SET_CONFIG', config: { pendingSteerDraft: null } }
+            { type: 'SET_STEER_DRAFT', sessionId: targetSessionId, draft: null }
           );
         }
       }

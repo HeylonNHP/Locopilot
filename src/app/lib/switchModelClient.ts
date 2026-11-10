@@ -26,7 +26,7 @@ export async function requestMidTurnModelSwitch(
    * the user clicks Stop while this fetch is in flight the fetch is
    * cancelled client-side, the server-side `pendingSwitches[sessionId]`
    * entry is cleaned up by the route's `unregisterActiveTurn`, and the
-   * UI's `modelSwitchPending` flag is reset — so the switch is dropped
+   * UI's model-switch-pending flag for that session is reset — so the switch is dropped
    * cleanly rather than landing on a non-streaming session.
    */
   signal?: AbortSignal
@@ -41,7 +41,7 @@ export async function requestMidTurnModelSwitch(
     return response.ok;
   } catch {
     // AbortError lands here too — surface as `false` so the caller can
-    // reset `modelSwitchPending` consistently with network failures.
+    // reset the pending flag consistently with network failures.
     return false;
   }
 }

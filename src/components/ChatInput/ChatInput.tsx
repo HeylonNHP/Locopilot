@@ -229,13 +229,17 @@ function extractPaths(e: React.DragEvent): string[] {
 
 export default function ChatInput({ onSend, disabled, visionState, provider }: Props) {
   const { state, dispatch } = useChat();
-  // Seed from any steering message that was sent mid-turn but never got a
-  // `steer_applied` ack (turn ended/aborted/errored first) — ChatInput
-  // fully unmounts while streaming, so this is the only place that text
-  // can land once the composer reappears. Read once via the lazy
-  // initializer; the mount-only effect below clears it so it isn't
-  // re-seeded on a later remount.
-  const [input, setInput] = useState(() => state.steerRestoreText ?? '');
+  // A steering message that was sent mid-turn, never got a `steer_applied`
+  // ack and is not in the saved history (turn ended/aborted/errored first) is
+  // put back here — but only in the composer of the conversation it came
+  // from. The lazy initializer covers a composer that mounts with the text
+  // already waiting; the effect below covers one that is already mounted
+  // (the user was in another conversation when the turn ended).
+  const restoreText =
+    state.currentSessionId === null
+      ? undefined
+      : state.steerRestoreTexts.get(state.currentSessionId);
+  const [input, setInput] = useState(() => restoreText ?? '');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -246,12 +250,16 @@ export default function ChatInput({ onSend, disabled, visionState, provider }: P
   const inputHistory = useInputHistory();
 
   useEffect(() => {
-    if (state.steerRestoreText !== null) {
-      dispatch({ type: 'SET_CONFIG', config: { steerRestoreText: null } });
-    }
-    // Mount-only: consumes whatever steerRestoreText was seeded above,
-    // deliberately not re-running if it changes again while mounted.
-  }, []);
+    if (restoreText === undefined || state.currentSessionId === null) return;
+    setInput((current) =>
+      current === ''
+        ? restoreText
+        : current.includes(restoreText)
+          ? current
+          : `${restoreText}\n${current}`
+    );
+    dispatch({ type: 'CLEAR_STEER_RESTORE', sessionId: state.currentSessionId });
+  }, [restoreText, state.currentSessionId, dispatch]);
 
   const addAttachments = useCallback(async (files: File[]) => {
     const accepted = files.filter(isAccepted);

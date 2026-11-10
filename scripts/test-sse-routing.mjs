@@ -248,9 +248,15 @@ check('vision_unsupported marks the model as not vision capable', () => {
   ]);
 });
 
-check('model_switched clears the pending switch and re-asks about vision', () => {
+check('model_switched clears the pending switch of ITS session and re-asks about vision', () => {
   assert.deepEqual(actionsFor('status', { phase: 'model_switched' }), [
-    { type: 'SET_CONFIG', config: { modelSwitchPending: false } },
+    { type: 'SET_MODEL_SWITCH_PENDING', sessionId: 7, pending: false },
+    { type: 'SET_VISION_STATE', state: 'unknown' },
+  ]);
+});
+
+check('model_switched with no owning session clears no session’s pending switch', () => {
+  assert.deepEqual(actionsFor('status', { phase: 'model_switched' }, UNOWNED), [
     { type: 'SET_VISION_STATE', state: 'unknown' },
   ]);
 });
@@ -268,8 +274,21 @@ check('steer_applied echoes the held draft and releases it', () => {
         message: { role: 'user', content: 'go on' },
         targetSessionId: 7,
       },
-      { type: 'SET_CONFIG', config: { pendingSteerDraft: null } },
+      { type: 'SET_STEER_DRAFT', sessionId: 7, draft: null },
     ]
+  );
+});
+
+check('steer_applied without an owning session releases nothing', () => {
+  // The draft is looked up by the owning session, so a frame that names no
+  // session can neither match nor release one.
+  assert.deepEqual(
+    actionsFor(
+      'status',
+      { phase: 'steer_applied', steerId: 'draft-1' },
+      { pendingSteerDraft: { id: 'draft-1', text: 'go on' } }
+    ),
+    []
   );
 });
 

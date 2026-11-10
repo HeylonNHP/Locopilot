@@ -37,6 +37,17 @@ export const MCP_TOOL_SEARCH_THRESHOLD = 20;
 /** Default name for newly created sessions before a title is generated. */
 export const DEFAULT_SESSION_NAME = 'New chat';
 
+/**
+ * How long the updates of a conversation that is NOT on screen may wait before
+ * they are applied to the store together (`src/app/lib/updateBatcher.ts`).
+ * Nothing about a background stream is visible except the sidebar's streaming
+ * dot (which is never batched), and every ordinary dispatch — a session
+ * switch, a turn's end, an error — applies the queue first, so a longer
+ * interval costs nothing the user can see while it saves a re-render of the
+ * conversation on screen for every piece of text that arrives behind it.
+ */
+export const BACKGROUND_UPDATE_INTERVAL_MS = 1000;
+
 // ── Stream & keepalive timeouts ────────────────────────────────────────────
 
 /** SSE keepalive interval for the chat stream. Emits a `: \n\n` comment. */

@@ -28,8 +28,13 @@ export default function StatusBar() {
     reasoningEffort,
     providers,
     activeProviderId,
-    modelSwitchPending,
+    modelSwitchPendingSessions,
   } = state;
+  // Whether the conversation on screen is the one with a model switch still
+  // waiting to be applied — another conversation's pending switch is not
+  // shown here.
+  const modelSwitchPending =
+    currentSessionId !== null && modelSwitchPendingSessions.has(currentSessionId);
   const [showSelector, setShowSelector] = useState(false);
   const [showCompactionSelector, setShowCompactionSelector] = useState(false);
   const [isDark, setIsDark] = useState(false);
