@@ -3,6 +3,7 @@
 import { type Dispatch, useCallback, useRef, useState } from 'react';
 
 import type { ChatMessage } from '@/app/lib/chatStore';
+import type { LatestGate } from '@/app/lib/latestGate';
 
 import { DEFAULT_SESSION_NAME } from '@/constants';
 
@@ -34,6 +35,8 @@ interface UseSessionActionsOptions {
     allowEmptyWhileStreaming?: boolean,
     options?: { keepCurrentSession?: boolean }
   ) => Promise<void>;
+  /** The order of the user's navigations; the last click decides the view. */
+  navigation: LatestGate;
   model: string;
 }
 
@@ -49,14 +52,16 @@ interface UseSessionActionsResult {
 /**
  * Encapsulates session lifecycle actions: create, select, delete, and search.
  * Tracks the latest search query so deletions can refresh the correct
- * filtered list. Stale loads from rapid switching are discarded by
- * `loadSessionMessages`' own "latest wins" token.
+ * filtered list. Opening a conversation and starting a new chat both take a
+ * turn in the shared navigation order, so the LAST click decides what is on
+ * screen and a late load or a slow server call cannot take the view back.
  */
 export function useSessionActions({
   dispatch,
   sessionIdRef,
   loadSessions,
   loadSessionMessages,
+  navigation,
   model,
 }: UseSessionActionsOptions): UseSessionActionsResult {
   const currentSearchQueryRef = useRef('');
@@ -72,6 +77,12 @@ export function useSessionActions({
   );
 
   const handleNewSession = useCallback(async () => {
+    // Taking a turn in the navigation order right away makes any conversation
+    // that is still loading from an earlier click stale: it can no longer
+    // arrive afterwards and take the view back from the new chat. It also
+    // lets a click made while the server is still creating this chat win
+    // over it.
+    const turn = navigation.begin();
     try {
       const res = await fetch('/api/sessions', {
         method: 'POST',
@@ -89,16 +100,20 @@ export function useSessionActions({
           };
         };
         dispatch({ type: 'ADD_SESSION', session: data.session });
-        dispatch({ type: 'SET_CURRENT_SESSION', id: data.session.id });
+        if (navigation.isLatest(turn)) {
+          dispatch({ type: 'SET_CURRENT_SESSION', id: data.session.id });
+        }
         await loadSessions();
         return;
       }
     } catch {
       // Fallback to in-memory new session if the backend is unreachable
     }
-    dispatch({ type: 'SET_CURRENT_SESSION', id: null });
+    if (navigation.isLatest(turn)) {
+      dispatch({ type: 'SET_CURRENT_SESSION', id: null });
+    }
     await loadSessions();
-  }, [dispatch, loadSessions, model]);
+  }, [dispatch, loadSessions, model, navigation]);
 
   const handleSelectSession = useCallback(
     async (sessionId: number) => {

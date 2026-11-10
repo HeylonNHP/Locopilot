@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { hasLiveTranscript, useChat } from '@/app/lib/chatStore';
+import { createLatestGate } from '@/app/lib/latestGate';
 
 import type { StableRefs } from './useStableRefs';
 
@@ -18,7 +19,12 @@ export function useDataLoaders(refs: StableRefs) {
   // it reads the store through a ref rather than closing over `state`.
   const stateRef = useRef(state);
   stateRef.current = state;
-  const sessionLoadRequestIdRef = useRef(0);
+  // The order of the user's navigations. Opening a conversation takes a token
+  // from it, and so does starting a new chat (`useSessionActions`), so the
+  // LAST click wins: a conversation that is still loading when the user
+  // clicks something else is stale when it arrives and cannot take the view
+  // back.
+  const [sessionNavigation] = useState(createLatestGate);
   // View-neutral refreshes (the end-of-turn reload) get their own
   // "latest wins" token, per session. Sharing the session-load token with
   // them would let a background refresh discard the user's own in-flight
@@ -94,20 +100,19 @@ export function useDataLoaders(refs: StableRefs) {
       const background = options?.keepCurrentSession === true;
       const requestId = background
         ? (backgroundLoadRequestIdRef.current.get(sessionId) ?? 0) + 1
-        : sessionLoadRequestIdRef.current + 1;
+        : sessionNavigation.begin();
       if (background) {
         backgroundLoadRequestIdRef.current.set(sessionId, requestId);
-      } else {
-        sessionLoadRequestIdRef.current = requestId;
       }
-      // The token this load is checked against. A view-neutral refresh has
-      // its own, per session, so it can neither discard the user's in-flight
-      // session switch nor be discarded by it, and two background refreshes
-      // of different sessions do not invalidate each other.
-      const latestRequestId = () =>
+      // Whether this load is still the one the user is waiting for. A
+      // view-neutral refresh has its own token, per session, so it can
+      // neither discard the user's in-flight navigation nor be discarded by
+      // it, and two background refreshes of different sessions do not
+      // invalidate each other.
+      const isLatest = () =>
         background
-          ? backgroundLoadRequestIdRef.current.get(sessionId)
-          : sessionLoadRequestIdRef.current;
+          ? backgroundLoadRequestIdRef.current.get(sessionId) === requestId
+          : sessionNavigation.isLatest(requestId);
 
       // A session that is still streaming already has a live copy on the
       // client — the top-level fields if it is on screen, its slot if it is
@@ -131,9 +136,9 @@ export function useDataLoaders(refs: StableRefs) {
 
       try {
         const res = await fetch(`/api/sessions/${sessionId}`);
-        // Stale check: another load of the same kind has been requested
-        // since this one started.
-        if (latestRequestId() !== requestId) return;
+        // Stale check: the user has navigated again (or another load of the
+        // same kind has been requested) since this one started.
+        if (!isLatest()) return;
 
         if (!res.ok) {
           // Session was deleted (e.g. in another tab). Only clear if the
@@ -153,7 +158,7 @@ export function useDataLoaders(refs: StableRefs) {
           return;
         }
         const data = await res.json();
-        if (latestRequestId() !== requestId) return;
+        if (!isLatest()) return;
 
         // Commit the session change now that we have data. The caller
         // typically already dispatched SET_CURRENT_SESSION optimistically,
@@ -251,7 +256,7 @@ export function useDataLoaders(refs: StableRefs) {
         // Silently ignore
       }
     },
-    [dispatch, knownTokenLimit]
+    [dispatch, knownTokenLimit, sessionNavigation]
   );
 
   // Called only on mount — no stability guarantee needed. Populates the
@@ -368,5 +373,5 @@ export function useDataLoaders(refs: StableRefs) {
     }
   };
 
-  return { loadSessions, loadSessionMessages, loadModels, loadConfig };
+  return { loadSessions, loadSessionMessages, loadModels, loadConfig, sessionNavigation };
 }

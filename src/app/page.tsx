@@ -42,7 +42,8 @@ function HomeInner() {
   const { isCompactingRef, isGeneratingTitleRef } = useSyncRefs(isCompacting, isGeneratingTitle);
 
   const refs = useStableRefs(state);
-  const { loadSessions, loadSessionMessages, loadModels, loadConfig } = useDataLoaders(refs);
+  const { loadSessions, loadSessionMessages, loadModels, loadConfig, sessionNavigation } =
+    useDataLoaders(refs);
 
   // Derive both the "is the visible session streaming" flag and the Stop
   // handler's key from the same helper: a brand-new chat has no id yet, so
@@ -92,6 +93,7 @@ function HomeInner() {
     sessionIdRef: refs.sessionIdRef,
     loadSessions,
     loadSessionMessages,
+    navigation: sessionNavigation,
     model: state.model,
   });
 
