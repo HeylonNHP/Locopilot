@@ -141,3 +141,14 @@
     }
   }
 }
+
+// The three <select>s share the `settings-input` class with the plain text and
+// number inputs, so they are targeted by element + class rather than getting a
+// second class in the TSX. This sits at file top level deliberately: nested
+// inside `.settings` it compiled to `.settings select.settings-input`, and no
+// element in the modal carries a bare `settings` class — the rule never matched
+// anything. At (0,1,1) it outranks `&-input` (0,1,0) regardless of order.
+select.settings-input {
+  @include glass-select;
+  font-size: 14px;
+}

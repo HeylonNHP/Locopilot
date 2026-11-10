@@ -11,6 +11,12 @@
 
 :root,
 html[data-theme='frutiger-aero'] {
+  // Tells the UA which palette to use for the UI *it* paints — <option> lists,
+  // scrollbars, date pickers, native focus rings. Without this the browser keeps
+  // its light palette even on a dark page, which is what made the reasoning
+  // dropdown show pale text on a white popup. Declared on <html> so portalled
+  // popovers inherit it. Every theme block must declare this.
+  color-scheme: light;
   // ── Base palette ───────────────────────────────────────────
   --color-sky-bright: #33d1ff; // hover accent / gradient-primary start
   --color-sky-core: #00a8e8; // primary accent
@@ -126,6 +132,15 @@ html[data-theme='frutiger-aero'] {
   --bg-suggestions: rgba(248, 252, 255, 0.78); // autocomplete dropdown
   --bg-popover: rgba(240, 250, 255, 0.82); // model selector popover
 
+  // Native popup / form-control surfaces. UA-drawn popups cannot composite
+  // alpha reliably across engines, so these are fully opaque.
+  --bg-popover-solid: #f0faff;
+  --bg-option-hover: #b7d4ec;
+  --glass-border-control: #7d8d9b; // 3.2:1 vs the input fill (WCAG 1.4.11)
+  --glass-border-control-hover: #0079a8; // 4.6:1 — must not drop below the resting border
+  --text-group-label: #4d6b8a; // <optgroup> headers: 5.24:1 on --bg-popover-solid
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%231a3a5c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
   // ── Glass surface highlights (panel top-edge rim + gel button gloss) ─────
   --glass-inset-highlight: rgba(255, 255, 255, 0.35);
   --glass-gloss-top: rgba(255, 255, 255, 0.5);
@@ -169,6 +184,8 @@ html[data-theme='frutiger-aero'] {
 
 // ── Dark professional theme ───────────────────────────────────
 html[data-theme='dark'] {
+  color-scheme: dark; // see the light block for why this lives here
+
   // Base palette
   --color-sky-bright: #7dd3fc;
   --color-sky-core: #38bdf8;
@@ -298,4 +315,12 @@ html[data-theme='dark'] {
   --overlay-modal: rgba(0, 8, 24, 0.72);
   --bg-suggestions: rgba(12, 20, 34, 0.96);
   --bg-popover: rgba(18, 28, 46, 0.96);
+
+  // Native popup / form-control surfaces (see the light block).
+  --bg-popover-solid: #121c2e;
+  --bg-option-hover: #2c3c5a;
+  --glass-border-control: #6b7c9c; // 3.2:1 vs the input fill (WCAG 1.4.11)
+  --glass-border-control-hover: rgba(56, 189, 248, 0.85); // 5.0:1
+  --text-group-label: #9fb0c6; // <optgroup> headers: 7.72:1 on --bg-popover-solid
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239fb0c6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }

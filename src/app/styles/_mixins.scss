@@ -105,9 +105,66 @@
   }
 
   &:focus {
-    background: var(--glass-input-focus);
+    // background-color, not the shorthand: the shorthand resets
+    // background-image, which would erase glass-select's chevron on focus.
+    background-color: var(--glass-input-focus);
     border-color: rgba(var(--rgb-accent), 0.5);
     box-shadow: 0 0 0 3px rgba(var(--rgb-accent), 0.15);
+  }
+}
+
+// ── Glass select ─────────────────────────────────────────────
+// A native <select> is glass-input plus what the UA-drawn popup makes
+// necessary: a border that survives compositing over the (near-white or
+// near-black) fill, and a chevron we draw ourselves because `appearance: none`
+// withdraws the native one.
+// Requires `color-scheme` on <html> (see _theme-colors.scss) so the *open* list
+// is painted by the UA in the matching palette; without it the popup stays light.
+@mixin glass-select {
+  @include glass-input;
+  border-color: var(--glass-border-control);
+  padding-right: 26px; // room for the chevron
+  cursor: pointer;
+  appearance: none;
+  // Only the image layer is set here — glass-input owns the fill, and its
+  // :focus rule uses background-color so the chevron survives focus.
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 6px;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+
+  // Its own token: the plain accent at the alpha used elsewhere drops the
+  // boundary to ~1.7:1 on the light theme, i.e. below the resting state.
+  &:hover:not(:disabled) {
+    border-color: var(--glass-border-control-hover);
+  }
+
+  // glass-input draws an accent halo on focus; with a defined border and the
+  // outline below it reads as a double ring.
+  &:focus {
+    box-shadow: none;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background-image: none;
+  }
+
+  // High-contrast mode forces the box colours but would keep our drawn glyph,
+  // so hand the arrow back to the UA there.
+  @media (forced-colors: active) {
+    appearance: auto;
+    background-image: none;
   }
 }
 

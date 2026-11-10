@@ -76,3 +76,29 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+// ── Native form-control popups ───────────────────────────────
+// The closed <select> box is ours (see @mixin glass-select); the option list is
+// the UA's. `color-scheme` on <html> sets the popup's base palette, but Firefox
+// and Chromium both honour an explicit opaque fill on the rows, and Firefox
+// otherwise leaves uncoloured strips above the first and below the last option.
+// Alpha values are unreliable on <option>, hence --bg-popover-solid.
+option,
+optgroup {
+  background-color: var(--bg-popover-solid);
+  color: var(--text-primary);
+}
+
+optgroup {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--text-group-label);
+}
+
+// Honoured by Firefox; Chromium draws its own highlight, which now follows
+// color-scheme. Kept for the engines that allow it.
+option:hover,
+option:focus {
+  background-color: var(--bg-option-hover);
+  color: var(--text-primary);
+}
