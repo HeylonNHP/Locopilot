@@ -55,9 +55,24 @@
 }
 
 // Firefox
-* {
-  scrollbar-width: auto;
-  scrollbar-color: var(--scrollbar-firefox) transparent;
+// Firefox never implemented ::-webkit-scrollbar, so it needs the standards
+// pair instead. It must not be applied to everyone: scrollbar-color is
+// inherited, and on any element whose computed scrollbar-color is anything
+// other than auto, browsers must ignore the whole ::-webkit-scrollbar family
+// (CSS Scrollbars L1, 2.1 and 3.1). A global rule would therefore kill the
+// glass bubble in every browser that does implement the pseudo-elements.
+//
+// -moz-appearance is a Mozilla-only property, so this matches Firefox and
+// nothing else. The "not selector()" half is a second, independent signal:
+// it is true in Firefox up to 152 and from 155 on, but false in 153 and 154
+// (including the current ESR), where Firefox began answering that probe
+// truthfully. Either half alone is sufficient today; both together keep
+// working if one of them is retired.
+@supports (-moz-appearance: none) or (not selector(::-webkit-scrollbar)) {
+  * {
+    scrollbar-width: auto;
+    scrollbar-color: var(--scrollbar-firefox) transparent;
+  }
 }
 
 // ── Native select popup scrollbar ─────────────────────────────

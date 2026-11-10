@@ -139,9 +139,11 @@
 
   // The classic select popup is a separate document, so the app's scrollbar
   // rules never reach it. Chromium copies the select's own ::-webkit-scrollbar*
-  // pseudo styles into that popup, but only when the computed scrollbar-color
-  // is `auto` - the global `* { scrollbar-color }` rule would otherwise
-  // suppress them, leaving the popup's scrollbar in the OS theme.
+  // pseudo styles into that popup, but only when the select computes
+  // scrollbar-color: auto - a non-auto value would leave the popup with the
+  // OS scrollbar. The app's own scrollbar-color rule is scoped to Firefox,
+  // which does not implement the pseudo-elements, so this is belt-and-braces
+  // against a future global rule.
   scrollbar-color: auto;
 
   // Its own token: the plain accent at the alpha used elsewhere drops the
