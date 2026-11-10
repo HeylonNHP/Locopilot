@@ -59,3 +59,36 @@
   scrollbar-width: auto;
   scrollbar-color: var(--scrollbar-firefox) transparent;
 }
+
+// ── Native select popup scrollbar ─────────────────────────────
+// Chromium renders the classic <select> popup as a separate document hosted in
+// its own popup WebContents, so none of the page's scrollbar rules reach it.
+// It is painted with the OS theme, which is why a long dropdown in dark mode
+// shows a white strip beside the dark list.
+//
+// Chromium does copy the owner select's ::-webkit-scrollbar* pseudo styles
+// into that document, but only these properties: display, background-color,
+// width, border-*, border-radius, background-clip and box-shadow. No
+// gradients and no scrollbar-color, hence the flat colours below. The copy
+// only happens when the select computes `scrollbar-color: auto`, which
+// @mixin glass-select sets.
+//
+// Firefox draws the popup as an OS menu instead, where the scrollbar follows
+// the OS theme and no page CSS can reach it.
+select::-webkit-scrollbar {
+  width: 12px;
+}
+
+select::-webkit-scrollbar-track {
+  background-color: var(--bg-popover-solid);
+}
+
+select::-webkit-scrollbar-thumb {
+  background-color: var(--select-scrollbar-thumb);
+  border-radius: 6px;
+  border: 2px solid var(--bg-popover-solid);
+}
+
+select::-webkit-scrollbar-thumb:hover {
+  background-color: var(--select-scrollbar-thumb-hover);
+}

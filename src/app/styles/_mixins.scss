@@ -137,6 +137,13 @@
     border-color 0.2s ease,
     box-shadow 0.2s ease;
 
+  // The classic select popup is a separate document, so the app's scrollbar
+  // rules never reach it. Chromium copies the select's own ::-webkit-scrollbar*
+  // pseudo styles into that popup, but only when the computed scrollbar-color
+  // is `auto` - the global `* { scrollbar-color }` rule would otherwise
+  // suppress them, leaving the popup's scrollbar in the OS theme.
+  scrollbar-color: auto;
+
   // Its own token: the plain accent at the alpha used elsewhere drops the
   // boundary to ~1.7:1 on the light theme, i.e. below the resting state.
   &:hover:not(:disabled) {
