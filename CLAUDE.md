@@ -16,6 +16,15 @@ turn — long-form history lives in `docs/CHANGELOG.md`, not here.
 
 A CLI tool for chatting with Ollama. It handles configuration for host/port, model selection, and basic chat loops.
 
+## Outstanding confirmations (`CONFIRMATIONS.md`)
+
+`CONFIRMATIONS.md` (repo root) lists claims that are not yet verified, and actions that are still pending. **Agents must check it and keep it current:**
+
+- Read it before working on the context window (`numCtx`), the OpenAI-compatible or Ollama adapters, retry or mid-turn model switching, compaction budgets, or the title route.
+- When your work verifies or contradicts an entry, update it: move a verified item to _Confirmed_ with the date and evidence, and correct any code or docs that relied on a contradicted claim.
+- When you write a "not verified" or "inferred" claim in a commit message, doc, or reply, add an entry there with a way to confirm it.
+- Keep entries self-contained, so an agent on another machine can run the check without this conversation. Never record API keys or other secrets in it.
+
 ## Transient-error retry layer (`src/services/adapters/openaiCompatibleAdapter.ts`)
 
 The openai-compatible adapter wraps the initial `client.responses.create`
