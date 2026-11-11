@@ -5,7 +5,7 @@ import type { SseEventPayloadMap } from '@/types/sse';
 
 import { debugLog } from '@/app/lib/debugLogger';
 import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
-import { DEFAULT_NUM_CTX, SSE_KEEPALIVE_MS } from '@/constants';
+import { SSE_KEEPALIVE_MS } from '@/constants';
 import { compactHistory } from '@/services/compact';
 import { RECENT_FILES_LOAD_LIMIT } from '@/services/compact/constants';
 import {
@@ -14,7 +14,8 @@ import {
   normaliseCompactionFocus,
 } from '@/services/compact/focus';
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
-import { loadConfig } from '@/services/configManager';
+import { readConfig } from '@/services/configManager';
+import { requestProblemFor, requireWindow } from '@/services/contextWindow/configProblem';
 import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import { loadRecentFiles } from '@/services/history';
 import {
@@ -125,6 +126,23 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
+  // Refused before any model call when the saved config cannot run this request:
+  // unreadable (never overwritten), no model chosen yet, or no context size.
+  // See src/services/contextWindow/configProblem.ts.
+  const savedConfig = await readConfig();
+  if (!savedConfig.ok) {
+    return NextResponse.json({ error: savedConfig.message }, { status: 503 });
+  }
+  const requestProblem = requestProblemFor(savedConfig.config, {
+    providerId,
+    model,
+    compactionProviderId,
+    compactionModel,
+  });
+  if (requestProblem !== null) {
+    return NextResponse.json({ error: requestProblem }, { status: 409 });
+  }
+
   const typedMessages: PersistedChatMessage[] = messages;
 
   // ── SSE streaming setup ───────────────────────────────────────────
@@ -176,7 +194,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       let effectiveCompactionModel = model as string;
       let compactStartedAt: number | null = null;
       try {
-        const config = await loadConfig();
+        const config = savedConfig.config;
         const resolved = resolveProviderRequestContext(
           config,
           typeof providerId === 'string' ? providerId : undefined,
@@ -245,8 +263,8 @@ export async function POST(request: NextRequest): Promise<Response> {
             configNumCtx: config?.numCtx,
           }),
         ]);
-        const effectiveNumCtx = mainWindow.effective ?? DEFAULT_NUM_CTX;
-        const compactionNumCtx = compactionWindow.effective ?? DEFAULT_NUM_CTX;
+        const effectiveNumCtx = requireWindow(mainWindow.effective);
+        const compactionNumCtx = requireWindow(compactionWindow.effective);
 
         // Strip system and subagent_log messages before compacting — system prompt
         // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.

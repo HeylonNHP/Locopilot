@@ -1,7 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
-import { loadConfig } from '@/services/configManager';
+import { readConfig } from '@/services/configManager';
+import { requestProblemFor, requireWindow } from '@/services/contextWindow/configProblem';
 import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import { listSessions } from '@/services/history';
 import {
@@ -50,8 +51,19 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: 'Model name is required.' }, { status: 400 });
   }
 
+  // Refused before the dump is built when the saved config cannot run this
+  // model (the window it labels comes from the same config).
+  const savedConfig = await readConfig();
+  if (!savedConfig.ok) {
+    return NextResponse.json({ error: savedConfig.message }, { status: 503 });
+  }
+  const requestProblem = requestProblemFor(savedConfig.config, { model });
+  if (requestProblem !== null) {
+    return NextResponse.json({ error: requestProblem }, { status: 409 });
+  }
+
   try {
-    const config = await loadConfig();
+    const config = savedConfig.config;
     const effectiveBaseUrl =
       typeof body.baseUrl === 'string' && body.baseUrl.trim().length > 0
         ? body.baseUrl.trim()
@@ -77,7 +89,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       providerNumCtx: resolvedProvider?.provider.numCtx,
       configNumCtx: config?.numCtx,
     });
-    const effectiveNumCtx = windowResolution.effective ?? 0;
+    const effectiveNumCtx = requireWindow(windowResolution.effective);
     const savedNumCtx = configRequested;
     const parsedSessionId = parsePositiveInteger(body.sessionId);
     const sessionName = parsedSessionId

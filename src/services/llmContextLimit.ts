@@ -308,6 +308,53 @@ export function parseContextLimitFromError(message: string): number | null {
 }
 
 /**
+ * Context-limit messages that name NO number, so they cannot teach a cap.
+ *
+ * NEEDS CLARIFICATION: only one phrasing is confirmed so far, from Ollama Cloud
+ * `minimax-m3.1-flash` (CONFIRMATIONS C-005): `invalid params, context window
+ * exceeds limit`. The adapter logs the body of every Ollama 400 (A-001), so the
+ * next occurrence will show whether the wording is the same. Add a pattern here
+ * when a logged occurrence shows another one. A non-match keeps the old
+ * behaviour: no cap learned, no retry.
+ */
+const NUMBERLESS_CONTEXT_LIMIT_PATTERNS: RegExp[] = [
+  /invalid params,?\s*context window exceeds limit/i,
+];
+
+/** True when a 400 says the request was too long, without saying how long the window is. */
+export function isNumberlessContextLimitError(message: string): boolean {
+  if (typeof message !== 'string' || message.length === 0) {
+    return false;
+  }
+  return NUMBERLESS_CONTEXT_LIMIT_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+/**
+ * What a provider's context-limit error should do:
+ *
+ * - `learn`: it names the window (`parseContextLimitFromError`). Record the cap,
+ *   and the request can be planned within it.
+ * - `compact-only`: it says the request was too long but names no number. Compact
+ *   the history once and send the turn again. Nothing is learned from it.
+ * - `none`: not a context-limit error. The caller's existing handling applies.
+ */
+export type ContextLimitVerdict =
+  | { kind: 'learn'; cap: number }
+  | { kind: 'compact-only' }
+  | { kind: 'none' };
+
+export function classifyContextLimitError(message: string): ContextLimitVerdict {
+  const cap = parseContextLimitFromError(message);
+  if (cap !== null) {
+    return { kind: 'learn', cap };
+  }
+  if (isNumberlessContextLimitError(message)) {
+    return { kind: 'compact-only' };
+  }
+  return { kind: 'none' };
+}
+
+/**
  * Patterns that, when matched against a 400-style error message,
  * indicate the model rejected the request because vision/image input
  * is not supported. Conservative on purpose — a false positive would

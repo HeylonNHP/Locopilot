@@ -10,8 +10,6 @@
 
 import type { Config, ProviderConfig } from '@/types/chatConfig';
 
-import { DEFAULT_NUM_CTX } from '@/constants';
-
 import { buildLlmRequestContext, type LlmRequestContext } from './llm';
 
 /**
@@ -100,12 +98,4 @@ export function resolveProviderRequestContext(
   const provider = resolveProvider(config, providerId, modelName);
   if (!provider) return null;
   return { provider, ctx: buildProviderRequestContext(provider, requestId) };
-}
-
-/**
- * Return the effective numCtx for a provider, falling back to the global
- * config value and ultimately to a default.
- */
-export function getProviderNumCtx(provider: ProviderConfig, globalNumCtx?: number): number {
-  return provider.numCtx ?? globalNumCtx ?? DEFAULT_NUM_CTX;
 }

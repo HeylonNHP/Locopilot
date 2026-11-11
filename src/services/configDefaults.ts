@@ -29,6 +29,14 @@ export const DEFAULT_OLLAMA_BASE_URL = `http://localhost:${DEFAULT_OLLAMA_PORT}`
 /** Provider name used when no explicit provider is set. */
 export const DEFAULT_PROVIDER: LlmProvider = 'ollama';
 
+/**
+ * The context window a FRESH `config.json` is created with, and nothing else.
+ * It is written once, when the file is created (Phase 3.1). It is never a window
+ * in use: once the file exists the saved setting is the only source, and a
+ * missing setting is an error to fix in Settings, not a value to assume.
+ */
+export const FRESH_CONFIG_NUM_CTX = 131_072;
+
 export { PROVIDER_OLLAMA, PROVIDER_OPENAI_COMPATIBLE } from '@/services/providerConstants';
 
 // ── Retry defaults (adapter + config validator share these) ────────────────

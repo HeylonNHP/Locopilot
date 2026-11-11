@@ -2,11 +2,9 @@
 // PUT /api/config - update config
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import { invalidateCapCache } from '@/services/capResolver';
 import {
   DEFAULT_ADAPTER_RETRY,
-  DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_RETRYABLE_STATUSES,
   DEFAULT_WEB_SEARCH_SETTINGS,
   MAX_RETRY_BASE_DELAY_MS,
@@ -16,7 +14,7 @@ import {
   RETRY_MAX_ATTEMPTS_LIMIT,
   RETRY_MAX_ATTEMPTS_MIN,
 } from '@/services/configDefaults';
-import { loadConfig, saveConfig } from '@/services/configManager';
+import { buildFreshConfig, readConfig, saveConfig } from '@/services/configManager';
 import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
 import { invalidateSamplingParamCache } from '@/services/samplingParamsCache';
 import { invalidateVisionCache } from '@/services/visionCache';
@@ -516,14 +514,17 @@ function validateConfig(
 
 export async function GET(): Promise<NextResponse> {
   try {
-    const config = await loadConfig();
-    if (!config) {
-      return NextResponse.json({ config: {} });
+    // A missing file is created with defaults by `readConfig`. A file that
+    // exists but cannot be read is an error the page must show, not an empty
+    // config to build on (saving over it would destroy the owner's settings).
+    const result = await readConfig();
+    if (!result.ok) {
+      return NextResponse.json({ error: result.message }, { status: 503 });
     }
     // No provider is probed here: the context window comes from
     // `GET /api/numctx`, so reading the config never waits on a provider that
     // is slow or down.
-    return NextResponse.json({ config });
+    return NextResponse.json({ config: result.config });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: `Failed to load config: ${message}` }, { status: 500 });
@@ -538,21 +539,22 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
     const body = validation.config;
-    const currentConfig = await loadConfig();
+    const current = await readConfig();
+    if (!current.ok) {
+      // Refused, not replaced: a file that cannot be read may hold the owner's
+      // providers and keys, and this save would overwrite them with defaults.
+      return NextResponse.json({ error: current.message }, { status: 503 });
+    }
+    const currentConfig: Config = current.config;
+    // Defaults fill only the fields the file does not have. The window is NOT
+    // among them: it is written once, when the file is created (Phase 3.1), so
+    // a save of an existing file never invents a window the owner did not set.
+    // Providers are not defaulted either; an empty list is not a saved choice.
+    const defaults = buildFreshConfig();
+    delete defaults.numCtx;
+    delete defaults.providers;
     const base: Config = {
-      model: '',
-      compactionModel: '',
-      numCtx: DEFAULT_NUM_CTX,
-      chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-      yolo: false,
-      thinkingEnabled: true,
-      promptTimestamps: true,
-      citeSources: true,
-      redactSecrets: true,
-      webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS },
-      completionMode: 'normal',
-      maxPromptLoopIterations: DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
-      retry: { ...DEFAULT_RETRY_CONFIG },
+      ...defaults,
       ...currentConfig,
     };
 

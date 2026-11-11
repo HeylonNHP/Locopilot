@@ -91,17 +91,6 @@ export function isStaleNumCtxAnswer(
   return asked.model !== current.model || asked.providerId !== current.providerId;
 }
 
-/**
- * The `numCtx` field of a request body.
- *
- * No longer used: the server ignores a body `numCtx` and resolves the window
- * itself, so the page stopped sending it. Removed in Phase 3 with its tests.
- */
-export function numCtxField(requested: number | null): { numCtx?: number } {
-  const value = positiveInteger(requested);
-  return value === null ? {} : { numCtx: value };
-}
-
 export type NumCtxInput =
   | { kind: 'unchanged' }
   | { kind: 'set'; value: number }
@@ -135,26 +124,4 @@ export function interpretNumCtxInput(text: string, current: number | null): NumC
     return { kind: 'invalid' };
   }
   return value === current ? { kind: 'unchanged' } : { kind: 'set', value };
-}
-
-/**
- * A stored request body with its `numCtx` replaced by the setting as it is now.
- *
- * No longer used: the page does not send `numCtx`, so a stored body carries
- * none, and the server resolves the window at the moment of the retry. Removed
- * in Phase 3 with its tests.
- */
-export function withCurrentNumCtx(body: string, requested: number | null): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return body;
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return body;
-  }
-  const next: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
-  delete next.numCtx;
-  return JSON.stringify({ ...next, ...numCtxField(requested) });
 }

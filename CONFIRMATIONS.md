@@ -66,7 +66,7 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 
 ### C-005 — Cause of the sub-agent's HTTP 400 "invalid params, context window exceeds limit"
 
-- **Status:** Unexplained.
+- **Status:** Partly answered (2026-11-11). The numberless 400 now gets one forced compaction and one re-send, and teaches no cap (Phase 3). The message is still confirmed from one occurrence only; the live check is pending (A-007).
 - **Observed:** 2026-11-11, a sub-agent on Ollama Cloud (`minimax-m3.1-flash`, session 522 in the owner's production copy). Its window was configured at 1,000,000 and the model advertises 1,000,000. `num_ctx` cannot be the cause (C-004). The Ollama path does not log the 400 body, so the real message is not on record.
 - **Also observed:** the numberless message is not matched by the parser (`parseContextLimitFromError` returns `null` for it, checked 2026-11-11), so the sub-agent cannot learn from it.
 - **How to confirm:** A-001 is done, so the body of the next Ollama 400 is logged. Read it in `logs/locopilot-debug.log` (`"phase":"error"`, `"layer":"adapter"`, `errorBody`), or reproduce it.
@@ -153,8 +153,9 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 
 ### A-004 — Phase 3: robustness
 
-- **Status:** Decided, not built.
-- **Scope:** the config save writes the 131072 default only when it creates a fresh config file (saving an existing file writes only the fields the user changed); compaction on a numberless context-limit 400; removal of the server's `DEFAULT_NUM_CTX` fallbacks; resolver tests with a fake adapter.
+- **Status:** Built (2026-11-11), not yet committed when this was written. What is in place: a missing `config.json` is created with defaults, and the window default is written only then; an unreadable one is refused everywhere and never overwritten (503, with the reason shown on screen); chat, compact, title and dump refuse a turn with no model chosen or no context size (409, with the reason); no server code defaults a window (`DEFAULT_NUM_CTX` removed); the numberless 400 gets one forced compaction and one re-send (see C-005).
+- **Still open:** the Settings dialog cannot add a provider, so a fresh config can be refused with "choose a model in Settings" and Settings has nothing to choose from. See A-006.
+- **Plan and differences:** `docs/context-window-phases.md`.
 
 ### A-005 — Commit the missing-config log fix
 
@@ -163,6 +164,19 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Committed with:** the regression check in `scripts/test-context-window.mjs`.
 
 ---
+
+### A-006 — Settings cannot add a provider (decision needed)
+
+- **Status:** Open. Found while building Phase 3, not part of it.
+- **What:** the Settings dialog has a model dropdown and a Context Size field, but no way to add a provider (endpoint, kind, API key). Providers exist only in `config.json`. A fresh config has none, so after the Phase 3 change a new owner is told to choose a model in Settings and cannot.
+- **Options:** (a) a minimal provider form in Settings (kind, base URL, optional API key, model), which writes the provider into `config.json`; (b) keep providers in `config.json` and make the refusal message say so; (c) the first-run flow the owner described, built on (a).
+- **Needs:** the owner's choice. This is a UI change, so it needs a decision before it is built.
+
+### A-007 — Live check of the numberless 400 (needs the owner's OK)
+
+- **Status:** Pending. The code path is tested by source and classifier checks (`scripts/test-numberless-context-limit.mjs`). No live send has been made.
+- **Why it cannot use the cheapest-looking model:** the cost is the prompt size, which must be near the model's window. The smallest chat-capable window I have seen is 131,072 tokens (`gpt-oss:20b`, `gpt-oss:120b`). `clef:27b` (65,536) is a decision model, and its endpoint rejected a chat request with `only supports /v1/systemone`, which is a different error and not the one under test.
+- **To do:** send `"ok"` to `gpt-oss:20b` first (cheap; confirms it answers chat), then one prompt just over its window, about 131,000 tokens, with the owner's OK. Record the exact message. If the message is numberless and not the one in C-005, widen the list in `llmContextLimit.ts` and add a case to the test.
 
 ## Confirmed
 
@@ -191,3 +205,9 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
   - A provider's own window beats the global setting: with the global setting at 42,000, `GET /api/numctx` for NVIDIA reported `requested` 300,000, and for Ollama Cloud (no window of its own) 42,000. A chat turn on NVIDIA reported `tokenLimit` 300,000 in its first `status` event.
   - Settings: changing Context Size to 77,000 on an Ollama Cloud model made the bar go from `0/42000` to `0/77000`, through a second `/api/numctx` request sent after the save.
   - Not run live: Retry after a failure (the stored body now has no window; a pin checks that Retry replays it unchanged), and llama.cpp (the router was down).
+- **Phase 3 live checks (2026-11-11, dev server; the owner's `config.json` was renamed out of the way and restored, hash `bd44524e221e8ad5` confirmed afterwards).**
+  - Missing file: the first `GET /api/config` created `config.json` with `providers: []`, `model: ""`, `numCtx: 131072`, and the default retry and web-search settings. Nothing else was written.
+  - Fresh config, every model-using route: chat (SSE error), compact, title and dump each answered 409 "No model is set up yet. Open Settings and choose a model to start chatting." with no model call. `GET /api/numctx` and `GET /api/models` answered 400 (no provider).
+  - Settings on a fresh config opens with Context Size 131072 and a model list holding only "Select a model...". No provider can be added (A-006).
+  - Unreadable file (`{ "model": "broken", "providers": [ ` written in place): `GET` and `PUT /api/config`, chat and `/api/numctx` all answered 503 with "config.json exists but could not be read (it is not valid JSON ...). Locopilot will not overwrite it". The file's hash did not change. The page showed the same text on screen.
+  - Cloud windows read from `/api/numctx` (metadata only, no inference): Ollama Cloud has 23 models, none unknown. Smallest: `clef:27b` 65,536 (a decision model, not a chat model), `gpt-oss:20b` and `gpt-oss:120b` 131,072, `gemma4:31b`, `kimi-k2.6`, `kimi-k2.7-code`, `nemotron-3-super`, `nemotron-3-ultra` 262,144, `minimax-m3` 512,000, `minimax-m3.1-flash` 1,000,000, `beam` and `deepseek-v4-pro:0813` 1,048,576.

@@ -1,6 +1,6 @@
 # Context window: remaining phases
 
-Status as of commit `2a91199` (plus the docs commit after it). Phases 1 and 2 are done. Phase 3 has not been started.
+Status: Phases 1, 2 and 3 are built. See the section "Phase 3: what was built" for where the build differs from the plan, and for what is still open (A-006, A-007 in `CONFIRMATIONS.md`).
 
 Companion files: [`CONFIRMATIONS.md`](../CONFIRMATIONS.md) (what is still unverified), [`CLAUDE.md`](../CLAUDE.md) (the numCtx section), `docs/CHANGELOG.md` (history).
 
@@ -208,6 +208,14 @@ Live checks (2.7): 1, 3, 4, 5 and 6 passed; check 2 (llama.cpp) is blocked becau
 - A numberless context 400 triggers one compaction, not a death, and teaches nothing.
 - No `DEFAULT_NUM_CTX` remains in server code paths that set a window.
 - Missing config fails clearly.
+
+### Phase 3: what was built
+
+- **3.1 fresh-file default:** the 131072 default is written only when `config.json` is created (`readConfig` → `buildFreshConfig`). A PUT to an existing file no longer merges a window default. Test: `scripts/test-config-load.mjs`.
+- **3.2 numberless 400:** the plan's "recognise that family of messages" is one phrasing (`invalid params, context window exceeds limit`), because only one is confirmed. The plan's optional llama.cpp `n_ctx`-in-JSON item was skipped: the message parser already reads that refusal. The retry is "compact once, then re-send" in the main loop (`continue outer`) and in sub-agents. Only the phrasing list is marked NEEDS CLARIFICATION.
+- **3.3 server defaults removed:** `DEFAULT_NUM_CTX` no longer exists. A missing window is an error (`requireWindow`), or 0 where a guard already treats 0 as "no window". The plan's "fail clearly" is done as a refusal before any model call (409, with the reason), and an unreadable file answers 503 and is never overwritten. The Settings dialog cannot add a provider, so the refusal's "choose a model in Settings" cannot be followed yet (A-006).
+- **3.4 cleanup:** `numCtxField` and `withCurrentNumCtx` removed, with their tests. CLAUDE.md's "decided, not built" lines are replaced by what was built.
+- **Not done:** the live check of the numberless 400 (A-007), which needs the owner's OK and a model with a window of about 131,000 tokens.
 
 ## Decisions still open
 

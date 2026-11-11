@@ -100,7 +100,9 @@ function buildChatPayload(params: ChatParams, stream: boolean) {
     params.visionSupported === false ? stripImagesFromMessages(params.messages) : params.messages;
 
   const options: Record<string, unknown> = {
-    num_ctx: params.numCtx,
+    // A window of 0 means "none is set" (Phase 3.3): send nothing rather than
+    // a zero the runner would act on.
+    ...(params.numCtx !== undefined && params.numCtx > 0 ? { num_ctx: params.numCtx } : {}),
     ...params.options,
   };
 

@@ -374,6 +374,16 @@ export function useDataLoaders(refs: StableRefs) {
     try {
       const res = await fetch('/api/config');
       if (!res.ok) {
+        // A 503 carries the owner-facing reason: the file exists but cannot be
+        // read, so it was not replaced. Show that on screen, not only in the console.
+        const reason = await res
+          .json()
+          .then((body: { error?: unknown }) => (typeof body.error === 'string' ? body.error : null))
+          .catch(() => null);
+        dispatch({
+          type: 'SET_ERROR',
+          error: reason ?? `Settings could not be loaded (HTTP ${res.status}).`,
+        });
         console.warn(
           `Config could not be loaded (HTTP ${res.status}); the context window stays unknown until it loads.`
         );

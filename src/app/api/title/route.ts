@@ -1,9 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { enqueueSessionRename } from '@/app/lib/sessionWriteQueue';
-import { DEFAULT_NUM_CTX } from '@/constants';
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
-import { loadConfig } from '@/services/configManager';
+import { readConfig } from '@/services/configManager';
+import { requestProblemFor, requireWindow } from '@/services/contextWindow/configProblem';
 import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import { listSessions, loadSessionMessages } from '@/services/history';
 import {
@@ -46,6 +46,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Model name is required.' }, { status: 400 });
   }
 
+  // Refused before any model call when the saved config cannot run this request:
+  // unreadable (never overwritten), no model chosen yet, or no context size.
+  // See src/services/contextWindow/configProblem.ts.
+  const savedConfig = await readConfig();
+  if (!savedConfig.ok) {
+    return NextResponse.json({ error: savedConfig.message }, { status: 503 });
+  }
+  const requestProblem = requestProblemFor(savedConfig.config, {
+    providerId,
+    model,
+    compactionProviderId,
+    compactionModel,
+  });
+  if (requestProblem !== null) {
+    return NextResponse.json({ error: requestProblem }, { status: 409 });
+  }
+
   const parsedSessionId =
     typeof sessionId === 'number' && Number.isFinite(sessionId) && sessionId > 0 ? sessionId : null;
   if (!parsedSessionId) {
@@ -85,7 +102,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         : DEFAULT_OLLAMA_BASE_URL,
   });
   try {
-    const config = await loadConfig();
+    const config = savedConfig.config;
     const resolved = resolveProviderRequestContext(
       config,
       typeof providerId === 'string' ? providerId : undefined,
@@ -144,7 +161,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       providerNumCtx: (compactionResolved?.provider ?? resolved?.provider)?.numCtx,
       configNumCtx: config?.numCtx,
     });
-    const compactionNumCtx = titleWindow.effective ?? DEFAULT_NUM_CTX;
+    const compactionNumCtx = requireWindow(titleWindow.effective);
 
     const title = await generateSessionTitle(
       compactionLlmRequestContext,

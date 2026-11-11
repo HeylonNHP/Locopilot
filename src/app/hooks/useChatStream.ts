@@ -616,7 +616,7 @@ export function useChatStream(
       if (state.streamingSessions.has(sessionKey)) return;
 
       if (!refs.modelRef.current.trim()) {
-        dispatch({ type: 'SET_ERROR', error: 'Please select a model first' });
+        dispatch({ type: 'SET_ERROR', error: 'Choose a model in Settings to start chatting.' });
         return;
       }
 

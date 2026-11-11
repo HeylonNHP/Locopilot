@@ -46,7 +46,6 @@ import {
 import { enqueueSessionRename, enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
 import { clearSteerMessages, drainSteerMessages } from '@/app/lib/steerRegistry';
 import {
-  DEFAULT_NUM_CTX,
   DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_SESSION_NAME,
   DEFAULT_WEB_SEARCH_MAX_QUERIES,
@@ -76,7 +75,8 @@ import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_OLLAMA_BASE_URL,
 } from '@/services/configDefaults';
-import { loadConfig } from '@/services/configManager';
+import { loadConfig, readConfig } from '@/services/configManager';
+import { configProblemFor } from '@/services/contextWindow/configProblem';
 import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import {
   buildEmptyResponseRecoveryNudge,
@@ -107,6 +107,7 @@ import {
   type StreamChatParams,
 } from '@/services/llm';
 import {
+  classifyContextLimitError,
   parseContextLimitFromError,
   parseUnsupportedParamFromError,
   parseVisionUnsupportedFromError,
@@ -328,6 +329,32 @@ export async function POST(req: NextRequest): Promise<Response> {
     );
   }
 
+  // Refused before any model call when the saved config cannot run this turn:
+  // unreadable (never overwritten), no model chosen yet, or no context size.
+  // See src/services/contextWindow/configProblem.ts.
+  const savedConfig = await readConfig();
+  if (!savedConfig.ok) {
+    return new Response(
+      `event: error\ndata: ${JSON.stringify({ message: savedConfig.message })}\n\n`,
+      { status: 503, headers: { 'Content-Type': SSE_CONTENT_TYPE } }
+    );
+  }
+  const turnProblem =
+    configProblemFor(savedConfig.config, providerId, model) ??
+    (typeof compactionProviderId === 'string' && compactionProviderId.trim()
+      ? configProblemFor(
+          savedConfig.config,
+          compactionProviderId.trim(),
+          (typeof compactionModel === 'string' && compactionModel.trim()) || model
+        )
+      : null);
+  if (turnProblem !== null) {
+    return new Response(`event: error\ndata: ${JSON.stringify({ message: turnProblem })}\n\n`, {
+      status: 409,
+      headers: { 'Content-Type': SSE_CONTENT_TYPE },
+    });
+  }
+
   const typedMessages: ClientChatMessage[] = messages;
 
   const effectiveBaseUrl =
@@ -335,9 +362,11 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   // The window is resolved server-side from the saved setting and the model's
   // maximum (`resolveNumCtxForModel`, below, once the config is loaded). The
-  // request body is not an input. `DEFAULT_NUM_CTX` stands in only until that
-  // runs, and when no setting can be read at all.
-  let effectiveNumCtx: number = DEFAULT_NUM_CTX;
+  // request body is not an input. Until that runs the value is 0, which every
+  // gate on the window already reads as "no window" (auto-compaction, the
+  // sub-agent guards). The preflight above refuses a turn that has no window,
+  // so 0 never reaches a model call.
+  let effectiveNumCtx = 0;
   /** The model's runtime cap as known to the resolver, or null if unknown. */
   let modelContextLimit: number | null = null;
 
@@ -429,6 +458,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       // same tokens, and pushing the turn further from a usable reply. Bounded
       // by MAX_COMPACTION_FAILURES_PER_TURN; reset on any success.
       let compactionFailureStreak = 0;
+      // A provider's context-limit 400 that names no number (see
+      // classifyContextLimitError): the next pass forces one compaction, and
+      // the turn is sent again once. Both are per turn, so the retry is bounded.
+      let compactionForcedByProvider = false;
+      let providerLimitRetriedThisTurn = false;
       // Whether YOLO mode is active (set from config below). When true,
       // run_command skips the approval gate and executes unconditionally.
       let effectiveYolo = false;
@@ -1060,8 +1094,8 @@ export async function POST(req: NextRequest): Promise<Response> {
          * Resolve the window for the current model: the setting (the provider's
          * own `numCtx`, else the global one) capped by the model's maximum when
          * that is known. This is the one place the window is decided; the page
-         * only displays what the status events report. `DEFAULT_NUM_CTX`
-         * applies only when no setting exists at all (Phase 3 removes it).
+         * only displays what the status events report. There is no default:
+         * a window that is missing is 0, and the preflight refuses the turn.
          */
         const resolveNumCtxForModel = async (fromSavedSetting = false): Promise<void> => {
           const setting = await settingSource(fromSavedSetting);
@@ -1071,7 +1105,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             providerNumCtx: providerForSetting(setting, activeProvider)?.numCtx,
             configNumCtx: setting?.numCtx,
           });
-          effectiveNumCtx = resolution.effective ?? DEFAULT_NUM_CTX;
+          effectiveNumCtx = resolution.effective ?? 0;
           modelContextLimit = resolution.modelMax;
           if (resolution.probeError !== null) {
             debugLog.diagnostic({
@@ -1189,7 +1223,9 @@ export async function POST(req: NextRequest): Promise<Response> {
               ?.numCtx,
             configNumCtx: setting?.numCtx,
           });
-          compactionNumCtx = resolution.effective ?? DEFAULT_NUM_CTX;
+          // Missing is 0, which compaction reports as "too small" rather than
+          // assuming a window. An explicit compaction provider is preflighted.
+          compactionNumCtx = resolution.effective ?? 0;
         };
 
         try {
@@ -1255,8 +1291,8 @@ export async function POST(req: NextRequest): Promise<Response> {
         } catch {
           // Config load is best-effort; defaults already apply. The body
           // compaction selection remains authoritative even on this fallback.
-          // Logged, because with no config the window falls back to the
-          // uncapped DEFAULT_NUM_CTX.
+          // Logged: the preflight refuses a turn whose config cannot be read,
+          // so reaching here means something failed after it.
           debugLog.diagnostic({
             layer: 'route',
             phase: 'config_unavailable',
@@ -1574,8 +1610,10 @@ export async function POST(req: NextRequest): Promise<Response> {
             // without it the wider trigger window re-fires it on every loop
             // iteration, which never shrinks the history and never finishes the
             // turn.
+            const forcedByProvider = compactionForcedByProvider;
+            compactionForcedByProvider = false;
             if (
-              tokensUsed >= compactionTriggerTokens &&
+              (forcedByProvider || tokensUsed >= compactionTriggerTokens) &&
               currentMessages.length >= 4 &&
               compactionFailureStreak < MAX_COMPACTION_FAILURES_PER_TURN
             ) {
@@ -2005,6 +2043,44 @@ export async function POST(req: NextRequest): Promise<Response> {
                 elapsedMs: Date.now() - requestStartedAt,
                 error: err,
               });
+              // A context-limit 400 that names no number (see
+              // classifyContextLimitError): compact the history once and send
+              // the turn again. No cap is learned from it, because it names none.
+              // NEEDS CLARIFICATION: the phrasing list is in llmContextLimit.ts;
+              // only one provider's wording is confirmed so far (CONFIRMATIONS C-005).
+              if (!providerLimitRetriedThisTurn) {
+                const providerMessage = await getLlmApiErrorMessage(llmRequestContext, err).catch(
+                  () => ''
+                );
+                if (classifyContextLimitError(providerMessage).kind === 'compact-only') {
+                  providerLimitRetriedThisTurn = true;
+                  compactionForcedByProvider = true;
+                  debugLog.diagnostic({
+                    layer: 'route',
+                    phase: 'context_limit_recovery',
+                    ...logCtx(activeSessionId),
+                    provider: llmRequestContext.provider,
+                    model: model as string,
+                    baseUrl: llmRequestContext.baseUrl,
+                    messageCount: currentMessages.length,
+                    numCtxAfter: effectiveNumCtx,
+                    recovery: 'compact_and_retry',
+                  });
+                  if (content.length > 0 || thinking.length > 0) {
+                    sendEvent('clear_assistant', {});
+                  }
+                  content = '';
+                  thinking = '';
+                  toolCalls = undefined;
+                  promptEvalCount = 0;
+                  evalCount = 0;
+                  finalChunkStats = {};
+                  liveMeter.reset();
+                  firstChunkLogged = false;
+                  lastDoneReason = undefined;
+                  continue outer;
+                }
+              }
               if (retryAttempt >= MAX_LLM_RETRIES - 1 || !isRetryableError(err)) {
                 logger.error(
                   'ollama',

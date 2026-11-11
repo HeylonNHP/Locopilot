@@ -20,7 +20,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 import type { NumCtxResponse } from '@/types/numCtx';
 
-import { loadConfig } from '@/services/configManager';
+import { readConfig } from '@/services/configManager';
 import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import { resolveProviderRequestContext } from '@/services/providerResolver';
 
@@ -34,10 +34,11 @@ function textParam(url: URL, name: string): string | undefined {
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const url = new URL(request.url);
-    const config = await loadConfig();
-    if (config === null) {
-      return NextResponse.json({ error: 'config.json is missing or unreadable.' }, { status: 503 });
+    const saved = await readConfig();
+    if (!saved.ok) {
+      return NextResponse.json({ error: saved.message }, { status: 503 });
     }
+    const config = saved.config;
 
     const model = textParam(url, 'model') ?? config.model;
     if (!model) {

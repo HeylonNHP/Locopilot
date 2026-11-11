@@ -82,7 +82,7 @@ import {
   type ToolCall,
   type ToolDefinition,
 } from '@/services/llm';
-import { parseContextLimitFromError } from '@/services/llmContextLimit';
+import { classifyContextLimitError } from '@/services/llmContextLimit';
 import { abortableSleep, isRetryableError, retryableErrorStatus } from '@/services/retryable';
 import { sanitizeChatMessage } from '@/services/textUtils';
 import { countMessagesTokens } from '@/services/tokenizer';
@@ -1334,13 +1334,19 @@ async function runSingleAgent(
         // record the cap, force one compaction, retry the same turn. Nothing
         // has been appended to `messages` on this path, so the retry cannot
         // violate the assistant/tool_call ordering contract.
-        const discoveredCap = parseContextLimitFromError(apiMessage);
+        // NEEDS CLARIFICATION: a numberless message (for example "invalid params,
+        // context window exceeds limit") gets the forced compaction and the
+        // retry, but teaches no cap. The phrasing list is in llmContextLimit.ts
+        // and is widened only from a logged occurrence (CONFIRMATIONS C-005).
+        const verdict = classifyContextLimitError(apiMessage);
         if (
-          discoveredCap !== null &&
+          verdict.kind !== 'none' &&
           contextLimitCompactions < MAX_CONTEXT_LIMIT_FORCED_COMPACT_ATTEMPTS
         ) {
           contextLimitCompactions += 1;
-          adoptDiscoveredContextLimit(config, discoveredCap);
+          if (verdict.kind === 'learn') {
+            adoptDiscoveredContextLimit(config, verdict.cap);
+          }
           debugLog.diagnostic({
             layer: 'subagent',
             phase: 'context_limit_recovery',
@@ -1351,7 +1357,8 @@ async function runSingleAgent(
             model: config.model,
             baseUrl: config.baseUrl,
             attempt: contextLimitCompactions,
-            discoveredCap,
+            discoveredCap: verdict.kind === 'learn' ? verdict.cap : null,
+            recovery: verdict.kind === 'learn' ? 'learn_and_compact' : 'compact_and_retry',
             numCtxAfter: config.numCtx,
             messageCount: messages.length,
           });

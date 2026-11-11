@@ -83,11 +83,7 @@ import {
   summariseChunk,
 } from '../src/services/compact/summarize.ts';
 import { loadConfig } from '../src/services/configManager.ts';
-import {
-  buildProviderRequestContext,
-  getProviderNumCtx,
-  resolveProvider,
-} from '../src/services/providerResolver.ts';
+import { buildProviderRequestContext, resolveProvider } from '../src/services/providerResolver.ts';
 
 /**
  * The six sections, in the order they must appear. Hard-coded on purpose:
@@ -1586,7 +1582,8 @@ async function runLiveCheck() {
     // repo's own config.json asks for 13107200), and a provider that rejects
     // it would fail the suite for a reason that has nothing to do with the
     // prompt. The live check therefore asks for at most 8192 tokens.
-    numCtx = Math.min(getProviderNumCtx(provider, config?.numCtx), LIVE_MAX_NUM_CTX);
+    // This live script's own fallback, not a server default.
+    numCtx = Math.min(provider.numCtx ?? config?.numCtx ?? 131_072, LIVE_MAX_NUM_CTX);
     console.log(
       `  NOTE  live run: provider=${providerId} model=${model} numCtx=${numCtx} (clamped to ${LIVE_MAX_NUM_CTX})`
     );
