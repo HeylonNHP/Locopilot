@@ -117,3 +117,24 @@ export function interpretNumCtxInput(text: string, current: number | null): NumC
   }
   return value === current ? { kind: 'unchanged' } : { kind: 'set', value };
 }
+
+/**
+ * A stored request body with its `numCtx` replaced by the setting as it is now.
+ * Retry uses it: the body was saved when the turn was first sent, and replaying
+ * it verbatim would replay the window the user had then. A body that is not a
+ * JSON object is returned unchanged.
+ */
+export function withCurrentNumCtx(body: string, requested: number | null): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return body;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return body;
+  }
+  const next: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+  delete next.numCtx;
+  return JSON.stringify({ ...next, ...numCtxField(requested) });
+}

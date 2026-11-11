@@ -324,6 +324,11 @@ export function useDataLoaders(refs: StableRefs) {
   const loadConfig = async () => {
     try {
       const res = await fetch('/api/config');
+      if (!res.ok) {
+        console.warn(
+          `Config could not be loaded (HTTP ${res.status}); the context window stays unknown until it loads.`
+        );
+      }
       if (res.ok) {
         const data = await res.json();
         const config = data.config ?? data;
@@ -387,8 +392,8 @@ export function useDataLoaders(refs: StableRefs) {
           });
         }
       }
-    } catch {
-      // Silently ignore
+    } catch (err) {
+      console.warn('Config could not be loaded:', err);
     }
   };
 

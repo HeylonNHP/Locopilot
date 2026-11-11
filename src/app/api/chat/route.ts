@@ -1038,23 +1038,32 @@ export async function POST(req: NextRequest): Promise<Response> {
          * to the active provider's numCtx, then the global config.numCtx,
          * then DEFAULT_NUM_CTX.
          */
-        const resolveNumCtxForModel = async (): Promise<void> => {
-          const providerRequested = activeProvider
-            ? getProviderNumCtx(activeProvider, config?.numCtx)
-            : undefined;
-          const configRequested = config?.numCtx;
-          const requested =
-            typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
+        const resolveNumCtxForModel = async (fromSavedSetting = false): Promise<void> => {
+          // A mid-turn switch (fromSavedSetting) reads the setting AS IT IS NOW
+          // from the saved config, and ignores the body value the turn started
+          // with — lowering the setting mid-turn takes effect at the next switch.
+          // The turn start itself still uses the body value.
+          const setting = fromSavedSetting ? await loadConfig().catch(() => null) : config;
+          const bodyRequested =
+            !fromSavedSetting && typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
               ? Math.floor(numCtx)
-              : providerRequested !== undefined &&
-                  Number.isFinite(providerRequested) &&
-                  providerRequested > 0
+              : undefined;
+          const providerRequested = activeProvider
+            ? getProviderNumCtx(activeProvider, setting?.numCtx)
+            : undefined;
+          const configRequested = setting?.numCtx;
+          const requested =
+            bodyRequested === undefined
+              ? providerRequested !== undefined &&
+                Number.isFinite(providerRequested) &&
+                providerRequested > 0
                 ? providerRequested
                 : typeof configRequested === 'number' &&
                     Number.isFinite(configRequested) &&
                     configRequested > 0
                   ? Math.floor(configRequested)
-                  : requestedNumCtx;
+                  : requestedNumCtx
+              : bodyRequested;
           try {
             const resolved = await resolveEffectiveNumCtx(llmRequestContext, model, requested);
             effectiveNumCtx = resolved.effective;
@@ -1208,6 +1217,16 @@ export async function POST(req: NextRequest): Promise<Response> {
         } catch {
           // Config load is best-effort; defaults already apply. The body
           // compaction selection remains authoritative even on this fallback.
+          // Logged, because with no config the window falls back to the
+          // uncapped DEFAULT_NUM_CTX.
+          debugLog.diagnostic({
+            layer: 'route',
+            phase: 'config_unavailable',
+            requestId,
+            sessionId: parsedSessionId,
+            model: model as string,
+            reason: 'config_load_failed',
+          });
           llmRequestContext = buildLlmRequestContext({
             baseUrl: effectiveBaseUrl,
             requestId,
@@ -1369,7 +1388,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                 requestId,
               });
             }
-            await resolveNumCtxForModel();
+            await resolveNumCtxForModel(true);
             visionSupported = await resolveVisionForModel();
             samplingParamSupport = await resolveSamplingSupportForModel();
             refreshSystemPrompt();

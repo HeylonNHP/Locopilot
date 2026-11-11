@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 
 import { type ChatAction, type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { retryBodyForSession, streamChatTurn } from '@/app/lib/chatTurn';
-import { numCtxField } from '@/app/lib/contextWindow';
+import { numCtxField, withCurrentNumCtx } from '@/app/lib/contextWindow';
 import { frameOwner, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
 import {
@@ -463,8 +463,12 @@ export function useChatStream(
    */
   const retry = useCallback(async () => {
     const sessionKey = streamKeyFor(refs.sessionIdRef.current);
-    const body = retryPayloadsRef.current.get(sessionKey);
-    if (body === undefined || state.streamingSessions.has(sessionKey)) return;
+    const stored = retryPayloadsRef.current.get(sessionKey);
+    if (stored === undefined || state.streamingSessions.has(sessionKey)) return;
+    // The window is the setting AS IT IS NOW, not the one saved when the turn
+    // was first sent: replaying the stored body would bring back the old,
+    // larger window after the user has lowered the setting.
+    const body = withCurrentNumCtx(stored, refs.requestedNumCtxRef.current);
 
     // The previous turn's rate described that turn — retire it (see the
     // note in sendChatMessage).

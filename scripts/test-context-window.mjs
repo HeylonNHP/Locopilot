@@ -36,6 +36,7 @@ import {
   numCtxField,
   positiveInteger,
   resolveContextWindow,
+  withCurrentNumCtx,
 } from '../src/app/lib/contextWindow.ts';
 import { routeSseEvent } from '../src/app/lib/sseRouting.ts';
 
@@ -361,6 +362,62 @@ check('the status bar derives its window from the setting and the model maximum 
   assert.ok(bar.includes('resolveContextWindow('));
   assert.ok(!/effectiveNumCtx\s*<\s*requestedNumCtx/.test(bar), 'a stale value is read as a cap');
   assert.ok(!/tokenStats\?\.tokenLimit\s*\|\|/.test(bar), 'the snapshot beats the setting again');
+});
+
+// ── Retry and the mid-turn switch use the setting as it is now ─────────────
+check('Retry replaces the stored window with the current setting', () => {
+  const stored = JSON.stringify({
+    messages: [{ role: 'user', content: 'hi' }],
+    model: 'm',
+    numCtx: 1_000_000,
+  });
+  const replayed = JSON.parse(withCurrentNumCtx(stored, 300_000));
+  assert.equal(replayed.numCtx, 300_000, 'the old window was replayed');
+  assert.equal(replayed.model, 'm', 'other fields must survive');
+  assert.deepEqual(replayed.messages, [{ role: 'user', content: 'hi' }]);
+});
+
+check('Retry drops the stored window when the setting is unknown', () => {
+  const stored = JSON.stringify({ model: 'm', numCtx: 1_000_000 });
+  assert.equal('numCtx' in JSON.parse(withCurrentNumCtx(stored, null)), false);
+});
+
+check('Retry adds the setting when the stored body had none, and leaves non-objects alone', () => {
+  const plain = JSON.stringify({ model: 'm' });
+  assert.equal(JSON.parse(withCurrentNumCtx(plain, 500_000)).numCtx, 500_000);
+  assert.equal(withCurrentNumCtx('not json', 500_000), 'not json');
+  assert.equal(withCurrentNumCtx('[1,2]', 500_000), '[1,2]');
+  assert.equal(withCurrentNumCtx('null', 500_000), 'null');
+});
+
+check('the route resolves a mid-turn switch from the saved setting, not the body', () => {
+  const route = read('src/app/api/chat/route.ts');
+  assert.ok(
+    route.includes('await resolveNumCtxForModel(true);'),
+    'the switch does not pass the flag'
+  );
+  assert.ok(
+    /const bodyRequested =\s*!fromSavedSetting/.test(route),
+    'the body value is not ignored at the switch'
+  );
+  assert.ok(route.includes("phase: 'config_unavailable'"), 'a config fallback is not logged');
+});
+
+check('the page warns when the config cannot be loaded', () => {
+  const loaders = read('src/app/hooks/useDataLoaders.ts');
+  assert.ok(
+    loaders.includes('Config could not be loaded (HTTP'),
+    'no warning for a failed response'
+  );
+  assert.ok(
+    loaders.includes("console.warn('Config could not be loaded:'"),
+    'no warning for a thrown error'
+  );
+});
+
+check('Retry rebuilds the body from the current setting', () => {
+  const hook = read('src/app/hooks/useChatStream.ts');
+  assert.ok(hook.includes('withCurrentNumCtx(stored, refs.requestedNumCtxRef.current)'));
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

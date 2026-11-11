@@ -163,7 +163,7 @@ export interface ChatParams {
    * Canonical maximum number of tokens the model may generate.
    * Each adapter maps this to its provider-specific field:
    *   - Ollama          → options.num_predict
-   *   - OpenAI-compatible → max_completion_tokens
+   *   - OpenAI-compatible → max_output_tokens (Responses API)
    *
    * Prefer this over setting `options.num_predict` / `options.max_tokens`
    * directly; the adapter guarantees correct translation.

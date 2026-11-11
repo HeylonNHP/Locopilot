@@ -115,6 +115,7 @@ export type DiagnosticPhase =
   | 'abort'
   | 'error'
   | 'model_switched'
+  | 'config_unavailable'
   | 'cleanup'
   | 'oauth_discovery'
   | 'oauth_redirect'
