@@ -42,7 +42,9 @@ function runEslintFull(projectDir) {
     fixableErrors += fileFixable;
     fixableWarnings += fileFixableWarnings;
 
-    fileLines.push(`  \`${filePath}\` (${fileErrors} error${fileErrors === 1 ? '' : 's'}, ${fileWarnings} warning${fileWarnings === 1 ? '' : 's'}):`);
+    fileLines.push(
+      `  \`${filePath}\` (${fileErrors} error${fileErrors === 1 ? '' : 's'}, ${fileWarnings} warning${fileWarnings === 1 ? '' : 's'}):`
+    );
 
     for (const msg of messages) {
       const line = msg?.line ?? '?';
@@ -78,7 +80,10 @@ function runTypeCheck(projectDir) {
 
   const errorCount = (output.match(/error TS/g) || []).length;
   const lines = output.split('\n');
-  const truncated = lines.length > 30 ? `${lines.slice(0, 30).join('\n')}\n  ... and ${lines.length - 30} more line(s)` : output;
+  const truncated =
+    lines.length > 30
+      ? `${lines.slice(0, 30).join('\n')}\n  ... and ${lines.length - 30} more line(s)`
+      : output;
 
   return `TypeScript (${errorCount} error${errorCount === 1 ? '' : 's'}):\n${truncated}`;
 }
@@ -93,10 +98,12 @@ const tscOutput = runTypeCheck(projectDir);
 if (tscOutput) sections.push(tscOutput);
 
 if (sections.length > 0) {
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: 'Stop',
-      additionalContext: `Full project lint and type-check results. Please review and fix the issues below:\n\n${sections.join('\n\n')}`,
-    },
-  }));
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'Stop',
+        additionalContext: `Full project lint and type-check results. Please review and fix the issues below:\n\n${sections.join('\n\n')}`,
+      },
+    })
+  );
 }

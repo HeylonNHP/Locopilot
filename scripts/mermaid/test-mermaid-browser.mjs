@@ -78,7 +78,7 @@ await browser.close();
 
 if (result.threw || result.hasErrorPanel || result.dataset === 'error' || !result.hasSvg) {
   console.error('\n❌ Reproduction: Mermaid failed to render client-side.');
-  throw new Error("test failed");
+  throw new Error('test failed');
 } else {
   console.log('\n✅ Mermaid rendered successfully in real browser.');
 }

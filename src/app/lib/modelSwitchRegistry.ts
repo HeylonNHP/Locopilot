@@ -82,10 +82,7 @@ export function peekModelSwitch(sessionId: number): ModelSwitchRequest | null {
  * Returns `true` when the entry was removed, `false` when a newer
  * request has since merged into it.
  */
-export function acknowledgeModelSwitch(
-  sessionId: number,
-  peeked: ModelSwitchRequest
-): boolean {
+export function acknowledgeModelSwitch(sessionId: number, peeked: ModelSwitchRequest): boolean {
   const current = pendingSwitches.get(sessionId);
   if (current !== peeked) return false;
   pendingSwitches.delete(sessionId);

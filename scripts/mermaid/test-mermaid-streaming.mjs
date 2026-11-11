@@ -26,4 +26,9 @@ async function main() {
   await browser.close();
 }
 
-try { await main(); } catch (err) { console.error(err); throw err; }
+try {
+  await main();
+} catch (err) {
+  console.error(err);
+  throw err;
+}

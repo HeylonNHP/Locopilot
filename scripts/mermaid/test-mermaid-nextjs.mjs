@@ -68,9 +68,14 @@ console.log('Next.js page render result:', JSON.stringify(result, null, 2));
 
 await browser.close();
 
-if (directResult.threw || directResult.hasErrorPanel || directResult.dataset === 'error' || !directResult.hasSvg) {
+if (
+  directResult.threw ||
+  directResult.hasErrorPanel ||
+  directResult.dataset === 'error' ||
+  !directResult.hasSvg
+) {
   console.error('\n❌ Reproduction: Mermaid failed to render in Next.js app.');
-  throw new Error("test failed");
+  throw new Error('test failed');
 } else {
   console.log('\n✅ Mermaid rendered successfully in Next.js app.');
 }

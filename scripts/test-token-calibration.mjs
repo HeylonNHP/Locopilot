@@ -650,10 +650,7 @@ check('the distiller does not sample under the chat class', () => {
   // under the chat class, whose factor the window checks depend on.
   const call = sampleCall(distillSource);
   assert.notEqual(call, '', 'the distiller records no sample');
-  assert.ok(
-    !/class:\s*'chat'/u.test(call),
-    'the distiller files its sample under the chat class'
-  );
+  assert.ok(!/class:\s*'chat'/u.test(call), 'the distiller files its sample under the chat class');
 });
 
 check('the main-turn sample compares the RAW count of the array that was sent', () => {
@@ -704,7 +701,10 @@ check('the requests that must NOT be sampled are not sampled', () => {
 
 check('the compaction pins the factor for its whole pass', () => {
   const orchestrateSource = readSource('src/services/compact/orchestrate.ts');
-  assert.ok(orchestrateSource.includes('pinTokenCalibration(model)'), 'the compaction does not pin');
+  assert.ok(
+    orchestrateSource.includes('pinTokenCalibration(model)'),
+    'the compaction does not pin'
+  );
   assert.ok(
     orchestrateSource.includes('unpinTokenCalibration(model)'),
     'the compaction does not unpin'

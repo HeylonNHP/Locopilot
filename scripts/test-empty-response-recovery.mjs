@@ -87,11 +87,7 @@ assertEq(
 
 console.log('sanitizeAssistantTextFragment');
 
-assertEq(
-  sanitizeAssistantTextFragment('thought'),
-  '',
-  'channel-label-only text is blanked'
-);
+assertEq(sanitizeAssistantTextFragment('thought'), '', 'channel-label-only text is blanked');
 assertEq(
   sanitizeAssistantTextFragment('  hello  '),
   '  hello  ',
@@ -111,7 +107,11 @@ console.log('EmptyResponseRecoveryTracker');
 
   tracker.recordAttempt();
   tracker.recordAttempt();
-  assertEq(tracker.shouldRecover(), false, `after ${MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS} attempts recovery is exhausted`);
+  assertEq(
+    tracker.shouldRecover(),
+    false,
+    `after ${MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS} attempts recovery is exhausted`
+  );
   assertEq(tracker.attemptsUsed, 3, 'three attempts recorded');
 
   tracker.reset();
@@ -128,20 +128,14 @@ console.log('buildEmptyResponseRecoveryNudge');
     nudge.content.startsWith(SYNTHETIC_NUDGE_MARKER),
     'nudge starts with SYNTHETIC_NUDGE_MARKER (compaction anchor skips it)'
   );
-  assertTrue(
-    nudge.content.endsWith(SYNTHETIC_NUDGE_END),
-    'nudge ends with SYNTHETIC_NUDGE_END'
-  );
+  assertTrue(nudge.content.endsWith(SYNTHETIC_NUDGE_END), 'nudge ends with SYNTHETIC_NUDGE_END');
   assertTrue(
     nudge.content.includes('Your last response was empty'),
     'nudge states the response was empty'
   );
 
   const second = buildEmptyResponseRecoveryNudge();
-  assertTrue(
-    nudge !== second,
-    'each call returns a fresh object (no shared mutable state)'
-  );
+  assertTrue(nudge !== second, 'each call returns a fresh object (no shared mutable state)');
   assertEq(second.content, nudge.content, 'nudge content is deterministic');
 }
 

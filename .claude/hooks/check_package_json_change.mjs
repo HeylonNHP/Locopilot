@@ -13,6 +13,8 @@ if (result.status === 0) {
     .filter(Boolean);
 
   if (changedFiles.includes('package.json')) {
-    process.stdout.write('⚠ package.json was modified — remember to run `npm install` if dependencies changed.\n');
+    process.stdout.write(
+      '⚠ package.json was modified — remember to run `npm install` if dependencies changed.\n'
+    );
   }
 }

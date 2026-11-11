@@ -39,9 +39,10 @@ function runEslintOnFile(projectDir, filePath) {
   const messages = Array.isArray(report?.messages) ? report.messages : [];
   if (messages.length === 0) return null;
 
-  const relPath = projectDir && filePath.startsWith(projectDir)
-    ? filePath.slice(projectDir.length + 1)
-    : filePath;
+  const relPath =
+    projectDir && filePath.startsWith(projectDir)
+      ? filePath.slice(projectDir.length + 1)
+      : filePath;
 
   const errors = messages.filter((m) => m?.severity === 2);
   const warnings = messages.filter((m) => m?.severity === 1);
@@ -69,14 +70,24 @@ function runEslintOnFile(projectDir, filePath) {
 const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const filePath = findEditedFile(readInput());
 
-if (filePath && (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js') || filePath.endsWith('.jsx') || filePath.endsWith('.mjs') || filePath.endsWith('.cjs'))) {
+if (
+  filePath &&
+  (filePath.endsWith('.ts') ||
+    filePath.endsWith('.tsx') ||
+    filePath.endsWith('.js') ||
+    filePath.endsWith('.jsx') ||
+    filePath.endsWith('.mjs') ||
+    filePath.endsWith('.cjs'))
+) {
   const outputText = runEslintOnFile(projectDir, filePath);
   if (outputText) {
-    process.stdout.write(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: 'PostToolUse',
-        additionalContext: `Lint results for the file you just edited. Please review and fix the issues:\n\n${outputText}`,
-      },
-    }));
+    process.stdout.write(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PostToolUse',
+          additionalContext: `Lint results for the file you just edited. Please review and fix the issues:\n\n${outputText}`,
+        },
+      })
+    );
   }
 }

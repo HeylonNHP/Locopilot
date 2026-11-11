@@ -127,7 +127,7 @@ export function extractTurnStats(chunk: RawTurnStats): CleanTurnStats {
 }
 
 function round2(value: number): number {
-  return +(value.toFixed(2));
+  return +value.toFixed(2);
 }
 
 /**
@@ -159,11 +159,7 @@ export class LiveThroughputMeter {
   private tokensAtLastCheck = 0;
   private lastEmitMs = 0;
 
-  constructor(
-    model: string,
-    minIntervalMs: number,
-    now: () => number = Date.now
-  ) {
+  constructor(model: string, minIntervalMs: number, now: () => number = Date.now) {
     this.model = model;
     this.minIntervalMs = minIntervalMs;
     this.now = now;

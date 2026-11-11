@@ -43,14 +43,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   if (body.target !== 'main' && body.target !== 'subagent') {
-    return NextResponse.json(
-      { error: 'target must be "main" or "subagent"' },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: 'target must be "main" or "subagent"' }, { status: 400 });
   }
   const target = body.target;
 
-  const agentId = typeof body.agentId === 'string' && body.agentId.trim() ? body.agentId : undefined;
+  const agentId =
+    typeof body.agentId === 'string' && body.agentId.trim() ? body.agentId : undefined;
 
   const id = requestSteerMessage(sessionId, text, target, agentId);
   if (id === false) {

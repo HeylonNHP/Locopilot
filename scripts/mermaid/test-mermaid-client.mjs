@@ -56,9 +56,7 @@ code.textContent = source;
 pre.append(code);
 document.querySelector('#root').append(pre);
 
-const { renderMermaidInPre } = await import(
-  './src/components/MarkdownMessage/mermaidRenderer.ts'
-);
+const { renderMermaidInPre } = await import('./src/components/MarkdownMessage/mermaidRenderer.ts');
 
 console.log('renderMermaidInPre loaded');
 console.log('pre.dataset before:', pre.dataset.mermaidRendered);
@@ -72,9 +70,9 @@ try {
   if (pre.dataset.mermaidRendered === 'error' || pre.querySelector('.mermaid-error-panel')) {
     console.error('ERROR: Mermaid failed to render');
     console.error(pre.innerHTML);
-    throw new Error("test failed");
+    throw new Error('test failed');
   }
 } catch (err) {
   console.error('renderMermaidInPre threw:', err);
-  throw new Error("test failed");
+  throw new Error('test failed');
 }

@@ -290,11 +290,7 @@ const pendingSamples = new Map<string, TokenCalibrationSample[]>();
  * @param requestClass - the shape of the request.
  * @returns {string} the key.
  */
-function cacheKey(
-  providerId: string,
-  model: string,
-  requestClass: TokenCalibrationClass
-): string {
+function cacheKey(providerId: string, model: string, requestClass: TokenCalibrationClass): string {
   return `${providerId}|${model}|${requestClass}`;
 }
 

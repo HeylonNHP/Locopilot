@@ -69,7 +69,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     request.compactionProviderId === undefined
   ) {
     return NextResponse.json(
-      { error: 'At least one of "model", "compactionModel", "providerId", or "compactionProviderId" is required' },
+      {
+        error:
+          'At least one of "model", "compactionModel", "providerId", or "compactionProviderId" is required',
+      },
       { status: 400 }
     );
   }

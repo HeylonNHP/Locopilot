@@ -2,7 +2,7 @@
  * Verify the exact HTML produced by marked + DOMPurify for a mermaid block,
  * and the source recovered via textContent.
  */
- 
+
 import DOMPurify from 'isomorphic-dompurify';
 import { JSDOM } from 'jsdom';
 import { marked } from 'marked';

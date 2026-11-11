@@ -28,7 +28,10 @@ assert(!small.truncated, 'small output is not marked truncated');
 const large = new BoundedOutput();
 large.append(Buffer.from('x'.repeat(RUN_COMMAND_OUTPUT_MAX_BYTES + 1024)));
 large.finish();
-assert(Buffer.byteLength(large.text(), 'utf8') <= RUN_COMMAND_OUTPUT_MAX_BYTES, 'large output stays within byte cap');
+assert(
+  Buffer.byteLength(large.text(), 'utf8') <= RUN_COMMAND_OUTPUT_MAX_BYTES,
+  'large output stays within byte cap'
+);
 assert(large.truncated, 'large output is marked truncated');
 assert(large.text().endsWith('x'.repeat(1024)), 'large output retains a bounded tail');
 
@@ -37,7 +40,10 @@ const encoded = Buffer.from('😀'.repeat(RUN_COMMAND_OUTPUT_MAX_BYTES));
 for (const byte of encoded) unicode.append(Buffer.from([byte]));
 unicode.finish();
 assert(!unicode.text().includes('�'), 'split multibyte output is not corrupted');
-assert(Buffer.byteLength(unicode.text(), 'utf8') <= RUN_COMMAND_OUTPUT_MAX_BYTES, 'unicode output respects byte cap');
+assert(
+  Buffer.byteLength(unicode.text(), 'utf8') <= RUN_COMMAND_OUTPUT_MAX_BYTES,
+  'unicode output respects byte cap'
+);
 
 assert(sanitize('[31mred[0m\r\n') === 'red\n', 'sanitization remains unchanged');
 

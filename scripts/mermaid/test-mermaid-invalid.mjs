@@ -20,7 +20,10 @@ const sources = [
   { name: 'leading newline', source: `\ngraph TD\n  A[User] --\u003E B[Locopilot]` },
   { name: 'leading spaces', source: `   graph TD\n  A[User] --\u003E B[Locopilot]` },
   { name: 'CRLF', source: `graph TD\r\n  A[User] --\u003E B[Locopilot]` },
-  { name: 'with fence', source: `\`\`\`mermaid\ngraph TD\n  A[User] --\u003E B[Locopilot]\n\`\`\`` },
+  {
+    name: 'with fence',
+    source: `\`\`\`mermaid\ngraph TD\n  A[User] --\u003E B[Locopilot]\n\`\`\``,
+  },
   { name: 'html entity', source: `graph TD\n  A[User] --\u0026gt; B[Locopilot]` },
 ];
 
