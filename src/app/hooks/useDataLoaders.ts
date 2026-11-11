@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { hasLiveTranscript, useChat } from '@/app/lib/chatStore';
-import { positiveInteger } from '@/app/lib/contextWindow';
+import { isStaleNumCtxAnswer, positiveInteger } from '@/app/lib/contextWindow';
 import { createLatestGate } from '@/app/lib/latestGate';
 
 import type { StableRefs } from './useStableRefs';
@@ -85,18 +85,21 @@ export function useDataLoaders(refs: StableRefs) {
    */
   const knownTokenLimit = useCallback((sessionId: number): number | undefined => {
     const current = stateRef.current;
+    // The window the server last reported for the selected model: it is what
+    // the next turn will run in, and it survives a session switch (the
+    // top-level token stats do not). It comes first because a session's own
+    // snapshot describes the turn that session last ran, which may predate a
+    // change of the setting or of the model.
+    const effective = current.effectiveNumCtx;
+    if (typeof effective === 'number' && effective > 0) {
+      return effective;
+    }
     const stats =
       sessionId === current.currentSessionId
         ? current.tokenStats
         : current.sessionStates.get(sessionId)?.tokenStats;
     const limit = stats?.tokenLimit;
-    if (typeof limit === 'number' && limit > 0) {
-      return limit;
-    }
-    // The server's effective size for the current model, which survives a
-    // session switch (the top-level token stats do not).
-    const effective = current.effectiveNumCtx;
-    return typeof effective === 'number' && effective > 0 ? effective : undefined;
+    return typeof limit === 'number' && limit > 0 ? limit : undefined;
   }, []);
 
   const loadSessionMessages = useCallback(
@@ -187,12 +190,9 @@ export function useDataLoaders(refs: StableRefs) {
             ...(allowEmptyWhileStreaming ? { allowEmptyWhileStreaming: true } : {}),
           });
         }
-        // Cap discovery is server-driven; the chat route's first
-        // status event on the next turn will populate
-        // state.effectiveNumCtx via SET_TOKEN_STATS. Until then, the
-        // status bar uses the user's requested value as the
-        // tokenLimit display, with the actual cap resolution
-        // happening on the server.
+        // The window is the server's: `loadNumCtx` fetches it and every
+        // turn's status event refreshes it (both land in
+        // state.effectiveNumCtx through SET_TOKEN_STATS).
         // Prefer actual provider token stats persisted on the session;
         // only fall back to the heuristic estimate when no real stats exist.
         const explicitStats = data.lastTokenStats;
@@ -320,6 +320,55 @@ export function useDataLoaders(refs: StableRefs) {
     }
   }, [state.models, state.model, state.activeProviderId, dispatch]);
 
+  /**
+   * Ask the server for the context window of the model that is selected now
+   * and store what it says: the window it will use, and the model's maximum
+   * (null when it does not know one). Nothing is computed here.
+   *
+   * Stable (it is in the dependency array of the effect that calls it). The
+   * answer is dropped when the selection changed while it was in flight, or
+   * when it fails — the display then keeps showing "—" rather than a guess.
+   * The dispatch seeds ONLY the cap fields and never touches the token count,
+   * which `loadSessionMessages` and the chat stream own.
+   */
+  const loadNumCtx = useCallback(async (): Promise<void> => {
+    const model = refs.modelRef.current;
+    if (!model) {
+      return;
+    }
+    const providerId = refs.activeProviderIdRef.current;
+    const params = new URLSearchParams({ model });
+    if (providerId) {
+      params.set('providerId', providerId);
+    }
+    try {
+      const res = await fetch(`/api/numctx?${params.toString()}`);
+      if (!res.ok) {
+        console.warn(`The context window could not be loaded (HTTP ${res.status}).`);
+        return;
+      }
+      const data = await res.json();
+      if (
+        isStaleNumCtxAnswer(
+          { model, providerId },
+          { model: refs.modelRef.current, providerId: refs.activeProviderIdRef.current }
+        )
+      ) {
+        return;
+      }
+      const effective = positiveInteger(data.effective);
+      dispatch({
+        type: 'SET_TOKEN_STATS',
+        stats: {
+          ...(effective === null ? {} : { tokenLimit: effective }),
+          modelContextLimit: positiveInteger(data.modelMax),
+        },
+      });
+    } catch (err) {
+      console.warn('The context window could not be loaded:', err);
+    }
+  }, [dispatch, refs]);
+
   // Called only on mount — no stability guarantee needed.
   const loadConfig = async () => {
     try {
@@ -360,42 +409,18 @@ export function useDataLoaders(refs: StableRefs) {
               config.maxPromptLoopIterations ?? state.maxPromptLoopIterations,
           },
         });
-        // The server also returns the cap for the persisted default
-        // model (best-effort; null when unresolved). Seed
-        // tokenStats with it so the Settings modal can show
-        // "capped by model limit" before the first chat turn. We
-        // only seed when we have a real cap; if the server
-        // reports null, leave tokenStats alone.
-        //
-        // This dispatch seeds ONLY the cap-related fields and must
-        // not touch the count (totalTokens / promptEvalCount /
-        // evalCount): the count is owned by `loadSessionMessages`
-        // (for restored sessions) and the chat stream's SSE
-        // `status` events (for live turns). The reducer's merge
-        // ({...base, ...action.stats}) would otherwise clobber
-        // whichever count was set first when both this and
-        // `loadSessionMessages` fire concurrently on mount — making
-        // restored sessions show `0 tokens` in the status bar
-        // until the first prompt overrides the count.
-        const reportedCap = data.modelContextLimit;
-        if (typeof reportedCap === 'number' && Number.isFinite(reportedCap) && reportedCap > 0) {
-          dispatch({
-            type: 'SET_TOKEN_STATS',
-            stats: {
-              // Only when the setting is known: with it unknown there is
-              // nothing to clamp, and writing a limit would be a guess.
-              ...(persistedNumCtx === null
-                ? {}
-                : { tokenLimit: Math.min(persistedNumCtx, reportedCap) }),
-              modelContextLimit: reportedCap,
-            },
-          });
-        }
       }
     } catch (err) {
       console.warn('Config could not be loaded:', err);
     }
   };
 
-  return { loadSessions, loadSessionMessages, loadModels, loadConfig, sessionNavigation };
+  return {
+    loadSessions,
+    loadSessionMessages,
+    loadModels,
+    loadConfig,
+    loadNumCtx,
+    sessionNavigation,
+  };
 }

@@ -4,7 +4,6 @@ import { useCallback, useRef, useState } from 'react';
 
 import { type ChatAction, type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { retryBodyForSession, streamChatTurn } from '@/app/lib/chatTurn';
-import { numCtxField, withCurrentNumCtx } from '@/app/lib/contextWindow';
 import { frameOwner, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
 import {
@@ -465,10 +464,10 @@ export function useChatStream(
     const sessionKey = streamKeyFor(refs.sessionIdRef.current);
     const stored = retryPayloadsRef.current.get(sessionKey);
     if (stored === undefined || state.streamingSessions.has(sessionKey)) return;
-    // The window is the setting AS IT IS NOW, not the one saved when the turn
-    // was first sent: replaying the stored body would bring back the old,
-    // larger window after the user has lowered the setting.
-    const body = withCurrentNumCtx(stored, refs.requestedNumCtxRef.current);
+    // The stored body is replayed as it was. It carries no context window:
+    // the server decides the window itself, from the setting as it is when
+    // the retry arrives, so a setting lowered since cannot be undone by a replay.
+    const body = stored;
 
     // The previous turn's rate described that turn — retire it (see the
     // note in sendChatMessage).
@@ -625,7 +624,6 @@ export function useChatStream(
       const settings = {
         model: refs.modelRef.current,
         providerId: refs.activeProviderIdRef.current,
-        ...numCtxField(refs.requestedNumCtxRef.current),
         baseUrl: refs.baseUrlRef.current,
         sessionId: originSessionId,
         yolo: refs.yoloRef.current,

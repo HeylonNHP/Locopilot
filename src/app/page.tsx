@@ -15,6 +15,7 @@ import { useActionHandlers } from './hooks/useActionHandlers';
 import { useApproval } from './hooks/useApproval';
 import { useChatStream } from './hooks/useChatStream';
 import { useDataLoaders } from './hooks/useDataLoaders';
+import { useNumCtxSync } from './hooks/useNumCtxSync';
 import { useScrollManager } from './hooks/useScrollManager';
 import { useSendHandler } from './hooks/useSendHandler';
 import { useSessionActions } from './hooks/useSessionActions';
@@ -42,8 +43,17 @@ function HomeInner() {
   const { isCompactingRef, isGeneratingTitleRef } = useSyncRefs(isCompacting, isGeneratingTitle);
 
   const refs = useStableRefs(state);
-  const { loadSessions, loadSessionMessages, loadModels, loadConfig, sessionNavigation } =
-    useDataLoaders(refs);
+  const {
+    loadSessions,
+    loadSessionMessages,
+    loadModels,
+    loadConfig,
+    loadNumCtx,
+    sessionNavigation,
+  } = useDataLoaders(refs);
+  // The window comes from the server: asked for again whenever the selection or
+  // the saved setting changes, and when the tab regains focus.
+  useNumCtxSync(loadNumCtx, state.model, state.activeProviderId, state.requestedNumCtx);
 
   // Derive both the "is the visible session streaming" flag and the Stop
   // handler's key from the same helper: a brand-new chat has no id yet, so

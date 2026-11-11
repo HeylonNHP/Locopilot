@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
-import { resolveContextWindow } from '@/app/lib/contextWindow';
+import { describeContextWindow } from '@/app/lib/contextWindow';
 import { resolveTpsDisplay } from '@/app/lib/tpsDisplay';
 import CompletionModeSelector from '@/components/CompletionModeSelector';
 import ModelSelector from '@/components/ModelSelector';
@@ -18,7 +18,6 @@ export default function StatusBar() {
     compactionModel,
     messages,
     effectiveNumCtx,
-    requestedNumCtx,
     currentTps,
     completionMode,
     maxPromptLoopIterations,
@@ -141,17 +140,13 @@ export default function StatusBar() {
   // Use the backend-provided token count. If we haven't received one yet
   // (briefly before the first SSE event) show 0 instead of a local guess.
   const totalTokens = tokenStats?.totalTokens ?? 0;
-  // The window shown is the one the user chose in Settings, unless the
-  // model's reported maximum is lower (then that maximum) — nothing else.
-  // A per-turn `tokenLimit` snapshot never overrides a setting the user has
-  // since changed; it is only used while the setting is still unknown (the
-  // config has not loaded). While the window is unknown the bar shows "—"
+  // The window shown is the one the SERVER reports for the selected model
+  // (the setting capped by the model's maximum, decided on the server). The
+  // page computes nothing: until the server has answered the bar shows "—"
   // and no percentage — never a stand-in number (see contextWindow.ts).
-  const contextWindow = resolveContextWindow({
-    requested: requestedNumCtx,
-    modelMax: tokenStats?.modelContextLimit,
-    reportedLimit: tokenStats?.tokenLimit,
+  const contextWindow = describeContextWindow({
     effective: effectiveNumCtx,
+    modelMax: tokenStats?.modelContextLimit,
   });
   const tokenLimit = contextWindow.limit;
 
@@ -175,18 +170,14 @@ export default function StatusBar() {
   const tpsDisplay = resolveTpsDisplay(currentTps, tokenStats);
   const tpsLabel = tpsDisplay?.label ?? null;
 
-  // "Model max" hint. The cap is the GGUF training context for Ollama
-  // (or the provider's advertised cap for OpenAI-compatible). When the
-  // user has asked for less than the cap, the requested value is
-  // already shown in the token display. When the user has asked for
-  // more, show a small label so it's clear that the displayed
-  // tokenLimit is the model's actual ceiling, not a transient state.
-  // Only a maximum the SERVER reported counts: it is no longer inferred from
-  // `effectiveNumCtx < requested`, which mistook a stale or stand-in value
-  // for a real model limit.
+  // "Model max" hint, from what the server reported: the maximum when it is
+  // what limits the window, "unknown" when the server answered without one.
+  // Nothing is inferred on the page.
   const modelMaxLabel =
     contextWindow.cappedAt === null
-      ? null
+      ? contextWindow.maxUnknown
+        ? '(model max unknown)'
+        : null
       : `(model max: ${contextWindow.cappedAt.toLocaleString()})`;
 
   const normalizedCompletionMode = (completionMode || 'normal') as string;

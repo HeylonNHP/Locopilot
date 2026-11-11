@@ -20,9 +20,10 @@
  *   - request bodies: the stand-in was sent as `numCtx`, and the server trusts
  *     a body value over the persisted config.
  *
- * The rule now: the window shown (and sent) is the user's setting, unless the
- * model's reported maximum is lower; while either is unknown the UI shows
- * "—" and the body omits the field. There is no placeholder.
+ * The rule now: the SERVER decides the window (the setting capped by the
+ * model's maximum) and the page shows what it reports; until the server has
+ * answered the UI shows "—". The page sends no numCtx and computes no minimum.
+ * There is no placeholder.
  */
 
 import assert from 'node:assert/strict';
@@ -32,10 +33,13 @@ import { fileURLToPath } from 'node:url';
 
 import { chatReducer, initialState } from '../src/app/lib/chatStore.ts';
 import {
+  describeContextWindow,
   interpretNumCtxInput,
+  isStaleNumCtxAnswer,
+  NUMCTX_FOCUS_REFETCH_MS,
   numCtxField,
   positiveInteger,
-  resolveContextWindow,
+  shouldRefetchNumCtx,
   withCurrentNumCtx,
 } from '../src/app/lib/contextWindow.ts';
 import { routeSseEvent } from '../src/app/lib/sseRouting.ts';
@@ -58,11 +62,20 @@ const PLACEHOLDER = 131072;
 
 /** What the status bar derives from a store state. */
 function windowOf(state) {
-  return resolveContextWindow({
-    requested: state.requestedNumCtx,
-    modelMax: state.tokenStats?.modelContextLimit,
-    reportedLimit: state.tokenStats?.tokenLimit,
+  return describeContextWindow({
     effective: state.effectiveNumCtx,
+    modelMax: state.tokenStats?.modelContextLimit,
+  });
+}
+
+/** The server's answer to GET /api/numctx, as the page stores it. */
+function serverAnswer(state, { effective, modelMax }) {
+  return chatReducer(state, {
+    type: 'SET_TOKEN_STATS',
+    stats: {
+      ...(effective === null ? {} : { tokenLimit: effective }),
+      modelContextLimit: modelMax,
+    },
   });
 }
 
@@ -75,65 +88,74 @@ check('positiveInteger accepts only positive safe integers', () => {
   }
 });
 
-// ── resolveContextWindow ───────────────────────────────────────────────────
-check('the setting wins when the model maximum is unknown or higher', () => {
-  assert.deepEqual(resolveContextWindow({ requested: 1_000_000 }), {
-    limit: 1_000_000,
-    cappedAt: null,
-  });
-  assert.deepEqual(resolveContextWindow({ requested: 200_000, modelMax: 1_000_000 }), {
-    limit: 200_000,
-    cappedAt: null,
-  });
-  assert.deepEqual(resolveContextWindow({ requested: 200_000, modelMax: 200_000 }), {
-    limit: 200_000,
-    cappedAt: null,
-  });
+// ── describeContextWindow ──────────────────────────────────────────────────
+check('until the server answers there is no window, and nothing is invented', () => {
+  const none = { limit: null, cappedAt: null, maxUnknown: false };
+  assert.deepEqual(describeContextWindow({}), none);
+  assert.deepEqual(describeContextWindow({ effective: null, modelMax: null }), none);
+  assert.deepEqual(describeContextWindow({ effective: null, modelMax: 262_144 }), none);
+  assert.deepEqual(describeContextWindow({ effective: 0 }), none);
 });
 
-check('a lower model maximum is shown and used instead', () => {
-  assert.deepEqual(resolveContextWindow({ requested: 1_000_000, modelMax: 262_144 }), {
+check('the window shown is the server window, whatever the page setting is', () => {
+  // The page has no setting input at all: a provider's own window can differ
+  // from the global one, and only the server knows which applies.
+  assert.equal(describeContextWindow({ effective: 300_000, modelMax: 1_048_576 }).limit, 300_000);
+  assert.equal(describeContextWindow({ effective: 40_960, modelMax: 40_960 }).limit, 40_960);
+});
+
+check('a maximum below the setting labels the window; a higher one does not', () => {
+  assert.deepEqual(describeContextWindow({ effective: 262_144, modelMax: 262_144 }), {
     limit: 262_144,
     cappedAt: 262_144,
+    maxUnknown: false,
   });
-});
-
-check('a per-turn snapshot never beats a setting the user has since changed', () => {
-  // The server reported 1 000 000 for the last turn; the user then lowered the
-  // setting to 500 000. The display follows the setting, not the snapshot.
-  assert.deepEqual(
-    resolveContextWindow({ requested: 500_000, reportedLimit: 1_000_000, effective: 1_000_000 }),
-    { limit: 500_000, cappedAt: null }
-  );
-});
-
-check('while the setting is unknown the server-reported window is used, never a default', () => {
-  assert.deepEqual(resolveContextWindow({ requested: null }), { limit: null, cappedAt: null });
-  assert.deepEqual(resolveContextWindow({ requested: null, reportedLimit: 0 }), {
-    limit: null,
+  assert.deepEqual(describeContextWindow({ effective: 300_000, modelMax: 1_000_000 }), {
+    limit: 300_000,
     cappedAt: null,
+    maxUnknown: false,
   });
-  assert.equal(resolveContextWindow({ requested: null, reportedLimit: 300_000 }).limit, 300_000);
-  assert.equal(resolveContextWindow({ requested: null, effective: 262_144 }).limit, 262_144);
+});
+
+check('a server that answered without a maximum is "model max unknown"', () => {
+  assert.deepEqual(describeContextWindow({ effective: 300_000, modelMax: null }), {
+    limit: 300_000,
+    cappedAt: null,
+    maxUnknown: true,
+  });
+  assert.equal(describeContextWindow({ effective: 300_000 }).maxUnknown, true);
+});
+
+check('zeros, negatives and NaN count as no answer', () => {
+  assert.equal(describeContextWindow({ effective: 0, modelMax: 0 }).limit, null);
+  assert.equal(describeContextWindow({ effective: -3 }).limit, null);
+  assert.equal(describeContextWindow({ effective: Number.NaN }).limit, null);
+  // A nonsense maximum is no maximum, not a cap.
+  assert.deepEqual(describeContextWindow({ effective: 1000, modelMax: -5 }), {
+    limit: 1000,
+    cappedAt: null,
+    maxUnknown: true,
+  });
+});
+
+// ── the refetch rules ──────────────────────────────────────────────────────
+check('a focus asks the server again at most every 30 seconds', () => {
+  assert.equal(NUMCTX_FOCUS_REFETCH_MS, 30_000);
+  assert.equal(shouldRefetchNumCtx(1_000, null), true, 'never fetched');
+  assert.equal(shouldRefetchNumCtx(1_000 + 29_999, 1_000), false, 'inside the window');
+  assert.equal(shouldRefetchNumCtx(1_000 + 30_000, 1_000), true, 'at the window');
+  assert.equal(shouldRefetchNumCtx(1_000 + 600_000, 1_000), true, 'long after');
+});
+
+check('an answer for a model that is no longer selected is stale', () => {
+  const asked = { model: 'a', providerId: 'p1' };
+  assert.equal(isStaleNumCtxAnswer(asked, { model: 'a', providerId: 'p1' }), false);
+  assert.equal(isStaleNumCtxAnswer(asked, { model: 'b', providerId: 'p1' }), true);
+  assert.equal(isStaleNumCtxAnswer(asked, { model: 'a', providerId: 'p2' }), true);
   assert.equal(
-    resolveContextWindow({ requested: null, reportedLimit: 300_000, effective: 262_144 }).limit,
-    300_000
+    isStaleNumCtxAnswer({ model: 'a', providerId: null }, { model: 'a', providerId: 'p1' }),
+    true
   );
-});
-
-check('zeros, negatives and NaN count as unknown', () => {
-  assert.deepEqual(resolveContextWindow({ requested: 0, modelMax: 0 }), {
-    limit: null,
-    cappedAt: null,
-  });
-  assert.deepEqual(resolveContextWindow({ requested: 1000, modelMax: -5 }), {
-    limit: 1000,
-    cappedAt: null,
-  });
-  assert.deepEqual(resolveContextWindow({ requested: 1000, modelMax: Number.NaN }), {
-    limit: 1000,
-    cappedAt: null,
-  });
 });
 
 // ── numCtxField ────────────────────────────────────────────────────────────
@@ -172,7 +194,7 @@ check('an unchanged value is not written; a changed one is', () => {
 check('the store starts with no setting and no window', () => {
   assert.equal(initialState.requestedNumCtx, null);
   assert.equal(initialState.effectiveNumCtx, null);
-  assert.deepEqual(windowOf(initialState), { limit: null, cappedAt: null });
+  assert.deepEqual(windowOf(initialState), { limit: null, cappedAt: null, maxUnknown: false });
 });
 
 check('SET_CONFIG without a context size leaves the setting unknown', () => {
@@ -181,7 +203,7 @@ check('SET_CONFIG without a context size leaves the setting unknown', () => {
 });
 
 check(
-  'replay: the saved count arrives BEFORE the config — never 131072, ends at the setting',
+  'replay: the saved count arrives BEFORE the config — never 131072, ends at the server window',
   () => {
     let state = initialState;
     // Reload of ?session=522: the database count arrives first. The loader no
@@ -199,9 +221,14 @@ check(
     assert.notEqual(windowOf(state).limit, PLACEHOLDER);
     assert.equal(state.effectiveNumCtx, null, 'nothing may be promoted into effectiveNumCtx');
 
-    // Then the config arrives.
+    // Then the config arrives. The page's setting is not a window: the bar
+    // still waits for the server rather than showing the setting.
     state = chatReducer(state, { type: 'SET_CONFIG', config: { requestedNumCtx: 1_000_000 } });
-    assert.deepEqual(windowOf(state), { limit: 1_000_000, cappedAt: null });
+    assert.equal(windowOf(state).limit, null, 'the setting was shown as the window');
+
+    // Then the server answers.
+    state = serverAnswer(state, { effective: 1_000_000, modelMax: 1_048_576 });
+    assert.deepEqual(windowOf(state), { limit: 1_000_000, cappedAt: null, maxUnknown: false });
     assert.equal(state.tokenStats.totalTokens, 276_922, 'the saved count must survive');
   }
 );
@@ -221,7 +248,7 @@ check('replay: a model maximum below the setting is shown, and clears on a model
       modelContextLimit: 262_144,
     },
   });
-  assert.deepEqual(windowOf(state), { limit: 262_144, cappedAt: 262_144 });
+  assert.deepEqual(windowOf(state), { limit: 262_144, cappedAt: 262_144, maxUnknown: false });
 
   // Re-selecting the same model must not forget what the server reported.
   const same = chatReducer(state, { type: 'SET_MODEL', model: 'small' });
@@ -230,7 +257,8 @@ check('replay: a model maximum below the setting is shown, and clears on a model
   const sameProvider = chatReducer(state, { type: 'SET_ACTIVE_PROVIDER', providerId: 'p1' });
   assert.equal(sameProvider.tokenStats.modelContextLimit, 262_144);
 
-  // A real change drops the previous model's maximum and window.
+  // A real change drops the previous model's maximum and window: the bar shows
+  // "—" until the server answers for the new model.
   for (const next of [
     chatReducer(state, { type: 'SET_MODEL', model: 'big' }),
     chatReducer(state, { type: 'SET_ACTIVE_PROVIDER', providerId: 'p2' }),
@@ -239,8 +267,11 @@ check('replay: a model maximum below the setting is shown, and clears on a model
   ]) {
     assert.equal(next.tokenStats.modelContextLimit, null);
     assert.equal(next.effectiveNumCtx, null);
-    assert.deepEqual(windowOf(next), { limit: 1_000_000, cappedAt: null });
+    assert.deepEqual(windowOf(next), { limit: null, cappedAt: null, maxUnknown: false });
     assert.equal(next.tokenStats.totalTokens, 11, 'the count is not the model maximum');
+    // The server then answers for the new model.
+    const answered = serverAnswer(next, { effective: 1_000_000, modelMax: 2_000_000 });
+    assert.deepEqual(windowOf(answered), { limit: 1_000_000, cappedAt: null, maxUnknown: false });
   }
 
   // A SET_CONFIG that does not change the selection leaves the maximum alone.
@@ -249,6 +280,23 @@ check('replay: a model maximum below the setting is shown, and clears on a model
     config: { model: 'small', yolo: true },
   });
   assert.equal(unrelated.tokenStats.modelContextLimit, 262_144);
+});
+
+check('the server answer seeds the window and the maximum without touching the count', () => {
+  let state = chatReducer(initialState, {
+    type: 'SET_TOKEN_STATS',
+    stats: { promptEvalCount: 100, evalCount: 5, totalTokens: 105, isEstimated: false },
+  });
+  state = serverAnswer(state, { effective: 300_000, modelMax: null });
+  assert.equal(state.effectiveNumCtx, 300_000);
+  assert.equal(state.tokenStats.modelContextLimit, null);
+  assert.deepEqual(windowOf(state), { limit: 300_000, cappedAt: null, maxUnknown: true });
+  assert.equal(state.tokenStats.totalTokens, 105, 'the count was clobbered');
+  assert.equal(state.tokenStats.promptEvalCount, 100);
+  // A server with no setting at all sends no window: the bar keeps showing "—".
+  const none = serverAnswer(initialState, { effective: null, modelMax: 262_144 });
+  assert.equal(none.effectiveNumCtx, null);
+  assert.equal(windowOf(none).limit, null);
 });
 
 check('a status merge without a limit keeps a limit the server already reported', () => {
@@ -327,14 +375,18 @@ check('no client file imports or uses DEFAULT_NUM_CTX', () => {
   assert.deepEqual(offenders, []);
 });
 
-check('no request body sends the raw requested value', () => {
-  const offenders = clientFiles.filter((file) =>
-    /numCtx:\s*refs\.requestedNumCtxRef\.current/.test(read(file))
-  );
-  assert.deepEqual(offenders, [], 'use numCtxField(...) so an unknown setting is omitted');
-  assert.ok(read('src/app/hooks/useChatStream.ts').includes('...numCtxField('));
-  const slash = read('src/app/hooks/useSlashCommands.ts');
-  assert.equal((slash.match(/\.{3}numCtxField\(/g) ?? []).length, 3, '/compact, /title, /dump');
+check('no request the page makes carries a context window', () => {
+  for (const file of clientFiles) {
+    const code = read(file)
+      .replaceAll(/\/\*[\S\s]*?\*\//g, '')
+      .replaceAll(/^\s*\/\/.*$/gm, '');
+    assert.ok(!/requestedNumCtxRef/.test(code), `${file} reads the requested-size ref`);
+    if (file === 'src/app/lib/contextWindow.ts') continue;
+    assert.ok(!/numCtxField\(/.test(code), `${file} still adds numCtx to a body`);
+    // `/ctx` saves the SETTING to the config; that is the one body allowed.
+    const withoutSettingSave = code.replace('JSON.stringify({ numCtx: size })', '');
+    assert.ok(!/\bnumCtx:\s/.test(withoutSettingSave), `${file} builds a body with numCtx`);
+  }
 });
 
 check('the loaders never write the setting or a default as a token limit', () => {
@@ -357,11 +409,55 @@ check('Settings validates the context size instead of defaulting it', () => {
   assert.ok(!settings.includes('numCtxChanged'), 'the old compare-with-state check is back');
 });
 
-check('the status bar derives its window from the setting and the model maximum only', () => {
+check('the status bar shows what the server reported and infers nothing', () => {
   const bar = read('src/components/StatusBar/StatusBar.tsx');
-  assert.ok(bar.includes('resolveContextWindow('));
+  assert.ok(bar.includes('describeContextWindow('));
+  assert.ok(!bar.includes('requestedNumCtx'), 'the bar reads the page setting');
+  assert.ok(bar.includes('(model max unknown)'), 'no label for an unknown maximum');
   assert.ok(!/effectiveNumCtx\s*<\s*requestedNumCtx/.test(bar), 'a stale value is read as a cap');
-  assert.ok(!/tokenStats\?\.tokenLimit\s*\|\|/.test(bar), 'the snapshot beats the setting again');
+  assert.ok(!/tokenStats\?\.tokenLimit\s*\|\|/.test(bar), 'the snapshot beats the server again');
+});
+
+check('the page asks the server for the window and keeps it current', () => {
+  const loaders = read('src/app/hooks/useDataLoaders.ts');
+  assert.ok(
+    loaders.includes('`/api/numctx?${params.toString()}`'),
+    'loadNumCtx does not call the endpoint'
+  );
+  assert.ok(loaders.includes('isStaleNumCtxAnswer('), 'a late answer for another model is used');
+  assert.ok(loaders.includes('loadNumCtx,'), 'loadNumCtx is not returned');
+  assert.ok(!loaders.includes('data.modelContextLimit'), 'config still seeds the maximum');
+  const sync = read('src/app/hooks/useNumCtxSync.ts');
+  assert.ok(
+    /\[loadNumCtx, model, providerId, requestedNumCtx]/.test(sync),
+    'not re-asked on change'
+  );
+  assert.ok(sync.includes("addEventListener('focus'"), 'not re-asked on focus');
+  assert.ok(sync.includes('shouldRefetchNumCtx('), 'focus is not throttled');
+  assert.ok(
+    read('src/app/page.tsx').includes('useNumCtxSync(loadNumCtx'),
+    'the page does not use it'
+  );
+});
+
+check('GET /api/config does not probe a provider, so reading it never waits on one', () => {
+  const route = read('src/app/api/config/route.ts');
+  assert.ok(!route.includes('resolveNumCtx'), 'the config route resolves a window');
+  assert.ok(!route.includes('modelContextLimit'), 'the config route still reports a maximum');
+});
+
+check('the page never computes a minimum', () => {
+  for (const file of [
+    'src/app/lib/contextWindow.ts',
+    'src/components/StatusBar/StatusBar.tsx',
+    'src/components/SettingsModal/SettingsModal.tsx',
+    'src/app/hooks/useDataLoaders.ts',
+  ]) {
+    const code = read(file)
+      .replaceAll(/\/\*[\S\s]*?\*\//g, '')
+      .replaceAll(/^\s*\/\/.*$/gm, '');
+    assert.ok(!/Math\.min\(/.test(code), `${file} computes a minimum`);
+  }
 });
 
 // ── Retry and the mid-turn switch use the setting as it is now ─────────────
@@ -413,9 +509,10 @@ check('the page warns when the config cannot be loaded', () => {
   );
 });
 
-check('Retry rebuilds the body from the current setting', () => {
+check('Retry replays the stored body, which carries no window', () => {
   const hook = read('src/app/hooks/useChatStream.ts');
-  assert.ok(hook.includes('withCurrentNumCtx(stored, refs.requestedNumCtxRef.current)'));
+  assert.ok(hook.includes('const body = stored;'), 'retry does not replay the stored body');
+  assert.ok(!hook.includes('withCurrentNumCtx'), 'retry still rewrites the window');
 });
 
 check('the route logs a missing or unreadable config, not only a thrown one', () => {

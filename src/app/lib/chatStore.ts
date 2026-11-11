@@ -172,19 +172,17 @@ export interface ChatState {
   activeProviderId: string | null;
   baseUrl: string;
   /**
-   * The user's requested context-window size, persisted to config.json.
-   * This is what the user typed in Settings; it is *not* the value
-   * sent to the LLM. The server clamps it against the model's runtime
-   * cap and reports the effective value back via the `status` SSE
-   * event's `tokenLimit` field; that value populates
-   * {@link effectiveNumCtx} below.
+   * The GLOBAL context-window setting as saved in config.json: what the
+   * user types in Settings. It is shown in the Settings field and is what
+   * `/ctx` writes. It is NOT the window in use and is never sent with a
+   * request: the server resolves the window itself (this setting, or the
+   * active provider's own, capped by the model's maximum) and reports it
+   * back; that value is {@link effectiveNumCtx} below.
    *
    * `null` until `loadConfig` has delivered the persisted setting — there
    * is deliberately NO stand-in default. A stand-in leaked into the status
-   * bar ("276922/131072 tokens (211%)"), into Settings (which saved it into
-   * config.json) and into request bodies. Consumers treat `null` as "not
-   * known yet": the display shows "—" and request bodies omit `numCtx`
-   * (see `src/app/lib/contextWindow.ts`).
+   * bar ("276922/131072 tokens (211%)") and into Settings, which saved it
+   * into config.json (see `src/app/lib/contextWindow.ts`).
    */
   requestedNumCtx: number | null;
   /**
@@ -198,19 +196,15 @@ export interface ChatState {
    */
   provider: 'ollama' | 'openai-compatible';
   /**
-   * The effective context-window size — the value the server actually
-   * sent to the LLM. `null` until the first `status` or `done` event
-   * arrives; thereafter it tracks the server's most recent reported
-   * value. The clamp itself is never applied on the client.
+   * The context window the SERVER resolved for the selected model: the
+   * setting capped by the model's maximum when that is known. It arrives
+   * from `GET /api/numctx` (`useDataLoaders.loadNumCtx`) and from every
+   * chat turn's `status` event. The page never computes it.
    *
-   * The `null` initial state is important: a non-null default (a
-   * stand-in for "unknown") would be displayed in the Settings modal as
-   * "capped by model limit" the moment the user opens the modal,
-   * which would be a lie — the server has not yet reported a cap.
-   * Components that consume this field should treat `null` as
-   * "server has not yet responded" and either show nothing, show a
-   * muted placeholder, or fall back to `requestedNumCtx` (the
-   * user's own setting) for display purposes.
+   * `null` until the server has answered for the current selection, and
+   * again after the model or provider changes (`staleModelCapReset`).
+   * Consumers show "—" for `null`; the status bar does not substitute the
+   * user's setting, which can differ (a provider has its own window).
    */
   effectiveNumCtx: number | null;
   error: string | null;
@@ -635,15 +629,15 @@ function settleSteerDraft(
 }
 
 /**
- * What the client learned about the PREVIOUS model's window, dropped when the
- * selected model or provider really changes.
+ * What the server told the client about the PREVIOUS model's window, dropped
+ * when the selected model or provider really changes.
  *
  * The model maximum (`tokenStats.modelContextLimit`) and the server's resolved
  * window (`effectiveNumCtx`) describe the model that was selected when the
- * server reported them. Left in place after a switch they would clamp the new
- * model to the old one's limit (a 131k model replaced by a 1M one would still
- * be shown as 131k) until the next turn's `status` event. Cleared, the display
- * shows the user's own setting — "model max unknown" — which is honest.
+ * server reported them. Left in place after a switch they would show the old
+ * model's window under the new model's name (a 131k model replaced by a 1M one
+ * would still read 131k). Cleared, the display shows "—", which is honest; the
+ * page then asks the server again (`useNumCtxSync`) and shows its answer.
  *
  * Only a real change clears: the reducers below compare with the current
  * selection, so re-dispatching the same model is a no-op for these fields.

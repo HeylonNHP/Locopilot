@@ -4,7 +4,7 @@ import { type EventSourceMessage, EventSourceParserStream } from 'eventsource-pa
 import { type Dispatch, type SetStateAction, useCallback } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
-import { numCtxField, positiveInteger, resolveContextWindow } from '@/app/lib/contextWindow';
+import { positiveInteger } from '@/app/lib/contextWindow';
 import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
 import { COMPACT_FOCUS_MAX_CHARS, normaliseCompactionFocus } from '@/services/compact/focus';
 import { formatCompactionReceipt } from '@/services/compact/receipt';
@@ -429,7 +429,6 @@ export function useSlashCommands({
                 messages: currentMessages,
                 model: refs.modelRef.current,
                 providerId: refs.activeProviderIdRef.current,
-                ...numCtxField(refs.requestedNumCtxRef.current),
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
                 compactionProviderId: refs.compactionProviderIdRef.current,
@@ -528,18 +527,12 @@ export function useSlashCommands({
             }
             const oldTokens = compactData.stats?.oldTokenCount;
             const newTokens = compactData.stats?.newTokenCount;
-            // Compare against the server's effective cap (the value the next
-            // turn will actually use), not the user's raw requested value. The
-            // server sends that window with this event; when it does not (an
-            // older server), fall back to the resolved refs. This is a
-            // display-only check, so the worst case is a slightly
-            // conservative warning.
-            const effective = refs.effectiveNumCtxRef.current;
-            const capForWarning = resolveContextWindow({
-              requested: refs.requestedNumCtxRef.current,
-              modelMax: effective,
-              effective,
-            }).limit;
+            // Compare against the server's window (the value the next turn will
+            // actually use), which the server sends with this event; when it
+            // does not (an older server), fall back to the window the server
+            // last reported. This is a display-only check, so the worst case
+            // is a slightly conservative warning.
+            const capForWarning = positiveInteger(refs.effectiveNumCtxRef.current);
             const receipt = formatCompactionReceipt({
               oldTokenCount: typeof oldTokens === 'number' ? oldTokens : null,
               newTokenCount: typeof newTokens === 'number' ? newTokens : null,
@@ -633,7 +626,6 @@ export function useSlashCommands({
               body: JSON.stringify({
                 model: refs.modelRef.current,
                 providerId: refs.activeProviderIdRef.current,
-                ...numCtxField(refs.requestedNumCtxRef.current),
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
                 compactionProviderId: refs.compactionProviderIdRef.current,
@@ -698,7 +690,6 @@ export function useSlashCommands({
               body: JSON.stringify({
                 messages: currentMessages,
                 model: refs.modelRef.current,
-                ...numCtxField(refs.requestedNumCtxRef.current),
                 baseUrl: refs.baseUrlRef.current,
                 sessionId: refs.sessionIdRef.current,
               }),

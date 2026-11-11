@@ -1,18 +1,18 @@
 /**
- * The context window the UI shows and the request bodies send — in one place,
- * with no placeholder.
+ * What the UI shows about the context window — and nothing it works out itself.
  *
- * The rule the user asked for: the window shown (and used) is the one they
- * chose in Settings, unless the selected model supports less, in which case it
- * is the model's maximum. The client used to keep a stand-in value
- * (`DEFAULT_NUM_CTX`, 131 072) for "the config has not loaded yet", and that
- * stand-in leaked: a reloaded session showed "276922/131072 tokens (211%)"
- * for a model that supports 1 000 000, Settings could save the stand-in into
- * `config.json`, and a request could carry it.
+ * The SERVER decides the window: the user's setting (the provider's own, else
+ * the global one) capped by the model's maximum when that is known
+ * (`src/services/contextWindow/resolveNumCtx.ts`). The page asks
+ * `GET /api/numctx` for it, receives it with every chat turn, and displays
+ * what it is told. It never computes a minimum and never invents a stand-in:
+ * the client used to keep one (`DEFAULT_NUM_CTX`, 131 072) for "the config has
+ * not loaded yet", and it leaked — a reloaded session showed
+ * "276922/131072 tokens (211%)" for a model that supports 1 000 000.
  *
- * "I do not know yet" is therefore a first-class state here — `null` — and
- * every consumer decides what to show for it ("—") instead of inventing a
- * number. Everything in this module is pure so the rules are pinned by
+ * "The server has not answered yet" is therefore a first-class state here —
+ * `null` — and every consumer decides what to show for it ("—").
+ * Everything in this module is pure so the rules are pinned by
  * scripts/test-context-window.mjs.
  */
 
@@ -25,58 +25,77 @@ export function positiveInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
-export interface ContextWindowInputs {
-  /** The user's setting. `null` until the config has loaded. */
-  requested: number | null;
-  /** The selected model's maximum as the server reported it; absent when it has not. */
-  modelMax?: number | null | undefined;
-  /**
-   * A limit the server reported for a past turn (0 or absent = none). It is a
-   * snapshot of the setting AT THAT TURN, so it is only used while the setting
-   * itself is unknown — never to override a setting the user has since changed.
-   */
-  reportedLimit?: number | null | undefined;
-  /** The window the server last resolved. Same rule as {@link reportedLimit}. */
+/** What the server reported for the selected model. */
+export interface ServerWindow {
+  /** The window the server will use. Absent or `null` until it has answered. */
   effective?: number | null | undefined;
+  /** The model's maximum as the server reported it; `null` when it does not know. */
+  modelMax?: number | null | undefined;
 }
 
 export interface ContextWindowView {
-  /** The window to show and to compute percentages against; `null` while unknown. */
+  /** The window to show and to compute percentages against; `null` until the server has answered. */
   limit: number | null;
-  /** The model's maximum, set only when it is BELOW the user's setting (so it is the limit). */
+  /** The model's maximum, set when it is what limits the window (the window equals it). */
   cappedAt: number | null;
+  /** True when the server answered but does not know the model's maximum. */
+  maxUnknown: boolean;
 }
 
 /**
- * min(the user's setting, the model's reported maximum) — and nothing else.
+ * How to present what the server said. The window shown is the server's
+ * `effective`; the model's maximum only labels it:
  *
- * - Setting known: the setting, clamped to the model's maximum when that is
- *   known and lower. A stale per-turn snapshot never wins over it.
- * - Setting unknown (config not loaded yet): the server's last reported
- *   window if there is one, else `null`. Never a default.
+ * - no answer yet: `limit: null` ("—", no percentage);
+ * - answered, maximum known and it is the limit: `cappedAt` is set
+ *   ("(model max: M)");
+ * - answered, maximum known and not the limit: no label;
+ * - answered, maximum not known: `maxUnknown` ("(model max unknown)").
+ *
+ * Only a comparison is made here (is the window the maximum?), never a minimum.
  */
-export function resolveContextWindow(inputs: ContextWindowInputs): ContextWindowView {
-  const requested = positiveInteger(inputs.requested);
-  const modelMax = positiveInteger(inputs.modelMax);
-
-  if (requested !== null) {
-    if (modelMax !== null && modelMax < requested) {
-      return { limit: modelMax, cappedAt: modelMax };
-    }
-    return { limit: requested, cappedAt: null };
+export function describeContextWindow(server: ServerWindow): ContextWindowView {
+  const limit = positiveInteger(server.effective);
+  if (limit === null) {
+    return { limit: null, cappedAt: null, maxUnknown: false };
   }
+  const modelMax = positiveInteger(server.modelMax);
+  if (modelMax === null) {
+    return { limit, cappedAt: null, maxUnknown: true };
+  }
+  return { limit, cappedAt: limit === modelMax ? modelMax : null, maxUnknown: false };
+}
 
-  return {
-    limit: positiveInteger(inputs.reportedLimit) ?? positiveInteger(inputs.effective),
-    cappedAt: null,
-  };
+/** The most often a focused window asks the server for the window again. */
+export const NUMCTX_FOCUS_REFETCH_MS = 30_000;
+
+/**
+ * Whether a window focus should ask the server for the window again: yes when
+ * it never has, or last did at least {@link NUMCTX_FOCUS_REFETCH_MS} ago. A tab
+ * left open while the config changed elsewhere (another tab, `config.json`)
+ * would otherwise show a window the server no longer uses.
+ */
+export function shouldRefetchNumCtx(now: number, lastFetchedAt: number | null): boolean {
+  return lastFetchedAt === null || now - lastFetchedAt >= NUMCTX_FOCUS_REFETCH_MS;
 }
 
 /**
- * The `numCtx` field of a request body: present only when the setting is
- * known. While it is unknown the field is OMITTED — the server then reads the
- * persisted config — instead of sending a stand-in value that the server
- * would trust over the config (a body value wins on the server).
+ * Whether a `/api/numctx` answer is for a model that is no longer selected. A
+ * probe can take seconds, and the user can pick another model meanwhile; the
+ * late answer would put the old model's window under the new model's name.
+ */
+export function isStaleNumCtxAnswer(
+  asked: { model: string; providerId: string | null },
+  current: { model: string; providerId: string | null }
+): boolean {
+  return asked.model !== current.model || asked.providerId !== current.providerId;
+}
+
+/**
+ * The `numCtx` field of a request body.
+ *
+ * No longer used: the server ignores a body `numCtx` and resolves the window
+ * itself, so the page stopped sending it. Removed in Phase 3 with its tests.
  */
 export function numCtxField(requested: number | null): { numCtx?: number } {
   const value = positiveInteger(requested);
@@ -120,9 +139,10 @@ export function interpretNumCtxInput(text: string, current: number | null): NumC
 
 /**
  * A stored request body with its `numCtx` replaced by the setting as it is now.
- * Retry uses it: the body was saved when the turn was first sent, and replaying
- * it verbatim would replay the window the user had then. A body that is not a
- * JSON object is returned unchanged.
+ *
+ * No longer used: the page does not send `numCtx`, so a stored body carries
+ * none, and the server resolves the window at the moment of the retry. Removed
+ * in Phase 3 with its tests.
  */
 export function withCurrentNumCtx(body: string, requested: number | null): string {
   let parsed: unknown;

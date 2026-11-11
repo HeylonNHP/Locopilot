@@ -579,11 +579,15 @@ await check('GET /api/numctx asks the resolver, takes an id and a model, and nev
   assert.ok(!/searchParams\.get\('(?:baseUrl|url|apiKey)'\)/.test(route), 'reads a URL or key');
 });
 
-await check('GET /api/config asks about the SELECTED model, not the provider default', () => {
-  const route = read('src/app/api/config/route.ts');
-  assert.ok(route.includes('config.model || resolvedProvider?.provider.model'), 'wrong target');
-  assert.ok(!route.includes('activeProvider.model,'), 'the provider default is still probed');
-});
+await check(
+  'GET /api/config probes no provider (the page reads the window from /api/numctx)',
+  () => {
+    const route = read('src/app/api/config/route.ts');
+    assert.ok(!route.includes('resolveNumCtx'), 'the config route resolves a window');
+    assert.ok(!route.includes('modelContextLimit'), 'the config route still reports a maximum');
+    assert.ok(!route.includes('activeProvider.model,'), 'the provider default is still probed');
+  }
+);
 
 await check('saving the config does not clear a learned limit because the setting changed', () => {
   const route = read('src/app/api/config/route.ts');

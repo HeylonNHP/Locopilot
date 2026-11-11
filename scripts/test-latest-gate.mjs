@@ -135,9 +135,8 @@ check('opening a conversation takes its token from the shared gate', () => {
 
 check('the loader and the session actions share ONE gate', () => {
   assert.ok(
-    loadersSource.includes(
-      'return { loadSessions, loadSessionMessages, loadModels, loadConfig, sessionNavigation }'
-    )
+    /return {[^}]*loadSessionMessages[^}]*sessionNavigation[^}]*}/.test(loadersSource),
+    'the loader does not hand its gate out'
   );
   assert.ok(pageSource.includes('navigation: sessionNavigation'));
 });

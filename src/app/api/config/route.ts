@@ -17,12 +17,7 @@ import {
   RETRY_MAX_ATTEMPTS_MIN,
 } from '@/services/configDefaults';
 import { loadConfig, saveConfig } from '@/services/configManager';
-import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
-import {
-  getNormalizedProviders,
-  resolveProvider,
-  resolveProviderRequestContext,
-} from '@/services/providerResolver';
+import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
 import { invalidateSamplingParamCache } from '@/services/samplingParamsCache';
 import { invalidateVisionCache } from '@/services/visionCache';
 import {
@@ -525,35 +520,10 @@ export async function GET(): Promise<NextResponse> {
     if (!config) {
       return NextResponse.json({ config: {} });
     }
-    // Resolve the model maximum for the SELECTED model (`config.model` on the
-    // active provider) so a freshly mounted tab can show it without waiting
-    // for the first chat turn. Informational: the authoritative window comes
-    // from `GET /api/numctx` and from every chat turn's `status` event. If
-    // resolution fails the field is null rather than a 500.
-    let modelContextLimit: number | null = null;
-    // Pass `config.model` so a stale `activeProviderId` can still recover via
-    // model match instead of silently resolving the first provider (which
-    // would report a maximum for the wrong model).
-    const resolvedProvider = resolveProviderRequestContext(
-      config,
-      config.activeProviderId,
-      config.model
-    );
-    const selectedModel = config.model || resolvedProvider?.provider.model;
-    if (resolvedProvider && selectedModel) {
-      try {
-        const resolved = await resolveNumCtx({
-          ctx: resolvedProvider.ctx,
-          model: selectedModel,
-          providerNumCtx: resolvedProvider.provider.numCtx,
-          configNumCtx: config.numCtx,
-        });
-        modelContextLimit = resolved.modelMax;
-      } catch {
-        // Resolver is best-effort on this read path.
-      }
-    }
-    return NextResponse.json({ config, modelContextLimit });
+    // No provider is probed here: the context window comes from
+    // `GET /api/numctx`, so reading the config never waits on a provider that
+    // is slow or down.
+    return NextResponse.json({ config });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: `Failed to load config: ${message}` }, { status: 500 });

@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 
 import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 import { useChat } from '@/app/lib/chatStore';
-import { interpretNumCtxInput, resolveContextWindow } from '@/app/lib/contextWindow';
+import { describeContextWindow, interpretNumCtxInput } from '@/app/lib/contextWindow';
 import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
@@ -440,22 +440,16 @@ export default function SettingsModal({ onClose }: Props) {
             </div>
 
             {(() => {
-              // Show the "Effective Context Size" row only when the
-              // server has reported a real cap that is smaller than
-              // the user's requested value. Before the first chat
-              // turn (or if the server could not resolve a cap),
-              // `tokenStats.modelContextLimit` is null and we hide
-              // the row entirely — the user only sees their
-              // requested value. Comparing
-              // state.effectiveNumCtx to state.requestedNumCtx
-              // would conflate the pre-response default with a
-              // genuine cap, which is the bug this row guards
-              // against.
-              const { cappedAt: reportedCap } = resolveContextWindow({
-                requested: state.requestedNumCtx,
+              // What the SERVER reports for the selected model: the window it
+              // will use, and whether the model's maximum limits it. The row
+              // is shown when the maximum is the limit, or when the server
+              // does not know the maximum; before it has answered the user
+              // sees only their own setting. Nothing is worked out here.
+              const { limit, cappedAt, maxUnknown } = describeContextWindow({
+                effective: state.effectiveNumCtx,
                 modelMax: state.tokenStats?.modelContextLimit,
               });
-              if (reportedCap === null) return <div />;
+              if (limit === null || (cappedAt === null && !maxUnknown)) return <div />;
               return (
                 <div className="settings-row">
                   <span className="settings-label">Effective Context Size</span>
@@ -463,7 +457,9 @@ export default function SettingsModal({ onClose }: Props) {
                     className="settings-input text-secondary"
                     style={{ display: 'inline-flex', alignItems: 'center' }}
                   >
-                    {reportedCap.toLocaleString()} (capped by model limit)
+                    {cappedAt === null
+                      ? `${limit.toLocaleString()} (model max unknown)`
+                      : `${cappedAt.toLocaleString()} (capped by model limit)`}
                   </span>
                 </div>
               );
