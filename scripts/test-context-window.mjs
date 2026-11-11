@@ -64,7 +64,7 @@ const PLACEHOLDER = 131072;
 function windowOf(state) {
   return describeContextWindow({
     effective: state.effectiveNumCtx,
-    modelMax: state.tokenStats?.modelContextLimit,
+    modelMax: state.modelMaxNumCtx,
   });
 }
 
@@ -253,6 +253,7 @@ check('replay: a model maximum below the setting is shown, and clears on a model
   // Re-selecting the same model must not forget what the server reported.
   const same = chatReducer(state, { type: 'SET_MODEL', model: 'small' });
   assert.equal(same.tokenStats.modelContextLimit, 262_144);
+  assert.equal(same.modelMaxNumCtx, 262_144);
   assert.equal(same.effectiveNumCtx, state.effectiveNumCtx);
   const sameProvider = chatReducer(state, { type: 'SET_ACTIVE_PROVIDER', providerId: 'p1' });
   assert.equal(sameProvider.tokenStats.modelContextLimit, 262_144);
@@ -266,6 +267,7 @@ check('replay: a model maximum below the setting is shown, and clears on a model
     chatReducer(state, { type: 'SET_CONFIG', config: { activeProviderId: 'p2' } }),
   ]) {
     assert.equal(next.tokenStats.modelContextLimit, null);
+    assert.equal(next.modelMaxNumCtx, null);
     assert.equal(next.effectiveNumCtx, null);
     assert.deepEqual(windowOf(next), { limit: null, cappedAt: null, maxUnknown: false });
     assert.equal(next.tokenStats.totalTokens, 11, 'the count is not the model maximum');
@@ -280,6 +282,47 @@ check('replay: a model maximum below the setting is shown, and clears on a model
     config: { model: 'small', yolo: true },
   });
   assert.equal(unrelated.tokenStats.modelContextLimit, 262_144);
+  assert.equal(unrelated.modelMaxNumCtx, 262_144);
+});
+
+check('the window and the maximum survive a cleared token count and a conversation switch', () => {
+  // The maximum belongs to the selected MODEL, not to a conversation's token
+  // stats. If it lived only in the stats, a conversation with no saved stats
+  // would show a window and no maximum, and the bar would claim "model max
+  // unknown" for a model whose maximum the server had reported.
+  let state = chatReducer(initialState, {
+    type: 'SET_CONFIG',
+    config: { model: 'm', activeProviderId: 'p1' },
+  });
+  state = serverAnswer(state, { effective: 262_144, modelMax: 262_144 });
+  const expected = { limit: 262_144, cappedAt: 262_144, maxUnknown: false };
+  assert.deepEqual(windowOf(state), expected);
+
+  state = chatReducer(state, { type: 'CLEAR_TOKEN_STATS' });
+  assert.deepEqual(windowOf(state), expected, 'a cleared count dropped the maximum');
+
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 5 });
+  assert.deepEqual(windowOf(state), expected, 'switching conversation dropped the maximum');
+  state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 6 });
+  state = chatReducer(state, { type: 'CLEAR_TOKEN_STATS' });
+  assert.deepEqual(windowOf(state), expected, 'a conversation with no saved stats lost it');
+});
+
+check('an update without the maximum leaves it alone; only an explicit null clears it', () => {
+  let state = serverAnswer(initialState, { effective: 262_144, modelMax: 262_144 });
+  // A turn's status event that carries a window but no maximum field.
+  state = chatReducer(state, {
+    type: 'SET_TOKEN_STATS',
+    stats: { promptEvalCount: 5, evalCount: 5, totalTokens: 10, tokenLimit: 262_144 },
+  });
+  assert.equal(state.modelMaxNumCtx, 262_144, 'an absent field was read as "unknown"');
+  // The server explicitly says it knows none.
+  state = chatReducer(state, {
+    type: 'SET_TOKEN_STATS',
+    stats: { promptEvalCount: 5, evalCount: 5, totalTokens: 10, modelContextLimit: null },
+  });
+  assert.equal(state.modelMaxNumCtx, null);
+  assert.equal(windowOf(state).maxUnknown, true);
 });
 
 check('the server answer seeds the window and the maximum without touching the count', () => {
@@ -290,6 +333,7 @@ check('the server answer seeds the window and the maximum without touching the c
   state = serverAnswer(state, { effective: 300_000, modelMax: null });
   assert.equal(state.effectiveNumCtx, 300_000);
   assert.equal(state.tokenStats.modelContextLimit, null);
+  assert.equal(state.modelMaxNumCtx, null);
   assert.deepEqual(windowOf(state), { limit: 300_000, cappedAt: null, maxUnknown: true });
   assert.equal(state.tokenStats.totalTokens, 105, 'the count was clobbered');
   assert.equal(state.tokenStats.promptEvalCount, 100);
@@ -412,10 +456,21 @@ check('Settings validates the context size instead of defaulting it', () => {
 check('the status bar shows what the server reported and infers nothing', () => {
   const bar = read('src/components/StatusBar/StatusBar.tsx');
   assert.ok(bar.includes('describeContextWindow('));
+  assert.ok(bar.includes('modelMaxNumCtx'), 'the bar reads a per-conversation maximum');
+  assert.ok(!bar.includes('modelContextLimit'), 'the bar reads the per-conversation stats');
   assert.ok(!bar.includes('requestedNumCtx'), 'the bar reads the page setting');
   assert.ok(bar.includes('(model max unknown)'), 'no label for an unknown maximum');
   assert.ok(!/effectiveNumCtx\s*<\s*requestedNumCtx/.test(bar), 'a stale value is read as a cap');
   assert.ok(!/tokenStats\?\.tokenLimit\s*\|\|/.test(bar), 'the snapshot beats the server again');
+});
+
+check('/ctx saves the setting BEFORE the page changes, so the refetch it causes reads it', () => {
+  const slash = read('src/app/hooks/useSlashCommands.ts');
+  const block = slash.slice(slash.indexOf("case 'ctx': {"), slash.indexOf("case 'ctx': {") + 1500);
+  const save = block.indexOf("fetch('/api/config'");
+  const show = block.indexOf("type: 'SET_CONFIG'");
+  assert.ok(save !== -1 && show !== -1, 'the /ctx handler changed shape');
+  assert.ok(save < show, 'the page is updated before the setting is saved');
 });
 
 check('the page asks the server for the window and keeps it current', () => {

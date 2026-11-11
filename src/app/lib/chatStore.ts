@@ -14,6 +14,7 @@ import type { VisionSupportState } from '@/services/visionCache';
 import type { ToolCallArguments } from '@/tools/tools';
 import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
+import { positiveInteger } from '@/app/lib/contextWindow';
 import { randomId } from '@/app/lib/randomId';
 import { NEW_SESSION_KEY } from '@/app/lib/streamKey';
 import { createBatchedDispatcher } from '@/app/lib/updateBatcher';
@@ -207,6 +208,18 @@ export interface ChatState {
    * user's setting, which can differ (a provider has its own window).
    */
   effectiveNumCtx: number | null;
+  /**
+   * The selected model's maximum context window as the server last reported
+   * it: `null` when the server reported none (it does not know) or has not
+   * answered yet — {@link effectiveNumCtx} tells those two apart (`null` there
+   * means "not answered"). It lives here, not only in `tokenStats`, because
+   * `tokenStats` is per conversation and is cleared or swapped when the user
+   * switches conversation, while the maximum belongs to the selected MODEL.
+   * Like `effectiveNumCtx` it is cleared only when the model or provider
+   * changes (`staleModelCapReset`), and set only by a server answer that
+   * carries the field (an event without it leaves it alone).
+   */
+  modelMaxNumCtx: number | null;
   error: string | null;
   // Approval dialog
   pendingCommand: { name: string; args: ToolCallArguments; toolCallName?: string } | null;
@@ -644,9 +657,10 @@ function settleSteerDraft(
  */
 function staleModelCapReset(
   state: ChatState
-): Pick<ChatState, 'effectiveNumCtx'> & Partial<Pick<ChatState, 'tokenStats'>> {
+): Pick<ChatState, 'effectiveNumCtx' | 'modelMaxNumCtx'> & Partial<Pick<ChatState, 'tokenStats'>> {
   return {
     effectiveNumCtx: null,
+    modelMaxNumCtx: null,
     ...(state.tokenStats === null
       ? {}
       : { tokenStats: { ...state.tokenStats, modelContextLimit: null } }),
@@ -1421,10 +1435,17 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         merged.tokenLimit > 0
           ? merged.tokenLimit
           : null;
+      // The model's maximum, when this update carries it: an explicit `null` is
+      // the server saying it knows none, an absent key says nothing.
+      const maxFromStats =
+        action.stats.modelContextLimit === undefined
+          ? undefined
+          : positiveInteger(action.stats.modelContextLimit);
       return {
         ...state,
         tokenStats: merged,
         ...(effectiveFromStats === null ? {} : { effectiveNumCtx: effectiveFromStats }),
+        ...(maxFromStats === undefined ? {} : { modelMaxNumCtx: maxFromStats }),
       };
     }
     case 'SET_DONE_REASON': {
@@ -1596,6 +1617,7 @@ export const initialState: ChatState = {
   provider: DEFAULT_PROVIDER,
   requestedNumCtx: null,
   effectiveNumCtx: null,
+  modelMaxNumCtx: null,
   error: null,
   pendingCommand: null,
   showApproval: false,

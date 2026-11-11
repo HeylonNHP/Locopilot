@@ -875,7 +875,9 @@ export function useSlashCommands({
           if (!args || Number.isNaN(size) || size <= 0) {
             addSystem('Usage: /ctx <size> (e.g., /ctx 8192)');
           } else {
-            dispatch({ type: 'SET_CONFIG', config: { requestedNumCtx: size } });
+            // Save FIRST, then update the page: changing `requestedNumCtx` makes
+            // the page ask the server for the window again, and that answer must
+            // read the setting that was just saved, not the old one.
             try {
               await fetch('/api/config', {
                 method: 'PUT',
@@ -885,6 +887,7 @@ export function useSlashCommands({
             } catch {
               // Ignore save errors
             }
+            dispatch({ type: 'SET_CONFIG', config: { requestedNumCtx: size } });
             addSystem(`Context size set to ${size}`);
           }
           return;

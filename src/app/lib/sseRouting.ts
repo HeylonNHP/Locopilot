@@ -322,7 +322,11 @@ export function routeSseEvent(
             // model limit" row without conflating it with the
             // client's default-effective value before any server
             // response has arrived.
-            modelContextLimit: data.modelContextLimit ?? null,
+            // An absent field says nothing; only an explicit `null` is the
+            // server saying it knows no maximum.
+            ...(data.modelContextLimit === undefined
+              ? {}
+              : { modelContextLimit: data.modelContextLimit }),
           },
           ...(targetSessionId === undefined ? {} : { targetSessionId }),
         });

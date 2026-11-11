@@ -18,6 +18,7 @@ export default function StatusBar() {
     compactionModel,
     messages,
     effectiveNumCtx,
+    modelMaxNumCtx,
     currentTps,
     completionMode,
     maxPromptLoopIterations,
@@ -146,7 +147,7 @@ export default function StatusBar() {
   // and no percentage — never a stand-in number (see contextWindow.ts).
   const contextWindow = describeContextWindow({
     effective: effectiveNumCtx,
-    modelMax: tokenStats?.modelContextLimit,
+    modelMax: modelMaxNumCtx,
   });
   const tokenLimit = contextWindow.limit;
 

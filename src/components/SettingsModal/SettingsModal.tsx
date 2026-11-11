@@ -447,7 +447,7 @@ export default function SettingsModal({ onClose }: Props) {
               // sees only their own setting. Nothing is worked out here.
               const { limit, cappedAt, maxUnknown } = describeContextWindow({
                 effective: state.effectiveNumCtx,
-                modelMax: state.tokenStats?.modelContextLimit,
+                modelMax: state.modelMaxNumCtx,
               });
               if (limit === null || (cappedAt === null && !maxUnknown)) return <div />;
               return (

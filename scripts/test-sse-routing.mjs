@@ -228,13 +228,28 @@ check('status with tokens updates the stats and the live rate', () => {
         promptEvalCount: 0,
         evalCount: 120,
         isEstimated: false,
-        modelContextLimit: null,
       },
       targetSessionId: 7,
     },
     { type: 'SET_CURRENT_TPS', tps: 30, targetSessionId: 7 },
   ]);
 });
+
+check(
+  'a status without a model maximum says nothing about it; an explicit null says "none"',
+  () => {
+    const stats = (data) => actionsFor('status', data)[0].stats;
+    assert.ok(!('modelContextLimit' in stats({ tokensUsed: 1, tokenLimit: 4096 })));
+    assert.equal(
+      stats({ tokensUsed: 1, tokenLimit: 4096, modelContextLimit: null }).modelContextLimit,
+      null
+    );
+    assert.equal(
+      stats({ tokensUsed: 1, tokenLimit: 4096, modelContextLimit: 8192 }).modelContextLimit,
+      8192
+    );
+  }
+);
 
 check('status without tokens leaves the stats alone', () => {
   assert.deepEqual(actionsFor('status', { tps: 12 }), [

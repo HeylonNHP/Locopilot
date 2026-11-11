@@ -161,7 +161,7 @@ Rules:
 
 ### Phase 2: what was built
 
-Commits: `82e9af9` (resolver), `d9998f9` (endpoint), `2c9ada8` (server routes), `2a91199` (page).
+Commits: `82e9af9` (resolver), `d9998f9` (endpoint), `2c9ada8` (server routes), `2a91199` (page), `c9232f1` (compaction failure reason), and the review fixes after the docs commit.
 
 Where it differs from the plan above:
 
@@ -171,7 +171,8 @@ Where it differs from the plan above:
 - **Compaction is always resolved against its own model**, rather than "only when it differs". For the same endpoint and model the probe is shared (cache and in-flight dedupe), so it costs no second call. The main and compaction windows are resolved in parallel.
 - **llama.cpp is "known" when `meta.n_ctx` is present and `status.value` is `loaded`, or there is no `status`** (a plain llama-server). The plan said "only when `status` is `loaded`".
 - **The page's token display** uses the server's window only. A restored session is measured against the server's current window, not a per-session snapshot. `requestedNumCtxRef` is gone. `numCtxField` and `withCurrentNumCtx` are unused and are removed in Phase 3.
-- **New diagnostic:** `numctx_probe_failed`, logged when a probe fails.
+- **The model maximum is a top-level store field** (`modelMaxNumCtx`), not only part of the per-conversation `tokenStats`, so it survives a conversation switch. An explicit `null` means "the server knows none"; an update without the field leaves it alone. `/ctx` saves before it updates the page.
+- **New diagnostics:** `numctx_probe_failed`, logged when a probe fails, and a `reason` (the first 300 characters of the message) on a failed compaction's `compaction_end` (CONFIRMATIONS C-013).
 - **Decisions 1 to 5 in the table below were adopted as recommended.**
 
 Live checks (2.7): 1, 3, 4, 5 and 6 passed; check 2 (llama.cpp) is blocked because the owner's router was not reachable. See `CONFIRMATIONS.md`.
