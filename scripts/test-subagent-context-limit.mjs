@@ -21,7 +21,8 @@
  * pass, 1 otherwise.
  */
 
-import { clearCapCache, resolveEffectiveNumCtx } from '../src/services/capResolver.ts';
+import { clearCapCache } from '../src/services/capResolver.ts';
+import { resolveNumCtx } from '../src/services/contextWindow/resolveNumCtx.ts';
 import { buildLlmRequestContext } from '../src/services/llm.ts';
 import { adoptDiscoveredContextLimit } from '../src/tools/impl/subAgentTool.ts';
 
@@ -95,10 +96,14 @@ console.log('adoptDiscoveredContextLimit — resolver cache');
     provider: 'openai-compatible',
     baseUrl: config.baseUrl,
   });
-  const resolved = await resolveEffectiveNumCtx(ctx, config.model, REQUESTED);
+  const resolved = await resolveNumCtx({
+    ctx,
+    model: config.model,
+    configNumCtx: REQUESTED,
+  });
 
   assertEq(resolved.source, 'learned', 'a later resolve uses the limit the provider disclosed');
-  assertEq(resolved.modelCap, CAP, 'cached cap is the discovered 262,144');
+  assertEq(resolved.modelMax, CAP, 'cached cap is the discovered 262,144');
   assertEq(resolved.effective, CAP, 'effective is clamped to 262,144, not 1,000,000');
 }
 

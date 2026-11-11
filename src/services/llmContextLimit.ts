@@ -38,7 +38,7 @@ import type { LlmModelInfo } from './adapters/llmAdapter';
  * — `meta.n_ctx` is the served `--ctx-size` and `meta.n_ctx_train` is the
  * GGUF training window. Without these two keys the object walk found nothing
  * behind a llama.cpp-backed provider, the cap resolved to `null`, and
- * `resolveEffectiveNumCtx` fell back to the *requested* numCtx: a
+ * the resolver fell back to the *requested* numCtx: a
  * 1,000,000-token setting therefore survived against a server that only
  * accepts 262,144 tokens.
  */

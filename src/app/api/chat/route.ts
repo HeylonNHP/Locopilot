@@ -2,8 +2,12 @@
  * POST /api/chat – Streaming AI chat route with tool-calling loop.
  *
  * The client sends:
- *   { messages, model, numCtx?, sessionId?, baseUrl?, think?,
+ *   { messages, model, sessionId?, baseUrl?, think?,
  *     completionMode?, maxPromptLoopIterations? }
+ *
+ * The context window is the server's to decide (`resolveNumCtxForModel`): the
+ * saved setting, capped by the model's maximum. A `numCtx` in the body is not
+ * read.
  *
  * The server runs the full AI agent loop (LLM → tools → LLM → …) and
  * streams back Server-Sent Events (SSE) for every incremental update.
@@ -56,7 +60,7 @@ import {
   TPS_STATUS_MIN_INTERVAL_MS,
 } from '@/constants';
 import { getMCPToolsForRequest, parseMCPToolName } from '@/mcp';
-import { recordDiscoveredCap, resolveEffectiveNumCtx } from '@/services/capResolver';
+import { recordDiscoveredCap } from '@/services/capResolver';
 import { createSystemPrompt } from '@/services/chatSession';
 import {
   compactHistory,
@@ -73,6 +77,7 @@ import {
   DEFAULT_OLLAMA_BASE_URL,
 } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
+import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import {
   buildEmptyResponseRecoveryNudge,
   EmptyResponseRecoveryTracker,
@@ -114,7 +119,7 @@ import {
 } from '@/services/mermaidRecovery';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { checkCompleteness } from '@/services/promptLoop';
-import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
+import { getNormalizedProviders, resolveProviderRequestContext } from '@/services/providerResolver';
 import {
   discoverSkills,
   getAllowedToolsFromSkills,
@@ -283,7 +288,6 @@ export async function POST(req: NextRequest): Promise<Response> {
   // Mutable for the whole turn: /api/chat/switch-model can hot-swap the
   // model between tool-call loop iterations. See applyPendingModelSwitch.
   let model: string = body.model as string;
-  const numCtx: number | undefined = body.numCtx as number | undefined;
   const sessionId: number | undefined = body.sessionId as number | undefined;
   const baseUrl: string | undefined = body.baseUrl as string | undefined;
   const providerId: string | undefined =
@@ -329,18 +333,11 @@ export async function POST(req: NextRequest): Promise<Response> {
   const effectiveBaseUrl =
     typeof baseUrl === 'string' && baseUrl.trim() ? baseUrl.trim() : DEFAULT_OLLAMA_BASE_URL;
 
-  // The client's numCtx (from the request body) is treated as the user's
-  // *requested* value. The actual effective value sent to the model is
-  // resolved server-side by resolveEffectiveNumCtx (see below, after
-  // config is loaded) so the clamp against the model's runtime cap is
-  // never the client's responsibility. The fallback chain here mirrors
-  // the priority the resolver will see: explicit per-request value,
-  // persisted config value, then DEFAULT_NUM_CTX.
-  const requestedNumCtx =
-    typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-      ? Math.floor(numCtx)
-      : DEFAULT_NUM_CTX;
-  let effectiveNumCtx = requestedNumCtx;
+  // The window is resolved server-side from the saved setting and the model's
+  // maximum (`resolveNumCtxForModel`, below, once the config is loaded). The
+  // request body is not an input. `DEFAULT_NUM_CTX` stands in only until that
+  // runs, and when no setting can be read at all.
+  let effectiveNumCtx: number = DEFAULT_NUM_CTX;
   /** The model's runtime cap as known to the resolver, or null if unknown. */
   let modelContextLimit: number | null = null;
 
@@ -1038,48 +1035,53 @@ export async function POST(req: NextRequest): Promise<Response> {
         // the new model instead of carrying stale verdicts forward.
 
         /**
-         * Resolve the effective numCtx against the current model's runtime
-         * cap. This is the single backend source of truth for the clamp;
-         * the client never applies it. The body numCtx (requestedNumCtx)
-         * wins over the persisted config value for this turn, falling back
-         * to the active provider's numCtx, then the global config.numCtx,
-         * then DEFAULT_NUM_CTX.
+         * The saved setting AS IT IS AT THE MOMENT OF USE. At the start of a
+         * turn that is the config this turn loaded. At a mid-turn model switch
+         * it is the file as saved now, so lowering the setting mid-turn takes
+         * effect at the next switch. The request body is never consulted.
+         */
+        const settingSource = async (fromSavedSetting: boolean): Promise<Config | null> =>
+          fromSavedSetting ? await loadConfig().catch(() => null) : config;
+
+        /**
+         * The provider whose own `numCtx` applies: the entry in `setting` with
+         * the active provider's id, so a provider window edited mid-turn is
+         * seen at a switch. Falls back to the copy this turn resolved.
+         */
+        const providerForSetting = (
+          setting: Config | null,
+          provider: ProviderConfig | null
+        ): ProviderConfig | null =>
+          provider
+            ? (getNormalizedProviders(setting).find((p) => p.id === provider.id) ?? provider)
+            : null;
+
+        /**
+         * Resolve the window for the current model: the setting (the provider's
+         * own `numCtx`, else the global one) capped by the model's maximum when
+         * that is known. This is the one place the window is decided; the page
+         * only displays what the status events report. `DEFAULT_NUM_CTX`
+         * applies only when no setting exists at all (Phase 3 removes it).
          */
         const resolveNumCtxForModel = async (fromSavedSetting = false): Promise<void> => {
-          // A mid-turn switch (fromSavedSetting) reads the setting AS IT IS NOW
-          // from the saved config, and ignores the body value the turn started
-          // with — lowering the setting mid-turn takes effect at the next switch.
-          // The turn start itself still uses the body value.
-          const setting = fromSavedSetting ? await loadConfig().catch(() => null) : config;
-          const bodyRequested =
-            !fromSavedSetting && typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-              ? Math.floor(numCtx)
-              : undefined;
-          const providerRequested = activeProvider
-            ? getProviderNumCtx(activeProvider, setting?.numCtx)
-            : undefined;
-          const configRequested = setting?.numCtx;
-          const requested =
-            bodyRequested === undefined
-              ? providerRequested !== undefined &&
-                Number.isFinite(providerRequested) &&
-                providerRequested > 0
-                ? providerRequested
-                : typeof configRequested === 'number' &&
-                    Number.isFinite(configRequested) &&
-                    configRequested > 0
-                  ? Math.floor(configRequested)
-                  : requestedNumCtx
-              : bodyRequested;
-          try {
-            const resolved = await resolveEffectiveNumCtx(llmRequestContext, model, requested);
-            effectiveNumCtx = resolved.effective;
-            modelContextLimit = resolved.modelCap;
-          } catch {
-            // Resolver is best-effort: if both probes fail, fall through
-            // with the requested value. The reactive 400 catch below will
-            // catch any over-budget request and update the cap.
-            effectiveNumCtx = requested;
+          const setting = await settingSource(fromSavedSetting);
+          const resolution = await resolveNumCtx({
+            ctx: llmRequestContext,
+            model,
+            providerNumCtx: providerForSetting(setting, activeProvider)?.numCtx,
+            configNumCtx: setting?.numCtx,
+          });
+          effectiveNumCtx = resolution.effective ?? DEFAULT_NUM_CTX;
+          modelContextLimit = resolution.modelMax;
+          if (resolution.probeError !== null) {
+            debugLog.diagnostic({
+              layer: 'route',
+              phase: 'numctx_probe_failed',
+              requestId,
+              sessionId: parsedSessionId,
+              model,
+              reason: resolution.probeError,
+            });
           }
         };
 
@@ -1159,10 +1161,11 @@ export async function POST(req: NextRequest): Promise<Response> {
          * by model matching or by resolveProvider's unrelated default
          * provider.
          */
-        const resolveCompactionRuntime = (
+        const resolveCompactionRuntime = async (
           requestedCompactionModel: string | undefined,
-          requestedCompactionProviderId: string | undefined
-        ): void => {
+          requestedCompactionProviderId: string | undefined,
+          fromSavedSetting = false
+        ): Promise<void> => {
           effectiveCompactionModel = resolveCompactionModel(requestedCompactionModel, model);
           const explicitId =
             typeof requestedCompactionProviderId === 'string' &&
@@ -1173,9 +1176,20 @@ export async function POST(req: NextRequest): Promise<Response> {
             ? resolveProviderRequestContext(config, explicitId, undefined, requestId)
             : null;
           compactionLlmRequestContext = resolved?.ctx ?? llmRequestContext;
-          compactionNumCtx = resolved
-            ? getProviderNumCtx(resolved.provider, config?.numCtx)
-            : effectiveNumCtx;
+
+          // The compaction model has its own maximum, which can be lower than
+          // the main model's. When it is the SAME endpoint and model as the main
+          // request the probe is the one the main window just made (the cache
+          // and the in-flight probe are shared), so this costs no second call.
+          const setting = await settingSource(fromSavedSetting);
+          const resolution = await resolveNumCtx({
+            ctx: compactionLlmRequestContext,
+            model: effectiveCompactionModel,
+            providerNumCtx: providerForSetting(setting, resolved?.provider ?? activeProvider)
+              ?.numCtx,
+            configNumCtx: setting?.numCtx,
+          });
+          compactionNumCtx = resolution.effective ?? DEFAULT_NUM_CTX;
         };
 
         try {
@@ -1215,11 +1229,15 @@ export async function POST(req: NextRequest): Promise<Response> {
             }
           }
 
-          await resolveNumCtxForModel();
-          resolveCompactionRuntime(
-            compactionModel ?? config?.compactionModel,
-            compactionProviderId
-          );
+          // The main window and the compaction window are independent probes:
+          // run them together so a slow provider costs one timeout, not two.
+          await Promise.all([
+            resolveNumCtxForModel(),
+            resolveCompactionRuntime(
+              compactionModel ?? config?.compactionModel,
+              compactionProviderId
+            ),
+          ]);
 
           // Compute allowedTools from always-apply skills (best-effort)
           let allowedTools: string[] | undefined;
@@ -1251,7 +1269,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             baseUrl: effectiveBaseUrl,
             requestId,
           });
-          resolveCompactionRuntime(compactionModel, undefined);
+          await resolveCompactionRuntime(compactionModel, undefined);
           requestContext = buildRequestContext(null, null);
         }
         // Build the merged tool list (static native TOOLS + dynamic MCP
@@ -1375,6 +1393,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // requests to the old provider). The actual model mutation
           // stays gated on modelChanged so a provider-only switch does
           // not also rewrite the model name.
+          let mainWindow: Promise<void> = Promise.resolve();
           const modelChanged = pending.model !== undefined && pending.model !== model;
           const providerChanged =
             pending.providerId !== undefined && pending.providerId !== providerId;
@@ -1408,7 +1427,8 @@ export async function POST(req: NextRequest): Promise<Response> {
                 requestId,
               });
             }
-            await resolveNumCtxForModel(true);
+            // The window probe runs alongside the vision and sampling probes.
+            mainWindow = resolveNumCtxForModel(true);
             visionSupported = await resolveVisionForModel();
             samplingParamSupport = await resolveSamplingSupportForModel();
             refreshSystemPrompt();
@@ -1419,10 +1439,14 @@ export async function POST(req: NextRequest): Promise<Response> {
           // anyone on "same as main".
           const nextCompactionModel =
             pending.compactionModel ?? compactionModel ?? config?.compactionModel;
-          resolveCompactionRuntime(
-            nextCompactionModel,
-            pending.compactionProviderId ?? compactionProviderId
-          );
+          await Promise.all([
+            mainWindow,
+            resolveCompactionRuntime(
+              nextCompactionModel,
+              pending.compactionProviderId ?? compactionProviderId,
+              true
+            ),
+          ]);
 
           // Mutating in place (rather than rebuilding the context) is what
           // lets an already-running run_subagents batch see the new model.

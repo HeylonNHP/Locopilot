@@ -116,6 +116,7 @@ export type DiagnosticPhase =
   | 'error'
   | 'model_switched'
   | 'config_unavailable'
+  | 'numctx_probe_failed'
   | 'cleanup'
   | 'oauth_discovery'
   | 'oauth_redirect'

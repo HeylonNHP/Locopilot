@@ -590,6 +590,76 @@ await check('saving the config does not clear a learned limit because the settin
   assert.ok(!route.includes('current.numCtx !== next.numCtx'), 'numCtx still invalidates');
 });
 
+// ── the server owns the window ─────────────────────────────────────────────
+
+console.log('the server owns the window: no request body value is used');
+
+const SERVER_ROUTES = [
+  'src/app/api/chat/route.ts',
+  'src/app/api/compact/route.ts',
+  'src/app/api/title/route.ts',
+  'src/app/api/dump/route.ts',
+];
+
+for (const file of SERVER_ROUTES) {
+  await check(`${file} does not read numCtx from the request body`, () => {
+    const source = read(file);
+    assert.ok(!/body\.numCtx/.test(source), 'reads body.numCtx');
+    assert.ok(!/\bconst numCtx\b/.test(source), 'has a numCtx taken from the request');
+    assert.ok(!source.includes('bodyRequested'), 'still has a body-supplied setting');
+    assert.ok(source.includes('resolveNumCtx('), 'does not use the resolver');
+  });
+}
+
+await check(
+  'the chat route resolves a mid-turn switch from the saved config, and keeps both hooks',
+  () => {
+    const route = read('src/app/api/chat/route.ts');
+    assert.match(route, /fromSavedSetting \? await loadConfig\(\)/);
+    assert.ok(
+      route.includes('resolveNumCtxForModel(true)'),
+      'the switch does not use the saved setting'
+    );
+    assert.ok(route.includes('refreshModels'), 'the sub-agent switch hook is gone');
+  }
+);
+
+await check(
+  'the compaction window is resolved against the compaction model, in parallel with the main one',
+  () => {
+    const route = read('src/app/api/chat/route.ts');
+    assert.ok(
+      /compactionNumCtx = resolution\.effective/.test(route),
+      'compaction window not resolved'
+    );
+    assert.ok(
+      /await Promise\.all\(\[\s*resolveNumCtxForModel\(\),\s*resolveCompactionRuntime\(/.test(
+        route
+      ),
+      'the two windows are not resolved together'
+    );
+  }
+);
+
+await check('no server code takes a window from a provider default or /api/ps', () => {
+  for (const file of [
+    ...SERVER_ROUTES,
+    'src/app/api/config/route.ts',
+    'src/app/api/numctx/route.ts',
+  ]) {
+    const source = read(file);
+    assert.ok(!source.includes('resolveEffectiveNumCtx'), `${file} uses the old resolver`);
+    assert.ok(!source.includes('getProviderNumCtx'), `${file} uses the provider-default helper`);
+    assert.ok(!source.includes('fetchLlmRunningModelContextLength'), `${file} reads /api/ps`);
+  }
+});
+
+await check('a probe failure is logged, not silent', () => {
+  const route = read('src/app/api/chat/route.ts');
+  assert.ok(route.includes("phase: 'numctx_probe_failed'"));
+  assert.ok(read('src/app/lib/debugLogger.ts').includes("'numctx_probe_failed'"));
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) {
   process.exitCode = 1;

@@ -1,9 +1,10 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { enqueueSessionRename } from '@/app/lib/sessionWriteQueue';
-import { resolveEffectiveNumCtx } from '@/services/capResolver';
+import { DEFAULT_NUM_CTX } from '@/constants';
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
+import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import { listSessions, loadSessionMessages } from '@/services/history';
 import {
   buildLlmRequestContext,
@@ -12,7 +13,7 @@ import {
   type LlmRequestContext,
 } from '@/services/llm';
 import { resolveCompactionModel } from '@/services/modelManager';
-import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
+import { resolveProviderRequestContext } from '@/services/providerResolver';
 import { generateSessionTitle } from '@/services/titleGeneration';
 
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const model = body.model;
-  const numCtx = body.numCtx;
   const baseUrl = body.baseUrl;
   const providerId = body.providerId;
   const compactionModel = body.compactionModel;
@@ -106,35 +106,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               : DEFAULT_OLLAMA_BASE_URL,
         });
 
-    // Resolve the effective numCtx against the model's runtime cap. The
-    // body numCtx is an explicit per-request override; otherwise the
-    // resolved provider's numCtx wins, falling back to the global config
-    // value and finally DEFAULT_NUM_CTX. The clamp itself is the server's
-    // responsibility.
-    const bodyRequested =
-      typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-        ? Math.floor(numCtx)
-        : null;
-    const providerRequested = resolved
-      ? getProviderNumCtx(resolved.provider, config?.numCtx)
-      : config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
-        ? Math.floor(config.numCtx)
-        : null;
-    const requested = bodyRequested ?? providerRequested ?? 0;
-    let effectiveNumCtx = requested;
-    if (requested > 0) {
-      try {
-        const resolved = await resolveEffectiveNumCtx(
-          llmRequestContext,
-          model as string,
-          requested
-        );
-        effectiveNumCtx = resolved.effective;
-      } catch {
-        // Resolver is best-effort; fall through with the requested
-        // value.
-      }
-    }
     const effectiveCompactionModel = resolveCompactionModel(
       typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
       model.trim()
@@ -163,13 +134,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       : null;
     const compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
 
-    // numCtx for the compaction LLM call. When a compaction provider
-    // resolved, prefer ITS numCtx so a per-provider context limit (e.g.
-    // NVIDIA 300000 vs Ollama default) is honored. Otherwise the same
-    // main numCtx is used.
-    const compactionNumCtx = compactionResolved
-      ? getProviderNumCtx(compactionResolved.provider, config?.numCtx)
-      : effectiveNumCtx;
+    // The window for the title call: the saved setting (the provider's own
+    // numCtx, else the global one) capped by the TITLE model's own maximum. The
+    // request body is not an input. `generateSessionTitle` applies its own,
+    // smaller cap on top, so a long title cannot be produced whatever the window.
+    const titleWindow = await resolveNumCtx({
+      ctx: compactionLlmRequestContext,
+      model: effectiveCompactionModel,
+      providerNumCtx: (compactionResolved?.provider ?? resolved?.provider)?.numCtx,
+      configNumCtx: config?.numCtx,
+    });
+    const compactionNumCtx = titleWindow.effective ?? DEFAULT_NUM_CTX;
 
     const title = await generateSessionTitle(
       compactionLlmRequestContext,

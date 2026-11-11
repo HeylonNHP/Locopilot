@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { resolveEffectiveNumCtx } from '@/services/capResolver';
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
+import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import { listSessions } from '@/services/history';
 import {
   buildConversationDumpMarkdown,
@@ -56,33 +56,28 @@ export async function POST(request: NextRequest): Promise<Response> {
       typeof body.baseUrl === 'string' && body.baseUrl.trim().length > 0
         ? body.baseUrl.trim()
         : DEFAULT_OLLAMA_BASE_URL;
-    // Resolve the effective numCtx against the model's runtime
-    // cap for the dump's runtimeNumCtx field. The dump is
-    // informational (no LLM call) so the cap is just a
-    // best-effort label. The savedNumCtx field is the user's
-    // persisted requested value.
-    const bodyRequested = parsePositiveInteger(body.numCtx);
+    // The dump labels the window the server resolves for this model: the saved
+    // setting (the provider's own numCtx, else the global one) capped by the
+    // model's maximum. The request body is not an input. The dump is
+    // informational (no LLM call), so a failed lookup is just an unlabelled
+    // window. `savedNumCtx` is the global setting as saved.
     const configRequested =
       config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
         ? Math.trunc(config.numCtx)
         : undefined;
-    const requested = bodyRequested ?? configRequested ?? 0;
-    let effectiveNumCtx = requested;
-    if (requested > 0) {
-      try {
-        // Prefer the resolved provider's context (credentials + baseUrl);
-        // fall back to an unauthenticated context against the effective
-        // base URL when no provider resolves.
-        const resolvedProvider = resolveProviderRequestContext(config, undefined, model);
-        const measurementContext = resolvedProvider
-          ? resolvedProvider.ctx
-          : buildLlmRequestContext({ baseUrl: effectiveBaseUrl });
-        const resolved = await resolveEffectiveNumCtx(measurementContext, model, requested);
-        effectiveNumCtx = resolved.effective;
-      } catch {
-        // Resolver is best-effort.
-      }
-    }
+    // Prefer the resolved provider's context (credentials + baseUrl); fall
+    // back to an unauthenticated context against the effective base URL when
+    // no provider resolves.
+    const resolvedProvider = resolveProviderRequestContext(config, undefined, model);
+    const windowResolution = await resolveNumCtx({
+      ctx: resolvedProvider
+        ? resolvedProvider.ctx
+        : buildLlmRequestContext({ baseUrl: effectiveBaseUrl }),
+      model,
+      providerNumCtx: resolvedProvider?.provider.numCtx,
+      configNumCtx: config?.numCtx,
+    });
+    const effectiveNumCtx = windowResolution.effective ?? 0;
     const savedNumCtx = configRequested;
     const parsedSessionId = parsePositiveInteger(body.sessionId);
     const sessionName = parsedSessionId

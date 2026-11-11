@@ -11,9 +11,9 @@
  * Each test prints PASS/FAIL with a one-line label. Exit code is 0
  * when all pass, 1 otherwise.
  *
- * The cap resolver's full resolveEffectiveNumCtx() (which calls
- * Ollama /api/ps and /api/show) is exercised end-to-end against a
- * running server in scripts/verify-numctx.mjs.
+ * The resolver itself is covered, with fake probes, in
+ * scripts/test-numctx-resolver.mjs, and end-to-end against a running
+ * server in scripts/verify-numctx.mjs.
  */
 
 import { clearCapCache, invalidateCapCache } from '../src/services/capResolver.ts';

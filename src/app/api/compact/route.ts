@@ -5,8 +5,7 @@ import type { SseEventPayloadMap } from '@/types/sse';
 
 import { debugLog } from '@/app/lib/debugLogger';
 import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
-import { SSE_KEEPALIVE_MS } from '@/constants';
-import { resolveEffectiveNumCtx } from '@/services/capResolver';
+import { DEFAULT_NUM_CTX, SSE_KEEPALIVE_MS } from '@/constants';
 import { compactHistory } from '@/services/compact';
 import { RECENT_FILES_LOAD_LIMIT } from '@/services/compact/constants';
 import {
@@ -16,6 +15,7 @@ import {
 } from '@/services/compact/focus';
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
+import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import { loadRecentFiles } from '@/services/history';
 import {
   buildLlmRequestContext,
@@ -26,7 +26,7 @@ import {
   type SubagentLogMessage,
 } from '@/services/llm';
 import { resolveCompactionModel } from '@/services/modelManager';
-import { getProviderNumCtx, resolveProviderRequestContext } from '@/services/providerResolver';
+import { resolveProviderRequestContext } from '@/services/providerResolver';
 import { getAgentWorkingDirectory } from '@/tools/workingDirectory';
 import {
   forwardableReasoningEffort,
@@ -58,7 +58,6 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const messages = body.messages;
   const model = body.model;
-  const numCtx = body.numCtx;
   const baseUrl = body.baseUrl;
   const providerId = body.providerId;
   const compactionModel = body.compactionModel;
@@ -197,35 +196,6 @@ export async function POST(request: NextRequest): Promise<Response> {
                   ? baseUrl.trim()
                   : DEFAULT_OLLAMA_BASE_URL,
             });
-        // Resolve the effective numCtx against the model's runtime cap.
-        // The body numCtx is an explicit per-request override; otherwise the
-        // resolved provider's numCtx wins, falling back to the global config
-        // value and finally DEFAULT_NUM_CTX. The clamp is the server's
-        // responsibility, not the client's.
-        const bodyRequested =
-          typeof numCtx === 'number' && Number.isFinite(numCtx) && numCtx > 0
-            ? Math.floor(numCtx)
-            : null;
-        const providerRequested = resolved
-          ? getProviderNumCtx(resolved.provider, config?.numCtx)
-          : config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
-            ? Math.floor(config.numCtx)
-            : null;
-        const requested = bodyRequested ?? providerRequested;
-        let effectiveNumCtx = requested ?? 0;
-        if (requested !== null) {
-          try {
-            const resolved = await resolveEffectiveNumCtx(
-              llmRequestContext,
-              model as string,
-              requested
-            );
-            effectiveNumCtx = resolved.effective;
-          } catch {
-            // Resolver is best-effort; fall through with the
-            // requested value.
-          }
-        }
         const effectiveCompactionModelResolved = resolveCompactionModel(
           typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
           model.trim()
@@ -255,12 +225,28 @@ export async function POST(request: NextRequest): Promise<Response> {
           : null;
         const compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
 
-        // numCtx for the compaction LLM call. When a compaction provider
-        // resolved, prefer ITS numCtx so a per-provider context limit is
-        // honored; otherwise use the main effectiveNumCtx.
-        const compactionNumCtx = compactionResolved
-          ? getProviderNumCtx(compactionResolved.provider, config?.numCtx)
-          : effectiveNumCtx;
+        // The windows come from the server's saved setting and each model's own
+        // maximum; the request body is not an input. The main window is what
+        // the next turn runs in (the receipt's overflow check); the compaction
+        // window is what the summarising calls are planned against, and the
+        // compaction model can have a lower maximum than the main one. When
+        // both are the same endpoint and model the probe is shared.
+        const [mainWindow, compactionWindow] = await Promise.all([
+          resolveNumCtx({
+            ctx: llmRequestContext,
+            model: model as string,
+            providerNumCtx: resolved?.provider.numCtx,
+            configNumCtx: config?.numCtx,
+          }),
+          resolveNumCtx({
+            ctx: compactionLlmRequestContext,
+            model: effectiveCompactionModel,
+            providerNumCtx: (compactionResolved?.provider ?? resolved?.provider)?.numCtx,
+            configNumCtx: config?.numCtx,
+          }),
+        ]);
+        const effectiveNumCtx = mainWindow.effective ?? DEFAULT_NUM_CTX;
+        const compactionNumCtx = compactionWindow.effective ?? DEFAULT_NUM_CTX;
 
         // Strip system and subagent_log messages before compacting — system prompt
         // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.

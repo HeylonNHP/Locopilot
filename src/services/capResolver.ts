@@ -40,9 +40,6 @@
  * other's maximum. The provider kind is in the key because one endpoint can be
  * reached through both adapters, and they read the maximum from different
  * places.
- *
- * `resolveEffectiveNumCtx` at the bottom is the previous entry point, kept
- * only until the routes move to `resolveNumCtx`.
  */
 
 import type { ModelMaxSource } from '@/types/numCtx';
@@ -277,33 +274,4 @@ export function invalidateCapCache(baseUrl?: string, modelName?: string): void {
       inflight.delete(key);
     }
   }
-}
-
-// ── Previous entry point ───────────────────────────────────────────────────
-// Kept until the routes call `resolveNumCtx`; the next commit removes it.
-
-/** Result of the previous resolver. */
-export interface ResolvedNumCtx {
-  effective: number;
-  requested: number;
-  modelCap: number | null;
-  runtime: null;
-  source: ModelMaxSource;
-}
-
-/** @deprecated Use `resolveNumCtx` from `./contextWindow/resolveNumCtx`. */
-export async function resolveEffectiveNumCtx(
-  ctx: LlmRequestContext,
-  modelName: string,
-  requestedNumCtx: number
-): Promise<ResolvedNumCtx> {
-  const requested = Math.max(0, Math.floor(requestedNumCtx));
-  const { modelMax, source } = await resolveModelMax(ctx, modelName);
-  return {
-    effective: modelMax === null ? requested : Math.min(requested, modelMax),
-    requested,
-    modelCap: modelMax,
-    runtime: null,
-    source,
-  };
 }

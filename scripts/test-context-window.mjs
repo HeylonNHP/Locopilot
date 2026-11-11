@@ -392,14 +392,12 @@ check('Retry adds the setting when the stored body had none, and leaves non-obje
 
 check('the route resolves a mid-turn switch from the saved setting, not the body', () => {
   const route = read('src/app/api/chat/route.ts');
+  assert.ok(route.includes('resolveNumCtxForModel(true)'), 'the switch does not pass the flag');
   assert.ok(
-    route.includes('await resolveNumCtxForModel(true);'),
-    'the switch does not pass the flag'
+    /fromSavedSetting \? await loadConfig\(\)/.test(route),
+    'the switch does not re-read the saved config'
   );
-  assert.ok(
-    /const bodyRequested =\s*!fromSavedSetting/.test(route),
-    'the body value is not ignored at the switch'
-  );
+  assert.ok(!route.includes('bodyRequested'), 'the body value is still an input');
   assert.ok(route.includes("phase: 'config_unavailable'"), 'a config fallback is not logged');
 });
 
