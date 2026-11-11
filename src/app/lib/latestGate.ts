@@ -13,7 +13,7 @@
  * typed into the conversation the user had just left.
  *
  * It is a plain object rather than a ref in the hook so the ordering rule can
- * be tested directly (scripts/test-latest-gate.mjs).
+ * be tested directly (tests/latest-gate.test.mjs).
  */
 export interface LatestGate {
   /** Start a piece of work. Every earlier piece of work becomes stale. */

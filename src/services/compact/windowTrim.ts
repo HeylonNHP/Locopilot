@@ -16,7 +16,7 @@
  * and never touches the history. `orchestrate.ts` owns the rebuild and the
  * notice it appends to the summary.
  *
- * INVARIANTS (all covered by scripts/test-compact-trim.mjs):
+ * INVARIANTS (all covered by tests/compact-trim.test.mjs):
  *
  * 1. SUBSEQUENCE. `messages` is a subsequence of `preserved` — EXCEPT that the
  *    latest real user message may be hoisted to index 0 (see rule 3 below), in

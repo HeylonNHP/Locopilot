@@ -89,3 +89,19 @@ endpoint that requires a Bearer token, set `apiKey` on that provider in
 The key is sent as an `Authorization: Bearer <key>` header on every
 request to that provider. Providers without an `apiKey` field behave
 exactly as before.
+
+## Running the tests
+
+The tests use [Jest](https://jestjs.io/) and live in `tests/`.
+
+```bash
+npm test                            # everything
+npm test -- tests/compact-budget    # one file, by path
+npm test -- -t "numCtx"             # by test name
+npm run test:watch                  # re-run on change
+npm run test:coverage               # V8 coverage of src/
+```
+
+A few tests drive headless Chromium; install it once with `npx playwright install chromium`.
+
+**WebStorm:** open the shared **All tests** run configuration (from `.run/`). To run a single test from the gutter icon, add `--experimental-vm-modules` to the Node options of the Jest run configuration _template_ once (Run | Edit Configurations | Edit configuration templates | Jest). The project is native ESM, and Jest needs that flag for ES modules.

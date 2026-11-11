@@ -14,7 +14,7 @@ jobs:
   quality:
     name: Code Quality
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,4 +25,6 @@ jobs:
       - run: npx eslint . --max-warnings 0
       - run: npx prettier --check .
       - run: npx tsc --noEmit
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
       - run: npm run build

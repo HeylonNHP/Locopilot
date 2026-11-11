@@ -556,7 +556,7 @@ export const RECENT_FILES_MAX_WINDOW_RATIO = 0.1;
  * mandatory part fits, or returns no stub — because this constant is a cheap
  * pre-filter, not the correctness condition.
  *
- * `scripts/test-compact-recent-files.mjs` pins both halves: the floor covers a
+ * `tests/compact-recent-files.test.mjs` pins both halves: the floor covers a
  * five-bullet stub of 80-character paths, and a budget of exactly this many
  * tokens really does buy that stub.
  */

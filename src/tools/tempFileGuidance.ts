@@ -84,7 +84,7 @@
  * resolved path (`/tmp`, `C:\Users\me\AppData\Local\Temp`) is
  * host-specific, so baking it into the prompt would make the prompt differ
  * from machine to machine - and the system prompt is the most cache-
- * sensitive part of a request (see `scripts/test-prompt-cache-stability.mjs`).
+ * sensitive part of a request (see `tests/prompt-cache-stability.test.mjs`).
  * It would also be wrong on the next machine. Naming the variable keeps the
  * prompt byte-stable across hosts and lets the model discover the real value
  * for itself.
@@ -95,7 +95,7 @@
  *
  * Keep it a single paragraph and keep it byte-stable: it is a static constant
  * and is interpolated into both prompts unchanged. The test script
- * `scripts/test-temp-file-guidance.mjs` pins the exact bytes with a SHA-256
+ * `tests/temp-file-guidance.test.mjs` pins the exact bytes with a SHA-256
  * digest, so any edit to this string has to be a DELIBERATE one.
  */
 export const TEMP_FILE_GUIDANCE =

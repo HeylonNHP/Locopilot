@@ -119,7 +119,7 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Predicted, not yet tested:** `Muse-Glimmer-30B-Q4_K_M` (`context_length` 131,072, `--ctx-size 262144`, no YaRN) should be enforced at **131,072**, because the trained value caps each slot. A request above 131,072 should be refused with `(131072 tokens)`.
   - The owner recalls that this model natively supports a 128K window, which is 131,072 tokens. That is consistent with the prediction, but it is the owner's recollection and has not been checked against the model card.
 - **Still open:** the Muse load failed twice (HTTP 500, "failed to load") on 2026-11-11, and the router's logs are not reachable from here. To test the prediction, load it on the owner's router and send a prompt of about 140,000 tokens with `max_tokens: 1`.
-- **Built in Phase 2 (2026-11-11):** `getLlamaCppServedWindow` in `src/services/llmContextLimit.ts`. A llama.cpp model is known only when its `/v1/models` entry has `meta.n_ctx` and its `status.value` is `loaded` (or there is no `status`, as on a plain llama-server). `context_length` and `n_ctx_train` are never used, and an unloaded model is unknown. Checked with fixtures, and through the real adapter mapping against a local test server (`scripts/test-numctx-resolver.mjs`). **Not checked live against the owner's router**: it was not reachable from this machine on 2026-11-11 (HTTP 000 on `localhost:60300`). The resolver reads the served window from the model list, not from `GET /props?model=` or from a refusal's `n_ctx`; the refusal body is still learned from through its message.
+- **Built in Phase 2 (2026-11-11):** `getLlamaCppServedWindow` in `src/services/llmContextLimit.ts`. A llama.cpp model is known only when its `/v1/models` entry has `meta.n_ctx` and its `status.value` is `loaded` (or there is no `status`, as on a plain llama-server). `context_length` and `n_ctx_train` are never used, and an unloaded model is unknown. Checked with fixtures, and through the real adapter mapping against a local test server (`tests/numctx-resolver.test.mjs`). **Not checked live against the owner's router**: it was not reachable from this machine on 2026-11-11 (HTTP 000 on `localhost:60300`). The resolver reads the served window from the model list, not from `GET /props?model=` or from a refusal's `n_ctx`; the refusal body is still learned from through its message.
 - **Consequence for Phase 2 (as planned):**
   - `context_length` from `/v1/models` is not the maximum to clamp to for llama.cpp.
   - For a loaded model, read the served value from `GET /props?model=<name>` (`default_generation_settings.n_ctx`), or from the refusal's `n_ctx`.
@@ -133,7 +133,7 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 
 ### A-001 — Log the response body for 400 errors on the Ollama path
 
-- **Status:** Done in commit `5597e3d`. Verified live (a 400 from Ollama, "does not support chat", was logged with its body) and by `scripts/test-ollama-error-log.mjs`.
+- **Status:** Done in commit `5597e3d`. Verified live (a 400 from Ollama, "does not support chat", was logged with its body) and by `tests/ollama-error-log.test.mjs`.
 - **What now happens:** both Ollama request paths log a 400's body as an adapter `error` diagnostic (`errorStatus`, `errorBody`, `requestId`, `model`). The body is cut to 1,000 characters. The user-facing message is unchanged.
 - **To use it:** search `logs/locopilot-debug.log` for `"phase":"error"` with `"layer":"adapter"`. The `requestId` matches the chat turn.
 - **Not covered:** a compaction failure that is not an HTTP 400 (C-013) still has no error text. The sub-agent's own error path logs the status, not the body.
@@ -160,8 +160,8 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 ### A-005 — Commit the missing-config log fix
 
 - **Status:** Done, committed as `dc66b49`.
-- **What:** `src/app/api/chat/route.ts` now logs `config_unavailable` when `loadConfig()` returns `null`. Before, the log sat only in the `catch`, and `loadConfig()` never throws, so a missing or unreadable config was not logged. A regression check is in `scripts/test-context-window.mjs`.
-- **Committed with:** the regression check in `scripts/test-context-window.mjs`.
+- **What:** `src/app/api/chat/route.ts` now logs `config_unavailable` when `loadConfig()` returns `null`. Before, the log sat only in the `catch`, and `loadConfig()` never throws, so a missing or unreadable config was not logged. A regression check is in `tests/context-window.test.mjs`.
+- **Committed with:** the regression check in `tests/context-window.test.mjs`.
 
 ---
 

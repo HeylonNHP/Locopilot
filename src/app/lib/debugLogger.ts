@@ -25,7 +25,7 @@ let pinoLogger: pino.Logger | undefined;
  *
  * Why lazy rather than at module load: `pino.destination(...)` opens a
  * SonicBoom and registers a process-exit flush hook. A process that merely
- * *imports* this module — for example a standalone `scripts/test-*.mjs` that
+ * *imports* this module — for example a standalone `tests/*.test.mjs` that
  * pulls in `configLoader` (which now reaches `clientManager`) — would then
  * print a spurious `sonic boom is not ready yet` stack trace the moment it
  * calls `process.exit()` before the async destination is ready. Deferring

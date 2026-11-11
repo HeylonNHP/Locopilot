@@ -4,7 +4,7 @@
  *
  * Why this is its own file:
  * - It is deliberately dependency-free: no `node:*`, no MCP SDK, no
- *   `debugLogger`, no I/O. That keeps the standalone `scripts/test-*.mjs`
+ *   `debugLogger`, no I/O. That keeps the standalone `tests/*.test.mjs`
  *   regression suite network-free and side-effect-free — importing
  *   `clientManager` / `oauthProvider` would drag in pino and the token
  *   store. This mirrors the `CLAUDE.md` guidance to separate business

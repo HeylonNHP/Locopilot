@@ -33,7 +33,7 @@ interface Props {
  * that redrew EVERY bubble — so the cost of a chunk grew with the length of
  * the conversation. With the default shallow comparison a bubble redraws only
  * when its own props change. That depends on two things, both pinned by
- * scripts/test-message-memo.mjs:
+ * tests/message-memo.test.mjs:
  *   - the reducer replaces only the message that changed and keeps every other
  *     message the SAME object (a reload from the database is the exception:
  *     every bubble redraws once, at the end of a turn);

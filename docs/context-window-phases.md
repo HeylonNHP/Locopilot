@@ -122,14 +122,14 @@ Rules:
 
 ### 2.6 Tests
 
-- **`scripts/test-numctx-resolver.mjs`** (new), with fake probes and the fake clock (`scripts/fakeClock.mjs`):
+- **`tests/numctx-resolver.test.mjs`** (new), with fake probes and the fake clock (`tests/helpers/fakeClock.mjs`):
   - provider beats config; the body is ignored (a source pin on the route);
   - Ollama: `context_length` used; `/api/ps` never used;
   - llama.cpp: unloaded is unknown; loaded uses `meta.n_ctx`; `context_length` is never used;
   - NVIDIA: unknown; a learned 400 applies for 5 minutes;
   - timeout after 10 s; failure cached for 60 s; success cached for 5 minutes;
   - a probe that fails does not stall a second turn within the 60 s window.
-- **Update** `scripts/test-context-window.mjs`, `scripts/test-compact-receipt.mjs`, and the source pins that name `requestedNumCtxRef`.
+- **Update** `tests/context-window.test.mjs`, `tests/compact-receipt.test.mjs`, and the source pins that name `requestedNumCtxRef`.
 - **Keep passing:** `test-chat-store.mjs`, `test-sse-routing.mjs`, `test-stream-machine.mjs`, `test-slash-command-routing.mjs`, `test-update-batcher.mjs`, `test-message-memo.mjs`.
 - **`tsc --noEmit`, eslint, prettier, and `next build`.**
 
@@ -211,7 +211,7 @@ Live checks (2.7): 1, 3, 4, 5 and 6 passed; check 2 (llama.cpp) is blocked becau
 
 ### Phase 3: what was built
 
-- **3.1 fresh-file default:** the 131072 default is written only when `config.json` is created (`readConfig` → `buildFreshConfig`). A PUT to an existing file no longer merges a window default. Test: `scripts/test-config-load.mjs`.
+- **3.1 fresh-file default:** the 131072 default is written only when `config.json` is created (`readConfig` → `buildFreshConfig`). A PUT to an existing file no longer merges a window default. Test: `tests/config-load.test.mjs`.
 - **3.2 numberless 400:** the plan's "recognise that family of messages" is two phrasings (`invalid params, context window exceeds limit` and `prompt too long; exceeded max context length by N tokens`), the only ones confirmed. The plan's optional llama.cpp `n_ctx`-in-JSON item was skipped: the message parser already reads that refusal. The retry is "compact once, then re-send" in the main loop (`continue outer`) and in sub-agents. Only the phrasing list is marked NEEDS CLARIFICATION.
 - **3.3 server defaults removed:** `DEFAULT_NUM_CTX` no longer exists. A missing window is an error (`requireWindow`), or 0 where a guard already treats 0 as "no window". The plan's "fail clearly" is done as a refusal before any model call (409, with the reason), and an unreadable file answers 503 and is never overwritten. The refusal's "choose a model in Settings" can be followed: Settings now has an Add provider form (A-006, below).
 - **3.4 cleanup:** `numCtxField` and `withCurrentNumCtx` removed, with their tests. CLAUDE.md's "decided, not built" lines are replaced by what was built.

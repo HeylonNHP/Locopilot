@@ -249,7 +249,7 @@ function buildUserContent(
  * and the position within that assistant's `tool_calls` array, so the
  * same synthetic ID is derivable from either side of the pairing.
  *
- * Exported for unit tests in scripts/test-tool-call-fallback-ids.mjs.
+ * Exported for unit tests in tests/tool-call-fallback-ids.test.mjs.
  */
 export function toolCallFallbackId(assistantIdx: number, tcIndex: number): string {
   return `call_fallback_${assistantIdx}_${tcIndex}`;
@@ -297,7 +297,7 @@ function findOriginatingAssistant(
  * Tool calls from the assistant become ResponseFunctionToolCall items.
  * Tool results become FunctionCallOutput items.
  *
- * Exported for unit tests in scripts/test-tool-call-fallback-ids.mjs.
+ * Exported for unit tests in tests/tool-call-fallback-ids.test.mjs.
  */
 export function toResponseInputItems(messages: ChatMessage[]): {
   instructions: string | null;

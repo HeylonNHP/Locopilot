@@ -319,7 +319,7 @@ export function parseContextLimitFromError(message: string): number | null {
  *
  * NEEDS CLARIFICATION: these are the only wordings seen. The adapter logs the
  * body of every Ollama 400 (A-001); add a pattern here when a log shows another
- * one, and a case to scripts/test-numberless-context-limit.mjs. A non-match
+ * one, and a case to tests/numberless-context-limit.test.mjs. A non-match
  * keeps the old behaviour: no cap learned, no retry.
  */
 const NUMBERLESS_CONTEXT_LIMIT_PATTERNS: RegExp[] = [

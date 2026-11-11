@@ -741,7 +741,7 @@ export function formatAgentFailure(id: string, reason: string): string {
   );
 }
 
-// Exported for the regression test scripts (scripts/test-subagent-mcp.mjs);
+// Exported for the regression test scripts (tests/subagent-mcp.test.mjs);
 // not part of the tool's public surface.
 export async function executeNestedToolCall(
   agentId: string,

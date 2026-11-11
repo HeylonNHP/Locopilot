@@ -1,7 +1,7 @@
 /**
  * The "Add provider" form in Settings: what it asks for, what it checks before
  * it asks the server, and what it says afterwards. All pure, so the rules are
- * pinned by scripts/test-provider-add.mjs. The server validates again
+ * pinned by tests/provider-add.test.mjs. The server validates again
  * (`src/services/providerValidation.ts`) and is the authority; this only saves
  * a round trip for the obvious mistakes.
  */

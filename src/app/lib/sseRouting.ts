@@ -12,7 +12,7 @@ import { formatCompactionReceipt } from '@/services/compact/receipt';
  * plus the few side effects the caller has to perform (coalescing a
  * sub-agent chunk, marking a failed turn, clearing a t/s read-out). Keeping
  * it free of refs and timers is what makes the routing testable — the
- * characterisation suite in `scripts/test-sse-routing.mjs` asserts the exact
+ * characterisation suite in `tests/sse-routing.test.mjs` asserts the exact
  * action sequence for every event type.
  *
  * Ownership (which session an event belongs to) is decided by the caller and

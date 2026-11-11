@@ -142,7 +142,7 @@ export default tseslint.config(
   },
 
   // Node scripts in scripts/ (including the moved `scripts/mermaid/`
-  // test runners) need browser globals disabled and Node globals enabled.
+  // test runners) and the Jest tests in tests/ need browser globals disabled and Node globals enabled.
   // The default ESLint environment is the browser, so process/console/
   // etc. are flagged as no-undef without this. Browser globals are also
   // exposed because Playwright test runners call page DOM APIs
@@ -153,7 +153,7 @@ export default tseslint.config(
   // "Additional sensible defaults" block so the `no-console: off`
   // override actually wins.
   {
-    files: ['scripts/**/*.{js,mjs,cjs,ts,mts,cts}'],
+    files: ['scripts/**/*.{js,mjs,cjs,ts,mts,cts}', 'tests/**/*.{js,mjs,cjs,ts,mts,cts}'],
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
     rules: { 'no-console': 'off' },
   },

@@ -270,7 +270,7 @@ export function useChatStream(
       const owner = frameOwner(data.sessionId, ownerOf(streamStateRef.current, requestId));
 
       // Routing an event into store actions is a pure function, so it can be
-      // characterised by tests (scripts/test-sse-routing.mjs). This callback
+      // characterised by tests (tests/sse-routing.test.mjs). This callback
       // keeps only the parts that need the ownership maps and the timers.
       const outcome = routeSseEvent(event, data, {
         targetSessionId: owner,

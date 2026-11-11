@@ -13,7 +13,7 @@
  * "The server has not answered yet" is therefore a first-class state here —
  * `null` — and every consumer decides what to show for it ("—").
  * Everything in this module is pure so the rules are pinned by
- * scripts/test-context-window.mjs.
+ * tests/context-window.test.mjs.
  */
 
 /**

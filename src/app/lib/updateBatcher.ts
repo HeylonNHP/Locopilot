@@ -23,7 +23,7 @@
  * "flush first" this simple.
  *
  * Timers are injectable so the rule is tested with a fake clock
- * (scripts/test-update-batcher.mjs).
+ * (tests/update-batcher.test.mjs).
  */
 export interface BatchedDispatcher<A> {
   /** Apply `action` now — after everything that was queued before it. */

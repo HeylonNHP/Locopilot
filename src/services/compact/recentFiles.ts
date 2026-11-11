@@ -40,7 +40,7 @@
  *
  * The planner is PURE apart from the injected reader: `buildRecentFilesMessage`
  * never touches the filesystem, `/proc` or the database, which is what lets the
- * tests drive it with a stub (`scripts/test-compact-recent-files.mjs`). The
+ * tests drive it with a stub (`tests/compact-recent-files.test.mjs`). The
  * only function here that reads the disk is {@link readRecentFileFromDisk}, and
  * the caller passes it in.
  */
