@@ -276,11 +276,12 @@ async function sendOllamaChat(
     };
   }
 
-  const response = await client.post<ChatApiResponse>(
-    `${ctx.baseUrl}/api/chat`,
-    buildChatPayload(params, false),
-    config
-  );
+  const response = await client
+    .post<ChatApiResponse>(`${ctx.baseUrl}/api/chat`, buildChatPayload(params, false), config)
+    .catch(async (err: unknown) => {
+      await logOllamaBadRequest(err, ctx, params.model);
+      throw err;
+    });
 
   return response.data;
 }
@@ -300,11 +301,16 @@ async function* sendOllamaChatStream(
     requestConfig.timeout = params.timeoutMs;
   }
 
-  const response = await client.post<NodeJS.ReadableStream>(
-    `${ctx.baseUrl}/api/chat`,
-    buildChatPayload(params, true),
-    requestConfig
-  );
+  const response = await client
+    .post<NodeJS.ReadableStream>(
+      `${ctx.baseUrl}/api/chat`,
+      buildChatPayload(params, true),
+      requestConfig
+    )
+    .catch(async (err: unknown) => {
+      await logOllamaBadRequest(err, ctx, params.model);
+      throw err;
+    });
 
   const lineReader = createInterface({
     input: response.data as NodeJS.ReadableStream,
@@ -367,6 +373,51 @@ async function* sendOllamaChatStream(
     });
     lineReader.close();
   }
+}
+
+/** How much of a 400 body the diagnostic log keeps. */
+const OLLAMA_ERROR_BODY_PREVIEW_CHARS = 1000;
+
+/**
+ * Log the body of a 400 from Ollama, so that a rejection can be explained
+ * afterwards. The OpenAI-compatible path dumps its 400 bodies; the Ollama path
+ * logged only the status, which left the sub-agent's "context window exceeds
+ * limit" 400 unexplained.
+ *
+ * The stream body is read once and stored back on the error as a string, so
+ * `getOllamaApiErrorMessage` still gets the text when the caller shows it, and
+ * the error is then rethrown unchanged.
+ */
+export async function logOllamaBadRequest(
+  error: unknown,
+  ctx: LlmRequestContext,
+  model: string
+): Promise<void> {
+  if (!axios.isAxiosError(error) || error.response?.status !== 400) return;
+
+  const data: unknown = error.response.data;
+  if (data instanceof Readable) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of data) {
+      chunks.push(Buffer.from(chunk));
+    }
+    error.response.data = Buffer.concat(chunks).toString('utf8');
+  }
+
+  const body = typeof error.response.data === 'string' ? error.response.data.trim() : '';
+  debugLog.diagnostic({
+    layer: 'adapter',
+    phase: 'error',
+    requestId: ctx.requestId,
+    provider: 'ollama',
+    model,
+    baseUrl: ctx.baseUrl,
+    errorStatus: 400,
+    errorBody:
+      body.length > OLLAMA_ERROR_BODY_PREVIEW_CHARS
+        ? `${body.slice(0, OLLAMA_ERROR_BODY_PREVIEW_CHARS)}…`
+        : body,
+  });
 }
 
 async function getOllamaApiErrorMessage(error: unknown): Promise<string> {
