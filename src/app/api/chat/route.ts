@@ -1748,6 +1748,11 @@ export async function POST(req: NextRequest): Promise<Response> {
                   elapsedMs: Date.now() - compactStartedAt,
                   result: req.signal.aborted ? 'client_aborted' : 'failed',
                   error: err,
+                  // The logger records only an error's name, code and status.
+                  // Without the message a failed compaction cannot be told
+                  // apart from a 400, a model that returned nothing usable, or
+                  // "failed to reduce history size" (CONFIRMATIONS C-013).
+                  ...(err instanceof Error ? { reason: err.message.slice(0, 300) } : {}),
                 });
               }
               if (compactFailed) {
