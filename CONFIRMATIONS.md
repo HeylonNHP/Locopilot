@@ -96,8 +96,9 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 
 - **Status:** Observed, cause unknown.
 - **Observed:** 2026-11-11, on the dev server. After a mid-turn switch to `qwen3:0.6b` (window 30,000), auto-compaction started with 4 messages and failed after about 21 seconds (`compaction_end` with `result: failed`). The error text is not in the log.
-- **Why it matters:** the switch itself worked (C-008). The failure is in the compaction path, which Phase 2 changes (compaction resolved against its own model's maximum).
-- **How to confirm:** reproduce it, or do action A-001 and log the compaction error. Check whether the compaction prompt fits in the 30,000 window, and whether the 0.6B model returns usable output.
+- **Seen again (2026-11-11, after Phase 2):** the same scenario, with the saved setting changed to 30,000 and the turn switched from `minimax-m3.1-flash` (Ollama Cloud) to `qwen3:0.6b`. `compaction_start` logged `numCtx` 30,000 with 4 messages, and `compaction_end` logged `result: failed`, `errorName: Error`, after 22.9 seconds. The log still carries no message, because `debugLog.diagnostic` writes only an error's name, code and status. A 4-message history is small, so "compaction failed to reduce history size" is a candidate, but that is a guess. It is not a 400: no adapter error was logged. The `qwen3:0.6b` turn that followed ran for more than two minutes until the test client was stopped.
+- **Why it matters:** the switch itself worked (C-008). The failure is in the compaction path. Phase 2 now resolves the compaction window against the compaction model's own maximum, which did not change this outcome.
+- **How to confirm:** the main loop's `compaction_end` failure diagnostic now carries `reason` (the first 300 characters of the error message). Repeat the scenario above and read it from `logs/locopilot-debug.log`. Then check whether the compaction prompt fits in the 30,000 window, and whether the 0.6B model returns usable output.
 - **Needs:** the owner's Ollama, and the `qwen3:0.6b` model on this machine (already pulled).
 
 ### C-014 — For llama.cpp, which maximum is enforced: the trained context or the served window?
@@ -118,7 +119,8 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Predicted, not yet tested:** `Muse-Glimmer-30B-Q4_K_M` (`context_length` 131,072, `--ctx-size 262144`, no YaRN) should be enforced at **131,072**, because the trained value caps each slot. A request above 131,072 should be refused with `(131072 tokens)`.
   - The owner recalls that this model natively supports a 128K window, which is 131,072 tokens. That is consistent with the prediction, but it is the owner's recollection and has not been checked against the model card.
 - **Still open:** the Muse load failed twice (HTTP 500, "failed to load") on 2026-11-11, and the router's logs are not reachable from here. To test the prediction, load it on the owner's router and send a prompt of about 140,000 tokens with `max_tokens: 1`.
-- **Consequence for Phase 2:**
+- **Built in Phase 2 (2026-11-11):** `getLlamaCppServedWindow` in `src/services/llmContextLimit.ts`. A llama.cpp model is known only when its `/v1/models` entry has `meta.n_ctx` and its `status.value` is `loaded` (or there is no `status`, as on a plain llama-server). `context_length` and `n_ctx_train` are never used, and an unloaded model is unknown. Checked with fixtures, and through the real adapter mapping against a local test server (`scripts/test-numctx-resolver.mjs`). **Not checked live against the owner's router**: it was not reachable from this machine on 2026-11-11 (HTTP 000 on `localhost:60300`). The resolver reads the served window from the model list, not from `GET /props?model=` or from a refusal's `n_ctx`; the refusal body is still learned from through its message.
+- **Consequence for Phase 2 (as planned):**
   - `context_length` from `/v1/models` is not the maximum to clamp to for llama.cpp.
   - For a loaded model, read the served value from `GET /props?model=<name>` (`default_generation_settings.n_ctx`), or from the refusal's `n_ctx`.
   - For an unloaded model, the enforced value depends on `--ctx-size`, the trained context, and any YaRN rewrite. It is not reliably known before the model loads, so the resolver should treat it as unknown until then.
@@ -139,21 +141,15 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 ### A-002 — Deploy the recent commits to the production copy
 
 - **Status:** Not done.
-- **Why:** the production copy at `C:\git\Locopilot - HeylonHome` is still on `e7429a4`. Commits `96adf4f` (stop inventing a context window) and `b36a272` (retry and mid-turn switches use the current setting) are not there yet.
+- **Why:** the production copy at `C:\git\Locopilot - HeylonHome` is still on `e7429a4`. The context window commits are not there yet: `96adf4f` (stop inventing a context window), `b36a272` (retry and mid-turn switches use the current setting), and the four Phase 2 commits (`82e9af9`, `d9998f9`, `2c9ada8`, `2a91199`). Phase 2 changes behaviour the owner will see: providers with their own `numCtx` (NVIDIA, Airia, OpenRouter) now apply it, and the bar shows "—" until the server answers.
 - **How:** on that machine, pull `dev`, rebuild, restart, and check the status bar on a reloaded session.
 
 ### A-003 — Phase 2: the server owns the window
 
-- **Status:** Decided, not built.
-- **Decisions:** a provider's own `numCtx` applies to chat, and a provider without one takes the global setting. There is no Settings control for provider windows; they are set by editing `config.json`.
-- **Scope:** one server resolver for `(provider, model)`; a `GET /api/numctx` endpoint; the page stops sending `numCtx`; `/api/config` probes the selected model rather than the provider's default; probes get timeouts; failures are cached for 30 to 60 seconds; `/api/ps` is no longer used as a cap; compaction is resolved against its own model's maximum.
-- **Keep:** each caller keeps its own output cap at its call site. The title route's `min(window, 8192)` stays where it is.
-- **Decided by the owner (2026-11-11):**
-  - **Unknown maximum:** when the model's maximum is not known, show the setting with "model max unknown", and read the real value once the model has loaded. For llama.cpp, that is `GET /props?model=` `n_ctx`, or the `n_ctx` in a refusal.
-  - **Local runners:** no new cap. Set a per-provider window for local runners in `config.json`, and let the owner manage memory. The owner has enough RAM for the local models in use.
-  - **Probes:** a 10-second timeout per probe. Failures are cached for 60 seconds. Discovered limits keep the existing 5-minute cache, so a retry does not hit the same 400 again.
-- **Not started:** the owner asked to stop before implementing Phase 2.
-- **Gated by:** C-014 (which maximum llama.cpp enforces) for llama.cpp models. The open part of C-003 no longer blocks, because the owner has accepted the memory risk.
+- **Status:** Done (2026-11-11), commits `82e9af9`, `d9998f9`, `2c9ada8`, `2a91199`. The plan and the places where the build differs from it are in `docs/context-window-phases.md`.
+- **What it does:** one server resolver for `(provider, model)` (`src/services/contextWindow/resolveNumCtx.ts`, probe and cache in `src/services/capResolver.ts`); `GET /api/numctx`; no route reads `numCtx` from a request body; the page stops sending it and shows what the server reports; `/api/ps` is no longer a cap; probes time out after 10 s, failures are cached 60 s, successes and learned limits 5 minutes; compaction is resolved against its own model's maximum.
+- **Decisions by the owner (2026-11-11), all applied:** a provider's own `numCtx` applies to chat and a provider without one takes the global setting (no Settings control for provider windows); an unknown maximum is shown as "model max unknown"; local runners get no new cap; the memory risk is accepted.
+- **Live checks:** see the Confirmed section ("Phase 2 live checks"). One was blocked: llama.cpp (C-014).
 
 ### A-004 — Phase 3: robustness
 
@@ -185,3 +181,11 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
   - Mid-turn switch: a turn with a 25-second PowerShell tool call was running. The saved setting was set to 30,000 through `PUT /api/config`, then the turn was switched to `qwen3:0.6b`. The `model_switched` status reported `tokenLimit` 30,000 and `modelContextLimit` 40,960. The 30,000 came from the saved setting, not from the 250,000 the turn started with.
 - **C-009, config-failure logging (2026-11-11).** The page warns `Config could not be loaded (HTTP 500)` when `/api/config` fails, and the status bar stays at `42868/—` (window unknown). The server logs `config_unavailable` with `reason: config_null` when `config.json` is missing (confirmed after the fix in A-005).
 - **C-010, load order (2026-11-11, browser).** With `/api/config` delayed 20 seconds through a local proxy, the session's count showed `42868/— tokens` and never 131072. The config arrived at 20.3 seconds and the bar then showed `42868/300000 tokens (14%)`.
+- **Phase 2 live checks (2026-11-11, dev server and browser pane; the dev config was backed up and restored byte for byte afterwards).**
+  - Local Ollama, `qwen3:0.6b`, setting 42,000: `GET /api/numctx` gave `requested` 42,000, `modelMax` 40,960, `effective` 40,960, `source: static`; the status bar read `0/40960 tokens (0%) (model max: 40,960)`.
+  - NVIDIA (`nvidia/nemotron-3-ultra-550b-a55b`, setting 300,000): `modelMax: null`, `known: false`, `probeError: null`, so "model max unknown"; the bar read `0/300000 tokens (0%) (model max unknown)` and Settings read `300,000 (model max unknown)`.
+  - Ollama Cloud, `minimax-m3.1-flash`, setting 2,000,000: the bar read `0/1000000 tokens (0%) (model max: 1,000,000)`. With the setting at 300,000 it showed `300000` with no label, because the maximum (1,000,000) is above the setting. `beam` gave 1,048,576. An unknown model gave `known: false` with `probeError: "Request failed with status code 404"`, and a second request was answered from the cache in about 20 ms.
+  - Request body ignored: a chat request sent with `numCtx` 5,000 reported `tokenLimit` 300,000 (the saved setting) and `modelContextLimit` 1,048,576.
+  - Load order: with `/api/numctx` delayed 5 seconds in the page, a model change in Settings showed `0/— tokens` for the whole wait and the window and label once the answer arrived. (The answer arrived about 10 seconds late in that run, although the server answered in 9 ms. The cause was not found; `/api/models` calls of 4 to 6 seconds were running at the same time. In an undelayed run the bar updated within the 3.5 seconds that were observed.)
+  - Mid-turn switch: a turn on `minimax-m3.1-flash` was running a 20-second tool call, the saved setting was changed to 30,000 and the turn switched to `qwen3:0.6b`. The `model_switched` status reported `tokenLimit` 30,000 and `modelContextLimit` 40,960, as before Phase 2 (C-008). The compaction failure that followed is C-013.
+  - Not run live: Retry after a failure (the stored body now has no window; a pin checks that Retry replays it unchanged), and llama.cpp (the router was down).
