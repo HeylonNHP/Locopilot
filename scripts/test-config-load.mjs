@@ -177,28 +177,31 @@ await check("a provider's own window is enough when the global one is missing", 
   assert.equal(configProblemFor(config, 'p1', 'm'), null);
 });
 
-await check('a compaction provider named in the body is checked, and refused when it has no window', () => {
-  const config = {
-    numCtx: 131_072,
-    providers: [
-      { id: 'p1', name: 'P', provider: 'ollama', baseUrl: 'http://x', model: 'm' },
-      { id: 'p2', name: 'Q', provider: 'ollama', baseUrl: 'http://y', model: 'n' },
-    ],
-  };
-  assert.equal(requestProblemFor(config, { providerId: 'p1', model: 'm' }), null);
-  const problem = requestProblemFor(config, {
-    providerId: 'p1',
-    model: 'm',
-    compactionProviderId: 'p2',
-    compactionModel: 'n',
-  });
-  assert.equal(problem, null, 'the global window covers p2 too');
-  const noGlobal = { ...config, numCtx: undefined };
-  assert.equal(
-    requestProblemFor(noGlobal, { providerId: 'p1', model: 'm', compactionProviderId: 'p2' }),
-    CONTEXT_SIZE_NOT_SET_MESSAGE
-  );
-});
+await check(
+  'a compaction provider named in the body is checked, and refused when it has no window',
+  () => {
+    const config = {
+      numCtx: 131_072,
+      providers: [
+        { id: 'p1', name: 'P', provider: 'ollama', baseUrl: 'http://x', model: 'm' },
+        { id: 'p2', name: 'Q', provider: 'ollama', baseUrl: 'http://y', model: 'n' },
+      ],
+    };
+    assert.equal(requestProblemFor(config, { providerId: 'p1', model: 'm' }), null);
+    const problem = requestProblemFor(config, {
+      providerId: 'p1',
+      model: 'm',
+      compactionProviderId: 'p2',
+      compactionModel: 'n',
+    });
+    assert.equal(problem, null, 'the global window covers p2 too');
+    const noGlobal = { ...config, numCtx: undefined };
+    assert.equal(
+      requestProblemFor(noGlobal, { providerId: 'p1', model: 'm', compactionProviderId: 'p2' }),
+      CONTEXT_SIZE_NOT_SET_MESSAGE
+    );
+  }
+);
 
 await check('requireWindow throws the clear message instead of assuming a window', () => {
   assert.equal(requireWindow(40_960), 40_960);
