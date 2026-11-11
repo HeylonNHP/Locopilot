@@ -153,8 +153,8 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 
 ### A-004 — Phase 3: robustness
 
-- **Status:** Built (2026-11-11), not yet committed when this was written. What is in place: a missing `config.json` is created with defaults, and the window default is written only then; an unreadable one is refused everywhere and never overwritten (503, with the reason shown on screen); chat, compact, title and dump refuse a turn with no model chosen or no context size (409, with the reason); no server code defaults a window (`DEFAULT_NUM_CTX` removed); the numberless 400 gets one forced compaction and one re-send (see C-005).
-- **Still open:** the Settings dialog cannot add a provider, so a fresh config can be refused with "choose a model in Settings" and Settings has nothing to choose from. See A-006.
+- **Status:** Built (2026-11-11), committed as 6c13e14 and c646d82. What is in place: a missing `config.json` is created with defaults, and the window default is written only then; an unreadable one is refused everywhere and never overwritten (503, with the reason shown on screen); chat, compact, title and dump refuse a turn with no model chosen or no context size (409, with the reason); no server code defaults a window (`DEFAULT_NUM_CTX` removed); the numberless 400 gets one forced compaction and one re-send (see C-005).
+- **Settings gap:** closed by A-006 (the Add provider form). Still open from this phase: the live check of the numberless 400 (A-007).
 - **Plan and differences:** `docs/context-window-phases.md`.
 
 ### A-005 — Commit the missing-config log fix
@@ -165,12 +165,13 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 
 ---
 
-### A-006 — Settings cannot add a provider (decision needed)
+### A-006 — Settings cannot add a provider
 
-- **Status:** Open. Found while building Phase 3, not part of it.
-- **What:** the Settings dialog has a model dropdown and a Context Size field, but no way to add a provider (endpoint, kind, API key). Providers exist only in `config.json`. A fresh config has none, so after the Phase 3 change a new owner is told to choose a model in Settings and cannot.
-- **Options:** (a) a minimal provider form in Settings (kind, base URL, optional API key, model), which writes the provider into `config.json`; (b) keep providers in `config.json` and make the refusal message say so; (c) the first-run flow the owner described, built on (a).
-- **Needs:** the owner's choice. This is a UI change, so it needs a decision before it is built.
+- **Status:** Done (2026-11-11). The owner chose option (a): a small form in Settings.
+- **What was built:** a Providers section at the top of Settings (`src/components/SettingsModal/ProviderSection.tsx`). It lists the providers by name, kind and address (never a key) and has an Add provider form: name, kind (Ollama or OpenAI-compatible), server address, an optional API key and an optional model. Adding calls `POST /api/providers`, which appends one validated entry to `config.json` on the server; it does not wait for the Save button. The form is open by default when there is no provider.
+- **Rules the server applies:** the id is made from the name and never reused; the address is stored without a trailing slash, and without a trailing `/v1` for an OpenAI-compatible server (the adapter appends `/v1` itself); a provider with the same name (any case) is refused; only name, kind, address, key and model are taken from the body; the response never carries the key (`hasApiKey` says whether one is stored); an unreadable `config.json` is refused and left alone.
+- **Scope kept small:** add only. Editing or removing a provider, and setting a provider's own `numCtx`, are still done in `config.json`.
+- **The key** is stored in `config.json` in plain text, as it always was. The field is masked on screen, and the page never receives a stored key back.
 
 ### A-007 — Live check of the numberless 400 (needs the owner's OK)
 
@@ -211,3 +212,10 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
   - Settings on a fresh config opens with Context Size 131072 and a model list holding only "Select a model...". No provider can be added (A-006).
   - Unreadable file (`{ "model": "broken", "providers": [ ` written in place): `GET` and `PUT /api/config`, chat and `/api/numctx` all answered 503 with "config.json exists but could not be read (it is not valid JSON ...). Locopilot will not overwrite it". The file's hash did not change. The page showed the same text on screen.
   - Cloud windows read from `/api/numctx` (metadata only, no inference): Ollama Cloud has 23 models, none unknown. Smallest: `clef:27b` 65,536 (a decision model, not a chat model), `gpt-oss:20b` and `gpt-oss:120b` 131,072, `gemma4:31b`, `kimi-k2.6`, `kimi-k2.7-code`, `nemotron-3-super`, `nemotron-3-ultra` 262,144, `minimax-m3` 512,000, `minimax-m3.1-flash` 1,000,000, `beam` and `deepseek-v4-pro:0813` 1,048,576.
+- **Add provider, live (2026-11-11, dev server and browser; the owner's `config.json` was renamed aside and restored, hash `bd44524e221e8ad5` confirmed).**
+  - From an empty config: Settings opened with the Providers section and the form open, and "No provider yet". An empty submit showed "Enter a name for this provider." and "Enter the server address."; `localhost` showed "That is not a valid address. For example: http://localhost:11434".
+  - Adding "Local Ollama" (`http://localhost:11434/`, model `qwen3:0.6b`) saved the provider with the trailing slash removed, listed 17 models, and preselected `qwen3:0.6b`. `config.json` then held the provider, `numCtx` 131072 and no chosen model. After Save it held the model and `activeProviderId`, and the status bar read `0/40960 tokens (0%) (model max: 40,960)`. A chat request through the new provider reported `tokenLimit` 40960 and `modelContextLimit` 40960.
+  - Ollama Cloud added with a dummy key: 23 models listed; the key was not on screen. (Ollama Cloud lists models without a key, so this did not exercise the failure path.)
+  - A provider at an address with nothing listening (`http://127.0.0.1:9`): saved, with the note "was added, but it did not answer: connect ECONNREFUSED 127.0.0.1:9".
+  - A second provider with the same name in a different case: refused inline, "A provider named ... already exists."
+  - The owner's real config: Settings lists NVIDIA, Ollama Cloud and Airia with their kinds and addresses, no key on screen, and the form collapsed behind an Add provider button.

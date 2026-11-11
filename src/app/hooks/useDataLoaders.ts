@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { hasLiveTranscript, useChat } from '@/app/lib/chatStore';
 import { isStaleNumCtxAnswer, positiveInteger } from '@/app/lib/contextWindow';
 import { createLatestGate } from '@/app/lib/latestGate';
+import { fetchModelList } from '@/app/lib/modelsClient';
 
 import type { StableRefs } from './useStableRefs';
 
@@ -275,19 +276,12 @@ export function useDataLoaders(refs: StableRefs) {
   // whether /api/models or /api/config resolves first.
   const loadModels = async () => {
     dispatch({ type: 'SET_MODELS_LOADING', modelsLoading: true });
-    try {
-      const res = await fetch('/api/models');
-      if (res.ok) {
-        const data = await res.json();
-        const models = data.models ?? data ?? [];
-        const modelList = Array.isArray(models) ? models : [];
-        dispatch({ type: 'SET_MODELS', models: modelList });
-      }
-    } catch {
-      // Silently ignore – models will be empty
-    } finally {
-      dispatch({ type: 'SET_MODELS_LOADING', modelsLoading: false });
+    // A failed or refused fetch leaves the list as it is; nothing is thrown.
+    const list = await fetchModelList();
+    if (list) {
+      dispatch({ type: 'SET_MODELS', models: list.models });
     }
+    dispatch({ type: 'SET_MODELS_LOADING', modelsLoading: false });
   };
 
   // Reconcile the active provider against the loaded model list. This runs

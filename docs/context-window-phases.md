@@ -1,6 +1,6 @@
 # Context window: remaining phases
 
-Status: Phases 1, 2 and 3 are built. See the section "Phase 3: what was built" for where the build differs from the plan, and for what is still open (A-006, A-007 in `CONFIRMATIONS.md`).
+Status: Phases 1, 2 and 3 are built. See the section "Phase 3: what was built" for where the build differs from the plan, and for what is still open (A-007 in `CONFIRMATIONS.md`).
 
 Companion files: [`CONFIRMATIONS.md`](../CONFIRMATIONS.md) (what is still unverified), [`CLAUDE.md`](../CLAUDE.md) (the numCtx section), `docs/CHANGELOG.md` (history).
 
@@ -213,8 +213,9 @@ Live checks (2.7): 1, 3, 4, 5 and 6 passed; check 2 (llama.cpp) is blocked becau
 
 - **3.1 fresh-file default:** the 131072 default is written only when `config.json` is created (`readConfig` → `buildFreshConfig`). A PUT to an existing file no longer merges a window default. Test: `scripts/test-config-load.mjs`.
 - **3.2 numberless 400:** the plan's "recognise that family of messages" is one phrasing (`invalid params, context window exceeds limit`), because only one is confirmed. The plan's optional llama.cpp `n_ctx`-in-JSON item was skipped: the message parser already reads that refusal. The retry is "compact once, then re-send" in the main loop (`continue outer`) and in sub-agents. Only the phrasing list is marked NEEDS CLARIFICATION.
-- **3.3 server defaults removed:** `DEFAULT_NUM_CTX` no longer exists. A missing window is an error (`requireWindow`), or 0 where a guard already treats 0 as "no window". The plan's "fail clearly" is done as a refusal before any model call (409, with the reason), and an unreadable file answers 503 and is never overwritten. The Settings dialog cannot add a provider, so the refusal's "choose a model in Settings" cannot be followed yet (A-006).
+- **3.3 server defaults removed:** `DEFAULT_NUM_CTX` no longer exists. A missing window is an error (`requireWindow`), or 0 where a guard already treats 0 as "no window". The plan's "fail clearly" is done as a refusal before any model call (409, with the reason), and an unreadable file answers 503 and is never overwritten. The refusal's "choose a model in Settings" can be followed: Settings now has an Add provider form (A-006, below).
 - **3.4 cleanup:** `numCtxField` and `withCurrentNumCtx` removed, with their tests. CLAUDE.md's "decided, not built" lines are replaced by what was built.
+- **Add provider (A-006, added after Phase 3):** Settings has a Providers section with a small add-only form, backed by `POST /api/providers`. The provider validation moved to `src/services/providerValidation.ts` and is shared with `PUT /api/config`. Editing and removing providers, and a provider's own `numCtx`, stay in `config.json`.
 - **Not done:** the live check of the numberless 400 (A-007), which needs the owner's OK and a model with a window of about 131,000 tokens.
 
 ## Decisions still open

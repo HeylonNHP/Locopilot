@@ -13,6 +13,8 @@ import {
   type ReasoningEffort,
 } from '@/types/chatConfig';
 
+import ProviderSection from './ProviderSection';
+
 import './SettingsModal.scss';
 
 interface Props {
@@ -185,6 +187,17 @@ export default function SettingsModal({ onClose }: Props) {
     const name = idx === -1 ? value : value.slice(idx + 2);
     setCompactionModel(name);
     setCompactionProviderId(providerId);
+  };
+
+  // A provider was just added (it is already saved, and its models fetched).
+  // Select its default model when it listed one and nothing is chosen yet, so
+  // the dropdown starts on something usable; otherwise the user picks from the
+  // new provider's group.
+  const handleProviderAdded = (providerId: string, addedModel: string | undefined) => {
+    if (addedModel !== undefined && model === '') {
+      setModel(addedModel);
+      setMainProviderId(providerId);
+    }
   };
 
   const handleSave = async () => {
@@ -387,6 +400,8 @@ export default function SettingsModal({ onClose }: Props) {
           <h3 id={titleId} className="settings-heading">
             Settings
           </h3>
+
+          <ProviderSection onProviderAdded={handleProviderAdded} />
 
           <div className="settings-grid">
             <div className="settings-row">

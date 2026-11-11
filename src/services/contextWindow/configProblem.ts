@@ -15,7 +15,7 @@ import { resolveProvider } from '@/services/providerResolver';
 import { pickRequestedNumCtx } from './resolveNumCtx';
 
 export const MODEL_NOT_CHOSEN_MESSAGE =
-  'No model is set up yet. Open Settings and choose a model to start chatting.';
+  'No model is set up yet. Open Settings, add a provider if there is none, and choose a model to start chatting.';
 
 export const CONTEXT_SIZE_NOT_SET_MESSAGE =
   'No context size is set. Open Settings and set Context Size, then try again.';

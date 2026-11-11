@@ -616,7 +616,13 @@ export function useChatStream(
       if (state.streamingSessions.has(sessionKey)) return;
 
       if (!refs.modelRef.current.trim()) {
-        dispatch({ type: 'SET_ERROR', error: 'Choose a model in Settings to start chatting.' });
+        dispatch({
+          type: 'SET_ERROR',
+          error:
+            refs.providersRef.current.length === 0
+              ? 'Open Settings, add a provider, and choose a model to start chatting.'
+              : 'Choose a model in Settings to start chatting.',
+        });
         return;
       }
 

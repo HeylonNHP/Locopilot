@@ -144,7 +144,10 @@ console.log('a config that cannot run a turn says what to do');
 
 await check('a fresh config refuses a chat until a model is chosen in Settings', () => {
   assert.equal(configProblemFor(buildFreshConfig(), undefined, ''), MODEL_NOT_CHOSEN_MESSAGE);
-  assert.match(MODEL_NOT_CHOSEN_MESSAGE, /Open Settings and choose a model/);
+  assert.match(
+    MODEL_NOT_CHOSEN_MESSAGE,
+    /Open Settings, add a provider if there is none, and choose a model/
+  );
 });
 
 await check('a provider with a model and a global window can run a turn', () => {

@@ -9,20 +9,18 @@ import {
   DEFAULT_WEB_SEARCH_SETTINGS,
   MAX_RETRY_BASE_DELAY_MS,
   MAX_RETRY_MAX_DELAY_MS,
-  PROVIDER_OLLAMA,
-  PROVIDER_OPENAI_COMPATIBLE,
   RETRY_MAX_ATTEMPTS_LIMIT,
   RETRY_MAX_ATTEMPTS_MIN,
 } from '@/services/configDefaults';
 import { buildFreshConfig, readConfig, saveConfig } from '@/services/configManager';
 import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
+import { isFiniteInteger, isPlainObject, validateProvider } from '@/services/providerValidation';
 import { invalidateSamplingParamCache } from '@/services/samplingParamsCache';
 import { invalidateVisionCache } from '@/services/visionCache';
 import {
   type CompletionMode,
   type Config,
   isReasoningEffort,
-  type LlmProvider,
   type ProviderConfig,
   REASONING_EFFORTS,
 } from '@/types/chatConfig';
@@ -74,77 +72,6 @@ const KNOWN_RETRY_KEYS: Set<string> = new Set([
 
 const DEFAULT_RETRY_CONFIG: NonNullable<Config['retry']> = DEFAULT_ADAPTER_RETRY;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isFiniteInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function validateProvider(value: unknown, index: number): ProviderConfig | string {
-  if (!isPlainObject(value)) {
-    return `providers[${index}] must be an object`;
-  }
-  if (!isNonEmptyString(value.id)) {
-    return `providers[${index}].id must be a non-empty string`;
-  }
-  if (!isNonEmptyString(value.name)) {
-    return `providers[${index}].name must be a non-empty string`;
-  }
-  if (
-    typeof value.provider !== 'string' ||
-    (value.provider !== PROVIDER_OLLAMA && value.provider !== PROVIDER_OPENAI_COMPATIBLE)
-  ) {
-    return `providers[${index}].provider must be '${PROVIDER_OLLAMA}' or '${PROVIDER_OPENAI_COMPATIBLE}'`;
-  }
-  if (typeof value.baseUrl !== 'string' || value.baseUrl.trim().length === 0) {
-    return `providers[${index}].baseUrl must be a non-empty string`;
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(value.baseUrl);
-  } catch {
-    return `providers[${index}].baseUrl is not a valid URL`;
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return `providers[${index}].baseUrl must use http: or https: scheme`;
-  }
-  const out: ProviderConfig = {
-    id: value.id.trim(),
-    name: value.name.trim(),
-    provider: value.provider as LlmProvider,
-    baseUrl: value.baseUrl.trim(),
-  };
-  if ('apiKey' in value) {
-    if (typeof value.apiKey !== 'string') {
-      return `providers[${index}].apiKey must be a string`;
-    }
-    if (value.apiKey.trim().length > 0) {
-      out.apiKey = value.apiKey.trim();
-    }
-  }
-  if ('model' in value) {
-    if (typeof value.model !== 'string') {
-      return `providers[${index}].model must be a string`;
-    }
-    if (value.model.trim().length > 0) {
-      out.model = value.model.trim();
-    }
-  }
-  if ('numCtx' in value) {
-    if (!isFiniteInteger(value.numCtx) || value.numCtx <= 0) {
-      return `providers[${index}].numCtx must be a positive integer`;
-    }
-    out.numCtx = value.numCtx;
-  }
-  return out;
-}
-
 function validateConfig(
   input: unknown
 ): { ok: true; config: Partial<Config> } | { ok: false; error: string } {
@@ -165,7 +92,7 @@ function validateConfig(
     }
     const providers: ProviderConfig[] = [];
     for (const [index, item] of input.providers.entries()) {
-      const validated = validateProvider(item, index);
+      const validated = validateProvider(item, `providers[${index}]`);
       if (typeof validated === 'string') {
         return { ok: false, error: `Invalid config: ${validated}` };
       }
