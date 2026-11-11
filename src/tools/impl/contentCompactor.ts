@@ -19,6 +19,7 @@ import {
 import { countCalibratedTextTokens, countMessagesTokens } from '@/services/tokenizer';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import { type WebExtractionSettings } from '@/tools/web/htmlExtractor';
+import { fillTemplate } from '@/util/fillTemplate';
 
 /**
  * Prompt template for content compaction.
@@ -120,7 +121,8 @@ function computeEffectiveCharLimit(charLimit: number, attempt: number): number {
   );
 }
 
-function buildCompactionPrompt(content: string, charLimit: number, attempt: number): string {
+/** Exported for unit tests (`tests/web-compaction-prompt.test.mjs`). */
+export function buildCompactionPrompt(content: string, charLimit: number, attempt: number): string {
   const retryNote =
     attempt > 1
       ? `Retry guidance: this is pass ${attempt} of ${MAX_COMPACTION_ATTEMPTS}. Be more aggressive about removing boilerplate, repetition, and non-essential exposition while preserving facts, URLs, code, tables, and direct quotes.`
@@ -129,11 +131,13 @@ function buildCompactionPrompt(content: string, charLimit: number, attempt: numb
   const effectiveCharLimit = computeEffectiveCharLimit(charLimit, attempt);
   const minCharLimit = Math.max(1, Math.floor(effectiveCharLimit * 0.85));
 
-  return COMPACTION_PROMPT_TEMPLATE.replace('{charLimit}', String(effectiveCharLimit))
-    .replace('{minCharLimit}', String(minCharLimit))
-    .replace('{originalLength}', String(content.length))
-    .replace('{retryNote}', retryNote)
-    .replace('{content}', content);
+  return fillTemplate(COMPACTION_PROMPT_TEMPLATE, {
+    charLimit: effectiveCharLimit,
+    minCharLimit,
+    originalLength: content.length,
+    retryNote,
+    content,
+  });
 }
 
 /**

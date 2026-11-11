@@ -21,6 +21,7 @@ import {
   getLlmTurnStats,
   type LlmRequestContext,
   sendLlmChat,
+  type ToolCall,
 } from '@/services/llm';
 import { recordTokenCalibrationSample } from '@/services/tokenCalibration';
 import { countRawMessagesTokens } from '@/services/tokenizer';
@@ -41,11 +42,7 @@ import {
   TOOL_DISTILL_SYSTEM_PROMPT,
   TOOL_DISTILL_TRUNCATION_MARKER,
 } from './constants';
-function getToolMessageName(message: ChatMessage): string {
-  const firstToolCall = message.tool_calls?.[0];
-  const name = firstToolCall?.function?.name;
-  return typeof name === 'string' && name.trim().length > 0 ? name.trim() : 'unknown_tool';
-}
+import { toolCallName, UNKNOWN_TOOL_NAME } from './serialize';
 
 /**
  * Cuts `text` to `maxChars` characters and marks the cut when there was one.
@@ -128,27 +125,30 @@ export function truncateToolOutputForDistillation(
 }
 
 /**
- * Returns the index of the assistant message that owns the tool message at
- * `toolIndex`, or -1 if no matching assistant is found in the same contiguous
- * tool block.
+ * The tool call that the tool message at `toolIndex` answers, matched by
+ * `tool_call_id` against the assistant row that heads its contiguous tool
+ * block; `undefined` for an orphan (no id, or no call in that block has it).
+ *
+ * WHY the CALL and not the assistant row: one assistant turn can make several
+ * calls, and a digest must name the call it answers, not the turn's first.
+ *
+ * Exported for unit tests.
  */
-function findMatchingAssistantIndex(messages: ChatMessage[], toolIndex: number): number {
-  if (toolIndex <= 0) return -1;
+export function findOwningToolCall(
+  messages: ChatMessage[],
+  toolIndex: number
+): ToolCall | undefined {
+  if (toolIndex <= 0) return undefined;
   const toolCallId = messages[toolIndex]?.tool_call_id;
-  if (!toolCallId) return -1;
+  if (!toolCallId) return undefined;
   for (let i = toolIndex - 1; i >= 0; i -= 1) {
     const candidate = messages[i];
-    if (
-      candidate?.role === 'assistant' &&
-      candidate?.tool_calls?.some((tc) => tc.id === toolCallId)
-    ) {
-      return i;
+    if (candidate?.role === 'assistant') {
+      return candidate.tool_calls?.find((tc) => tc?.id === toolCallId);
     }
-    if (candidate?.role !== 'tool') {
-      break;
-    }
+    if (candidate?.role !== 'tool') break;
   }
-  return -1;
+  return undefined;
 }
 
 /**
@@ -484,7 +484,7 @@ export function planDistillation(
     if (length < thresholdChars) {
       continue;
     }
-    if (findMatchingAssistantIndex(historyMessages, index) < 0) {
+    if (findOwningToolCall(historyMessages, index) === undefined) {
       orphans += 1;
       continue;
     }
@@ -592,9 +592,10 @@ export async function distillToolMessages(
       continue;
     }
 
-    const matchingAssistantIndex = findMatchingAssistantIndex(historyMessages, index);
-    const previous = historyMessages[matchingAssistantIndex];
-    const toolName = previous ? getToolMessageName(previous) : 'unknown_tool';
+    // Planned rows always have an owner (orphans are never planned), so the
+    // fallback is defensive only.
+    const owningCall = findOwningToolCall(historyMessages, index);
+    const toolName = owningCall ? toolCallName(owningCall) : UNKNOWN_TOOL_NAME;
 
     // An empty tool output has nothing to distil: the call would be a
     // request whose answer is an empty digest wrapped in a header that claims

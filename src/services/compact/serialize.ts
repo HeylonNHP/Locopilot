@@ -59,7 +59,7 @@ export const SERIALIZED_TOOL_RESULT_MAX_CHARS = 8000;
 const TRUNCATION_MARKER = '…';
 
 /** Label used when a tool result cannot be traced back to the tool call that produced it. */
-const UNKNOWN_TOOL_NAME = 'unknown_tool';
+export const UNKNOWN_TOOL_NAME = 'unknown_tool';
 
 /** The key that marks a projection whose pairs did not all fit inside the cap. */
 const TRUNCATED_PROJECTION_KEY = '_truncated';
@@ -485,7 +485,7 @@ function toolResultText(
  * row must not abort the compaction: a call without a usable name is
  * `unknown_tool`.
  */
-function toolCallName(toolCall: ToolCall): string {
+export function toolCallName(toolCall: ToolCall): string {
   const name = toolCall.function?.name;
   return typeof name === 'string' && name.length > 0 ? name : UNKNOWN_TOOL_NAME;
 }
