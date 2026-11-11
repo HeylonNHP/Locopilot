@@ -128,10 +128,6 @@
     word-break: break-all;
   }
 
-  &-provider-form {
-    margin-top: 12px;
-  }
-
   &-hint {
     margin: 4px 0 12px;
     font-size: 12px;
@@ -201,6 +197,25 @@
       cursor: progress;
     }
   }
+}
+
+// The Add provider dialog opens from Settings and is portaled to <body>. It
+// reuses the .settings-overlay and .settings-panel look and stacks one layer
+// higher, so it sits above the Settings dialog it came from.
+.provider-dialog-overlay {
+  z-index: var(--z-overlay);
+}
+
+.provider-dialog-divider {
+  margin: 4px 0 16px;
+  border-top: 1px solid var(--glass-border-soft);
+}
+
+.provider-dialog-subheading {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 // The three <select>s share the `settings-input` class with the plain text and

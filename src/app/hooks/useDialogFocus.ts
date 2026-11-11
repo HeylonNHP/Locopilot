@@ -69,6 +69,10 @@ export function useDialogFocus<T extends HTMLElement = HTMLDivElement>({
       const last = items.at(-1)!;
       const active = document.activeElement;
       if (!panel.contains(active)) {
+        // Focus is in a dialog stacked on top of this one (portaled, so outside
+        // this panel). That dialog runs its own Tab cycle; pulling focus back
+        // here would break it.
+        if (active?.closest('[aria-modal="true"]')) return;
         event.preventDefault();
         first.focus();
         return;

@@ -391,16 +391,60 @@ describe('the form is wired into Settings', () => {
     expect(settings).toContain("import ProviderSection from './ProviderSection'");
   });
 
-  test('the form posts to /api/providers, hides the key, and refreshes the models', () => {
+  test('Settings keeps the list and the button; the add form is a dialog it opens', () => {
     const section = read('src/components/SettingsModal/ProviderSection.tsx');
-    expect(section).toContain("fetch('/api/providers'");
-    expect(section).toContain('type="password"');
-    expect(section).toContain('fetchModelList()');
-    expect(section).toContain("type: 'SET_MODELS'");
-    expect(section).toContain("type: 'SET_PROVIDERS'");
+    expect(section).toContain('<ProviderList');
+    expect(section).toContain('<AddProviderDialog onClose={() => setAdding(false)}');
+    expect(section).not.toContain('type="password"');
+    // The button stays mounted while the dialog is open, so focus has somewhere to return to.
+    expect(codeOnly(section)).not.toMatch(/{!adding &&/);
+  });
+
+  test('the dialog lists the providers, portals to body, and stacks above Settings', () => {
+    const dialog = read('src/components/SettingsModal/AddProviderDialog.tsx');
+    expect(dialog).toContain('<ProviderList providers={providers}');
+    expect(dialog).toContain('createPortal(');
+    expect(dialog).toMatch(/document\.body\s*\);/);
+    expect(dialog).toContain('aria-modal="true"');
+    expect(dialog).toContain('provider-dialog-overlay');
+    expect(read('src/components/SettingsModal/SettingsModal.scss')).toMatch(
+      /\.provider-dialog-overlay {\s*z-index: var\(--z-overlay\);/
+    );
+  });
+
+  test('a save in flight cannot be dismissed, so its outcome always reaches Settings', () => {
+    const dialog = read('src/components/SettingsModal/AddProviderDialog.tsx');
+    expect(dialog).toContain('if (!busy) onClose();');
+    expect(dialog).toContain('onAdded({');
+    expect(dialog).toMatch(/disabled={busy}\s*\n\s*onClick={handleDismiss}/);
+  });
+
+  test('the form posts through the client, hides the key, and refreshes the models', () => {
+    const client = read('src/app/lib/providersClient.ts');
+    expect(client).toContain("fetch('/api/providers'");
+    const dialog = read('src/components/SettingsModal/AddProviderDialog.tsx');
+    expect(dialog).toContain('postNewProvider(fields)');
+    expect(dialog).toContain('type="password"');
+    expect(dialog).toContain('fetchModelList()');
+    expect(dialog).toContain("type: 'SET_MODELS'");
+    expect(dialog).toContain("type: 'SET_PROVIDERS'");
     // The key the user TYPES is `fields.apiKey`; no provider object's stored key is read.
-    expect(codeOnly(section)).not.toMatch(
-      /\b(?:p|provider|added|data\.provider|state\.providers)\.apiKey\b/
+    for (const source of [
+      client,
+      dialog,
+      read('src/components/SettingsModal/ProviderList.tsx'),
+      read('src/components/SettingsModal/ProviderSection.tsx'),
+    ]) {
+      expect(codeOnly(source)).not.toMatch(
+        /\b(?:p|provider|added|data\.provider|state\.providers)\.apiKey\b/
+      );
+    }
+  });
+
+  test('a dialog stacked above Settings keeps its own Tab cycle', () => {
+    // Settings' trap would otherwise pull focus back from the portaled dialog.
+    expect(read('src/app/hooks/useDialogFocus.ts')).toMatch(
+      /closest\('\[aria-modal="true"]'\)\)\s*return;/
     );
   });
 

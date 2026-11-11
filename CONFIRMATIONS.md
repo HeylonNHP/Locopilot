@@ -168,7 +168,7 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 ### A-006 — Settings cannot add a provider
 
 - **Status:** Done (2026-11-11). The owner chose option (a): a small form in Settings.
-- **What was built:** a Providers section at the top of Settings (`src/components/SettingsModal/ProviderSection.tsx`). It lists the providers by name, kind and address (never a key) and has an Add provider form: name, kind (Ollama or OpenAI-compatible), server address, an optional API key and an optional model. Adding calls `POST /api/providers`, which appends one validated entry to `config.json` on the server; it does not wait for the Save button. The form is open by default when there is no provider.
+- **What was built:** a Providers section at the top of Settings (`src/components/SettingsModal/ProviderSection.tsx`). It lists the providers by name, kind and address (never a key) and has an Add provider button. The button opens a dialog (`src/components/SettingsModal/AddProviderDialog.tsx`) that lists the providers again and holds the form: name, kind (Ollama or OpenAI-compatible), server address, an optional API key and an optional model. Adding calls `POST /api/providers`, which appends one validated entry to `config.json` on the server; it does not wait for the Save button. The dialog is not opened by itself when there is no provider. (First built as an inline form, open by default when there was no provider; moved into the dialog on 2026-11-11, see the changelog.)
 - **Rules the server applies:** the id is made from the name and never reused; the address is stored without a trailing slash, and without a trailing `/v1` for an OpenAI-compatible server (the adapter appends `/v1` itself); a provider with the same name (any case) is refused; only name, kind, address, key and model are taken from the body; the response never carries the key (`hasApiKey` says whether one is stored); an unreadable `config.json` is refused and left alone.
 - **Scope kept small:** add only. Editing or removing a provider, and setting a provider's own `numCtx`, are still done in `config.json`.
 - **The key** is stored in `config.json` in plain text, as it always was. The field is masked on screen, and the page never receives a stored key back.
@@ -184,6 +184,20 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **What changed because of it:** before, the classifier said `none` for this message, so a sub-agent or the main loop would have failed without compacting. The phrasing list in `src/services/llmContextLimit.ts` now has both wordings, with a test on the exact text, and a check that the 8397 is not read as a window.
 - **Not done:** the excess could drive a smarter compaction target (compact by at least N tokens). The current retry compacts the way auto-compaction does.
 - **Cost:** about 3,500 tokens for the ping and calibration, and one request of roughly 138,000 tokens that the provider rejected at its limit. Whether the provider billed a rejected request is unknown. The earlier `clef:27b` attempt (about 69,000 tokens) was a routing error: it is a decision model and only accepts `/v1/systemone`.
+
+### A-008 — Live check of the Add provider dialog's submit path
+
+- **Status:** Not done. The dialog was checked live on 2026-11-11 WITHOUT submitting, because a submit writes the owner's `config.json` at once.
+- **Checked live** (dev server on port 3001, built-in browser): opened from Settings; Tab and Shift+Tab stay inside the dialog and wrap at both ends; Escape closes the dialog only and returns focus to the Add provider button; a backdrop click closes the dialog only; Settings' own Tab trap works afterwards; an empty submit shows "Enter a name for this provider." and "Enter the server address." and sends no `POST /api/providers`; no console errors.
+- **Still to check:** adding a provider through the dialog. The list in the dialog and in Settings must refresh, the note must appear, the default model must be preselected when the provider lists it, and `config.json` must gain exactly one provider. With the owner's OK: rename `config.json` aside, start the dev server, add one provider, restore the file, and check its hash. The in-flight guard (Escape and the backdrop do nothing while a save runs) is also not exercised live.
+
+### A-009 — Test fixtures in the repo-root `config.json`
+
+- **Status:** Not done. Editing `config.json` needs the owner's OK; it is the owner's file.
+- **What was found:** the repo-root `config.json` (git-ignored) holds providers that match the fixtures of `tests/provider-add.test.mjs`: `Router` (`https://api.example.com`, stored with the key the test uses), `Sneaky` (`http://sneaky:11434`), `Local-Ollama!` (`http://third:11434`), and `Local Ollama` (`http://localhost:11434`, id `local-ollama`). The file's mtime is 19:27 on 2026-11-11, before the current suite was run.
+- **Verified:** the current suite leaves the file unchanged. Its SHA-256 prefix `770530678b06f6c5` was the same before and after `npm test -- tests/provider-add` and after the full `npm test`. The endpoint tests run in a temporary directory, as intended.
+- **Not verified:** which earlier run wrote the fixtures, and whether `Local Ollama` is the owner's own provider (the owner may have added it during the live check of A-006). To settle it, compare with the earlier `scripts/test-provider-add.mjs` in git history and ask the owner.
+- **Action with the owner's OK:** copy `config.json` aside, then remove the fixture providers by hand. Settings can add a provider but cannot remove one.
 
 ## Confirmed
 
