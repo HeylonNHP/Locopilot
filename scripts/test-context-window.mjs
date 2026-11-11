@@ -420,6 +420,15 @@ check('Retry rebuilds the body from the current setting', () => {
   assert.ok(hook.includes('withCurrentNumCtx(stored, refs.requestedNumCtxRef.current)'));
 });
 
+check('the route logs a missing or unreadable config, not only a thrown one', () => {
+  const route = read('src/app/api/chat/route.ts');
+  // loadConfig() returns null instead of throwing, so the catch alone never sees it.
+  assert.ok(
+    /if \(config === null\) {[\S\s]*?phase: 'config_unavailable'/.test(route),
+    'a null config is not logged'
+  );
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) {
   process.exitCode = 1;

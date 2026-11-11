@@ -1173,6 +1173,19 @@ export async function POST(req: NextRequest): Promise<Response> {
 
         try {
           config = await loadConfig();
+          // loadConfig() returns null, rather than throwing, when the file is
+          // missing or unreadable. Log it here: the catch below only runs when
+          // something throws, which a null config does not do.
+          if (config === null) {
+            debugLog.diagnostic({
+              layer: 'route',
+              phase: 'config_unavailable',
+              requestId,
+              sessionId: parsedSessionId,
+              model: model as string,
+              reason: 'config_null',
+            });
+          }
           const resolved = resolveProviderRequestContext(config, providerId, model, requestId);
           if (resolved) {
             activeProvider = resolved.provider;
