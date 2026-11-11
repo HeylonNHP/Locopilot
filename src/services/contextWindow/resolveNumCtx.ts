@@ -14,24 +14,12 @@
  */
 
 import type { LlmRequestContext } from '@/services/llm';
+import type { NumCtxResolution } from '@/types/numCtx';
 
-import { type CapProbeDeps, type ModelMaxSource, resolveModelMax } from '@/services/capResolver';
+import { type CapProbeDeps, resolveModelMax } from '@/services/capResolver';
 import { parsePositiveInteger } from '@/services/llmContextLimit';
 
-/** What the server knows about one model's window. */
-export interface NumCtxResolution {
-  /** The user's setting (provider first, then global); null when unset. */
-  requested: number | null;
-  /** The model's maximum; null when it is not known. */
-  modelMax: number | null;
-  /** The window to plan with; null only when there is no setting. */
-  effective: number | null;
-  /** True when `modelMax` is known. When false the page says "model max unknown". */
-  known: boolean;
-  source: ModelMaxSource;
-  /** Why the last probe failed; null when it did not. */
-  probeError: string | null;
-}
+export type { NumCtxResolution } from '@/types/numCtx';
 
 /** The setting that applies: the provider's own, else the global one. */
 export function pickRequestedNumCtx(providerNumCtx: unknown, configNumCtx: unknown): number | null {
@@ -58,9 +46,9 @@ export async function resolveNumCtx(
     ctx: LlmRequestContext;
     model: string;
     /** `provider.numCtx` of the provider that serves the model, if it has one. */
-    providerNumCtx?: number;
+    providerNumCtx?: number | undefined;
     /** The global `config.numCtx`. */
-    configNumCtx?: number;
+    configNumCtx?: number | undefined;
   },
   deps: Partial<CapProbeDeps> = {}
 ): Promise<NumCtxResolution> {

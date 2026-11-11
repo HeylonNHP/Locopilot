@@ -10,8 +10,8 @@
  *   2. Two concurrent requests to two different models report
  *      different `modelCap` values (the (baseUrl, modelName) cache
  *      key is not collapsing them).
- *   3. A second request to the same model hits the cache
- *      (`source: 'cache'`).
+ *   3. A second request to the same model gives the same answer from the
+ *      cache (the same `modelCap` and `source`).
  *
  * Run with: node scripts/verify-numctx.mjs
  *
@@ -76,19 +76,17 @@ async function main() {
     `effective (${a1.effective}) <= requested (${REQUESTED})`
   );
   assert(
-    a1.source === 'runtime-ps' ||
-      a1.source === 'static-show' ||
-      a1.source === 'cache' ||
-      a1.source === 'unknown',
+    ['static', 'llamacpp-loaded', 'openai-models', 'learned', 'unknown'].includes(a1.source),
     `source is one of the expected values (got: ${a1.source})`
   );
   console.log('');
 
   // Test 2: second request to the same model should hit the cache.
-  console.log('Test 2: second request hits the cap cache');
+  console.log('Test 2: second request is answered from the cap cache');
   const a2 = await resolve(MODEL_A, REQUESTED);
   console.log(`  response: ${JSON.stringify(a2)}`);
-  assert(a2.source === 'cache', `second request source is 'cache' (got: ${a2.source})`);
+  assert(a2.modelCap === a1.modelCap, 'cached modelCap matches the first request');
+  assert(a2.source === a1.source, `cached source matches the first request (got: ${a2.source})`);
   assert(a2.effective === a1.effective, 'cached effective matches first request');
   console.log('');
 
@@ -156,7 +154,7 @@ async function main() {
   console.log('Test 6: cache invalidation on model change');
   // Warm MODEL_B's cache by re-resolving.
   const bWarm = await resolve(MODEL_B, REQUESTED);
-  assert(bWarm.source === 'cache', `MODEL_B re-resolve hits cache (got: ${bWarm.source})`);
+  assert(bWarm.modelCap === b1.modelCap, 'MODEL_B re-resolve returns the cached cap');
   // Switch the active model via PUT /api/config.
   const putRes = await fetch(`${BASE_URL}/api/config`, {
     method: 'PUT',
@@ -167,8 +165,8 @@ async function main() {
     const bFresh = await resolve(MODEL_B, REQUESTED);
     console.log(`  response: ${JSON.stringify(bFresh)}`);
     assert(
-      bFresh.source !== 'cache' || bFresh.modelCap === bWarm.modelCap,
-      'after model change, either re-probed (source != cache) or cap unchanged'
+      bFresh.modelCap === bWarm.modelCap,
+      'after the model change the cap is unchanged (it is the same model, probed again)'
     );
   } else {
     console.log(`  SKIP  PUT /api/config returned ${putRes.status}; cannot exercise invalidation`);

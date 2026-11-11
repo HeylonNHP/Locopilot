@@ -565,6 +565,31 @@ await check(
   }
 );
 
+// ── the routes ─────────────────────────────────────────────────────────────
+
+console.log('the endpoint and the config route');
+
+await check('GET /api/numctx asks the resolver, takes an id and a model, and never a URL', () => {
+  const route = read('src/app/api/numctx/route.ts');
+  assert.ok(route.includes('resolveNumCtx('), 'the endpoint does not use the resolver');
+  assert.ok(route.includes("textParam(url, 'providerId')"), 'no providerId parameter');
+  assert.ok(route.includes("textParam(url, 'model')"), 'no model parameter');
+  assert.ok(route.includes('config.activeProviderId'), 'no default provider');
+  assert.ok(route.includes('config.model'), 'no default model');
+  assert.ok(!/searchParams\.get\('(?:baseUrl|url|apiKey)'\)/.test(route), 'reads a URL or key');
+});
+
+await check('GET /api/config asks about the SELECTED model, not the provider default', () => {
+  const route = read('src/app/api/config/route.ts');
+  assert.ok(route.includes('config.model || resolvedProvider?.provider.model'), 'wrong target');
+  assert.ok(!route.includes('activeProvider.model,'), 'the provider default is still probed');
+});
+
+await check('saving the config does not clear a learned limit because the setting changed', () => {
+  const route = read('src/app/api/config/route.ts');
+  assert.ok(!route.includes('current.numCtx !== next.numCtx'), 'numCtx still invalidates');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) {
   process.exitCode = 1;

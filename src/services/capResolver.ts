@@ -45,6 +45,8 @@
  * only until the routes move to `resolveNumCtx`.
  */
 
+import type { ModelMaxSource } from '@/types/numCtx';
+
 import type { LlmModelInfo } from './adapters/llmAdapter';
 
 import { fetchLlmModelInfo, getLlmModelContextLimit, type LlmRequestContext } from './llm';
@@ -58,9 +60,6 @@ export const CAP_SUCCESS_TTL_MS = 5 * 60 * 1000;
 export const CAP_FAILURE_TTL_MS = 60 * 1000;
 /** How long a limit learned from a provider's 400 is trusted. */
 export const CAP_LEARNED_TTL_MS = 5 * 60 * 1000;
-
-/** Where a model maximum came from. */
-export type ModelMaxSource = 'static' | 'llamacpp-loaded' | 'openai-models' | 'learned' | 'unknown';
 
 /** What is known about one model's maximum context window. */
 export interface ModelMax {

@@ -3,7 +3,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
-import { invalidateCapCache, resolveEffectiveNumCtx } from '@/services/capResolver';
+import { invalidateCapCache } from '@/services/capResolver';
 import {
   DEFAULT_ADAPTER_RETRY,
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
@@ -17,8 +17,12 @@ import {
   RETRY_MAX_ATTEMPTS_MIN,
 } from '@/services/configDefaults';
 import { loadConfig, saveConfig } from '@/services/configManager';
-import { buildLlmRequestContext } from '@/services/llm';
-import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
+import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
+import {
+  getNormalizedProviders,
+  resolveProvider,
+  resolveProviderRequestContext,
+} from '@/services/providerResolver';
 import { invalidateSamplingParamCache } from '@/services/samplingParamsCache';
 import { invalidateVisionCache } from '@/services/visionCache';
 import {
@@ -521,31 +525,30 @@ export async function GET(): Promise<NextResponse> {
     if (!config) {
       return NextResponse.json({ config: {} });
     }
-    // Resolve the model cap for the persisted default model so a
-    // freshly-mounted tab can display the "capped by model limit"
-    // hint without waiting for the first chat turn. The cap is
-    // informational; the authoritative value comes back on every
-    // chat turn's `status` event. If resolution fails (Ollama
-    // unreachable, model not loaded, etc.) we silently omit the
-    // field rather than 500ing the config read.
+    // Resolve the model maximum for the SELECTED model (`config.model` on the
+    // active provider) so a freshly mounted tab can show it without waiting
+    // for the first chat turn. Informational: the authoritative window comes
+    // from `GET /api/numctx` and from every chat turn's `status` event. If
+    // resolution fails the field is null rather than a 500.
     let modelContextLimit: number | null = null;
     // Pass `config.model` so a stale `activeProviderId` can still recover via
     // model match instead of silently resolving the first provider (which
-    // would report a cap for the wrong model). Returns null when neither
-    // resolves, in which case we omit the cap hint.
-    const activeProvider = resolveProvider(config, config.activeProviderId, config.model);
-    if (activeProvider?.baseUrl && activeProvider?.model) {
+    // would report a maximum for the wrong model).
+    const resolvedProvider = resolveProviderRequestContext(
+      config,
+      config.activeProviderId,
+      config.model
+    );
+    const selectedModel = config.model || resolvedProvider?.provider.model;
+    if (resolvedProvider && selectedModel) {
       try {
-        const resolved = await resolveEffectiveNumCtx(
-          buildLlmRequestContext({
-            ...(activeProvider.provider ? { provider: activeProvider.provider } : {}),
-            ...(activeProvider.apiKey ? { apiKey: activeProvider.apiKey } : {}),
-            baseUrl: activeProvider.baseUrl,
-          }),
-          activeProvider.model,
-          activeProvider.numCtx ?? config.numCtx ?? DEFAULT_NUM_CTX
-        );
-        modelContextLimit = resolved.modelCap;
+        const resolved = await resolveNumCtx({
+          ctx: resolvedProvider.ctx,
+          model: selectedModel,
+          providerNumCtx: resolvedProvider.provider.numCtx,
+          configNumCtx: config.numCtx,
+        });
+        modelContextLimit = resolved.modelMax;
       } catch {
         // Resolver is best-effort on this read path.
       }
@@ -624,9 +627,11 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     }
 
     // Invalidate the cap-resolver and vision caches for any provider
-    // whose identity (baseUrl/model) or context size changed. Without
-    // this, stale entries from a previous model/runner state would
-    // persist for up to 5 minutes.
+    // whose identity (provider/baseUrl/model) changed. Without this, stale
+    // entries from a previous model/runner state would persist for up to 5
+    // minutes. A change of `numCtx` is deliberately NOT a trigger: a model's
+    // maximum does not depend on the setting, and clearing the cache would
+    // throw away a limit learned from a 400 just as the user raises the window.
     const currentProviders = getNormalizedProviders(currentConfig ?? null);
     const nextProviders = getNormalizedProviders(updatedConfig);
     const changedProviderIds = new Set<string>();
@@ -636,8 +641,7 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
         !current ||
         current.provider !== next.provider ||
         current.baseUrl !== next.baseUrl ||
-        current.model !== next.model ||
-        current.numCtx !== next.numCtx
+        current.model !== next.model
       ) {
         changedProviderIds.add(next.id);
       }
