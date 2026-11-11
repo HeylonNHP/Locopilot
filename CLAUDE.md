@@ -309,6 +309,8 @@ the flow. Regression coverage lives in `scripts/test-mcp-oauth.mjs`
   - A provider without a published window (NVIDIA publishes none) uses the setting unclamped. A 400 whose body states the limit (`maximum context length is N tokens`, or `exceeds the available context size (N tokens)`) lowers the window for the cache TTL; the provider's own message is trusted as the only source of a cap.
   - A config the page cannot load is warned about in the console; a config the server cannot read is logged as the `config_unavailable` diagnostic, and the window then falls back to the uncapped `DEFAULT_NUM_CTX`.
   - Decided, not yet built (Phase 2): a provider's own `numCtx` applies to chat, and a provider without one takes the global setting. There is no Settings control for provider windows; they are set by editing `config.json`. Today the page sends the global value, which overrides them.
+  - Decided by the owner, not yet built (Phase 2): when the model's maximum is unknown, show the setting with "model max unknown" and read the real value after the model loads. Probes time out after 10 s; failures are cached for 60 s; discovered limits keep the 5-minute cache. Local runners get a per-provider window, with no new cap.
+  - The Ollama path logs the body of any 400 as an adapter `error` diagnostic (`logOllamaBadRequest`, `src/services/adapters/ollamaAdapter.ts`).
   - Decided, not yet built (Phase 3): the config save writes the 131072 default only when it creates a fresh config file. Saving an existing file writes only the fields the user changed.
 
 - **Mid-turn model switching** (`src/app/lib/modelSwitchRegistry.ts`, `src/app/api/chat/switch-model/route.ts`, `src/app/api/chat/route.ts`, `src/tools/impl/subAgentTool.ts`):

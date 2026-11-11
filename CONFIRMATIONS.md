@@ -37,18 +37,22 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **How to confirm:** run the same request as C-001 against a vLLM server's `/v1/responses` and check `status` and `usage.output_tokens`.
 - **Needs:** a machine running vLLM.
 
-### C-003 — Does a local runner honour `options.num_ctx`, and what does it do above the model's maximum?
+### C-003 — Does a local runner honour `options.num_ctx`, and how much memory does it reserve?
 
-- **Status:** Partly confirmed. One small model tested on this machine (2026-11-11).
-- **Confirmed here** with `qwen3:0.6b` on the owner's local Ollama:
-  - A roughly 2,800-token prompt had `prompt_eval_count` 2,816 with no `num_ctx` and with `num_ctx` 4,096.
-  - With `num_ctx` 256 the same prompt was cut to 130 tokens. So the local runner honours the window by truncating the input.
-  - With `num_ctx` 42,000, above the model's `context_length` of 40,960, `/api/ps` reported `context_length` 40,960. So the local runner clamps `num_ctx` to the model's own maximum.
-- **Still to check** on the owner's other machine:
-  - A model whose trained context is large (262,144 or more). The clamp keeps the cache at the model's own maximum, which is still large. Check the memory the runner uses (`size` and `size_vram` in `/api/ps`).
-  - Whether the clamp behaves the same for larger models.
-- **How:** the same calls as before. Use `curl -s http://localhost:11434/api/chat -d '{"model":"<model>","stream":false,"options":{"num_ctx":256,"num_predict":1},"messages":[{"role":"user","content":"<about 2,000 tokens of text>"}]}'`, then read `/api/ps` while the model is loaded. Unload with `{"model":"<model>","keep_alive":0}` on `/api/generate`.
-- **Needs:** a local Ollama install with the model pulled. The other machine is the place to test a large model.
+- **Status:** Partly confirmed. Two local models tested on this machine (2026-11-11, CPU only). The large-window question for a full-attention model is still open.
+- **Honours `num_ctx`:** with `qwen3:0.6b`, a roughly 2,800-token prompt was cut to 130 tokens at `num_ctx` 256. So the runner truncates the input to the window.
+- **Clamps above the model's own maximum:** with `qwen3:0.6b` (context 40,960), `num_ctx` 42,000 and 40,960 both reported `context_length` 40,960 and the same size, 5,500,211,034 bytes.
+- **Reserves the cache up front:** with `bonsai-2:2b` (`qwen35`, `context_length` 262,144, a hybrid model), `/api/ps` size rose with `num_ctx`:
+  - 8,192: 1,025,968,699 bytes
+  - 32,768: 1,378,290,235 bytes
+  - 65,536: 2,099,752,466 bytes
+  - The server log's CPU KV buffer was 96, 384 and 768 MiB, which is exactly 12,288 bytes per token. The reserve happens at model load, not on demand.
+- **The simple per-token formula overstates the cache for hybrid models.** Layers × KV heads × (key + value length) × 2 gives 49,152 bytes per token for this model. The log shows 12,288, because only 6 of its 24 layers keep a full-attention cache. Use the log figure, or count only the full-attention layers.
+- **Not yet tested:** `num_ctx` 131,072 and 262,144 for this model, which the 6 GB budget blocked. The projected cache is 1.6 GB and 3.2 GB at those sizes. Whether the compute buffer also grows is unknown. And the clamp above `context_length` is untested on this model.
+- **Why it matters:** the cache size depends on the model's architecture, not only on `num_ctx`. A full-attention model of similar size could need about 49 KB per token, which is about 12.9 GB at 262,144 tokens. So a model-specific check is needed before the server sends a large window to local runners.
+- **How to reproduce:** `POST /api/chat` with `options.num_ctx`, read `GET /api/ps`, then unload with `POST /api/generate` and `keep_alive: 0`. Read the server log for the KV buffer size.
+- **Needs:** the owner's machine, ideally with a GPU, to run the larger sizes. The compute buffer at those sizes is unknown.
+- **Installed for testing on this machine:** `qwen3:0.6b`, `bonsai-2:2b` (911 MB) and `tev1:0.8b` (833 MB). `tev1:0.8b` refused chat requests ("does not support chat") and can be removed on request.
 
 ### C-004 — Does Ollama Cloud ignore `options.num_ctx`? Also: what does it say above the model's maximum?
 
@@ -65,7 +69,7 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Status:** Unexplained.
 - **Observed:** 2026-11-11, a sub-agent on Ollama Cloud (`minimax-m3.1-flash`, session 522 in the owner's production copy). Its window was configured at 1,000,000 and the model advertises 1,000,000. `num_ctx` cannot be the cause (C-004). The Ollama path does not log the 400 body, so the real message is not on record.
 - **Also observed:** the numberless message is not matched by the parser (`parseContextLimitFromError` returns `null` for it, checked 2026-11-11), so the sub-agent cannot learn from it.
-- **How to confirm:** do action A-001 (log the 400 body on the Ollama path), then read the body the next time it happens, or reproduce it.
+- **How to confirm:** A-001 is done, so the body of the next Ollama 400 is logged. Read it in `logs/locopilot-debug.log` (`"phase":"error"`, `"layer":"adapter"`, `errorBody`), or reproduce it.
 - **Needs:** the owner's logs or a reproduction on the owner's Ollama Cloud account.
 
 ### C-007 — Reasoning tokens count against `max_output_tokens`
@@ -96,16 +100,30 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **How to confirm:** reproduce it, or do action A-001 and log the compaction error. Check whether the compaction prompt fits in the 30,000 window, and whether the 0.6B model returns usable output.
 - **Needs:** the owner's Ollama, and the `qwen3:0.6b` model on this machine (already pulled).
 
-### C-014 — For llama.cpp, is the model maximum the trained context or the served window?
+### C-014 — For llama.cpp, which maximum is enforced: the trained context or the served window?
 
-- **Status:** Open. A decision is needed before Phase 2.
-- **Observed:** the llama.cpp router (`localhost:60300`) reports two different numbers for the same model:
-  - `context_length` on every entry (loaded or not) is the model's trained maximum. For example, `Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_XL` shows 1,048,576.
-  - The served window is the `--ctx-size` argument in `status.args` for each model. For the same model it is 393,216. A loaded model also exposes `meta.n_ctx`, which matched its `--ctx-size` (262,144) for the one loaded model.
-  - `Muse-Glimmer-30B-Q4_K_M` is the opposite: `context_length` 131,072 against a `--ctx-size` of 262,144.
-- **Why it matters:** if Phase 2 takes `context_length` as the maximum, a 1,000,000-token setting on `Nemotron-3.5-Lightning` would be sent, but the server would refuse anything above 393,216. The served value is the one that is enforced. Confirm this on the server, not just in the listing.
-- **How to confirm:** load one such model (on the owner's machine, where memory allows) and send a request just above `--ctx-size`. Read the error. Then compare with `meta.n_ctx` once it is loaded.
-- **Needs:** the owner's llama.cpp router, and enough memory to load a 30B model.
+- **Status:** Mostly answered (2026-11-11). Three models tested live. One model (Muse-Glimmer) still needs a live check; the source predicts a result for it.
+- **Result (live):** the enforced limit is the **served** window, not the trained context that `/v1/models` lists as `context_length`.
+  - `Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_XL`: `context_length` 1,048,576, `--ctx-size 393216`, served `n_ctx` 393,216. A 429,927-token prompt was refused in about 1 second with `request (429927 tokens) exceeds the available context size (393216 tokens)`. The loaded `meta.n_ctx_train` also reads 393,216, which fits a YaRN rewrite (see the source below).
+  - `Ornith-1.5-35B-A3B-Heretic-MTP-APEX` (no `--ctx-size`): `context_length` 262,144, served `n_ctx` 222,976 (sized by llama.cpp at load to fit memory). A 239,960-token prompt was refused with `exceeds the available context size (222976 tokens)`.
+  - `Ornith-1.5-35B-A3B-Heretic-MTP-APEX-I-Quality` (`--ctx-size 262144`): served 262,144, equal to its `context_length`. This case does not discriminate.
+- **Result (live):** a single 109,987-token prompt was accepted on the Nemotron model, which has 4 slots. A single request can use the whole served window.
+- **Result (live):** the refusal's JSON body carries `"n_ctx"` with the enforced value (for example `"n_ctx":393216`). This is the most reliable value to read at request time.
+- **Source (llama.cpp tag `b12124`, read by a research agent; the key check spot-verified by hand on 2026-11-11):**
+  - The 400 is raised in `tools/server/server-context.cpp` around line 4081, by `slot.task->n_tokens() >= slot.n_ctx`, and the value is the per-slot context.
+  - The per-slot value comes from `n_ctx_slot()` (line 5066): the smallest of the per-sequence context, `--kv-unified-per-slot` if set, and the trained context after any YaRN rewrite.
+  - `context_length` in `/v1/models` is set from the GGUF key `<arch>.context_length` (`tools/server/server-models.cpp` around lines 2133–2225, and `common/common.cpp` around 1247). It ignores `--ctx-size`, RoPE and YaRN. That is why it differs from the served value.
+  - With `--rope-scale` and YaRN, `src/llama-context.cpp` around 4383 sets `n_ctx_train` to `n_ctx_orig_yarn / rope_freq_scale`. For Nemotron, 262,144 / (1/1.5) = 393,216, which matches both its `--ctx-size` and its loaded `n_ctx_train`.
+  - A `--ctx-size` above the trained context is accepted, but each slot is capped at the trained value (warning at `server-context.cpp` around 1464).
+- **Predicted, not yet tested:** `Muse-Glimmer-30B-Q4_K_M` (`context_length` 131,072, `--ctx-size 262144`, no YaRN) should be enforced at **131,072**, because the trained value caps each slot. A request above 131,072 should be refused with `(131072 tokens)`.
+  - The owner recalls that this model natively supports a 128K window, which is 131,072 tokens. That is consistent with the prediction, but it is the owner's recollection and has not been checked against the model card.
+- **Still open:** the Muse load failed twice (HTTP 500, "failed to load") on 2026-11-11, and the router's logs are not reachable from here. To test the prediction, load it on the owner's router and send a prompt of about 140,000 tokens with `max_tokens: 1`.
+- **Consequence for Phase 2:**
+  - `context_length` from `/v1/models` is not the maximum to clamp to for llama.cpp.
+  - For a loaded model, read the served value from `GET /props?model=<name>` (`default_generation_settings.n_ctx`), or from the refusal's `n_ctx`.
+  - For an unloaded model, the enforced value depends on `--ctx-size`, the trained context, and any YaRN rewrite. It is not reliably known before the model loads, so the resolver should treat it as unknown until then.
+- **How to reproduce:** `POST /tokenize` with `{"model": "<name>", "content": "..."}` counts tokens exactly. Then send `POST /v1/chat/completions` with `max_tokens: 1` and a prompt just above the expected size. The error body names the enforced value.
+- **Could not verify (per the research):** whether `GET /props?model=` loads an unloaded model, the owner's GGUF `rope_freq_scale_train`, and the `--parallel` behaviour on the owner's build. The owner's router log line "custom YaRN scaling detected" would confirm the YaRN rewrite.
 
 ---
 
@@ -113,9 +131,10 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 
 ### A-001 — Log the response body for 400 errors on the Ollama path
 
-- **Status:** Not done.
-- **Why:** the OpenAI-compatible path logs a debug dump of every 400 body, but the Ollama path logs none. Without the body, C-005, C-006 and C-013 cannot be explained.
-- **Where:** the Ollama adapter's error handling (`src/services/adapters/ollamaAdapter.ts`), the sub-agent error path (`src/tools/impl/subAgentTool.ts`), and the compaction error path (`src/services/compact/`).
+- **Status:** Done in commit `5597e3d`. Verified live (a 400 from Ollama, "does not support chat", was logged with its body) and by `scripts/test-ollama-error-log.mjs`.
+- **What now happens:** both Ollama request paths log a 400's body as an adapter `error` diagnostic (`errorStatus`, `errorBody`, `requestId`, `model`). The body is cut to 1,000 characters. The user-facing message is unchanged.
+- **To use it:** search `logs/locopilot-debug.log` for `"phase":"error"` with `"layer":"adapter"`. The `requestId` matches the chat turn.
+- **Not covered:** a compaction failure that is not an HTTP 400 (C-013) still has no error text. The sub-agent's own error path logs the status, not the body.
 
 ### A-002 — Deploy the recent commits to the production copy
 
@@ -129,7 +148,12 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Decisions:** a provider's own `numCtx` applies to chat, and a provider without one takes the global setting. There is no Settings control for provider windows; they are set by editing `config.json`.
 - **Scope:** one server resolver for `(provider, model)`; a `GET /api/numctx` endpoint; the page stops sending `numCtx`; `/api/config` probes the selected model rather than the provider's default; probes get timeouts; failures are cached for 30 to 60 seconds; `/api/ps` is no longer used as a cap; compaction is resolved against its own model's maximum.
 - **Keep:** each caller keeps its own output cap at its call site. The title route's `min(window, 8192)` stays where it is.
-- **Gated by:** C-014 (which maximum llama.cpp enforces), and the open part of C-003 (large local models).
+- **Decided by the owner (2026-11-11):**
+  - **Unknown maximum:** when the model's maximum is not known, show the setting with "model max unknown", and read the real value once the model has loaded. For llama.cpp, that is `GET /props?model=` `n_ctx`, or the `n_ctx` in a refusal.
+  - **Local runners:** no new cap. Set a per-provider window for local runners in `config.json`, and let the owner manage memory. The owner has enough RAM for the local models in use.
+  - **Probes:** a 10-second timeout per probe. Failures are cached for 60 seconds. Discovered limits keep the existing 5-minute cache, so a retry does not hit the same 400 again.
+- **Not started:** the owner asked to stop before implementing Phase 2.
+- **Gated by:** C-014 (which maximum llama.cpp enforces) for llama.cpp models. The open part of C-003 no longer blocks, because the owner has accepted the memory risk.
 
 ### A-004 — Phase 3: robustness
 
@@ -138,9 +162,9 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 
 ### A-005 — Commit the missing-config log fix
 
-- **Status:** Done in the working tree, not committed.
+- **Status:** Done, committed as `dc66b49`.
 - **What:** `src/app/api/chat/route.ts` now logs `config_unavailable` when `loadConfig()` returns `null`. Before, the log sat only in the `catch`, and `loadConfig()` never throws, so a missing or unreadable config was not logged. A regression check is in `scripts/test-context-window.mjs`.
-- **How:** commit both files after the owner's review.
+- **Committed with:** the regression check in `scripts/test-context-window.mjs`.
 
 ---
 
