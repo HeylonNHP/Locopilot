@@ -308,17 +308,23 @@ export function parseContextLimitFromError(message: string): number | null {
 }
 
 /**
- * Context-limit messages that name NO number, so they cannot teach a cap.
+ * Context-limit messages that name NO window size, so they cannot teach a cap.
  *
- * NEEDS CLARIFICATION: only one phrasing is confirmed so far, from Ollama Cloud
- * `minimax-m3.1-flash` (CONFIRMATIONS C-005): `invalid params, context window
- * exceeds limit`. The adapter logs the body of every Ollama 400 (A-001), so the
- * next occurrence will show whether the wording is the same. Add a pattern here
- * when a logged occurrence shows another one. A non-match keeps the old
- * behaviour: no cap learned, no retry.
+ * Two phrasings are confirmed, both from Ollama Cloud and from different models
+ * (CONFIRMATIONS C-005 and A-007):
+ *   - `invalid params, context window exceeds limit` (`minimax-m3.1-flash`);
+ *   - `prompt too long; exceeded max context length by N tokens` (`gpt-oss:20b`,
+ *     seen live on 2026-11-11 with a prompt about 5% over its 131,072-token
+ *     window). N is how far over the request was, NOT the size of the window.
+ *
+ * NEEDS CLARIFICATION: these are the only wordings seen. The adapter logs the
+ * body of every Ollama 400 (A-001); add a pattern here when a log shows another
+ * one, and a case to scripts/test-numberless-context-limit.mjs. A non-match
+ * keeps the old behaviour: no cap learned, no retry.
  */
 const NUMBERLESS_CONTEXT_LIMIT_PATTERNS: RegExp[] = [
   /invalid params,?\s*context window exceeds limit/i,
+  /prompt too long;?\s*exceeded max context length/i,
 ];
 
 /** True when a 400 says the request was too long, without saying how long the window is. */

@@ -66,7 +66,7 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 
 ### C-005 — Cause of the sub-agent's HTTP 400 "invalid params, context window exceeds limit"
 
-- **Status:** Partly answered (2026-11-11). The numberless 400 now gets one forced compaction and one re-send, and teaches no cap (Phase 3). The message is still confirmed from one occurrence only; the live check is pending (A-007).
+- **Status:** Partly answered (2026-11-11). Two wordings of a context-limit 400 that names no window are now confirmed from Ollama Cloud, from different models: `invalid params, context window exceeds limit` (`minimax-m3.1-flash`, the original sub-agent failure) and `prompt too long; exceeded max context length by N tokens` (`gpt-oss:20b`, seen live in A-007). Both get one forced compaction and one re-send, and neither teaches a cap. Still unknown: whether other models or providers use other wording, and whether every occurrence of the original sub-agent failure is the minimax wording.
 - **Observed:** 2026-11-11, a sub-agent on Ollama Cloud (`minimax-m3.1-flash`, session 522 in the owner's production copy). Its window was configured at 1,000,000 and the model advertises 1,000,000. `num_ctx` cannot be the cause (C-004). The Ollama path does not log the 400 body, so the real message is not on record.
 - **Also observed:** the numberless message is not matched by the parser (`parseContextLimitFromError` returns `null` for it, checked 2026-11-11), so the sub-agent cannot learn from it.
 - **How to confirm:** A-001 is done, so the body of the next Ollama 400 is logged. Read it in `logs/locopilot-debug.log` (`"phase":"error"`, `"layer":"adapter"`, `errorBody`), or reproduce it.
@@ -173,11 +173,17 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Scope kept small:** add only. Editing or removing a provider, and setting a provider's own `numCtx`, are still done in `config.json`.
 - **The key** is stored in `config.json` in plain text, as it always was. The field is masked on screen, and the page never receives a stored key back.
 
-### A-007 — Live check of the numberless 400 (needs the owner's OK)
+### A-007 — Live check of the numberless 400
 
-- **Status:** Pending. The code path is tested by source and classifier checks (`scripts/test-numberless-context-limit.mjs`). No live send has been made.
-- **Why it cannot use the cheapest-looking model:** the cost is the prompt size, which must be near the model's window. The smallest chat-capable window I have seen is 131,072 tokens (`gpt-oss:20b`, `gpt-oss:120b`). `clef:27b` (65,536) is a decision model, and its endpoint rejected a chat request with `only supports /v1/systemone`, which is a different error and not the one under test.
-- **To do:** send `"ok"` to `gpt-oss:20b` first (cheap; confirms it answers chat), then one prompt just over its window, about 131,000 tokens, with the owner's OK. Record the exact message. If the message is numberless and not the one in C-005, widen the list in `llmContextLimit.ts` and add a case to the test.
+- **Status:** Done (2026-11-11), with the owner's OK.
+- **What was sent**, to `gpt-oss:20b` on Ollama Cloud, straight to the adapter (no chat route, so no auto-compaction in front of it):
+  - a one-word ping: answered, and the provider counted 69 tokens for a 7-token prompt (a fixed overhead);
+  - a calibration prompt: estimate 3,599 tokens, provider count 3,269, so about 0.89 provider tokens per estimated token plus about 62 of overhead;
+  - one prompt with an estimate of about 155,000 tokens, aimed at about 5% over the model's 131,072-token window.
+- **Result:** HTTP 400 with `prompt too long; exceeded max context length by 8397 tokens (ref: ...)`. This is NOT the minimax wording. The number is how far over the request was, not the size of the window (the estimate puts the window near 131,072, consistent with `/api/numctx`).
+- **What changed because of it:** before, the classifier said `none` for this message, so a sub-agent or the main loop would have failed without compacting. The phrasing list in `src/services/llmContextLimit.ts` now has both wordings, with a test on the exact text, and a check that the 8397 is not read as a window.
+- **Not done:** the excess could drive a smarter compaction target (compact by at least N tokens). The current retry compacts the way auto-compaction does.
+- **Cost:** about 3,500 tokens for the ping and calibration, and one request of roughly 138,000 tokens that the provider rejected at its limit. Whether the provider billed a rejected request is unknown. The earlier `clef:27b` attempt (about 69,000 tokens) was a routing error: it is a decision model and only accepts `/v1/systemone`.
 
 ## Confirmed
 
@@ -219,3 +225,4 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
   - A provider at an address with nothing listening (`http://127.0.0.1:9`): saved, with the note "was added, but it did not answer: connect ECONNREFUSED 127.0.0.1:9".
   - A second provider with the same name in a different case: refused inline, "A provider named ... already exists."
   - The owner's real config: Settings lists NVIDIA, Ollama Cloud and Airia with their kinds and addresses, no key on screen, and the form collapsed behind an Add provider button.
+- **Numberless 400, live (2026-11-11, A-007).** `gpt-oss:20b` on Ollama Cloud answers chat (a ping returned, with the 16-token output cap spent on reasoning, so the reply text was empty). A prompt about 5% over its 131,072-token window was refused with HTTP 400 `prompt too long; exceeded max context length by 8397 tokens`. The classifier now treats it as `compact-only`; it names no window and teaches no cap. `clef:27b` (65,536) is a decision model and is not usable for chat.

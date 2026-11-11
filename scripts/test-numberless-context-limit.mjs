@@ -50,6 +50,28 @@ check('the confirmed Ollama Cloud body is numberless', () => {
   assert.equal(isNumberlessContextLimitError(NUMBERLESS), true);
 });
 
+// The exact text `gpt-oss:20b` on Ollama Cloud returned for a prompt about 5%
+// over its 131,072-token window (CONFIRMATIONS A-007, 2026-11-11). The number is
+// how far OVER the request was, not the size of the window.
+const OVER_BY =
+  'Request failed with status code 400: prompt too long; exceeded max context length by 8397 tokens (ref: 9a22efc0-bc25-4041-a572-70a5a0dc827a)';
+
+check('the gpt-oss:20b body is numberless too, and its number is not taken for the window', () => {
+  assert.equal(isNumberlessContextLimitError(OVER_BY), true);
+  assert.equal(parseContextLimitFromError(OVER_BY), null, 'the excess was read as a window');
+  assert.deepEqual(classifyContextLimitError(OVER_BY), { kind: 'compact-only' });
+});
+
+check('"prompt too long" alone, or a path that is too long, is not a context-limit error', () => {
+  for (const message of [
+    'prompt too long',
+    'prompt too long; try a shorter title',
+    'path too long; exceeded max path length by 12 characters',
+  ]) {
+    assert.equal(isNumberlessContextLimitError(message), false, `matched: ${message}`);
+  }
+});
+
 check('the phrase is matched without regard to case or spacing', () => {
   assert.equal(
     isNumberlessContextLimitError('Invalid Params,  Context Window Exceeds Limit'),
