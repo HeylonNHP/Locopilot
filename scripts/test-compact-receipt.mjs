@@ -253,25 +253,36 @@ check('the token badge uses the SAME limit as the receipt', () => {
   // and show the client's own `effectiveNumCtx`. When the two disagree the
   // screen contradicts itself: a badge reading "8,192" next to a warning
   // saying the history is over 4,096 tokens. Both now read the server's value
-  // first and fall back to the resolved refs only when it is absent.
+  // first and fall back to the server's last resolved window only when it is
+  // absent. The user's SETTING is no longer a fallback for the badge: written
+  // into the stats it was promoted into `effectiveNumCtx` as if the server had
+  // reported it (the status bar derives the window from the setting itself),
+  // so a frame without a window now leaves the limit unknown instead.
   const source = readFileSync(
     fileURLToPath(new URL('../src/app/hooks/useSlashCommands.ts', import.meta.url)),
     'utf8'
+  ).replaceAll('\r\n', '\n');
+  const badgeIndex = source.indexOf('const badgeLimit =');
+  assert.notEqual(badgeIndex, -1, 'the badge has no limit of its own');
+  const badgeLimit = source.slice(badgeIndex, source.indexOf(';', badgeIndex));
+  assert.ok(
+    badgeLimit.includes('compactData.tokenLimit'),
+    "the badge ignores the server's tokenLimit"
+  );
+  assert.ok(
+    badgeLimit.indexOf('compactData.tokenLimit') < badgeLimit.indexOf('effectiveForLimit'),
+    'the badge prefers the client window over the server value'
+  );
+  assert.ok(
+    !badgeLimit.includes('requestedNumCtxRef'),
+    "the badge falls back to the user's setting again (it would be promoted to effectiveNumCtx)"
   );
   const setStatsIndex = source.indexOf("type: 'SET_TOKEN_STATS'");
   assert.notEqual(setStatsIndex, -1, 'useSlashCommands never dispatches SET_TOKEN_STATS');
   const block = source.slice(setStatsIndex, source.indexOf('});', setStatsIndex));
-  const limitIndex = block.indexOf('tokenLimit:');
-  assert.notEqual(limitIndex, -1, 'the badge carries no tokenLimit');
-  const limit = block.slice(limitIndex);
-  assert.ok(limit.includes('compactData.tokenLimit'), "the badge ignores the server's tokenLimit");
   assert.ok(
-    limit.indexOf('compactData.tokenLimit') < limit.indexOf('effectiveForLimit'),
-    'the badge prefers the client window over the server value'
-  );
-  assert.ok(
-    limit.includes('refs.requestedNumCtxRef.current'),
-    'the badge no longer falls back to the requested window'
+    block.includes('badgeLimit === null ? {} : { tokenLimit: badgeLimit }'),
+    'the badge writes a limit it does not have'
   );
   // And the receipt a few lines later still prefers the server value, so the
   // two cannot drift apart again.

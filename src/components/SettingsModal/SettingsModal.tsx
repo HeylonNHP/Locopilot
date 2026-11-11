@@ -4,8 +4,9 @@ import { createPortal } from 'react-dom';
 
 import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 import { useChat } from '@/app/lib/chatStore';
+import { interpretNumCtxInput, resolveContextWindow } from '@/app/lib/contextWindow';
 import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
-import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
   REASONING_EFFORT_LABELS,
   REASONING_EFFORTS,
@@ -21,7 +22,18 @@ interface Props {
 export default function SettingsModal({ onClose }: Props) {
   const { state, dispatch, abortControllersRef } = useChat();
   const [model, setModel] = useState(state.model);
-  const [numCtx, setNumCtx] = useState(String(state.requestedNumCtx));
+  // Empty until the config has loaded — there is no stand-in value. The field
+  // follows the config's arrival only while the user has not edited it, so a
+  // late-arriving config neither leaves it blank nor overwrites what they typed.
+  const [numCtx, setNumCtx] = useState(
+    state.requestedNumCtx === null ? '' : String(state.requestedNumCtx)
+  );
+  const [numCtxEdited, setNumCtxEdited] = useState(false);
+  useEffect(() => {
+    if (!numCtxEdited && state.requestedNumCtx !== null) {
+      setNumCtx(String(state.requestedNumCtx));
+    }
+  }, [numCtxEdited, state.requestedNumCtx]);
   const [yolo, setYolo] = useState(state.yolo);
   const [thinkingEnabled, setThinkingEnabled] = useState(state.thinkingEnabled);
   const [reasoningEffort, setReasoningEffort] = useState(state.reasoningEffort);
@@ -177,9 +189,17 @@ export default function SettingsModal({ onClose }: Props) {
 
   const handleSave = async () => {
     setSaveError(null);
-    setIsSaving(true);
 
-    const parsedNumCtx = Number.parseInt(numCtx) || DEFAULT_NUM_CTX;
+    // A blank or malformed context size is an error to fix, not a value to
+    // guess: it used to become the 131 072 default and be saved into
+    // config.json. Nothing is sent for it either way.
+    const numCtxInput = interpretNumCtxInput(numCtx, state.requestedNumCtx);
+    if (numCtxInput.kind === 'invalid') {
+      setSaveError('Context size must be a whole number greater than 0.');
+      return;
+    }
+
+    setIsSaving(true);
     const parsedHours = Number.parseInt(chatTimeoutHours) || 0;
     const parsedMinutes = Number.parseInt(chatTimeoutMinutes) || 0;
     const parsedSeconds = Number.parseInt(chatTimeoutSeconds) || 0;
@@ -196,7 +216,6 @@ export default function SettingsModal({ onClose }: Props) {
     // edited, say, the chat timeout, sending the unchanged numCtx
     // back would be a no-op write that could still overwrite a value
     // another tab had just persisted.)
-    const numCtxChanged = parsedNumCtx !== state.requestedNumCtx;
     const clientConfig: Record<string, unknown> = {
       model,
       // Persist the selected model's provider so the next request is sent to
@@ -218,8 +237,8 @@ export default function SettingsModal({ onClose }: Props) {
         perPageCharLimit: parsedWebPerPageCharLimit,
       },
     };
-    if (numCtxChanged) {
-      clientConfig.numCtx = parsedNumCtx;
+    if (numCtxInput.kind === 'set') {
+      clientConfig.numCtx = numCtxInput.value;
     }
 
     try {
@@ -275,7 +294,7 @@ export default function SettingsModal({ onClose }: Props) {
             resultsPerQuery: parsedWebResultsPerQuery,
             perPageCharLimit: parsedWebPerPageCharLimit,
           },
-          ...(numCtxChanged ? { requestedNumCtx: parsedNumCtx } : {}),
+          ...(numCtxInput.kind === 'set' ? { requestedNumCtx: numCtxInput.value } : {}),
         },
       });
 
@@ -411,7 +430,11 @@ export default function SettingsModal({ onClose }: Props) {
                 id="settings-context-size"
                 type="number"
                 value={numCtx}
-                onChange={(e) => setNumCtx(e.target.value)}
+                onChange={(e) => {
+                  setNumCtxEdited(true);
+                  setNumCtx(e.target.value);
+                }}
+                placeholder={state.requestedNumCtx === null ? 'Loading…' : undefined}
                 className="settings-input"
               />
             </div>
@@ -428,13 +451,11 @@ export default function SettingsModal({ onClose }: Props) {
               // would conflate the pre-response default with a
               // genuine cap, which is the bug this row guards
               // against.
-              const reportedCap = state.tokenStats?.modelContextLimit;
-              const isCapped =
-                typeof reportedCap === 'number' &&
-                Number.isFinite(reportedCap) &&
-                reportedCap > 0 &&
-                reportedCap < state.requestedNumCtx;
-              if (!isCapped) return <div />;
+              const { cappedAt: reportedCap } = resolveContextWindow({
+                requested: state.requestedNumCtx,
+                modelMax: state.tokenStats?.modelContextLimit,
+              });
+              if (reportedCap === null) return <div />;
               return (
                 <div className="settings-row">
                   <span className="settings-label">Effective Context Size</span>

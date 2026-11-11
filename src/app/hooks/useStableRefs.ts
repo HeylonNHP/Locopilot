@@ -35,7 +35,7 @@ export interface StableRefs {
    * server's clamp result lands back in `effectiveNumCtxRef` via the
    * `status` SSE event.
    */
-  requestedNumCtxRef: WritableRef<number>;
+  requestedNumCtxRef: WritableRef<number | null>;
   baseUrlRef: WritableRef<string>;
   sessionIdRef: WritableRef<number | null>;
   sessionsRef: WritableRef<Session[]>;
@@ -73,7 +73,7 @@ interface StableRefsInput {
   messages: ChatMessage[];
   model: string;
   effectiveNumCtx: number | null;
-  requestedNumCtx: number;
+  requestedNumCtx: number | null;
   baseUrl: string;
   currentSessionId: number | null;
   sessions: Session[];

@@ -4,6 +4,7 @@ import { type EventSourceMessage, EventSourceParserStream } from 'eventsource-pa
 import { type Dispatch, type SetStateAction, useCallback } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
+import { numCtxField, positiveInteger, resolveContextWindow } from '@/app/lib/contextWindow';
 import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
 import { COMPACT_FOCUS_MAX_CHARS, normaliseCompactionFocus } from '@/services/compact/focus';
 import { formatCompactionReceipt } from '@/services/compact/receipt';
@@ -428,7 +429,7 @@ export function useSlashCommands({
                 messages: currentMessages,
                 model: refs.modelRef.current,
                 providerId: refs.activeProviderIdRef.current,
-                numCtx: refs.requestedNumCtxRef.current,
+                ...numCtxField(refs.requestedNumCtxRef.current),
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
                 compactionProviderId: refs.compactionProviderIdRef.current,
@@ -506,21 +507,21 @@ export function useSlashCommands({
               // two different limits on the same screen (a badge saying 8,192
               // and a warning saying 4,096) is a contradiction the user cannot
               // resolve. The server value is the effective (clamped) cap the
-              // next turn will really use; the refs are only a fallback for an
-              // older server that does not report one.
+              // next turn will really use; the server's last resolved window is
+              // the only fallback for an older server that does not report one.
+              // The user's SETTING is not: written here it would be promoted
+              // into `effectiveNumCtx` as if the server had reported it, and
+              // the status bar derives the window from the setting anyway.
               const effectiveForLimit = refs.effectiveNumCtxRef.current;
+              const badgeLimit =
+                positiveInteger(compactData.tokenLimit) ?? positiveInteger(effectiveForLimit);
               dispatch({
                 type: 'SET_TOKEN_STATS',
                 stats: {
                   promptEvalCount: compactData.stats.newTokenCount,
                   evalCount: 0,
                   totalTokens: compactData.stats.newTokenCount,
-                  tokenLimit:
-                    typeof compactData.tokenLimit === 'number' && compactData.tokenLimit > 0
-                      ? compactData.tokenLimit
-                      : typeof effectiveForLimit === 'number' && effectiveForLimit > 0
-                        ? effectiveForLimit
-                        : refs.requestedNumCtxRef.current,
+                  ...(badgeLimit === null ? {} : { tokenLimit: badgeLimit }),
                 },
                 ...(compactSessionId === null ? {} : { targetSessionId: compactSessionId }),
               });
@@ -534,17 +535,15 @@ export function useSlashCommands({
             // display-only check, so the worst case is a slightly
             // conservative warning.
             const effective = refs.effectiveNumCtxRef.current;
-            const capForWarning =
-              typeof effective === 'number' && effective > 0
-                ? Math.min(refs.requestedNumCtxRef.current, effective)
-                : refs.requestedNumCtxRef.current;
+            const capForWarning = resolveContextWindow({
+              requested: refs.requestedNumCtxRef.current,
+              modelMax: effective,
+              effective,
+            }).limit;
             const receipt = formatCompactionReceipt({
               oldTokenCount: typeof oldTokens === 'number' ? oldTokens : null,
               newTokenCount: typeof newTokens === 'number' ? newTokens : null,
-              tokenLimit:
-                typeof compactData.tokenLimit === 'number' && compactData.tokenLimit > 0
-                  ? compactData.tokenLimit
-                  : capForWarning,
+              tokenLimit: positiveInteger(compactData.tokenLimit) ?? capForWarning,
               // The normalised note: the same single-line form the server put
               // into the prompt, so the quote cannot be multi-line.
               ...(focusNote === undefined ? {} : { focus: focusNote }),
@@ -634,7 +633,7 @@ export function useSlashCommands({
               body: JSON.stringify({
                 model: refs.modelRef.current,
                 providerId: refs.activeProviderIdRef.current,
-                numCtx: refs.requestedNumCtxRef.current,
+                ...numCtxField(refs.requestedNumCtxRef.current),
                 baseUrl: refs.baseUrlRef.current,
                 compactionModel: refs.compactionModelRef.current,
                 compactionProviderId: refs.compactionProviderIdRef.current,
@@ -699,7 +698,7 @@ export function useSlashCommands({
               body: JSON.stringify({
                 messages: currentMessages,
                 model: refs.modelRef.current,
-                numCtx: refs.requestedNumCtxRef.current,
+                ...numCtxField(refs.requestedNumCtxRef.current),
                 baseUrl: refs.baseUrlRef.current,
                 sessionId: refs.sessionIdRef.current,
               }),

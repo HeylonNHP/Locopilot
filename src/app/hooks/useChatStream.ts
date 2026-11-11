@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 
 import { type ChatAction, type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { retryBodyForSession, streamChatTurn } from '@/app/lib/chatTurn';
+import { numCtxField } from '@/app/lib/contextWindow';
 import { frameOwner, routeSseEvent, type SseEventData } from '@/app/lib/sseRouting';
 import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
 import {
@@ -278,7 +279,6 @@ export function useChatStream(
         compactOwner: owner,
         doneOwner: owner,
         subagentOwner: owner,
-        requestedNumCtx: refs.requestedNumCtxRef.current,
         // The draft of the session this frame belongs to — never another
         // conversation's, so an ack cannot release the wrong draft.
         pendingSteerDraft: owner === undefined ? undefined : refs.steerDraftsRef.current.get(owner),
@@ -621,7 +621,7 @@ export function useChatStream(
       const settings = {
         model: refs.modelRef.current,
         providerId: refs.activeProviderIdRef.current,
-        numCtx: refs.requestedNumCtxRef.current,
+        ...numCtxField(refs.requestedNumCtxRef.current),
         baseUrl: refs.baseUrlRef.current,
         sessionId: originSessionId,
         yolo: refs.yoloRef.current,

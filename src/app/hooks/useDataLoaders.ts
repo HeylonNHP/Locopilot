@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { hasLiveTranscript, useChat } from '@/app/lib/chatStore';
+import { positiveInteger } from '@/app/lib/contextWindow';
 import { createLatestGate } from '@/app/lib/latestGate';
 
 import type { StableRefs } from './useStableRefs';
@@ -74,6 +75,13 @@ export function useDataLoaders(refs: StableRefs) {
    * the CURRENT requested size could contradict the turn that actually ran
    * — if the user lowers the context size while a turn is streaming, the
    * denominator would drop below the token count that turn produced.
+   *
+   * `undefined` means "the server has not told us yet". Callers OMIT the
+   * `tokenLimit` key in that case — they never write a stand-in. A stand-in
+   * (the requested size, or before the config had loaded the 131 072
+   * default) was promoted by the reducer into `effectiveNumCtx` as if the
+   * server had reported it, which is how a reloaded session came to show
+   * "276922/131072 tokens (211%)" for a 1 000 000-token model.
    */
   const knownTokenLimit = useCallback((sessionId: number): number | undefined => {
     const current = stateRef.current;
@@ -208,43 +216,45 @@ export function useDataLoaders(refs: StableRefs) {
           sessionStats.last_eval_count !== null;
 
         if (hasExplicitStats) {
-          // Until the next chat turn's status event arrives, display
-          // the user's requested value as the tokenLimit. The
-          // chat route's `resolveEffectiveNumCtx` will re-resolve the
-          // real cap on the next request and emit it via SSE.
-          const tokenLimit = knownTokenLimit(sessionId) ?? refs.requestedNumCtxRef.current;
+          // The COUNT comes from the database; the limit is only carried
+          // over when the server has already reported one. Otherwise the
+          // `tokenLimit` key is left out of the merge (never written as 0 or
+          // as the user's setting) and the status bar derives the window
+          // from the setting and the model maximum — see contextWindow.ts.
+          const knownLimit = knownTokenLimit(sessionId);
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
               promptEvalCount: explicitStats.promptEvalCount,
               evalCount: explicitStats.evalCount,
               totalTokens: explicitStats.totalTokens,
-              tokenLimit,
+              ...(knownLimit === undefined ? {} : { tokenLimit: knownLimit }),
               isEstimated: false,
             },
             targetSessionId: sessionId,
           });
         } else if (hasSessionStats) {
-          const tokenLimit = knownTokenLimit(sessionId) ?? refs.requestedNumCtxRef.current;
+          const knownLimit = knownTokenLimit(sessionId);
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
               promptEvalCount: sessionStats.last_prompt_eval_count,
               evalCount: sessionStats.last_eval_count,
               totalTokens: sessionStats.last_total_tokens,
-              tokenLimit,
+              ...(knownLimit === undefined ? {} : { tokenLimit: knownLimit }),
               isEstimated: false,
             },
             targetSessionId: sessionId,
           });
         } else if (data.estimatedTokens !== null && data.estimatedTokens !== undefined) {
+          const knownLimit = knownTokenLimit(sessionId);
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
               promptEvalCount: 0,
               evalCount: data.estimatedTokens,
               totalTokens: data.estimatedTokens,
-              tokenLimit: knownTokenLimit(sessionId) ?? refs.requestedNumCtxRef.current,
+              ...(knownLimit === undefined ? {} : { tokenLimit: knownLimit }),
               isEstimated: true,
             },
             targetSessionId: sessionId,
@@ -317,12 +327,17 @@ export function useDataLoaders(refs: StableRefs) {
       if (res.ok) {
         const data = await res.json();
         const config = data.config ?? data;
+        // The persisted context size, or null. There is no stand-in: when
+        // the config carries none, `requestedNumCtx` stays `null` (shown as
+        // "—", omitted from request bodies) rather than being re-asserted
+        // from the mount-time `state` closure, which could be a default.
+        const persistedNumCtx = positiveInteger(config.numCtx);
         dispatch({
           type: 'SET_CONFIG',
           config: {
             providers: config.providers ?? state.providers,
             activeProviderId: config.activeProviderId ?? state.activeProviderId,
-            requestedNumCtx: config.numCtx ?? state.requestedNumCtx,
+            ...(persistedNumCtx === null ? {} : { requestedNumCtx: persistedNumCtx }),
             model: config.model || config.lastModel || refs.modelRef.current,
             yolo: config.yolo ?? state.yolo,
             thinkingEnabled: config.thinkingEnabled ?? state.thinkingEnabled,
@@ -362,7 +377,11 @@ export function useDataLoaders(refs: StableRefs) {
           dispatch({
             type: 'SET_TOKEN_STATS',
             stats: {
-              tokenLimit: Math.min(config.numCtx ?? state.requestedNumCtx, reportedCap),
+              // Only when the setting is known: with it unknown there is
+              // nothing to clamp, and writing a limit would be a guess.
+              ...(persistedNumCtx === null
+                ? {}
+                : { tokenLimit: Math.min(persistedNumCtx, reportedCap) }),
               modelContextLimit: reportedCap,
             },
           });

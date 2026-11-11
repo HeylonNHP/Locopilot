@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
+import { resolveContextWindow } from '@/app/lib/contextWindow';
 import { resolveTpsDisplay } from '@/app/lib/tpsDisplay';
 import CompletionModeSelector from '@/components/CompletionModeSelector';
 import ModelSelector from '@/components/ModelSelector';
@@ -140,24 +141,25 @@ export default function StatusBar() {
   // Use the backend-provided token count. If we haven't received one yet
   // (briefly before the first SSE event) show 0 instead of a local guess.
   const totalTokens = tokenStats?.totalTokens ?? 0;
-  // Prefer the per-turn tokenLimit reported by the server (already
-  // clamped to the model's cap). Fall back to state.effectiveNumCtx
-  // for the brief window before the first SSE event arrives; if
-  // that is also null (no server response yet), fall back to the
-  // user's requested value as a last resort. We never invent a
-  // default like DEFAULT_NUM_CTX here — using the requested value
-  // means the percentage is at most 100% even before the server
-  // speaks, which is the right display behaviour.
-  // `||` rather than `??`: the server uses 0 as its "no limit reported yet"
-  // sentinel, and `??` only falls through on null/undefined — so a 0 won the
-  // race and the bar rendered "0/0 tokens (0%)" in the warning colour.
-  const tokenLimit = tokenStats?.tokenLimit || effectiveNumCtx || requestedNumCtx;
+  // The window shown is the one the user chose in Settings, unless the
+  // model's reported maximum is lower (then that maximum) — nothing else.
+  // A per-turn `tokenLimit` snapshot never overrides a setting the user has
+  // since changed; it is only used while the setting is still unknown (the
+  // config has not loaded). While the window is unknown the bar shows "—"
+  // and no percentage — never a stand-in number (see contextWindow.ts).
+  const contextWindow = resolveContextWindow({
+    requested: requestedNumCtx,
+    modelMax: tokenStats?.modelContextLimit,
+    reportedLimit: tokenStats?.tokenLimit,
+    effective: effectiveNumCtx,
+  });
+  const tokenLimit = contextWindow.limit;
 
-  const pct = tokenLimit > 0 ? Math.round((totalTokens / tokenLimit) * 100) : 0;
+  const pct = tokenLimit === null ? null : Math.round((totalTokens / tokenLimit) * 100);
 
   let tokenColorClass = 'statusbar-token-green';
-  if (pct >= 90) tokenColorClass = 'statusbar-token-red';
-  else if (pct >= 75) tokenColorClass = 'statusbar-token-yellow';
+  if (pct !== null && pct >= 90) tokenColorClass = 'statusbar-token-red';
+  else if (pct !== null && pct >= 75) tokenColorClass = 'statusbar-token-yellow';
 
   // Mark whether we're showing an estimate or authoritative count.
   // Backend-driven estimates carry isEstimated=true; absent stats mean
@@ -179,13 +181,13 @@ export default function StatusBar() {
   // already shown in the token display. When the user has asked for
   // more, show a small label so it's clear that the displayed
   // tokenLimit is the model's actual ceiling, not a transient state.
-  const modelMax =
-    tokenStats?.modelContextLimit ??
-    (effectiveNumCtx !== null && effectiveNumCtx < requestedNumCtx ? effectiveNumCtx : null);
+  // Only a maximum the SERVER reported counts: it is no longer inferred from
+  // `effectiveNumCtx < requested`, which mistook a stale or stand-in value
+  // for a real model limit.
   const modelMaxLabel =
-    modelMax !== null && modelMax > 0 && modelMax < requestedNumCtx
-      ? `(model max: ${modelMax.toLocaleString()})`
-      : null;
+    contextWindow.cappedAt === null
+      ? null
+      : `(model max: ${contextWindow.cappedAt.toLocaleString()})`;
 
   const normalizedCompletionMode = (completionMode || 'normal') as string;
   const iterations = maxPromptLoopIterations ?? 4;
@@ -201,7 +203,8 @@ export default function StatusBar() {
         <span className="statusbar-streaming">● Streaming</span>
       )}
       <span className={tokenColorClass}>
-        {totalTokens}/{tokenLimit} tokens ({pct}%) {sourceLabel}
+        {totalTokens}/{tokenLimit === null ? '—' : tokenLimit} tokens
+        {pct === null ? '' : ` (${pct}%)`} {sourceLabel}
         {modelMaxLabel && <span className="statusbar-model-max"> {modelMaxLabel}</span>}
       </span>
       {tpsLabel && <span>{tpsLabel}</span>}

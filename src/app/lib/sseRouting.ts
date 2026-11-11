@@ -1,7 +1,7 @@
 import type { ChatAction, DoneReason } from '@/app/lib/chatStore';
 import type { SseEventPayloadMap } from '@/types/sse';
 
-import { DEFAULT_NUM_CTX } from '@/constants';
+import { positiveInteger } from '@/app/lib/contextWindow';
 import { formatCompactionReceipt } from '@/services/compact/receipt';
 
 /**
@@ -70,8 +70,6 @@ export interface SseRouteContext {
   doneOwner?: number | undefined;
   /** Owner for a sub-agent chunk, so its buffered text is flushed against the right session. */
   subagentOwner?: number | undefined;
-  /** Context size to fall back to when the server omits one. */
-  requestedNumCtx?: number | undefined;
   /** The steer draft of the OWNING session, which the server may have applied. */
   pendingSteerDraft?: { id: string; text: string } | null | undefined;
 }
@@ -142,7 +140,6 @@ export function routeSseEvent(
     compactOwner,
     doneOwner,
     subagentOwner,
-    requestedNumCtx,
     pendingSteerDraft,
   } = ctx;
 
@@ -423,9 +420,12 @@ export function routeSseEvent(
       }
       // The window this history now has to fit. The server sends it with the
       // event (it is the window the NEXT turn runs with, which the client
-      // cannot derive when a provider clamps the configured value); the old
-      // fallbacks stay for a frame from an older server.
-      const tokenLimit = data.tokenLimit ?? requestedNumCtx ?? DEFAULT_NUM_CTX;
+      // cannot derive when a provider clamps the configured value). A frame
+      // that carries none (an older server) leaves the limit UNKNOWN — the
+      // client no longer substitutes its own setting or a default, because a
+      // stand-in written here was promoted into `effectiveNumCtx` as if the
+      // server had reported it.
+      const tokenLimit = positiveInteger(data.tokenLimit);
       if (typeof data.stats?.newTokenCount === 'number') {
         actions.push({
           type: 'SET_TOKEN_STATS',
@@ -433,7 +433,7 @@ export function routeSseEvent(
             promptEvalCount: data.stats.newTokenCount,
             evalCount: 0,
             totalTokens: data.stats.newTokenCount,
-            tokenLimit,
+            ...(tokenLimit === null ? {} : { tokenLimit }),
           },
           ...(compactOwner === undefined ? {} : { targetSessionId: compactOwner }),
         });

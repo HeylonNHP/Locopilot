@@ -17,11 +17,7 @@ import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/ch
 import { randomId } from '@/app/lib/randomId';
 import { NEW_SESSION_KEY } from '@/app/lib/streamKey';
 import { createBatchedDispatcher } from '@/app/lib/updateBatcher';
-import {
-  BACKGROUND_UPDATE_INTERVAL_MS,
-  DEFAULT_NUM_CTX,
-  DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-} from '@/constants';
+import { BACKGROUND_UPDATE_INTERVAL_MS, DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_OLLAMA_BASE_URL,
@@ -182,8 +178,15 @@ export interface ChatState {
    * cap and reports the effective value back via the `status` SSE
    * event's `tokenLimit` field; that value populates
    * {@link effectiveNumCtx} below.
+   *
+   * `null` until `loadConfig` has delivered the persisted setting — there
+   * is deliberately NO stand-in default. A stand-in leaked into the status
+   * bar ("276922/131072 tokens (211%)"), into Settings (which saved it into
+   * config.json) and into request bodies. Consumers treat `null` as "not
+   * known yet": the display shows "—" and request bodies omit `numCtx`
+   * (see `src/app/lib/contextWindow.ts`).
    */
-  requestedNumCtx: number;
+  requestedNumCtx: number | null;
   /**
    * The active LLM provider — `'ollama'` (default) or
    * `'openai-compatible'`. Loaded from `config.json` on mount via
@@ -200,8 +203,8 @@ export interface ChatState {
    * arrives; thereafter it tracks the server's most recent reported
    * value. The clamp itself is never applied on the client.
    *
-   * The `null` initial state is important: a non-null default (e.g.
-   * `DEFAULT_NUM_CTX`) would be displayed in the Settings modal as
+   * The `null` initial state is important: a non-null default (a
+   * stand-in for "unknown") would be displayed in the Settings modal as
    * "capped by model limit" the moment the user opens the modal,
    * which would be a lie — the server has not yet reported a cap.
    * Components that consume this field should treat `null` as
@@ -629,6 +632,31 @@ function settleSteerDraft(
   const steerRestoreTexts = new Map(state.steerRestoreTexts);
   steerRestoreTexts.set(sessionId, draft.text);
   return { steerDrafts, steerRestoreTexts };
+}
+
+/**
+ * What the client learned about the PREVIOUS model's window, dropped when the
+ * selected model or provider really changes.
+ *
+ * The model maximum (`tokenStats.modelContextLimit`) and the server's resolved
+ * window (`effectiveNumCtx`) describe the model that was selected when the
+ * server reported them. Left in place after a switch they would clamp the new
+ * model to the old one's limit (a 131k model replaced by a 1M one would still
+ * be shown as 131k) until the next turn's `status` event. Cleared, the display
+ * shows the user's own setting — "model max unknown" — which is honest.
+ *
+ * Only a real change clears: the reducers below compare with the current
+ * selection, so re-dispatching the same model is a no-op for these fields.
+ */
+function staleModelCapReset(
+  state: ChatState
+): Pick<ChatState, 'effectiveNumCtx'> & Partial<Pick<ChatState, 'tokenStats'>> {
+  return {
+    effectiveNumCtx: null,
+    ...(state.tokenStats === null
+      ? {}
+      : { tokenStats: { ...state.tokenStats, modelContextLimit: null } }),
+  };
 }
 
 /**
@@ -1130,10 +1158,18 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, providers: action.providers };
     }
     case 'SET_ACTIVE_PROVIDER': {
-      return { ...state, activeProviderId: action.providerId };
+      return {
+        ...state,
+        activeProviderId: action.providerId,
+        ...(action.providerId === state.activeProviderId ? {} : staleModelCapReset(state)),
+      };
     }
     case 'SET_MODEL': {
-      return { ...state, model: action.model };
+      return {
+        ...state,
+        model: action.model,
+        ...(action.model === state.model ? {} : staleModelCapReset(state)),
+      };
     }
     case 'SET_ERROR': {
       if (targetsBackgroundSession(state, action.targetSessionId)) {
@@ -1149,7 +1185,15 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // The clamp is the server's responsibility. SET_CONFIG only
       // stores the user's requested value; the effective value is
       // updated by SET_TOKEN_STATS when the server reports back.
-      return { ...state, ...action.config };
+      const { model, activeProviderId } = action.config;
+      const selectionChanged =
+        (model !== undefined && model !== state.model) ||
+        (activeProviderId !== undefined && activeProviderId !== state.activeProviderId);
+      return {
+        ...state,
+        ...action.config,
+        ...(selectionChanged ? staleModelCapReset(state) : {}),
+      };
     }
     case 'SET_ACTIVE_SUBAGENT': {
       if (targetsBackgroundSession(state, action.targetSessionId)) {
@@ -1556,7 +1600,7 @@ export const initialState: ChatState = {
   activeProviderId: null,
   baseUrl: DEFAULT_OLLAMA_BASE_URL,
   provider: DEFAULT_PROVIDER,
-  requestedNumCtx: DEFAULT_NUM_CTX,
+  requestedNumCtx: null,
   effectiveNumCtx: null,
   error: null,
   pendingCommand: null,
