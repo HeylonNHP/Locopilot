@@ -206,8 +206,8 @@ const MAX_CONTEXT_LIMIT_FORCED_COMPACT_ATTEMPTS = 1;
  * reactive 400 branch does for the main loop:
  *
  *   1. `recordDiscoveredCap` writes the cap into the resolver's per-(baseUrl,
- *      model) cache so the next proactive probe agrees and no second 400 is
- *      needed.
+ *      provider, model) cache so the next resolution agrees and no second 400
+ *      is needed.
  *   2. This config is mutated in place. `config` IS the route's
  *      `requestContext.subAgent` object, so the corrected cap also covers every
  *      remaining sub-agent in the same `run_subagents` batch, and the forced
@@ -224,7 +224,7 @@ export function adoptDiscoveredContextLimit(config: SubAgentConfig, cap: number)
     return;
   }
 
-  recordDiscoveredCap(config.baseUrl, config.model, cap);
+  recordDiscoveredCap({ baseUrl: config.baseUrl, provider: config.provider }, config.model, cap);
   // `Math.min`: the discovery says "you may not plan for more than N tokens",
   // so it can never raise a ceiling that the user or the resolver deliberately
   // chose below the server's cap.

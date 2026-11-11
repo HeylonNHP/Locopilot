@@ -41,5 +41,9 @@ export function createFakeClock() {
     pending() {
       return timers.size;
     },
+    /** The current time, for code that is handed a clock to read. */
+    now() {
+      return now;
+    },
   };
 }

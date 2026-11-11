@@ -1,261 +1,310 @@
 /**
- * Server-side resolver for the effective context-window size of a chat
- * request.
+ * Probe-and-cache layer for a model's context MAXIMUM.
  *
- * The "effective" numCtx is what should actually be sent to the model:
+ * The window the app plans with is
  *
- *     effective = min(requestedNumCtx, modelContextLimit)
+ *     effective = min(setting, modelMax)    when the maximum is known
+ *     effective = setting                   when it is not
  *
- * where `modelContextLimit` is the model's runtime cap (what the
- * running Ollama runner will actually enforce, not what the modelfile
- * declares) and `requestedNumCtx` is what the user configured. If the
- * cap is unknown, `effective = requestedNumCtx`.
+ * `resolveNumCtx` (`./contextWindow/resolveNumCtx.ts`) is the one place that
+ * computes it. This module answers only "what is this model's maximum, and how
+ * do we know?". The client never computes it; the server reports it.
  *
- * This module is the single backend source of truth for the cap. The
- * client must NOT apply the clamp itself; it sends the user's
- * requested value, the server resolves the cap, and the resolved
- * `effective` value is reported back to the client on every `status`
- * SSE event. See `WEBUI_MIGRATION.md §"numCtx preservation across
- * model changes"` for the full design.
+ * Where the maximum comes from (never `/api/ps`, which reports a runner's
+ * current allocation and can under-cap):
  *
- * Multi-tab contract
- * -------------------
- * The cap cache is keyed on (baseUrl, modelName). The cache is
- * process-wide (intentional: cap discovery is amortised across tabs),
- * but the key discipline prevents one tab's model from leaking into
- * another tab's cap:
+ *   - Ollama (local or cloud): `/api/show`, via the adapter ('static').
+ *   - llama.cpp: `meta.n_ctx` of a LOADED model only ('llamacpp-loaded'). Its
+ *     `context_length` is the trained window and is ignored.
+ *   - Other OpenAI-compatible servers: the `/v1/models` entry ('openai-models').
+ *     NVIDIA publishes none, so its maximum is unknown.
+ *   - Any provider: a 400 whose body states the limit ('learned').
  *
- *   - `baseUrl` is part of the key because two Ollama instances on
- *     different URLs can host the same model name with different caps.
- *   - The key is the model name exactly as supplied — no
- *     normalisation, no case folding, no tag stripping. `qwen3:6.35b`
- *     and `qwen3:6.35b-instruct` are two distinct cache entries.
+ * Caching and timeouts:
  *
- * Two tabs using two different models therefore see two different caps
- * on their respective chat responses, and neither tab's in-flight turn
- * is influenced by the other tab's choice. A `clearCapCache` test
- * helper is exported for the smoke-test harness.
+ *   - A probe is abandoned after `CAP_PROBE_TIMEOUT_MS` (10 s). `fetchModelInfo`
+ *     takes no abort signal, so this is a race against a timer, not a cancel.
+ *   - A successful probe is cached for 5 minutes, including "answered, but
+ *     states no maximum" (NVIDIA), so an unknowable maximum is not re-probed on
+ *     every turn.
+ *   - A failed or timed-out probe is cached for 60 s, so a dead endpoint does
+ *     not stall every turn for 10 s. The turn proceeds with no known maximum.
+ *   - A limit learned from a 400 is cached for 5 minutes and is never replaced
+ *     by a probe while it is fresh: a shorter cache would let the retry hit
+ *     the same 400 again.
+ *   - Concurrent callers for one key share one probe.
+ *
+ * Multi-tab contract: the cache is process-wide on purpose (discovery is
+ * amortised across tabs), keyed on (baseUrl, provider kind, model) exactly as
+ * supplied, with no normalisation. Two tabs on two models never see each
+ * other's maximum. The provider kind is in the key because one endpoint can be
+ * reached through both adapters, and they read the maximum from different
+ * places.
+ *
+ * `resolveEffectiveNumCtx` at the bottom is the previous entry point, kept
+ * only until the routes move to `resolveNumCtx`.
  */
 
-import {
-  fetchLlmModelInfo,
-  fetchLlmRunningModelContextLength,
-  getLlmModelContextLimit,
-  type LlmRequestContext,
-} from './llm';
+import type { LlmModelInfo } from './adapters/llmAdapter';
 
-/** Result of resolving a chat request's effective numCtx. */
-export interface ResolvedNumCtx {
-  /** The user's requested value, clamped to the model's cap if known. */
-  effective: number;
-  /** The user's requested value, as passed in (unclamped). */
-  requested: number;
-  /** The model's capability cap (from `/api/show` model_info). null if unknown. */
-  modelCap: number | null;
-  /**
-   * The runner's current KV-cache allocation (from `/api/ps`). Informational
-   * only — does not affect `effective`. Useful for UI hints and diagnostics.
-   * Null when the model is not currently loaded or the provider has no
-   * runtime probe.
-   */
-  runtime: number | null;
-  /** Where the modelCap came from, for diagnostics. */
-  source: 'static-show' | 'runtime-ps' | 'cache' | 'unknown';
+import { fetchLlmModelInfo, getLlmModelContextLimit, type LlmRequestContext } from './llm';
+import { isLlamaCppModelInfo } from './llmContextLimit';
+
+/** How long one model-info probe may run before it counts as failed. */
+export const CAP_PROBE_TIMEOUT_MS = 10_000;
+/** How long a successful probe is trusted. */
+export const CAP_SUCCESS_TTL_MS = 5 * 60 * 1000;
+/** How long a failed or timed-out probe is remembered. */
+export const CAP_FAILURE_TTL_MS = 60 * 1000;
+/** How long a limit learned from a provider's 400 is trusted. */
+export const CAP_LEARNED_TTL_MS = 5 * 60 * 1000;
+
+/** Where a model maximum came from. */
+export type ModelMaxSource = 'static' | 'llamacpp-loaded' | 'openai-models' | 'learned' | 'unknown';
+
+/** What is known about one model's maximum context window. */
+export interface ModelMax {
+  /** The maximum in tokens, or null when it is not known. */
+  modelMax: number | null;
+  source: ModelMaxSource;
+  /** Why the last probe failed (timeout, unreachable, …); null otherwise. */
+  probeError: string | null;
 }
 
-interface CacheEntry {
-  cap: number | null;
-  /** Epoch ms after which the entry is stale and should be re-resolved. */
+type EntryKind = 'probed' | 'failed' | 'learned';
+
+interface CacheEntry extends ModelMax {
+  kind: EntryKind;
+  /** Epoch ms after which the entry is stale and is probed again. */
   expiresAt: number;
+  baseUrl: string;
+  provider: string;
+  model: string;
 }
 
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+/** What a probe needs from the outside world; replaceable in tests. */
+export interface CapProbeDeps {
+  fetchModelInfo(ctx: LlmRequestContext, modelName: string): Promise<LlmModelInfo>;
+  now(): number;
+  setTimer(callback: () => void, ms: number): unknown;
+  clearTimer(handle: unknown): void;
+  timeoutMs: number;
+}
+
+const defaultDeps: CapProbeDeps = {
+  fetchModelInfo: fetchLlmModelInfo,
+  now: () => Date.now(),
+  setTimer: (callback, ms) => setTimeout(callback, ms),
+  clearTimer: (handle) => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
+  timeoutMs: CAP_PROBE_TIMEOUT_MS,
+};
+
 const cache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<ModelMax>>();
 
-function cacheKey(baseUrl: string, modelName: string): string {
-  // Use a NUL separator so a model name containing the separator
-  // character cannot collide with a baseUrl that happens to contain
-  // the same character. NUL is not a valid character in either
-  // Ollama base URLs or model names.
-  return `${baseUrl}\0${modelName}`;
+/** The provider kind a context talks to; no provider means the Ollama default. */
+function providerKind(provider: string | undefined): string {
+  return provider ?? 'ollama';
 }
 
-function getCachedCap(baseUrl: string, modelName: string, now: number): number | null | undefined {
-  const entry = cache.get(cacheKey(baseUrl, modelName));
-  if (!entry) {
-    return undefined; // miss
-  }
-  if (entry.expiresAt <= now) {
-    return undefined; // stale
-  }
-  return entry.cap;
+function cacheKey(baseUrl: string, provider: string, modelName: string): string {
+  // NUL separates the parts so a value containing another separator character
+  // cannot collide with a different triple. NUL is valid in none of them.
+  return `${baseUrl}\0${provider}\0${modelName}`;
 }
 
-function setCachedCap(baseUrl: string, modelName: string, cap: number | null, now: number): void {
-  cache.set(cacheKey(baseUrl, modelName), {
-    cap,
-    expiresAt: now + CACHE_TTL_MS,
-  });
+function toModelMax(entry: CacheEntry): ModelMax {
+  return { modelMax: entry.modelMax, source: entry.source, probeError: entry.probeError };
 }
 
-/** Test helper: drop all cached cap entries. */
-export function clearCapCache(): void {
-  cache.clear();
+function freshEntry(key: string, now: number): CacheEntry | undefined {
+  const entry = cache.get(key);
+  return entry && entry.expiresAt > now ? entry : undefined;
 }
 
 /**
- * Invalidate cached cap entries so the next call to
- * `resolveEffectiveNumCtx` re-probes the provider.
+ * Store a probe result. A probe never replaces a fresh learned limit: the 400
+ * that taught it may have arrived while the probe was still in flight.
+ */
+function storeProbeResult(entry: CacheEntry, now: number): ModelMax {
+  const key = cacheKey(entry.baseUrl, entry.provider, entry.model);
+  const existing = freshEntry(key, now);
+  if (existing?.kind === 'learned') {
+    return toModelMax(existing);
+  }
+  cache.set(key, entry);
+  return toModelMax(entry);
+}
+
+function sourceFor(ctx: LlmRequestContext, info: LlmModelInfo): ModelMaxSource {
+  if (ctx.provider === 'openai-compatible') {
+    return isLlamaCppModelInfo(info) ? 'llamacpp-loaded' : 'openai-models';
+  }
+  return 'static';
+}
+
+function describeProbeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function probeModelMax(
+  ctx: LlmRequestContext,
+  modelName: string,
+  deps: CapProbeDeps
+): Promise<ModelMax> {
+  const base = {
+    baseUrl: ctx.baseUrl,
+    provider: providerKind(ctx.provider),
+    model: modelName,
+  };
+  let timer: unknown;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timer = deps.setTimer(() => {
+      reject(new Error(`model info probe timed out after ${deps.timeoutMs / 1000} s`));
+    }, deps.timeoutMs);
+  });
+  try {
+    const info = await Promise.race([deps.fetchModelInfo(ctx, modelName), timedOut]);
+    const modelMax = getLlmModelContextLimit(info, ctx);
+    return storeProbeResult(
+      {
+        ...base,
+        kind: 'probed',
+        modelMax,
+        source: modelMax === null ? 'unknown' : sourceFor(ctx, info),
+        probeError: null,
+        expiresAt: deps.now() + CAP_SUCCESS_TTL_MS,
+      },
+      deps.now()
+    );
+  } catch (err) {
+    return storeProbeResult(
+      {
+        ...base,
+        kind: 'failed',
+        modelMax: null,
+        source: 'unknown',
+        probeError: describeProbeError(err),
+        expiresAt: deps.now() + CAP_FAILURE_TTL_MS,
+      },
+      deps.now()
+    );
+  } finally {
+    deps.clearTimer(timer);
+  }
+}
+
+/**
+ * The maximum context window for `modelName` on the endpoint `ctx` points at.
+ * Never throws: a probe that fails or times out resolves to an unknown maximum
+ * with `probeError` set, and is not repeated for 60 s.
+ */
+export function resolveModelMax(
+  ctx: LlmRequestContext,
+  modelName: string,
+  deps: Partial<CapProbeDeps> = {}
+): Promise<ModelMax> {
+  const resolvedDeps: CapProbeDeps = { ...defaultDeps, ...deps };
+  const key = cacheKey(ctx.baseUrl, providerKind(ctx.provider), modelName);
+
+  const cached = freshEntry(key, resolvedDeps.now());
+  if (cached) {
+    return Promise.resolve(toModelMax(cached));
+  }
+
+  const pending = inflight.get(key);
+  if (pending) {
+    return pending;
+  }
+  const probe = probeModelMax(ctx, modelName, resolvedDeps).finally(() => {
+    inflight.delete(key);
+  });
+  inflight.set(key, probe);
+  return probe;
+}
+
+/**
+ * Record a limit a provider disclosed in a 400, so the next turn plans within
+ * it and does not hit the same error. Replaces whatever the probe found.
+ */
+export function recordDiscoveredCap(
+  target: { baseUrl: string; provider?: string | undefined },
+  modelName: string,
+  cap: number,
+  now: number = Date.now()
+): void {
+  const provider = providerKind(target.provider);
+  cache.set(cacheKey(target.baseUrl, provider, modelName), {
+    kind: 'learned',
+    modelMax: cap,
+    source: 'learned',
+    probeError: null,
+    expiresAt: now + CAP_LEARNED_TTL_MS,
+    baseUrl: target.baseUrl,
+    provider,
+    model: modelName,
+  });
+}
+
+/** Test helper: drop every cached maximum and every probe in flight. */
+export function clearCapCache(): void {
+  cache.clear();
+  inflight.clear();
+}
+
+/**
+ * Forget cached maximums so the next call probes again. Use it when the model,
+ * the endpoint or the provider changes. A change of the context SETTING does
+ * not need it: the maximum does not depend on the setting.
  *
- * Use this when the user changes the model or updates the config in
- * a way that should re-trigger discovery — switching models,
- * switching `baseUrl`, or raising `requestedNumCtx` above the
- * cached cap. Without invalidation, the stale 5-minute cache
- * continues to report the old cap for the next 5 minutes.
- *
- * - If `baseUrl` and `modelName` are both provided, only the one
- *   matching entry is removed.
- * - If only `baseUrl` is provided, all entries for that URL are
- *   removed (e.g. when the user switches Ollama instances).
- * - If neither is provided, the entire cache is cleared.
+ * - `baseUrl` and `modelName`: every entry for that pair, whichever provider.
+ * - only `baseUrl`: every entry for that endpoint.
+ * - neither: everything.
  */
 export function invalidateCapCache(baseUrl?: string, modelName?: string): void {
   if (baseUrl === undefined && modelName === undefined) {
     cache.clear();
+    inflight.clear();
     return;
   }
-  if (modelName === undefined) {
-    // Invalidate every entry for this baseUrl, regardless of model.
-    for (const key of cache.keys()) {
-      if (key.startsWith(`${baseUrl}\0`)) {
-        cache.delete(key);
-      }
+  for (const [key, entry] of cache) {
+    if (
+      (baseUrl === undefined || entry.baseUrl === baseUrl) &&
+      (modelName === undefined || entry.model === modelName)
+    ) {
+      cache.delete(key);
+      inflight.delete(key);
     }
-    return;
   }
-  cache.delete(cacheKey(baseUrl as string, modelName));
 }
 
-/**
- * Resolve the effective context-window size for a (baseUrl, modelName)
- * pair, given the user's requested numCtx.
- *
- * The cap authority is the **static probe** (per-adapter
- * `getModelContextLimit`, typically backed by Ollama `/api/show`'s
- * `model_info.<arch>.context_length`). This is the model's
- * capability — the training-time max context that Ollama will not
- * exceed when allocating a runner. The user's request is sent to
- * Ollama as `options.num_ctx` and Ollama's scheduler reloads the
- * runner with the new size if it differs from the current
- * allocation.
- *
- * The runtime probe (`/api/ps`) is informational: it reports the
- * runner's *current* KV-cache allocation, which is a transient
- * state Ollama will change automatically. We still call it (so the
- * UI can show "(runner at N)" hints) but its value never affects
- * `effective`.
- *
- * The resolution order is:
- *
- *   1. Cache hit (TTL-bounded).
- *   2. Static probe (per-adapter `getModelContextLimit`, typically
- *      backed by `/api/show`) — the model's capability cap.
- *   3. Runtime probe (Ollama `/api/ps`) — collected for telemetry
- *      but does NOT affect the cap. Used as a last-resort fallback
- *      only when the static probe is unavailable.
- *   4. `null` cap (no probe succeeded). The effective value is then
- *      equal to the requested value, and Ollama will reject the
- *      request with 400 if it's beyond the model's real cap.
- *
- * The cap result is cached so subsequent requests for the same
- * model hit the cache for up to 5 minutes. This is
- * per-(baseUrl, modelName), not per-request, so two tabs sharing
- * a model share the resolved cap. Use `invalidateCapCache` to
- * force a re-probe (e.g. after the user changes the model or
- * updates the config).
- */
+// ── Previous entry point ───────────────────────────────────────────────────
+// Kept until the routes call `resolveNumCtx`; the next commit removes it.
+
+/** Result of the previous resolver. */
+export interface ResolvedNumCtx {
+  effective: number;
+  requested: number;
+  modelCap: number | null;
+  runtime: null;
+  source: ModelMaxSource;
+}
+
+/** @deprecated Use `resolveNumCtx` from `./contextWindow/resolveNumCtx`. */
 export async function resolveEffectiveNumCtx(
   ctx: LlmRequestContext,
   modelName: string,
   requestedNumCtx: number
 ): Promise<ResolvedNumCtx> {
-  const now = Date.now();
   const requested = Math.max(0, Math.floor(requestedNumCtx));
-  // The cap cache is keyed on (baseUrl, modelName). baseUrl is part of
-  // the per-request context, so two tabs with different baseUrls still
-  // see independent caps.
-  const baseUrl = ctx.baseUrl;
-
-  // 1. Cache hit.
-  const cached = getCachedCap(baseUrl, modelName, now);
-  if (cached !== undefined) {
-    return {
-      effective: cached === null ? requested : Math.min(requested, cached),
-      requested,
-      modelCap: cached,
-      runtime: null,
-      source: 'cache',
-    };
-  }
-
-  // 2. Static probe — the model's capability cap.
-  let cap: number | null = null;
-  let source: ResolvedNumCtx['source'] = 'unknown';
-  try {
-    const modelInfo = await fetchLlmModelInfo(ctx, modelName);
-    cap = getLlmModelContextLimit(modelInfo);
-    if (cap !== null) {
-      source = 'static-show';
-    }
-  } catch {
-    // Static probe is best-effort; fall through.
-  }
-
-  // 3. Runtime probe — informational only. Run in parallel with the
-  //    static probe would be nicer but the per-request cost is
-  //    negligible (one extra HTTP call) and serial is simpler.
-  let runtime: number | null = null;
-  try {
-    runtime = await fetchLlmRunningModelContextLength(ctx, modelName);
-  } catch {
-    // Runtime probe is best-effort.
-  }
-
-  // 3a. Last-resort fallback: if the static probe returned nothing,
-  //     use the runtime probe as the cap. This keeps the legacy
-  //     "runtime as cap" behaviour for the case where /api/show
-  //     doesn't expose a `context_length` (older Ollama, some
-  //     OpenAI-compatible providers).
-  if (cap === null && runtime !== null) {
-    cap = runtime;
-    source = 'runtime-ps';
-  }
-
-  setCachedCap(baseUrl, modelName, cap, now);
-
+  const { modelMax, source } = await resolveModelMax(ctx, modelName);
   return {
-    effective: cap === null ? requested : Math.min(requested, cap),
+    effective: modelMax === null ? requested : Math.min(requested, modelMax),
     requested,
-    modelCap: cap,
-    runtime,
+    modelCap: modelMax,
+    runtime: null,
     source,
   };
-}
-
-/**
- * Update the cached cap for a model based on a 400 error response from
- * the LLM. Used by the chat route's catch block to fold a
- * runtime-discovered cap (smaller than the proactive probe) into the
- * cache so the next turn uses the right value without another 400.
- *
- * The new cap takes effect immediately for the rest of the process;
- * the existing TTL is reset to 5 minutes from now.
- */
-export function recordDiscoveredCap(
-  baseUrl: string,
-  modelName: string,
-  cap: number,
-  now: number = Date.now()
-): void {
-  setCachedCap(baseUrl, modelName, cap, now);
 }

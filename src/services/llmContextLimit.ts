@@ -205,6 +205,64 @@ export function getModelContextLimitFromInfo(info: LlmModelInfo): number | null 
   return findContextLimitInObject(info);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * True when a `/v1/models` entry came from llama.cpp (`owned_by: "llamacpp"`).
+ *
+ * The OpenAI-compatible adapter moves `owned_by` into `details.parent_model`
+ * when it maps the list (`fetchOpenAICompatibleModels`), so that is where a
+ * real payload carries it. `model_info.owned_by` is accepted too, for a raw
+ * entry that has not been through that mapping.
+ */
+export function isLlamaCppModelInfo(info: LlmModelInfo): boolean {
+  const owner = info.details?.parent_model ?? info.model_info?.owned_by;
+  return typeof owner === 'string' && owner.toLowerCase() === 'llamacpp';
+}
+
+/**
+ * The window llama.cpp serves for a model, or null when it is not knowable.
+ *
+ * llama.cpp enforces its served window (`--ctx-size`, or what it sized itself
+ * at load), NOT the entry's `context_length`, which is the GGUF training
+ * value. So the only trusted source is `meta.n_ctx` on an entry that is
+ * loaded. A router lists unloaded models with a `status` whose value is not
+ * `loaded`; those are unknown, however the status is spelled. A plain
+ * llama-server has no `status` and always has the model loaded.
+ *
+ * Deliberately does not fall back to the generic key walk: with no `meta.n_ctx`
+ * that walk would return `context_length` or `n_ctx_train`, the trained value.
+ */
+export function getLlamaCppServedWindow(info: LlmModelInfo): number | null {
+  const entry = info.model_info;
+  if (!isRecord(entry)) {
+    return null;
+  }
+  const status = entry.status;
+  if (isRecord(status) && status.value !== 'loaded') {
+    return null;
+  }
+  const meta = entry.meta;
+  if (!isRecord(meta)) {
+    return null;
+  }
+  return parsePositiveInteger(meta.n_ctx);
+}
+
+/**
+ * Context limit for an OpenAI-compatible model. llama.cpp has its own rule
+ * (see {@link getLlamaCppServedWindow}); every other server uses the generic
+ * walk over the model entry.
+ */
+export function getOpenAICompatibleContextLimit(info: LlmModelInfo): number | null {
+  if (isLlamaCppModelInfo(info)) {
+    return getLlamaCppServedWindow(info);
+  }
+  return getModelContextLimitFromInfo(info);
+}
+
 /**
  * Error-body phrasings that disclose a model's real context cap, tried in
  * order. The first pattern that matches yields the cap.

@@ -46,6 +46,7 @@
     "test:update-batcher": "npx tsx scripts/test-update-batcher.mjs",
     "test:message-memo": "npx tsx scripts/test-message-memo.mjs",
     "test:context-window": "npx tsx scripts/test-context-window.mjs",
+    "test:numctx-resolver": "npx tsx scripts/test-numctx-resolver.mjs",
     "test:chat-store": "npx tsx scripts/test-chat-store.mjs",
     "test:chat-turn": "npx tsx scripts/test-chat-turn.mjs",
     "test:token-calibration": "npx tsx scripts/test-token-calibration.mjs",

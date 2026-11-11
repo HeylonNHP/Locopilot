@@ -87,8 +87,18 @@ export function fetchLlmModelInfo(
   return adapterForContext(ctx).fetchModelInfo(ctx, modelName);
 }
 
-export function getLlmModelContextLimit(modelInfo: LlmModelInfo): number | null {
-  return ollamaAdapter.getModelContextLimit(modelInfo);
+/**
+ * The model's context maximum, read from its info payload by the adapter that
+ * produced it. Without a context the Ollama rule applies (the historical
+ * behaviour); with one, an OpenAI-compatible provider uses its own rule, which
+ * for llama.cpp trusts only a loaded model's `meta.n_ctx`.
+ */
+export function getLlmModelContextLimit(
+  modelInfo: LlmModelInfo,
+  ctx?: LlmRequestContext
+): number | null {
+  const adapter = ctx ? adapterForContext(ctx) : ollamaAdapter;
+  return adapter.getModelContextLimit(modelInfo);
 }
 
 export function getLlmModelVisionSupport(info: LlmModelInfo): boolean {

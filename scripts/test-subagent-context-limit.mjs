@@ -97,7 +97,7 @@ console.log('adoptDiscoveredContextLimit — resolver cache');
   });
   const resolved = await resolveEffectiveNumCtx(ctx, config.model, REQUESTED);
 
-  assertEq(resolved.source, 'cache', 'a later resolve hits the discovered-cap cache');
+  assertEq(resolved.source, 'learned', 'a later resolve uses the limit the provider disclosed');
   assertEq(resolved.modelCap, CAP, 'cached cap is the discovered 262,144');
   assertEq(resolved.effective, CAP, 'effective is clamped to 262,144, not 1,000,000');
 }

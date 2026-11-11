@@ -23,7 +23,7 @@ import { debugLog } from '@/app/lib/debugLogger';
 import { DEFAULT_ADAPTER_RETRY, RETRY_MAX_ATTEMPTS_LIMIT } from '@/services/configDefaults';
 import { loadConfig } from '@/services/configManager';
 import {
-  getModelContextLimitFromInfo,
+  getOpenAICompatibleContextLimit,
   parseUnsupportedParamFromError,
 } from '@/services/llmContextLimit';
 import {
@@ -1816,7 +1816,7 @@ export const openaiCompatibleAdapter: LlmAdapter = {
   fetchModels: fetchOpenAICompatibleModels,
   fetchModelInfo: fetchOpenAICompatibleModelInfo,
   fetchSamplingParamSupport: fetchOpenAICompatibleSamplingParamSupport,
-  getModelContextLimit: getModelContextLimitFromInfo,
+  getModelContextLimit: getOpenAICompatibleContextLimit,
   sendChat: sendOpenAICompatibleChat,
   sendChatStream: sendOpenAICompatibleChatStream,
   getApiErrorMessage: getOpenAICompatibleApiErrorMessage,

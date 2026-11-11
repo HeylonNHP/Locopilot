@@ -782,7 +782,14 @@ export async function POST(req: NextRequest): Promise<Response> {
 
         effectiveNumCtx = Math.min(effectiveNumCtx, cap);
         modelContextLimit = cap;
-        recordDiscoveredCap(activeProvider?.baseUrl ?? effectiveBaseUrl, model as string, cap);
+        recordDiscoveredCap(
+          {
+            baseUrl: activeProvider?.baseUrl ?? effectiveBaseUrl,
+            provider: activeProvider?.provider,
+          },
+          model as string,
+          cap
+        );
 
         // Keep the request-scoped copies in step with the resolved value:
         // `requestContext` is the object every tool sees (`read_file`,
