@@ -22,9 +22,6 @@
  */
 
 import { describe, expect, test } from '@jest/globals';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import {
   formatWindowTrimNotice,
@@ -50,7 +47,6 @@ import { withContext } from './helpers/withContext.mjs';
 const MODEL = 'gpt-4o';
 /** A fixed "now" so the stub's ages are exact. */
 const NOW = 1_700_000_000_000;
-const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /**
  * One `session_recent_files` row, as the loader returns it.
@@ -602,144 +598,33 @@ describe('the trim budget pays for the system prompt', () => {
     expect(totalAfterTrim).toBeGreaterThan(acceptanceBudget);
   });
 
-  test('orchestrate.ts charges the system prompt to the trim budget', () => {
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
-    );
-    const callIndex = source.indexOf('computePreservedWindowBudget({');
-    expect(callIndex).not.toBe(-1);
-    const call = source.slice(callIndex, source.indexOf('});', callIndex));
-    for (const charge of [
-      'acceptanceBudget',
-      'headerTokens',
-      'noticeTokens',
-      'systemPromptTokens',
-    ]) {
-      expect(call).toMatch(new RegExp(`\\b${charge}\\b`));
-    }
-    // And the planner is given THAT number, not the old header-only arithmetic.
-    expect(source).toContain('planWindowTrim(preparedRecentMessages, windowBudget, model)');
-  });
+  // What the pipeline passes to `computePreservedWindowBudget` (and whether the
+  // system prompt is among the charges) is checked where it is observable: the
+  // `trim: system prompt charged` scenario in compact-orchestrate.test.mjs, whose
+  // one dropped message only fits if the system prompt was paid for, and which a
+  // budget charged `systemPromptTokens: 0` fails.
 });
 
-describe('the pipeline trims before it re-summarises', () => {
-  test('orchestrate.ts drops the preserved window before it recurses', () => {
-    // The regression this whole module exists for: a compaction that did not fit
-    // used to re-enter `compactHistory` on the already-compacted array, so the
-    // model was asked to summarise a summary. The trim has to come FIRST.
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
-    );
-    const trimIndex = source.indexOf('planWindowTrim(');
-    expect(trimIndex).not.toBe(-1);
-    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
-    expect(retryIndex).not.toBe(-1);
-    expect(trimIndex).toBeLessThan(retryIndex);
-    // And the recursion is still gated on the result being over budget, so a
-    // successful trim cannot pay for a stronger pass anyway.
-    const gateIndex = source.lastIndexOf('if (shouldRetry && remainingRetries > 0)', retryIndex);
-    expect(gateIndex !== -1 && gateIndex < retryIndex).toBeTruthy();
-    expect(gateIndex).toBeGreaterThan(trimIndex);
-  });
-});
+describe('the pipeline order', () => {
+  // The ORDER of the phases (split, distil the window, distil the older slice,
+  // summary, trim, extra spend, retry, stub) is checked where it is observable
+  // and cannot go vacuous: the progress lines of every scenario in
+  // compact-orchestrate.test.mjs are compared with a stored transcript, and the
+  // scenarios assert the phases that ran from the `compaction_size` diagnostic
+  // (`windowTrim`, `extraDistill`, `retried`). A reordering that changes what is
+  // spent, dropped or re-summarised fails one of them.
 
-describe('the leftover distillation budget is spent before the re-summary', () => {
-  test('the extra spend runs BETWEEN the trim and the retry recursion', () => {
-    // The order is the whole feature: the trim is free (no model call) and it
-    // costs context but not fidelity, so it goes first; the extra digests cost
-    // model calls, so they are only spent when the trim was not enough; and
-    // the retry recursion — a summary of a summary — is the last resort.
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
-    );
-    const trimIndex = source.indexOf('planWindowTrim(preparedRecentMessages, windowBudget, model)');
-    const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
-    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
-    expect(trimIndex).not.toBe(-1);
-    expect(extraIndex).not.toBe(-1);
-    expect(retryIndex).not.toBe(-1);
-    expect(trimIndex).toBeLessThan(extraIndex);
-    expect(extraIndex).toBeLessThan(retryIndex);
-  });
+  // Whether the extra spend draws on the SAME budget, whether it skips the rows
+  // the first pass attempted, and whether the verdict is re-taken afterwards are
+  // checked behaviourally in compact-orchestrate.test.mjs: the `budget too
+  // small` scenario (a fresh budget would find room where the spent one cannot),
+  // `skips what the window pass attempted, after a trim` (a skip set in the wrong
+  // index space re-attempts a failed row), and every scenario's progress line
+  // that reports whether the result is now within budget.
 
-  test('the extra spend is gated on the result STILL being over budget', () => {
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
-    );
-    const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
-    const gateIndex = source.lastIndexOf('if (shouldRetry) {', extraIndex);
-    expect(gateIndex).not.toBe(-1);
-    expect(extraIndex).toBeGreaterThan(gateIndex);
-    // And the gate is the POST-TRIM verdict: the trim block comes before it.
-    const trimIndex = source.indexOf('planWindowTrim(preparedRecentMessages, windowBudget, model)');
-    expect(trimIndex).toBeLessThan(gateIndex);
-    // The aborted verdict is thrown BEFORE the gate, so nothing is spent on a
-    // compaction that is going to be refused.
-    const abortIndex = source.indexOf('if (verdict.aborted)');
-    expect(abortIndex !== -1 && abortIndex < gateIndex).toBeTruthy();
-  });
 
-  test('the extra spend draws on the SAME distillation budget', () => {
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
-    );
-    const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
-    expect(extraIndex).not.toBe(-1);
-    const extraEnd = source.indexOf('\n    });', extraIndex);
-    expect(extraEnd).toBeGreaterThan(extraIndex);
-    const extraCall = source.slice(extraIndex, extraEnd);
-    // The budget object is handed to the extra pass…
-    expect(extraCall).toMatch(/\bdistillBudget\b/u);
-    // …and the extra pass's prefill is charged back to it, so the total
-    // prefill of ONE compaction still respects the window's budget.
-    expect(source).toContain('distillBudget.usedTokens += extraDistill.prefillTokens;');
-    // And the calls are bounded by the ceiling, so the spend cannot blow up the
-    // latency even when the budget would allow more.
-    expect(extraCall).toMatch(/TOOL_DISTILL_EXTRA_CALLS_MAX/u);
-  });
 
-  test('the extra spend skips the rows the first pass already dealt with', () => {
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
-    );
-    const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
-    expect(extraIndex).not.toBe(-1);
-    const extraEnd = source.indexOf('\n    });', extraIndex);
-    expect(extraEnd).toBeGreaterThan(extraIndex);
-    const extraCall = source.slice(extraIndex, extraEnd);
-    expect(extraCall).toMatch(/handledRows/u);
-    // The bookkeeping is per-ROW and per-PASS: the digests and the failures of
-    // the WINDOW pass are what is excluded, and the exclusion set is built in
-    // the index space of the array the extra pass walks (the trimmer re-indexes
-    // the window, so the two index spaces are not the same).
-    expect(source).toContain('recentDistill.distilledIndices');
-    expect(source).toContain('recentDistill.failedIndices');
-    expect(source).toContain('resultWindowSources = trimPlan.keptIndices;');
-  });
 
-  test('the verdict is re-taken after the extra spend', () => {
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
-    );
-    const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
-    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
-    const sliceText = source.slice(extraIndex, retryIndex);
-    expect(sliceText).toMatch(
-      /countMessagesTokens\(digestedMessages, model\) \+ resolvedSystemPromptTokens/
-    );
-    expect(sliceText).toMatch(/shouldRetry = numCtx > 0 && newTokenCount > acceptanceBudget;/);
-    // And the digests are only kept when they made the result SMALLER: a digest
-    // can be longer than the output it replaced, and spending the budget must
-    // never make the result bigger.
-    expect(sliceText).toContain('if (distilledTokens < newTokenCount) {');
-  });
 });
 
 describe('the trim budget and the recent-files stub', () => {
@@ -767,94 +652,13 @@ describe('the trim budget and the recent-files stub', () => {
     expect(computePreservedWindowBudget(chargesWithStub)).toBeLessThan(budget);
   });
 
-  test('orchestrate.ts keeps the stub out of the trim, and out of the retry', () => {
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
-    );
-
-    // The header the trim charges is the summary alone.
-    expect(source).toContain('const headerTokens = countMessagesTokens([summaryMessage], model);');
-    // The rebuild after a trim has no stub in it: the result is the summary
-    // plus the trimmed window, and the stub is attached later (see below).
-    const rebuild = source.indexOf('newMessages = [resultSummary, ...resultWindow];');
-    expect(rebuild).not.toBe(-1);
-    const rebuildBlock = source.slice(Math.max(0, rebuild - 400), rebuild);
-    expect(rebuildBlock).not.toContain('recentFilesMessage');
-    expect(source).toContain('resultWindow = trimPlan.messages;');
-    expect(source).toMatch(/resultSummary = \{\s*\.\.\.summaryMessage,/u);
-    expect(source).toContain('planWindowTrim(preparedRecentMessages, windowBudget, model)');
-    // And the retry does not forward the rows — `newMessages` has no stub at that
-    // point, so a second one would be stacked on the recursion's result.
-    const retryStart = source.indexOf('const retryResult = await compactWithPin(');
-    expect(retryStart).not.toBe(-1);
-    const retry = source.slice(retryStart);
-    const retryEnd = retry.indexOf('\n    });');
-    expect(retryEnd).toBeGreaterThan(0);
-    const retryCall = retry.slice(0, retryEnd);
-    // Comments are stripped first: the call carries a comment that names the two
-    // parameters, and a check the comment can satisfy would pass on a regression.
-    const retryArguments = retryCall.replaceAll(/\/\/[^\n]*/gu, '');
-    expect(retryArguments).not.toMatch(/\brecentFiles(Root)?\b/u);
-    // The retry reuses the request (which carries the focus note) and the
-    // already-compacted array, and is given no files by construction.
-    expect(retryArguments).toMatch(/compactWithPin\(request,\s*newMessages,/u);
-  });
+  // The stub's ordering (after any retry, built once, never forwarded to the
+  // recursion) is checked behaviourally below and in compact-orchestrate.test.mjs
+  // (`the retry pass never sees the files`, and every request's messages are
+  // asserted to contain no marker).
 });
 
 describe('the retry invariant', () => {
-  test('the stub is built ONCE, after the retry, and only claimed once attached', () => {
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
-    );
-    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
-    const buildIndex = source.indexOf('await buildRecentFilesMessage(');
-    const attachIndex = source.indexOf('attachRecentFilesMessage(');
-    // The progress line's TEXT lives in progressText.ts ("Re-attached the ..."); what
-    // matters here is where orchestrate asks for it: only after the stub is attached.
-    const progressIndex = source.indexOf('formatStubLine(');
-    expect(
-      retryIndex !== -1 && buildIndex !== -1 && attachIndex !== -1 && progressIndex !== -1
-    ).toBeTruthy();
-    expect(retryIndex).toBeLessThan(buildIndex);
-    expect(buildIndex).toBeLessThan(attachIndex);
-    expect(attachIndex).toBeLessThan(progressIndex);
-    // The summariser's input: nothing between the result array and the recursion
-    // may build, splice or mention a stub, so the array the summariser sees has
-    // none — and no file content is summarised into prose.
-    const resultStart = source.indexOf(
-      'let newMessages: ChatMessage[] = [resultSummary, ...resultWindow];'
-    );
-    // The anchor must EXIST: with `indexOf` returning -1, `slice(-1, n)` is the
-    // empty string and every "must not contain" check below passes on nothing.
-    // (This anchor used to name `[summaryMessage` after the code had moved on to
-    // `[resultSummary`, and the three checks ran on an empty string.)
-    expect(resultStart).not.toBe(-1);
-    expect(resultStart).toBeLessThan(retryIndex);
-    const beforeRetry = source.slice(resultStart, retryIndex);
-    expect(beforeRetry.length).toBeGreaterThan(500);
-    for (const forbidden of [
-      'buildRecentFilesMessage',
-      'attachRecentFilesMessage',
-      'recentFilesPlan',
-    ]) {
-      // A RegExp rather than `String#includes` on purpose: the lint rule that
-      // rewrites `includes` to a Set turns a substring test into a character
-      // test, which would make this check vacuous.
-      expect(new RegExp(forbidden, 'u').test(beforeRetry)).toBeFalsy();
-    }
-    // And the assistant role is pinned where the message is actually built.
-    const recentFilesSource = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/recentFiles.ts'),
-      'utf8'
-    );
-    expect(
-      recentFilesSource.includes('candidate.splice(1, 0, params.message)') &&
-        source.includes("recentFilesMessage = { role: 'assistant', content: recentFilesPlan.text }")
-    ).toBeTruthy();
-  });
-
   test('a retried compaction still ends with the stub attached', async () => {
     // The behaviour behind the ordering: the budget is charged against the FINAL
     // history. On the pre-retry sizes the only honest answer is "no stub"; after

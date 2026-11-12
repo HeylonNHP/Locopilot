@@ -192,25 +192,9 @@ describe('the wiring', () => {
     expect(source).toContain('focusNote.length > COMPACT_FOCUS_MAX_CHARS');
   });
 
-  test('compactHistory forwards the note into the summary pipeline', () => {
-    const source = readSource('services', 'compact', 'orchestrate.ts');
-    expect(source).toContain('focus?: string');
-    // The note has to reach `produceConversationSummary`, and the retry recursion
-    // has to carry it too — the retry re-summarises an already-compacted array,
-    // which is exactly where a note would otherwise be lost.
-    const forwardIndex = source.indexOf(
-      'preservedRecentTokens: historySplit.preservedRecentTokens,\n    focus,'
-    );
-    expect(forwardIndex).not.toBe(-1);
-    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
-    expect(retryIndex).not.toBe(-1);
-    // The note rides in `request`, which is everything in the options except the
-    // messages and the files; the retry is handed that same `request`. (The
-    // behavioural proof, that the retry's own prompts carry the note, is in
-    // compact-orchestrate.test.mjs.)
-    expect(source).toContain('const { messages, recentFiles, ...request } = options;');
-    const retryEnd = source.indexOf('\n    });', retryIndex);
-    expect(retryEnd).toBeGreaterThan(retryIndex);
-    expect(source.slice(retryIndex, retryEnd)).toMatch(/compactWithPin\(request, newMessages,/);
-  });
+  // "compactHistory forwards the note" is a behavioural test now, in
+  // compact-orchestrate.test.mjs: every summary request of the first pass AND of
+  // the retry pass is asserted to carry the note, which fails both when the note
+  // is not forwarded to the summariser and when it is dropped from the request the
+  // retry is handed.
 });

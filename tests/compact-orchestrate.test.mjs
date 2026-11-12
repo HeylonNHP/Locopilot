@@ -68,6 +68,8 @@ let debugLog;
 let SUMMARY_PREAMBLE;
 let TOOL_DISTILL_SYSTEM_PROMPT;
 let resetTokenCalibration;
+let countMessagesTokens;
+let recordTokenCalibrationSample;
 
 beforeAll(async () => {
   scratch = enterScratchCwd('locopilot-orchestrate');
@@ -78,6 +80,8 @@ beforeAll(async () => {
     await import('../src/services/compact/constants.ts'));
   ({ debugLog } = await import('../src/app/lib/debugLogger.ts'));
   ({ resetTokenCalibration } = await import('../src/services/tokenCalibration.ts'));
+  ({ countMessagesTokens } = await import('../src/services/tokenizer.ts'));
+  ({ recordTokenCalibrationSample } = await import('../src/services/tokenCalibration.ts'));
   goldenFile.load();
 });
 
@@ -164,8 +168,17 @@ const describeMessage = (message) => {
  * @param {string} [options.focus]
  * @param {object[]} [options.recentFiles]
  */
-async function compact({ messages, respond, numCtx = NUM_CTX, focus, recentFiles }) {
-  return runScenario({
+async function compact({
+  messages,
+  respond,
+  numCtx = NUM_CTX,
+  focus,
+  recentFiles,
+  checkCounts = true,
+}) {
+  // Every compaction starts cold, whatever the previous one learned.
+  resetTokenCalibration();
+  const outcome = await runScenario({
     distillSystemPrompt: TOOL_DISTILL_SYSTEM_PROMPT,
     respond,
     run: (ctx, progress) =>
@@ -180,6 +193,27 @@ async function compact({ messages, respond, numCtx = NUM_CTX, focus, recentFiles
         recentFiles: recentFiles === undefined ? undefined : { rows: recentFiles, root: workDir },
       }),
   });
+  // A scenario that changes the factor mid-pass is checked by its own test: the
+  // counts below are taken after the queued samples landed.
+  if (outcome.value !== undefined && checkCounts) {
+    expectCountsAgree(messages, outcome.value);
+  }
+  return outcome;
+}
+
+/**
+ * The two stats are counts of what is on the page, whatever path produced the
+ * result (trim, extra spend, retry, stub): the old count is the whole input, the
+ * new count is the returned messages plus the system prompt the caller will
+ * prepend. A path that forgets the system prompt, or recounts without it, breaks
+ * this and nothing else.
+ */
+function expectCountsAgree(input, { newMessages, stats }) {
+  const systemRows = input.filter((message) => message.role === 'system');
+  expect(stats.oldTokenCount).toBe(countMessagesTokens(input, MODEL));
+  expect(stats.newTokenCount).toBe(
+    countMessagesTokens(newMessages, MODEL) + countMessagesTokens(systemRows, MODEL)
+  );
 }
 
 /** Compare a scenario's whole transcript with the stored copy (or record it). */
@@ -508,6 +542,166 @@ describe('the leftover distillation budget is spent before re-summarising', () =
   });
 });
 
+describe('the trim is charged what the result cannot drop', () => {
+  test('a large system prompt shrinks the window the trim leaves', async () => {
+    // The system prompt is not part of the compacted array but is part of every
+    // request, so the window budget is what the boundary leaves AFTER it. With a
+    // 600-token system prompt the result sits inside the confirm band, the
+    // live count says it is over, and one dropped message is exactly enough; a
+    // trim that forgot the system prompt would keep the window, stay over and
+    // go on to re-summarise.
+    const messages = base(24);
+    messages[0] = { role: 'system', content: lines('sys', 50) };
+    const result = await compact({
+      messages,
+      respond: ({ kind }) =>
+        kind === 'measure'
+          ? { text: '', promptEvalCount: 4000, evalCount: 1 }
+          : { text: summaryOf(2300) },
+    });
+    const { progress, value, error } = result;
+    expect(error).toBeUndefined();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].systemPromptTokens).toBeGreaterThan(550);
+    expect(diagnostics[0]).toMatchObject({
+      method: 'live-confirmed',
+      retried: false,
+      retry: false,
+      windowTrim: { droppedCount: 1, stopReason: 'trimmed' },
+    });
+    expect(diagnostics[0]).not.toHaveProperty('extraDistill');
+    expect(progress.join('\n')).not.toMatch(/retrying/);
+    expect(value.stats.newTokenCount).toBeLessThanOrEqual(ACCEPTANCE);
+    expectGolden('trim: system prompt charged', result);
+  });
+});
+
+describe('a measured verdict stands when the trim can do nothing', () => {
+  test('the extra spend runs on the live count even though the estimate fits', async () => {
+    // The estimate lands inside the band and under the boundary; the live count
+    // says it is over. The window is one turn that cannot be cut, so the trim
+    // drops nothing, and the verdict that is still standing is the MEASURED one:
+    // the leftover budget is spent, and only then is the estimate used again.
+    const result = await compact({
+      messages: withSmallOutputs(),
+      respond: ({ kind }) => {
+        if (kind === 'measure') return { text: '', promptEvalCount: 4000, evalCount: 1 };
+        if (kind === 'distil') return { text: 'DIGEST xx' };
+        return { text: summaryOf(2200) };
+      },
+    });
+    const { fake, progress, value, error } = result;
+    expect(error).toBeUndefined();
+    expect(kindsOf(fake).filter((kind) => kind === 'measure')).toHaveLength(1);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      method: 'live-confirmed',
+      retried: false,
+      retry: false,
+      extraDistill: { distilledCount: 2 },
+    });
+    expect(diagnostics[0].estimatedNewTokens).toBeLessThan(ACCEPTANCE);
+    expect(diagnostics[0].confirmedNewTokens).toBeGreaterThan(ACCEPTANCE);
+    expect(diagnostics[0]).not.toHaveProperty('windowTrim');
+    expect(progress.some((line) => line.startsWith('Spent the leftover distillation budget'))).toBe(
+      true
+    );
+    expect(value.stats.newTokenCount).toBe(diagnostics[0].estimatedNewTokens);
+    expectGolden('confirm over, nothing to trim, extra spend', result);
+  });
+});
+
+describe('the extra spend skips what the window pass attempted, after a trim', () => {
+  /** A turn of three outputs (each over the distiller's threshold, a handful of tokens each). */
+  const turn = [
+    { role: 'user', content: 'Now run the checks and report.' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [call('c0', 'run_command'), call('c1', 'run_command'), call('c2', 'run_command')],
+    },
+    { role: 'tool', content: '-'.repeat(1400), tool_call_id: 'c0' },
+    { role: 'tool', content: '='.repeat(1350), tool_call_id: 'c1' },
+    { role: 'tool', content: '#'.repeat(1250), tool_call_id: 'c2' },
+  ];
+
+  /** The first character of the output each distillation request carried. */
+  const distilledOutputs = (fake) =>
+    fake.requests
+      .filter((request) => request.kind === 'distil')
+      .map((request) => request.body.messages.at(-1).content.split('Tool output:\n')[1][0]);
+
+  test('rows that failed in the first pass are not retried at their new position', async () => {
+    // The window pass has room for two calls (the two largest outputs) and both
+    // fail. The result is over, the trim drops the two oldest preserved messages
+    // and the window is re-indexed: the failed rows were at positions 4 and 5 of
+    // the original window and are at 2 and 3 now. The extra spend must attempt
+    // only the output nobody tried ("#"), at its NEW position.
+    let distils = 0;
+    const result = await compact({
+      messages: [...base(24), ...turn],
+      respond: ({ kind }) => {
+        if (kind === 'distil') {
+          distils += 1;
+          return distils <= 2 ? { status: 500 } : { text: 'DIGEST xx' };
+        }
+        // Big until the extra spend has run (calls 1-2 are the window pass,
+        // call 3 is the spend), small for the retry's summaries.
+        return { text: distils < 3 ? summaryOf(3500) : 'SMALL SUMMARY' };
+      },
+    });
+    const { fake, progress, error } = result;
+    expect(error).toBeUndefined();
+    expect(distilledOutputs(fake).slice(0, 3)).toStrictEqual(['-', '=', '#']);
+    expect(diagnostics[1]).toMatchObject({
+      windowTrim: { droppedCount: 2 },
+      extraDistill: { distilledCount: 1 },
+    });
+    expect(
+      progress.some((line) =>
+        line.startsWith('Spent the leftover distillation budget on 1 more oversized tool output(s)')
+      )
+    ).toBe(true);
+    expectGolden('extra spend skips attempted rows after a trim', result);
+  });
+});
+
+describe('the retries are bounded', () => {
+  test('a result that cannot fit is re-summarised twice and then returned', async () => {
+    // A system prompt of ~3000 tokens leaves no room for anything: every pass is
+    // over the boundary however small its summary. The summaries shrink with
+    // their input (so no pass is "not smaller than its history"), the passes
+    // recurse twice, and the third returns what it has instead of recursing.
+    const messages = base(24);
+    messages[0] = { role: 'system', content: lines('sys', 255) };
+    const result = await compact({
+      messages,
+      respond: ({ user }) => ({ text: summaryOf(Math.ceil((user.length / 5.45) * 0.8)) }),
+    });
+    const { progress, value, error } = result;
+    expect(error).toBeUndefined();
+    expect(progress.filter((line) => line.includes('stronger compression'))).toStrictEqual([
+      expect.stringContaining('(2 attempt(s) left)'),
+      expect.stringContaining('(1 attempt(s) left)'),
+    ]);
+    // Innermost first: the last pass is over and has nothing left to try.
+    expect(diagnostics.map(({ retried, retry }) => ({ retried, retry }))).toStrictEqual([
+      { retried: false, retry: true },
+      { retried: true, retry: true },
+      { retried: true, retry: true },
+    ]);
+    // The retries' passes see no system row: each is handed its size, and the
+    // live count they pay for in the band carries it too.
+    expect(new Set(diagnostics.map((entry) => entry.systemPromptTokens)).size).toBe(1);
+    expect(diagnostics[0].method).toBe('live-confirmed');
+    expect(diagnostics[0].confirmedNewTokens).toBeGreaterThanOrEqual(
+      diagnostics[0].systemPromptTokens
+    );
+    expect(value.stats.newTokenCount).toBeGreaterThan(ACCEPTANCE);
+    expectGolden('retries exhausted', result);
+  });
+});
+
 describe('the recent-files stub', () => {
   /** Two real files in the scratch root, touched two hours ago (a stable "2 hours ago"). */
   function rows() {
@@ -589,6 +783,76 @@ describe('the recent-files stub', () => {
   });
 });
 
+describe('the calibration is pinned for the whole pass', () => {
+  test('a factor that changes mid-pass leaves the pass unchanged', async () => {
+    // Two compactions of the same history. The second learns a different factor
+    // (2 instead of 1) after its first request — a second tab finishing a turn,
+    // in real life. Both must take the same path with the same counts: the factor
+    // is pinned when the pass begins, so every count in it uses one scale, or
+    // "did the history shrink?" would compare two of them.
+    const history = withSmallOutputs();
+    const respond = ({ kind }) => (kind === 'distil' ? { text: 'DIGEST xx' } : { text: summaryOf(2600) });
+    const steady = await compact({ messages: history, respond });
+    expect(steady.error).toBeUndefined();
+    let requests = 0;
+    const shifting = await compact({
+      messages: history,
+      respond: (call) => {
+        requests += 1;
+        if (requests === 1) {
+          // What a finished turn in another tab does: a sample lands.
+          recordTokenCalibrationSample({
+            model: MODEL,
+            provider: 'ollama',
+            class: 'chat',
+            estimatedTokens: 4000,
+            authoritativeTokens: 8000,
+          });
+        }
+        return respond(call);
+      },
+      checkCounts: false,
+    });
+    expect(shifting.error?.message).toBe(steady.error?.message);
+    expect(shifting.value.stats).toStrictEqual(steady.value.stats);
+    expect(kindsOf(shifting.fake)).toStrictEqual(kindsOf(steady.fake));
+    expect(shifting.progress).toStrictEqual(steady.progress);
+  });
+});
+
+
+describe('the stub is a checked attach', () => {
+  test('the stub is attached out of the room below the boundary, system prompt paid', async () => {
+    // The result lands ~450 tokens below the boundary, and the system prompt is
+    // ~730: a budget that forgot the system prompt would find no room at all and
+    // leave the stub unattached. What is left buys the paths only — the two
+    // files' contents do not fit — so the stub is attached with them named and
+    // not reproduced, and the result still lands below the boundary. The attach
+    // measures the array it returns; the budget cannot disagree with it.
+    const messages = base(24);
+    messages[0] = { role: 'system', content: lines('sys', 60) };
+    const touched = Date.now() - 2 * 60 * 60 * 1000;
+    const files = ['gamma.ts', 'delta.ts'].map((name) => {
+      const file = path.join(workDir, name);
+      writeFileSync(file, `export const MARKER = 'UNIQUE_MARKER_${name}';\n${lines(name, 60)}`);
+      return { path: file, tool: 'read_file', hits: 3, lastSeenAt: touched };
+    });
+    const result = await compact({
+      messages,
+      respond: () => ({ text: summaryOf(1700) }),
+      recentFiles: files,
+    });
+    const { value, progress, error } = result;
+    expect(error).toBeUndefined();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].recentFiles).toMatchObject({ included: 2, dropped: 'no-budget' });
+    expect(value.newMessages[1].content.startsWith('[Recent files')).toBe(true);
+    expect(value.stats.newTokenCount).toBeLessThanOrEqual(ACCEPTANCE);
+    expect(progress.filter((line) => line.startsWith('Re-attached the'))).toHaveLength(1);
+    expectGolden('stub: checked attach', result, { pathDependent: true });
+  });
+});
+
 describe('a compaction that cannot proceed says why', () => {
   test('a history too short to summarise', async () => {
     const result = await compact({
@@ -628,5 +892,22 @@ describe('a compaction that cannot proceed says why', () => {
       'Cannot compact: conversation has no content beyond the system prompt.'
     );
     expect(result.fake.requests).toHaveLength(0);
+  });
+});
+
+describe('EXPLORE3', () => {
+  test('attach refusal', async () => {
+    for (const [sys, summary] of [[60, 1640], [60, 1690], [38, 1760], [80, 1560], [30, 1800]]) {
+      const messages = base(24);
+      messages[0] = { role: 'system', content: lines('sys', sys) };
+      const touched = Date.now() - 7200_000;
+      const files = ['gamma.ts', 'delta.ts'].map((name) => {
+        const file = path.join(workDir, name);
+        writeFileSync(file, `export const MARKER = 'UNIQUE_MARKER_${name}';\n${lines(name, 60)}`);
+        return { path: file, tool: 'read_file', hits: 3, lastSeenAt: touched };
+      });
+      const r = await compact({ messages, respond: () => ({ text: summaryOf(summary) }), recentFiles: files });
+      console.log('E3', sys, summary, JSON.stringify({ err: r.error?.message, est: diagnostics[0]?.estimatedNewTokens, sysTok: diagnostics[0]?.systemPromptTokens, rf: diagnostics[0]?.recentFiles, second: r.value?.newMessages[1]?.content.slice(0, 24), stub: r.progress.filter((l) => l.startsWith('Re-attached')) }));
+    }
   });
 });

@@ -627,21 +627,20 @@ describe('the wiring', () => {
   });
 
   test('the compaction pins the factor for its whole pass', () => {
+    // Behaviour, not text: a factor that changes between the pass's requests (as
+    // a finished turn in another tab makes it change) must not move the counts
+    // the pass compares. compact-orchestrate.test.mjs runs the same compaction
+    // twice, once with a sample landing after its first request, and requires
+    // identical stats, progress lines and requests.
     const orchestrateSource = readSource('src/services/compact/orchestrate.ts');
+    // What the source can still state: the pin and the release wrap the pass.
     expect(orchestrateSource).toContain('pinTokenCalibration(model)');
     expect(orchestrateSource).toContain('unpinTokenCalibration(model)');
-    const pin = orchestrateSource.indexOf('pinTokenCalibration(model)');
-    const unpin = orchestrateSource.indexOf('unpinTokenCalibration(model)');
-    expect(pin).toBeLessThan(unpin);
-    const between = orchestrateSource.slice(pin, unpin);
-    expect(between).toMatch(/finally\s*\{/u);
-  });
-
-  test('the compaction’s counts are the calibrated ones', () => {
-    const orchestrateSource = readSource('src/services/compact/orchestrate.ts');
-    expect(orchestrateSource).toContain(
-      'countMessagesTokens(newMessages, model) + resolvedSystemPromptTokens'
+    const between = orchestrateSource.slice(
+      orchestrateSource.indexOf('pinTokenCalibration(model)'),
+      orchestrateSource.indexOf('unpinTokenCalibration(model)')
     );
-    expect(orchestrateSource).toContain('countMessagesTokens(messages, model) +');
+    expect(between).toMatch(/finally\s*\{/u);
+    expect(between).toContain('runPinnedAttempt(');
   });
 });

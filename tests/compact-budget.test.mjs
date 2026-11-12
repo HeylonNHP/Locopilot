@@ -1387,27 +1387,15 @@ describe('a failed distillation does not cost the whole compaction', () => {
 });
 
 describe('the retry pass knows the system prompt', () => {
-  test('compactHistory takes the system-prompt tokens and forwards them', () => {
-    const source = readFileSync(
-      fileURLToPath(new URL('../src/services/compact/orchestrate.ts', import.meta.url)),
-      'utf8'
-    );
-    // The parameter exists because the retry recursion deliberately passes a
-    // history WITHOUT the system row, so the inner pass would compute 0.
-    expect(source).toContain('systemPromptTokens?: number');
-    expect(source).toContain('systemPromptTokens ?? countMessagesTokens(systemMessages, model)');
-    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
-    expect(retryIndex).not.toBe(-1);
-    const retryEnd = source.indexOf('\n    });', retryIndex);
-    expect(retryEnd).toBeGreaterThan(retryIndex);
-    const retryCall = source.slice(retryIndex, retryEnd);
-    expect(retryCall).toMatch(/systemPromptTokens: resolvedSystemPromptTokens/);
-    // And the NEW count (the one the acceptance decision and the stats use) is
-    // the local count plus that number.
-    expect(source).toContain(
-      'countMessagesTokens(newMessages, model) + resolvedSystemPromptTokens'
-    );
-  });
+  // The retry hands the recursion a history WITHOUT the system row and its size
+  // alongside it; the inner pass then charges that size to its old count, its new
+  // counts, its trim budget and its confirm measurement. All of it is pinned by
+  // compact-orchestrate.test.mjs: `trim then retry` and `a result that cannot fit
+  // is re-summarised twice` assert the retry pass's `systemPromptTokens` equals
+  // the outer pass's, and the `expectCountsAgree` invariant every scenario runs
+  // holds the returned stats to the returned messages plus the system prompt. A
+  // retry that forgot to forward the number, or a count that left it out, fails
+  // those.
 });
 
 describe('the reasoning effort forwarded to the summariser', () => {
@@ -1450,19 +1438,21 @@ describe('the retired 92 % gate and the measurement cost', () => {
   });
 
   test('the pipeline measures a conversation once, and only to confirm', () => {
-    const source = readFileSync(
-      path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
-      'utf8'
+    // Counted over EVERY compaction source, wherever the phases end up: one call
+    // to the live measurement, and it is the confirm branch that pays for it.
+    const sources = listSourceFiles(path.join(REPO_ROOT, 'src/services/compact')).map((file) =>
+      readFileSync(file, 'utf8')
     );
-    const calls = source.match(/measureConversationTokens\(/g) ?? [];
-    // The import statement carries no parenthesis, so only real CALLS match.
+    // `measure.ts` DEFINES it; an import carries no parenthesis; a call is awaited.
+    const calls = sources.flatMap(
+      (source) => source.match(/await measureConversationTokens\(/gu) ?? []
+    );
     expect(calls).toHaveLength(1);
-    const confirmIndex = source.indexOf('if (verdict.confirm)');
-    expect(confirmIndex).not.toBe(-1);
-    expect(source.indexOf('measureConversationTokens(')).toBeGreaterThan(confirmIndex);
-    // Both sizes come from the free local tokenizer.
-    const localCounts = source.match(/countMessagesTokens\(/g) ?? [];
-    expect(localCounts.length).toBeGreaterThanOrEqual(2);
+    const measureFile = sources.find((source) => source.includes('await measureConversationTokens('));
+    expect(measureFile).toContain('if (verdict.confirm)');
+    // The scenarios prove the gate: `confirm band: fits` and `confirm band: over`
+    // each pay for exactly one measure request, and every other scenario pays for
+    // none (compact-orchestrate.test.mjs).
   });
 });
 
