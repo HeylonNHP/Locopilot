@@ -1,0 +1,365 @@
+{
+  "single pass": {
+    "requests": [
+      {
+        "index": 1,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 8192,
+          "temperature": 0,
+          "num_predict": 60
+        },
+        "tools": [],
+        "systemSha": "8fe021d01d8f",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Please rename the "
+      }
+    ],
+    "progress": [
+      "AI is summarizing... (11 chars)"
+    ]
+  },
+  "chunked and reduced": {
+    "requests": [
+      {
+        "index": 1,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c71685ce0ed0",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 7477,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1. lorem i"
+      },
+      {
+        "index": 2,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "1fd7c8f5bd5c",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 7480,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 7. lorem i"
+      },
+      {
+        "index": 3,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 391
+        },
+        "tools": [],
+        "systemSha": "acae7dbf714e",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 2529,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 13. lorem "
+      },
+      {
+        "index": 4,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 368
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 120,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nPA"
+      }
+    ],
+    "progress": [
+      "History is too large for a single pass (3275 tokens) — splitting into 3 chunks for map-reduce compaction.",
+      "chunk 1/3 — AI is summarizing... (6 chars)",
+      "chunk 2/3 — AI is summarizing... (6 chars)",
+      "chunk 3/3 — AI is summarizing... (6 chars)",
+      "Reducing chunk summaries...",
+      "Reducing summaries...",
+      "AI is summarizing... (8 chars)"
+    ]
+  },
+  "reduction pairing": {
+    "requests": [
+      {
+        "index": 1,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 5512,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nPa"
+      },
+      {
+        "index": 2,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 5512,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nPa"
+      },
+      {
+        "index": 3,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 5512,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 5]:\nPa"
+      },
+      {
+        "index": 4,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 5512,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 7]:\nPa"
+      },
+      {
+        "index": 5,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 2789,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 9]:\nPa"
+      },
+      {
+        "index": 6,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 4912,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nCO"
+      },
+      {
+        "index": 7,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 4912,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nCO"
+      },
+      {
+        "index": 8,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 2489,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 5]:\nCO"
+      },
+      {
+        "index": 9,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 4912,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nCO"
+      },
+      {
+        "index": 10,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 2489,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nCO"
+      },
+      {
+        "index": 11,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 2048,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 4913,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nCO"
+      }
+    ],
+    "progress": [
+      "Reducing reduction group 1/5...",
+      "AI is summarizing... (2411 chars)",
+      "Reducing reduction group 2/5...",
+      "AI is summarizing... (2411 chars)",
+      "Reducing reduction group 3/5...",
+      "AI is summarizing... (2411 chars)",
+      "Reducing reduction group 4/5...",
+      "AI is summarizing... (2411 chars)",
+      "Reducing reduction group 5/5...",
+      "AI is summarizing... (2411 chars)",
+      "Reducing reduction group 1/3...",
+      "AI is summarizing... (2411 chars)",
+      "Reducing reduction group 2/3...",
+      "AI is summarizing... (2411 chars)",
+      "Reducing reduction group 3/3...",
+      "AI is summarizing... (2411 chars)",
+      "Reducing reduction group 1/2...",
+      "AI is summarizing... (2411 chars)",
+      "Reducing reduction group 2/2...",
+      "AI is summarizing... (2412 chars)",
+      "Reducing summaries...",
+      "AI is summarizing... (2412 chars)"
+    ]
+  },
+  "empty answer then retry": {
+    "requests": [
+      {
+        "index": 1,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 8192,
+          "temperature": 0,
+          "num_predict": 60
+        },
+        "tools": [],
+        "systemSha": "7f8d85bbfe8c",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Please rename the "
+      },
+      {
+        "index": 2,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 8192,
+          "temperature": 0,
+          "num_predict": 60
+        },
+        "tools": [],
+        "systemSha": "05cbd7da7f3b",
+        "systemHead": "You are a conversation summariser. Write ONE summary of the ",
+        "userChars": 158,
+        "userHead": "Summarise this conversation:\n\n[USER]: Please rename the helper and update its ca"
+      }
+    ],
+    "progress": [
+      "Empty response — retrying with simplified prompt...",
+      "AI is summarizing... (15 chars)"
+    ]
+  },
+  "two empty answers": {
+    "requests": [
+      {
+        "index": 1,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 8192,
+          "temperature": 0,
+          "num_predict": 60
+        },
+        "tools": [],
+        "systemSha": "7f8d85bbfe8c",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Please rename the "
+      },
+      {
+        "index": 2,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 8192,
+          "temperature": 0,
+          "num_predict": 60
+        },
+        "tools": [],
+        "systemSha": "05cbd7da7f3b",
+        "systemHead": "You are a conversation summariser. Write ONE summary of the ",
+        "userChars": 158,
+        "userHead": "Summarise this conversation:\n\n[USER]: Please rename the helper and update its ca"
+      }
+    ],
+    "progress": [
+      "Empty response — retrying with simplified prompt..."
+    ]
+  }
+}
