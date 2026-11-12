@@ -15,9 +15,9 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
-import { createServer } from 'node:http';
 
 import { distillToolMessages, findOwningToolCall } from '../src/services/compact/distill.ts';
+import { startFakeOllama } from './helpers/fakeOllama.mjs';
 
 const MODEL = 'test-model';
 
@@ -70,33 +70,23 @@ describe('findOwningToolCall', () => {
 });
 
 describe('a digest names the call it answers', () => {
-  const prompts = [];
-  let server;
-  let baseUrl;
+  let fake;
 
+  // No promptEvalCount, so no calibration sample is recorded.
   beforeAll(async () => {
-    server = createServer((req, res) => {
-      const chunks = [];
-      req.on('data', (chunk) => chunks.push(chunk));
-      req.on('error', () => {});
-      req.on('end', () => {
-        const body = JSON.parse(Buffer.concat(chunks).toString());
-        prompts.push(body.messages.at(-1).content);
-        // No prompt_eval_count, so no calibration sample is recorded.
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(
-          `${JSON.stringify({ message: { role: 'assistant', content: 'digest' }, done: true })}\n`
-        );
-      });
-    });
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    baseUrl = `http://127.0.0.1:${server.address().port}`;
+    fake = await startFakeOllama(() => ({ text: 'digest' }));
   });
 
-  afterAll(() => new Promise((resolve) => server.close(resolve)));
+  afterAll(() => fake.close());
 
   test('every output of a multi-call turn is labelled with its own tool', async () => {
-    const result = await distillToolMessages({ baseUrl }, multiCallHistory(), 32768, MODEL, 3);
+    const result = await distillToolMessages(
+      { baseUrl: fake.baseUrl },
+      multiCallHistory(),
+      32768,
+      MODEL,
+      3
+    );
     expect(result.distilledCount).toBe(3);
 
     const expected = ['web_fetch', 'read_file', 'run_command'];
@@ -105,7 +95,10 @@ describe('a digest names the call it answers', () => {
       .map((message) => /^\[Distilled tool output from (\S+);/.exec(message.content)?.[1]);
     expect(headerNames).toStrictEqual(expected);
 
-    const requestNames = prompts.map((prompt) => /^Tool name: (.+)$/m.exec(prompt)?.[1]);
+    const requestNames = fake.requests.map(
+      (request) => /^Tool name: (.+)$/m.exec(request.body.messages.at(-1).content)?.[1]
+    );
     expect(requestNames).toStrictEqual(expected);
+    expect(fake.unexpected).toStrictEqual([]);
   });
 });
