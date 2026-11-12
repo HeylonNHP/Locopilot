@@ -30,10 +30,10 @@ import {
   splitHistoryIntoChunks,
 } from '../src/services/compact/split.ts';
 import {
-  buildCompactSystemPrompt,
   buildSummarisationInput,
   countSummarisationPromptTokens,
 } from '../src/services/compact/summarize.ts';
+import { buildCompactSystemPrompt } from '../src/services/compact/summaryPrompt.ts';
 import { countMessagesTokens, countTextTokens } from '../src/services/tokenizer.ts';
 
 const MODEL = 'gpt-4o';

@@ -32,15 +32,17 @@ import {
 import { serializeHistoryForSummaryText, type SerializeHistoryOptions } from './serialize';
 import { splitHistoryIntoChunks } from './split';
 import {
-  type BuildCompactSystemPromptParams,
-  buildRetrySystemPrompt,
   countPromptOverhead,
   countRetryPromptTokens,
   countSummarisationPromptTokens,
   summariseChunk,
   summariseMessages,
-  type SummaryPromptMode,
 } from './summarize';
+import {
+  type BuildCompactSystemPromptParams,
+  buildRetrySystemPrompt,
+  type SummaryPromptMode,
+} from './summaryPrompt';
 
 /** The blank line that separates two serialised history blocks. */
 const SERIALIZED_BLOCK_SEPARATOR = '\n\n';

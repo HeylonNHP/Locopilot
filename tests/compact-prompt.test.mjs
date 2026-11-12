@@ -73,12 +73,11 @@ import {
   buildToolNameMap,
   serializeHistoryForSummaryText,
 } from '../src/services/compact/serialize.ts';
+import { buildSummarisationInput, summariseChunk } from '../src/services/compact/summarize.ts';
 import {
   buildCompactSystemPrompt,
   buildRetrySystemPrompt,
-  buildSummarisationInput,
-  summariseChunk,
-} from '../src/services/compact/summarize.ts';
+} from '../src/services/compact/summaryPrompt.ts';
 import { loadConfig } from '../src/services/configManager.ts';
 import { buildProviderRequestContext, resolveProvider } from '../src/services/providerResolver.ts';
 import { withContext } from './helpers/withContext.mjs';

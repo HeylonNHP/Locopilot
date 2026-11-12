@@ -33,12 +33,12 @@ import {
   buildReductionCombineSystemPrompt,
   TOOL_DISTILL_SYSTEM_PROMPT,
 } from '../src/services/compact/constants.ts';
+import { buildSummarisationInput } from '../src/services/compact/summarize.ts';
 import {
   buildCompactSystemPrompt,
   buildRetrySystemPrompt,
-  buildSummarisationInput,
   SUMMARY_REQUEST_USER_PREFIX,
-} from '../src/services/compact/summarize.ts';
+} from '../src/services/compact/summaryPrompt.ts';
 import { buildCompactionPrompt } from '../src/tools/impl/contentCompactor.ts';
 
 const GOLDEN_PATH = new URL('fixtures/compact-prompts.golden.json', import.meta.url);
