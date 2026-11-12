@@ -43,6 +43,7 @@ import {
   TOOL_DISTILL_TRUNCATION_MARKER,
 } from './constants';
 import { toolCallName, UNKNOWN_TOOL_NAME } from './serialize';
+import { findOwningAssistantIndex } from './split';
 
 /**
  * Cuts `text` to `maxChars` characters and marks the cut when there was one.
@@ -138,17 +139,10 @@ export function findOwningToolCall(
   messages: ChatMessage[],
   toolIndex: number
 ): ToolCall | undefined {
-  if (toolIndex <= 0) return undefined;
+  const owner = findOwningAssistantIndex(messages, toolIndex);
+  if (owner < 0) return undefined;
   const toolCallId = messages[toolIndex]?.tool_call_id;
-  if (!toolCallId) return undefined;
-  for (let i = toolIndex - 1; i >= 0; i -= 1) {
-    const candidate = messages[i];
-    if (candidate?.role === 'assistant') {
-      return candidate.tool_calls?.find((tc) => tc?.id === toolCallId);
-    }
-    if (candidate?.role !== 'tool') break;
-  }
-  return undefined;
+  return messages[owner]?.tool_calls?.find((tc) => tc?.id === toolCallId);
 }
 
 /**
@@ -588,17 +582,17 @@ export async function distillToolMessages(
     // A single tool output can exceed numCtx, causing the distillation call
     // itself to fail with a 400 — and a failed call leaves the output
     // VERBATIM, which is the thing the distillation existed to avoid.
-    const { text: distillInputContent, keptChars, totalChars, truncated } = truncateToolOutputForDistillation(
-      message.content,
-      inputMaxChars
-    );
+    const {
+      text: distillInputContent,
+      keptChars,
+      totalChars,
+      truncated,
+    } = truncateToolOutputForDistillation(message.content, inputMaxChars);
 
     const input =
       `Tool name: ${toolName}\n` +
       `Tool output length: ${totalChars} chars${
-        truncated
-          ? ` (only the first ${keptChars} chars were sent to the distiller)`
-          : ''
+        truncated ? ` (only the first ${keptChars} chars were sent to the distiller)` : ''
       }\n\n` +
       `Tool output:\n${distillInputContent}`;
 

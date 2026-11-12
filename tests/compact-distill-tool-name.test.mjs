@@ -17,6 +17,7 @@
 import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 
 import { distillToolMessages, findOwningToolCall } from '../src/services/compact/distill.ts';
+import { findOwningAssistantIndex } from '../src/services/compact/split.ts';
 import { startFakeOllama } from './helpers/fakeOllama.mjs';
 
 const MODEL = 'test-model';
@@ -66,6 +67,44 @@ describe('findOwningToolCall', () => {
     ],
   ])('%s is an orphan', (_label, history) => {
     expect(findOwningToolCall(history, history.length - 1)).toBeUndefined();
+  });
+});
+
+describe('findOwningAssistantIndex (shared by the split and the distiller)', () => {
+  test.each([
+    [2, 1],
+    [3, 1],
+    [4, 1],
+  ])('row %p is owned by the assistant at %p', (index, owner) => {
+    expect(findOwningAssistantIndex(multiCallHistory(), index)).toBe(owner);
+  });
+
+  test.each([
+    ['no tool_call_id', [assistant(call('c-a', 'read_file')), output('')]],
+    ['an id the block never issued', [assistant(call('c-a', 'read_file')), output('c-z')]],
+    [
+      'an owner outside the tool block',
+      [assistant(call('c-a', 'read_file')), { role: 'user', content: 'u' }, output('c-a')],
+    ],
+  ])('%s has no owner', (_label, history) => {
+    expect(findOwningAssistantIndex(history, history.length - 1)).toBe(-1);
+  });
+
+  test('a null entry in tool_calls is "not the call", never a throw', () => {
+    // The persisted array is whatever the model emitted. The split's walk used to
+    // read `tc.id` and threw on a null entry; both consumers now share one walk.
+    // (The tokenizer still throws on a null entry before the split is reached, so
+    // this is a property of the walk, not of the whole pipeline.)
+    const history = [
+      { role: 'assistant', content: '', tool_calls: [null, call('c-a', 'read_file')] },
+      output('c-a'),
+      { role: 'assistant', content: '', tool_calls: [null] },
+      output('c-b'),
+    ];
+    expect(findOwningAssistantIndex(history, 1)).toBe(0);
+    expect(findOwningAssistantIndex(history, 3)).toBe(-1);
+    expect(findOwningToolCall(history, 1)?.function.name).toBe('read_file');
+    expect(findOwningToolCall(history, 3)).toBeUndefined();
   });
 });
 

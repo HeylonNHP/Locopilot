@@ -51,6 +51,36 @@ export function findLatestUserMessageIndex(messages: ChatMessage[]): number {
 }
 
 /**
+ * The index of the assistant row that issued the tool call the tool message at
+ * `toolIndex` answers, or -1 when there is none.
+ *
+ * The owner is looked for through the CONTIGUOUS run of tool rows that precedes
+ * the message: the first assistant row reached either holds a call with the
+ * message's `tool_call_id` or ends the search, and any other role ends it too.
+ * -1 therefore covers a message with no id, an id nobody issued, and an owner
+ * that is not adjacent (a user turn in between).
+ *
+ * A malformed entry in a persisted `tool_calls` array (`null`) is "not the
+ * call", never a throw: the arrays are whatever the model emitted.
+ */
+export function findOwningAssistantIndex(
+  messages: readonly ChatMessage[],
+  toolIndex: number
+): number {
+  if (toolIndex <= 0) return -1;
+  const toolCallId = messages[toolIndex]?.tool_call_id;
+  if (!toolCallId) return -1;
+  for (let i = toolIndex - 1; i >= 0; i -= 1) {
+    const candidate = messages[i];
+    if (candidate?.role === 'assistant') {
+      return candidate.tool_calls?.some((tc) => tc?.id === toolCallId) ? i : -1;
+    }
+    if (candidate?.role !== 'tool') return -1;
+  }
+  return -1;
+}
+
+/**
  * If the proposed split index would bisect an assistant message and its
  * immediate tool responses, return the index of the assistant so that the
  * entire assistant+tools block stays on the same side of the split.
@@ -67,21 +97,8 @@ function adjustSplitForToolBlockIntegrity(
 
   // Case 1: splitIndex points at a tool message. Walk back through consecutive
   // tool messages to find the assistant that owns this tool_call_id.
-  const splitToolCallId = historyMessages[splitIndex]?.tool_call_id;
-  if (splitToolCallId && historyMessages[splitIndex]?.role === 'tool') {
-    for (let i = splitIndex - 1; i >= 0; i -= 1) {
-      const candidate = historyMessages[i];
-      if (
-        candidate?.role === 'assistant' &&
-        candidate?.tool_calls?.some((tc) => tc.id === splitToolCallId)
-      ) {
-        assistantIndex = i;
-        break;
-      }
-      if (candidate?.role !== 'tool') {
-        break;
-      }
-    }
+  if (historyMessages[splitIndex]?.role === 'tool') {
+    assistantIndex = findOwningAssistantIndex(historyMessages, splitIndex);
   }
 
   // Case 2: splitIndex sits immediately after an assistant with tool_calls.
