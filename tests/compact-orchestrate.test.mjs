@@ -169,24 +169,16 @@ async function compact({ messages, respond, numCtx = NUM_CTX, focus, recentFiles
     distillSystemPrompt: TOOL_DISTILL_SYSTEM_PROMPT,
     respond,
     run: (ctx, progress) =>
-      compactHistory(
+      compactHistory({
         ctx,
-        MODEL,
+        model: MODEL,
         messages,
         numCtx,
-        (line) => progress.push(line),
-        1,
-        2,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        true,
+        onProgress: (line) => progress.push(line),
+        redactSecrets: true,
         focus,
-        undefined,
-        recentFiles,
-        recentFiles === undefined ? undefined : workDir
-      ),
+        recentFiles: recentFiles === undefined ? undefined : { rows: recentFiles, root: workDir },
+      }),
   });
 }
 
@@ -365,6 +357,11 @@ describe('a result that stays over after the trim is re-summarised', () => {
     // logs last and keeps ITS verdict (`retry: true`) next to `retried: true`.
     expect(diagnostics).toHaveLength(2);
     expect(diagnostics[0]).toMatchObject({ retried: false, retry: false });
+    // The retry's pass sees a history WITHOUT the system row, so it is handed the
+    // system prompt's size: without it, its counts would be short by the whole
+    // system prompt.
+    expect(diagnostics[0].systemPromptTokens).toBeGreaterThan(0);
+    expect(diagnostics[0].systemPromptTokens).toBe(diagnostics[1].systemPromptTokens);
     expect(diagnostics[1]).toMatchObject({
       retried: true,
       retry: true,

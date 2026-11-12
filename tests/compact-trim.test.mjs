@@ -634,7 +634,7 @@ describe('the pipeline trims before it re-summarises', () => {
     );
     const trimIndex = source.indexOf('planWindowTrim(');
     expect(trimIndex).not.toBe(-1);
-    const retryIndex = source.indexOf('const retryResult = await compactHistory(');
+    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
     expect(retryIndex).not.toBe(-1);
     expect(trimIndex).toBeLessThan(retryIndex);
     // And the recursion is still gated on the result being over budget, so a
@@ -657,7 +657,7 @@ describe('the leftover distillation budget is spent before the re-summary', () =
     );
     const trimIndex = source.indexOf('planWindowTrim(preparedRecentMessages, windowBudget, model)');
     const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
-    const retryIndex = source.indexOf('const retryResult = await compactHistory(');
+    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
     expect(trimIndex).not.toBe(-1);
     expect(extraIndex).not.toBe(-1);
     expect(retryIndex).not.toBe(-1);
@@ -729,7 +729,7 @@ describe('the leftover distillation budget is spent before the re-summary', () =
       'utf8'
     );
     const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
-    const retryIndex = source.indexOf('const retryResult = await compactHistory(');
+    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
     const sliceText = source.slice(extraIndex, retryIndex);
     expect(sliceText).toMatch(
       /countMessagesTokens\(digestedMessages, model\) \+ resolvedSystemPromptTokens/
@@ -786,17 +786,19 @@ describe('the trim budget and the recent-files stub', () => {
     expect(source).toContain('planWindowTrim(preparedRecentMessages, windowBudget, model)');
     // And the retry does not forward the rows — `newMessages` has no stub at that
     // point, so a second one would be stacked on the recursion's result.
-    const retryStart = source.indexOf('const retryResult = await compactHistory(');
+    const retryStart = source.indexOf('const retryResult = await compactWithPin(');
     expect(retryStart).not.toBe(-1);
     const retry = source.slice(retryStart);
-    const retryEnd = retry.indexOf('\n    );');
+    const retryEnd = retry.indexOf('\n    });');
     expect(retryEnd).toBeGreaterThan(0);
     const retryCall = retry.slice(0, retryEnd);
     // Comments are stripped first: the call carries a comment that names the two
     // parameters, and a check the comment can satisfy would pass on a regression.
     const retryArguments = retryCall.replaceAll(/\/\/[^\n]*/gu, '');
     expect(retryArguments).not.toMatch(/\brecentFiles(Root)?\b/u);
-    expect(retryArguments).toMatch(/\bmodel,\n\s+newMessages,/u);
+    // The retry reuses the request (which carries the focus note) and the
+    // already-compacted array, and is given no files by construction.
+    expect(retryArguments).toMatch(/compactWithPin\(request,\s*newMessages,/u);
   });
 });
 
@@ -806,7 +808,7 @@ describe('the retry invariant', () => {
       path.join(REPO_ROOT, 'src/services/compact/orchestrate.ts'),
       'utf8'
     );
-    const retryIndex = source.indexOf('const retryResult = await compactHistory(');
+    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
     const buildIndex = source.indexOf('await buildRecentFilesMessage(');
     const attachIndex = source.indexOf('attachRecentFilesMessage(');
     // The progress line's TEXT lives in progressText.ts ("Re-attached the ..."); what

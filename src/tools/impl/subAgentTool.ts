@@ -513,29 +513,25 @@ async function autoCompactSubAgentIfNeeded(
       messages,
       orchestratorPrompt,
       async (history) => {
-        const compactionResult = await compactHistory(
-          compactionContext,
-          config.compactionModel,
-          history,
-          compactionNumCtx,
-          undefined,
-          1,
-          2,
-          undefined,
+        const compactionResult = await compactHistory({
+          ctx: compactionContext,
+          model: config.compactionModel,
+          messages: history,
+          numCtx: compactionNumCtx,
           signal,
           // The compaction model's own reasoning effort, inherited from the
           // parent's compaction setting (NOT the sub-agent's `reasoningEffort`,
           // which is the main model's level). 'off' is normalised away here.
-          forwardableReasoningEffort(config.compactionReasoningEffort),
+          reasoningEffort: forwardableReasoningEffort(config.compactionReasoningEffort),
           // Live compaction speed — the route forwards reportTps to the client,
           // so the t/s badge keeps updating while the sub-agent compacts.
-          (tps: number) => {
+          onTps: (tps: number) => {
             output.reportTps?.(tps);
           },
           // The sub-agent inherits the parent's redaction setting, so its
           // compaction summaries are redacted exactly like the main
           // session's.
-          config.redactSecrets ?? true
+          redactSecrets: config.redactSecrets ?? true,
           // `recentFiles` is deliberately NOT passed. The stub names the files
           // a session touched, and a sub-agent records none of its own: its
           // tool calls go straight to `command.execute`, bypassing the
@@ -544,7 +540,7 @@ async function autoCompactSubAgentIfNeeded(
           // the PARENT's, so attaching its rows would tell this agent it has
           // been working on files it has never opened — a confident lie is
           // worse than the re-read the stub exists to prevent.
-        );
+        });
         return {
           newMessages: compactionResult.newMessages,
           newTokenCount: compactionResult.stats.newTokenCount,

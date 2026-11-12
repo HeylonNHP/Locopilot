@@ -1643,49 +1643,47 @@ export async function POST(req: NextRequest): Promise<Response> {
                 // request context size was known. This keeps auto-compaction,
                 // sub-agent compaction, web content compaction, and title
                 // generation on the same selected model/provider semantics.
-                const compactResult = await compactHistory(
-                  compactionLlmRequestContext,
-                  effectiveCompactionModel,
-                  currentMessages,
-                  compactionNumCtx,
-                  (message: string) => {
+                const compactResult = await compactHistory({
+                  ctx: compactionLlmRequestContext,
+                  model: effectiveCompactionModel,
+                  messages: currentMessages,
+                  numCtx: compactionNumCtx,
+                  onProgress: (message: string) => {
                     sendEvent('compact_progress', { message });
                   },
-                  1,
-                  2,
-                  undefined,
-                  req.signal,
+                  signal: req.signal,
                   // The compaction model's own reasoning effort — NOT this
                   // route's `reasoningEffort`, which is the MAIN model's level
                   // from the request body. 'off' means "no explicit level", so
                   // it is normalised away before it reaches the adapter.
-                  forwardableReasoningEffort(config?.compactionReasoningEffort),
+                  reasoningEffort: forwardableReasoningEffort(config?.compactionReasoningEffort),
                   // Live compaction speed for the t/s badge.
-                  (tps: number) => {
+                  onTps: (tps: number) => {
                     sendEvent('status', { phase: 'compacting', tps });
                   },
                   // The user's redaction setting: with it OFF the summariser
                   // sees the raw tool arguments and tool results, with it ON
                   // both are redacted.
-                  config?.redactSecrets ?? true,
+                  redactSecrets: config?.redactSecrets ?? true,
                   // No `/compact` focus note on the automatic path, and no
                   // borrowed system prompt either: `currentMessages` still has
                   // its `system` row here, so `compactHistory` measures it.
-                  undefined,
-                  undefined,
+                  //
                   // The files this session touched most recently — recorded by
                   // `recordToolFileTouch` at the single tool dispatch point —
                   // re-attached after the compaction so the model does not
                   // re-read what it was already working on. A few more rows
                   // than the stub shows, so an unreadable file cannot starve
-                  // the list.
-                  loadRecentFiles(activeSessionId, RECENT_FILES_LOAD_LIMIT),
-                  // The reader is confined to THIS request's working directory:
-                  // `run_command`'s `cd` tracking lives on the scope, so the
-                  // containment root has to follow it (a path outside it is not
-                  // read, and the stub degrades to its path list).
-                  getAgentWorkingDirectory(requestContext.workingDirectoryScope)
-                );
+                  // the list. The reader is confined to THIS request's working
+                  // directory: `run_command`'s `cd` tracking lives on the
+                  // scope, so the containment root has to follow it (a path
+                  // outside it is not read, and the stub degrades to its path
+                  // list).
+                  recentFiles: {
+                    rows: loadRecentFiles(activeSessionId, RECENT_FILES_LOAD_LIMIT),
+                    root: getAgentWorkingDirectory(requestContext.workingDirectoryScope),
+                  },
+                });
                 // Replace server-side history with the compacted result.
                 const preservedSystemMessage = currentMessages[0];
                 if (!preservedSystemMessage || preservedSystemMessage.role !== 'system') {

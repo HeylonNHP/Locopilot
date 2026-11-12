@@ -304,31 +304,28 @@ export async function POST(request: NextRequest): Promise<Response> {
             ? undefined
             : loadRecentFiles(parsedSessionId, RECENT_FILES_LOAD_LIMIT);
 
-        const result = await compactHistory(
-          compactionLlmRequestContext,
-          effectiveCompactionModel,
-          conversationMessages,
-          compactionNumCtx,
-          (message: string) => {
+        const result = await compactHistory({
+          ctx: compactionLlmRequestContext,
+          model: effectiveCompactionModel,
+          messages: conversationMessages,
+          numCtx: compactionNumCtx,
+          onProgress: (message: string) => {
             sendEvent('compact_progress', { message });
           },
-          1,
-          2,
-          undefined,
-          request.signal,
+          signal: request.signal,
           // 'off' is the UI default and means "no explicit level"; only
           // forward an explicit reasoning level so the adapter applies its
           // own default mapping. Mirrors the chat route's convention.
-          forwardableReasoningEffort(compactionReasoningEffort),
+          reasoningEffort: forwardableReasoningEffort(compactionReasoningEffort),
           // Live compaction speed for the t/s badge.
-          (tps: number) => {
+          onTps: (tps: number) => {
             sendEvent('status', { phase: 'compacting', tps });
           },
           // The user's redaction setting, read from the stored config (the
           // same source the compaction provider is resolved from): with it
           // OFF the summariser sees the raw tool arguments and tool results,
           // with it ON both are redacted.
-          config?.redactSecrets ?? true,
+          redactSecrets: config?.redactSecrets ?? true,
           // What the user asked the summary to keep. `undefined` when the
           // command was typed without a note, which leaves every prompt
           // byte-identical to the pre-focus prompts.
@@ -338,18 +335,20 @@ export async function POST(request: NextRequest): Promise<Response> {
           // both sides of the comparison — the same arithmetic this route has
           // always used. (Passing a number here would charge the stub's budget
           // for a prompt this array does not carry.)
-          undefined,
+          //
           // The files this session touched most recently (PART A records them in
           // `session_recent_files`), so the model does not re-read them after
-          // the compaction.
-          recentFiles,
-          // The reader is confined to the agent's working directory. This
-          // route has no `WorkingDirectoryScope` of its own (it runs no tools),
-          // so it uses the process default — the same directory a tool call
-          // with no scope would resolve relative paths against. A path outside
-          // it is simply not read, and the stub degrades to its path list.
-          getAgentWorkingDirectory()
-        );
+          // the compaction. The reader is confined to the agent's working
+          // directory. This route has no `WorkingDirectoryScope` of its own (it
+          // runs no tools), so it uses the process default — the same directory
+          // a tool call with no scope would resolve relative paths against. A
+          // path outside it is simply not read, and the stub degrades to its
+          // path list.
+          recentFiles:
+            recentFiles === undefined
+              ? undefined
+              : { rows: recentFiles, root: getAgentWorkingDirectory() },
+        });
 
         if (parsedSessionId) {
           // Use a reducer so the queue reads current DB state inside the

@@ -8,15 +8,13 @@
  */
 
 import type { RecentFileRow } from '@/services/history';
-import type { ChatMessage, LlmRequestContext } from '@/services/llm';
-import type { ReasoningEffort } from '@/types/chatConfig';
+import type { ChatMessage } from '@/services/llm';
 
 import { debugLog } from '@/app/lib/debugLogger';
 import { pinTokenCalibration, unpinTokenCalibration } from '@/services/tokenCalibration';
 import { countMessagesTokens, countMessageTokens } from '@/services/tokenizer';
-import { getAgentWorkingDirectory } from '@/tools/workingDirectory';
 
-import type { CompactResult, CompactStats } from './types';
+import type { CompactionLlmCall, CompactResult } from './types';
 
 import { computeDistillCallCap, evaluateCompactionSizes } from './budget';
 import {
@@ -52,6 +50,89 @@ import { buildToolNameMap } from './serialize';
 import { planCompactionSplit } from './split';
 import { computePreservedWindowBudget, planWindowTrim, type WindowTrimPlan } from './windowTrim';
 
+/** The inputs of {@link compactHistory}. */
+export interface CompactHistoryOptions extends CompactionLlmCall {
+  /**
+   * Current conversation history (should include the system prompt). `ctx` is
+   * the per-request LLM context (provider, baseUrl, apiKey), threaded through
+   * every nested call so concurrent compaction requests cannot clobber each
+   * other.
+   */
+  messages: ChatMessage[];
+  /**
+   * Whether secrets are redacted out of the tool arguments AND the tool results
+   * that reach the summariser. Defaults to true — the same default as
+   * `Config.redactSecrets`, which the callers pass in.
+   */
+  redactSecrets?: boolean | undefined;
+  /**
+   * The user's `/compact` note about what to keep — text typed after the
+   * command, already normalised to one line by `normaliseCompactionFocus`.
+   * `undefined` on every automatic path, where it adds nothing to the prompt.
+   */
+  focus?: string | undefined;
+  /**
+   * The files this session touched most recently, newest first (usually
+   * `loadRecentFiles(sessionId, 12)`), and the directory the excerpt reader is
+   * confined to.
+   *
+   * Their paths — and, when a file fits WHOLE in its per-file budget, its
+   * contents — are re-injected as an assistant message right after the summary,
+   * so the model does not re-read the files it was working on. The stub is built
+   * ONCE, after the size verdict and after any retry, against the FINAL history's
+   * budget, so it can neither cause a retry nor be lost to one.
+   *
+   * `undefined` means "no stub" and is what every sub-agent passes: their tool
+   * calls bypass `fileTouchRecorder`, and the only session id in reach there is
+   * the PARENT's — stamping the parent's working set onto a sub-agent's prompt
+   * would be a confident lie about files the sub-agent never touched.
+   *
+   * The root is supplied together with the rows because only the caller can: the
+   * confinement is the request's agent working directory
+   * (`getAgentWorkingDirectory(scope)`), and a stored path is absolute but says
+   * nothing about which scope resolved it.
+   */
+  recentFiles?: { rows: RecentFileRow[]; root: string } | undefined;
+}
+
+/**
+ * What stays the same across the passes of ONE compaction: where the calls go,
+ * the window, the callbacks, the redaction switch and the focus note. The retry
+ * pass reuses it as it is, which is how the focus note survives the retry.
+ */
+type CompactionRequest = Omit<CompactHistoryOptions, 'messages' | 'recentFiles'>;
+
+/** The recent-files input of a pass (see {@link CompactHistoryOptions.recentFiles}). */
+type RecentFilesInput = NonNullable<CompactHistoryOptions['recentFiles']>;
+
+/**
+ * What differs between the first pass and a retry. Private: every external
+ * caller starts at the first pass, and only the retry supplies real values.
+ */
+interface CompactionAttempt {
+  /** >1 to force stronger compression (the retry pass). */
+  aggressiveFactor: number;
+  /** How many aggressive retry passes remain. */
+  remainingRetries: number;
+  /**
+   * The tokens of the system prompt this history will be sent with
+   * (`resolvedSystemPromptTokens` inside the body, once it has been derived). It
+   * exists because the RETRY recursion deliberately passes a history WITHOUT the
+   * system row: `newMessages` is an assistant summary plus preserved turns, and
+   * the caller re-prepends its own system prompt afterwards. The inner pass
+   * therefore cannot derive the number from `messages` (it would compute 0 and
+   * understate the real request by the whole system prompt — measured at numCtx
+   * 32768 with a 12k system prompt: an inner result of 22k passed the
+   * 29,491-token acceptance budget while the true request was 34k, so the
+   * route's overflow warning never fired). When absent, the number is computed
+   * from the `system` rows of `messages`.
+   */
+  systemPromptTokens?: number | undefined;
+}
+
+/** The first pass of every external call. */
+const FIRST_ATTEMPT: CompactionAttempt = { aggressiveFactor: 1, remainingRetries: 2 };
+
 /**
  * Compacts the provided conversation history by asking the LLM to summarise it.
  * Returns the new message array and stats comparing old vs new sizes.
@@ -59,151 +140,66 @@ import { computePreservedWindowBudget, planWindowTrim, type WindowTrimPlan } fro
  * Large older histories are processed with a bounded map-reduce pipeline so no
  * single summarisation request can exceed the model's context window.
  *
- * @param ctx             - Per-request LLM context (provider, baseUrl, apiKey).
- *                          Threaded through every nested call so concurrent
- *                          compaction requests cannot clobber each other.
- * @param model           - Model name to use for summarisation.
- * @param messages        - Current conversation history (should include system prompt).
- * @param numCtx          - Context length to pass to the API.
- * @param onProgress      - Optional callback for live progress updates.
- * @param aggressiveFactor - >1 to force stronger compression.
- * @param remainingRetries - How many aggressive retry passes remain.
- * @param onStats         - Optional callback for token stats.
- * @param signal          - Optional AbortSignal.
- * @param reasoningEffort - Optional reasoning effort level forwarded to the
- *                          provider adapters for every compaction LLM call.
- * @param onTps           - Optional live tokens-per-second reporter, invoked
- *                          while the distillation and summarisation LLM calls
- *                          stream, so the UI can show compaction speed. Not
- *                          wired to the token-measurement call (it generates
- *                          at most one token, so it has no meaningful rate).
- * @param redactSecrets  - Whether secrets are redacted out of the tool
- *                          arguments AND the tool results that reach the
- *                          summariser. Defaults to true — the same default as
- *                          `Config.redactSecrets`, which the callers pass in.
- * @param focus          - The user's `/compact` note about what to keep —
- *                          text typed after the command, already normalised
- *                          to one line by `normaliseCompactionFocus`.
- *                          `undefined` on every automatic path, where it
- *                          adds nothing to the prompt.
- * @param systemPromptTokens - The tokens of the system prompt this history
- *                          will be sent with (`resolvedSystemPromptTokens`
- *                          inside the body, once it has been derived). It exists because the RETRY
- *                          recursion deliberately passes a history WITHOUT
- *                          the system row: `newMessages` is an assistant
- *                          summary plus preserved turns, and the caller
- *                          re-prepends its own system prompt afterwards. The
- *                          inner pass therefore cannot derive the number from
- *                          `messages` (it would compute 0 and understate the
- *                          real request by the whole system prompt — measured
- *                          at numCtx 32768 with a 12k system prompt: an inner
- *                          result of 22k passed the 29,491-token acceptance
- *                          budget while the true request was 34k, so the
- *                          route's overflow warning never fired). When absent,
- *                          the number is computed from the `system` rows of
- *                          `messages`.
- * @param recentFiles    - The files this session touched most recently, newest
- *                          first (usually `loadRecentFiles(sessionId, 12)`).
- *                          Their paths — and, when a file fits WHOLE in its
- *                          per-file budget, its contents — are re-injected as
- *                          an assistant message right after the summary, so
- *                          the model does not re-read the files it was working
- *                          on. The stub is built ONCE, after the size verdict
- *                          and after any retry, against the FINAL history's
- *                          budget, so it can neither cause a retry nor be lost
- *                          to one. `undefined` means "no stub" and is what
- *                          every sub-agent passes: their tool calls bypass
- *                          `fileTouchRecorder`, and the only session id in
- *                          reach there is the PARENT's — stamping the parent's
- *                          working set onto a sub-agent's prompt would be a
- *                          confident lie about files the sub-agent never
- *                          touched.
- * @param recentFilesRoot - The directory the excerpt reader is confined to.
- *                          The caller supplies it because only the caller can:
- *                          the confinement is the request's agent working
- *                          directory (`getAgentWorkingDirectory(scope)`), and
- *                          a stored path is absolute but says nothing about
- *                          which scope resolved it. Defaults to the process's
- *                          default working directory.
+ * `onTps` is invoked while the distillation and summarisation LLM calls stream,
+ * so the UI can show compaction speed. It is not wired to the token-measurement
+ * call (it generates at most one token, so it has no meaningful rate).
  *
  * The model's TOKEN CALIBRATION FACTOR is pinned for the whole compaction: the
  * before/after counts have to be measured with the SAME factor, or "did the
  * history shrink?" can flip mid-compaction — a second tab that finished a
  * request in between would move the factor between the two counts and the
  * verdict would compare two different scales. The pin nests (the retry pass
- * re-enters this function), and the samples the compaction's own requests
- * produce are queued and applied when the LAST pin is released.
+ * re-enters through {@link compactWithPin}), and the samples the compaction's own
+ * requests produce are queued and applied when the LAST pin is released.
  */
-export async function compactHistory(
-  ctx: LlmRequestContext,
-  model: string,
+export async function compactHistory(options: CompactHistoryOptions): Promise<CompactResult> {
+  const { messages, recentFiles, ...request } = options;
+  return compactWithPin(request, messages, FIRST_ATTEMPT, recentFiles);
+}
+
+/**
+ * One pass of the compaction with the calibration pinned — the entry the first
+ * pass and the retry both go through.
+ *
+ * WHY the pin is a wrapper and not a `try`/`finally` inside
+ * {@link runPinnedAttempt}: the pin has to be held across the WHOLE pass, and a
+ * `try`/`finally` around that body would have meant re-indenting several hundred
+ * lines — a diff in which a changed indent hides a changed line.
+ */
+async function compactWithPin(
+  request: CompactionRequest,
   messages: ChatMessage[],
-  numCtx: number,
-  onProgress?: (message: string) => void,
-  aggressiveFactor: number = 1,
-  remainingRetries: number = 2,
-  onStats?: (stats: CompactStats) => void,
-  signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void,
-  redactSecrets: boolean = true,
-  focus?: string,
-  systemPromptTokens?: number,
-  recentFiles?: RecentFileRow[],
-  recentFilesRoot?: string
+  attempt: CompactionAttempt,
+  recentFiles?: RecentFilesInput
 ): Promise<CompactResult> {
+  const { model } = request;
   pinTokenCalibration(model);
   try {
-    return await compactHistoryPinned(
-      ctx,
-      model,
-      messages,
-      numCtx,
-      onProgress,
-      aggressiveFactor,
-      remainingRetries,
-      onStats,
-      signal,
-      reasoningEffort,
-      onTps,
-      redactSecrets,
-      focus,
-      systemPromptTokens,
-      recentFiles,
-      recentFilesRoot
-    );
+    return await runPinnedAttempt(request, messages, attempt, recentFiles);
   } finally {
     unpinTokenCalibration(model);
   }
 }
 
-/**
- * The compaction itself — the body of {@link compactHistory}, split out so
- * the calibration pin can wrap it.
- *
- * WHY it is a separate function: the pin has to be held across the WHOLE
- * pass, and a `try`/`finally` around this body would have meant re-indenting
- * several hundred lines — a diff in which a changed indent hides a changed
- * line. The pin lives in the thin exported wrapper above instead.
- */
-async function compactHistoryPinned(
-  ctx: LlmRequestContext,
-  model: string,
+/** The compaction itself — one pass, with the calibration already pinned. */
+async function runPinnedAttempt(
+  request: CompactionRequest,
   messages: ChatMessage[],
-  numCtx: number,
-  onProgress?: (message: string) => void,
-  aggressiveFactor: number = 1,
-  remainingRetries: number = 2,
-  onStats?: (stats: CompactStats) => void,
-  signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void,
-  redactSecrets: boolean = true,
-  focus?: string,
-  systemPromptTokens?: number,
-  recentFiles?: RecentFileRow[],
-  recentFilesRoot?: string
+  attempt: CompactionAttempt,
+  recentFiles?: RecentFilesInput
 ): Promise<CompactResult> {
+  const {
+    ctx,
+    model,
+    numCtx,
+    onProgress,
+    signal,
+    reasoningEffort,
+    onTps,
+    redactSecrets = true,
+    focus,
+  } = request;
+  const { aggressiveFactor, remainingRetries, systemPromptTokens } = attempt;
   // The system prompt is NOT part of the compacted array (the caller injects
   // its own), but it IS part of every request the history is sent in — so it
   // is charged to the OLD count as well as the NEW one. `messages` carries its
@@ -710,30 +706,19 @@ async function compactHistoryPinned(
     // and — worse — the summariser would read a few thousand tokens of file
     // heads as part of the history it is compressing. The stub is attached
     // once, below, to whatever this returns.
-    const retryResult = await compactHistory(
-      ctx,
-      model,
-      newMessages,
-      numCtx,
-      onProgress,
-      retryFactor,
-      remainingRetries - 1,
-      onStats,
-      signal,
-      reasoningEffort,
-      onTps,
-      redactSecrets,
-      // The note survives the retry: a second pass re-summarises the
-      // already-compacted array, which is exactly where a note the user cares
-      // about would otherwise be lost — the retry's summary becomes the ONLY
-      // record of the older turns, so it has to be told what matters too.
-      focus,
+    const retryResult = await compactWithPin(request, newMessages, {
+      aggressiveFactor: retryFactor,
+      remainingRetries: remainingRetries - 1,
       // The inner pass sees a history WITHOUT the `system` row, so it cannot
       // work the system prompt out for itself: pass the number through, or its
       // retry/confirm decision, its trim budget and its `stats.newTokenCount`
       // would all be short by the whole system prompt.
-      resolvedSystemPromptTokens
-    );
+      systemPromptTokens: resolvedSystemPromptTokens,
+    });
+    // The note survives the retry because `request` carries it: a second pass
+    // re-summarises the already-compacted array, which is exactly where a note
+    // the user cares about would otherwise be lost — the retry's summary becomes
+    // the ONLY record of the older turns, so it has to be told what matters too.
     retried = true;
     newMessages = retryResult.newMessages;
     newTokenCount = retryResult.stats.newTokenCount;
@@ -770,7 +755,7 @@ async function compactHistoryPinned(
   // throw "failed to reduce history".
   let recentFilesPlan: RecentFilesPlan | undefined;
   let recentFilesMessage: ChatMessage | undefined;
-  if (recentFiles !== undefined && recentFiles.length > 0) {
+  if (recentFiles !== undefined && recentFiles.rows.length > 0) {
     const budgetTokens = computeBudgetForResult({
       numCtx,
       acceptanceBudget,
@@ -782,10 +767,10 @@ async function compactHistoryPinned(
       // absolute paths, but a path is only safe to READ if it is inside the
       // directory the session is allowed to work in (see
       // `readRecentFileFromDisk`).
-      const root = recentFilesRoot ?? getAgentWorkingDirectory();
+      const { root, rows } = recentFiles;
       const readExcerpt: RecentFileReader = (absPath) => readRecentFileFromDisk(absPath, root);
       const plan = await buildRecentFilesMessage({
-        files: recentFiles,
+        files: rows,
         budgetTokens,
         model,
         redactSecrets,
@@ -841,11 +826,6 @@ async function compactHistoryPinned(
       retry: shouldRetry,
     })
   );
-
-  onStats?.({
-    oldTokenCount,
-    newTokenCount,
-  });
 
   return {
     newMessages,

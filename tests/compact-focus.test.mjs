@@ -179,7 +179,7 @@ describe('the wiring', () => {
     const source = readSource('app', 'api', 'compact', 'route.ts');
     const callIndex = source.indexOf('const result = await compactHistory(');
     expect(callIndex).not.toBe(-1);
-    const call = source.slice(callIndex, source.indexOf('\n        );', callIndex));
+    const call = source.slice(callIndex, source.indexOf('\n        });', callIndex));
     const redactIndex = call.indexOf('config?.redactSecrets ?? true');
     expect(redactIndex).not.toBe(-1);
     expect(call.indexOf('\n          focus')).toBeGreaterThan(redactIndex);
@@ -202,9 +202,15 @@ describe('the wiring', () => {
       'preservedRecentTokens: historySplit.preservedRecentTokens,\n    focus,'
     );
     expect(forwardIndex).not.toBe(-1);
-    const retryIndex = source.indexOf('const retryResult = await compactHistory(');
+    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
     expect(retryIndex).not.toBe(-1);
-    const retryCall = source.slice(retryIndex, source.indexOf('\n    );', retryIndex));
-    expect(retryCall).toMatch(/redactSecrets,[\S\s]*\bfocus\b/);
+    // The note rides in `request`, which is everything in the options except the
+    // messages and the files; the retry is handed that same `request`. (The
+    // behavioural proof, that the retry's own prompts carry the note, is in
+    // compact-orchestrate.test.mjs.)
+    expect(source).toContain('const { messages, recentFiles, ...request } = options;');
+    const retryEnd = source.indexOf('\n    });', retryIndex);
+    expect(retryEnd).toBeGreaterThan(retryIndex);
+    expect(source.slice(retryIndex, retryEnd)).toMatch(/compactWithPin\(request, newMessages,/);
   });
 });

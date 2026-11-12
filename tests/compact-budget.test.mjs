@@ -1396,10 +1396,12 @@ describe('the retry pass knows the system prompt', () => {
     // history WITHOUT the system row, so the inner pass would compute 0.
     expect(source).toContain('systemPromptTokens?: number');
     expect(source).toContain('systemPromptTokens ?? countMessagesTokens(systemMessages, model)');
-    const retryIndex = source.indexOf('const retryResult = await compactHistory(');
+    const retryIndex = source.indexOf('const retryResult = await compactWithPin(');
     expect(retryIndex).not.toBe(-1);
-    const retryCall = source.slice(retryIndex, source.indexOf('\n    );', retryIndex));
-    expect(retryCall).toMatch(/focus,[\S\s]*\bresolvedSystemPromptTokens\b/);
+    const retryEnd = source.indexOf('\n    });', retryIndex);
+    expect(retryEnd).toBeGreaterThan(retryIndex);
+    const retryCall = source.slice(retryIndex, retryEnd);
+    expect(retryCall).toMatch(/systemPromptTokens: resolvedSystemPromptTokens/);
     // And the NEW count (the one the acceptance decision and the stats use) is
     // the local count plus that number.
     expect(source).toContain(
