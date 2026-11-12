@@ -391,10 +391,11 @@ export function useChatStream(
       } else {
         clearTpsReadout(ownerId);
       }
+      // Refresh the sidebar now (ordering, fallback titles). The real title
+      // is generated in the background and lands later as a pushed
+      // `session-renamed` event — see `useSessionEvents` — so there is no
+      // longer a timer here guessing how long it will take.
       loadSessions();
-      // The server titles a new chat once its first turn ends; give it a
-      // moment to arrive before refreshing the list again.
-      setTimeout(() => loadSessions(), 2000);
       // Only THIS session's retry payload is settled by this turn.
       if (!requestFailed && ownerId !== undefined) {
         setRetryPayload(ownerId, null);

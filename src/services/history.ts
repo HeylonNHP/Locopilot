@@ -20,6 +20,7 @@ import { debugLog } from '@/app/lib/debugLogger';
 import { DB_PATH } from '@/services/paths';
 
 import { type ChatMessage, type PersistedChatMessage, type SubagentLogMessage } from './llm';
+import { emitSessionEvent } from './sessionEvents';
 import { sanitizeChatMessage } from './textUtils';
 
 // ---------------------------------------------------------------------------
@@ -313,9 +314,17 @@ export function createSession(name: string, model: string): number {
 
 /**
  * Renames an existing session (e.g. to the first user prompt).
+ *
+ * Every rename path funnels through here — the synchronous fallback title, the
+ * background LLM-generated title, and `/title` — so this is the one place that
+ * announces the change to open browser tabs. Without that push the client can
+ * only learn a title by re-reading `GET /api/sessions`, and the interesting
+ * renames happen after the response stream has already closed, which is how
+ * stale titles ended up needing an F5.
  */
 export function renameSession(sessionId: number, name: string): void {
   stmtUpdateSessionName.run(name, sessionId);
+  emitSessionEvent({ kind: 'renamed', sessionId, name });
 }
 
 /**

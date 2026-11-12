@@ -400,6 +400,18 @@ export type ChatAction =
   | { type: 'SET_SESSIONS'; sessions: Session[] }
   | { type: 'ADD_SESSION'; session: Session }
   | {
+      type: 'RENAME_SESSION';
+      sessionId: number;
+      /**
+       * The title the server just committed, pushed over
+       * `/api/sessions/events`. Patched in place rather than re-fetching the
+       * list: the rename can land long after the turn finished, and a whole
+       * list refresh would also have to win a race against any list fetch
+       * already in flight.
+       */
+      name: string;
+    }
+  | {
       type: 'SET_CURRENT_SESSION';
       id: number | null;
       /**
@@ -1067,6 +1079,19 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const exists = state.sessions.some((s) => s.id === action.session.id);
       if (exists) return state;
       return { ...state, sessions: [action.session, ...state.sessions] };
+    }
+    case 'RENAME_SESSION': {
+      // The server pushed a new title for one conversation. Ignore it if the
+      // session isn't in the list yet (it will arrive with the next full
+      // load) or if the title is already current — returning the same state
+      // keeps `document.title` and the sidebar from re-rendering for nothing.
+      const index = state.sessions.findIndex((s) => s.id === action.sessionId);
+      const current = state.sessions[index];
+      if (!current) return state;
+      if (current.name === action.name) return state;
+      const sessions = [...state.sessions];
+      sessions[index] = { ...current, name: action.name };
+      return { ...state, sessions };
     }
     case 'SET_CURRENT_SESSION': {
       // 1. Save current active session into its slot

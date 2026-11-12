@@ -45,6 +45,13 @@ export const SSE_EVENT_NAMES = [
 /** Wrapper event name for the MCP events SSE endpoint. */
 export const MCP_SSE_EVENT_NAME = 'mcp-state';
 
+/**
+ * Wrapper event name for the session-metadata SSE endpoint
+ * (`GET /api/sessions/events`). Fired whenever a session is renamed, which is
+ * how a browser learns the LLM-generated title of a brand-new conversation.
+ */
+export const SESSIONS_SSE_EVENT_NAME = 'session-renamed';
+
 // ── `status.phase` ─────────────────────────────────────────────────────────
 
 /**
