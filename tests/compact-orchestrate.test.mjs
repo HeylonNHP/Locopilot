@@ -853,6 +853,33 @@ describe('the stub is a checked attach', () => {
   });
 });
 
+describe('a history with no known window', () => {
+  test('is compacted, with no boundary to be over and no stub to pay for', async () => {
+    // An infinite window is the reachable "no window" (a window of 0 is refused
+    // by the summariser before any verdict). Nothing is over an infinite
+    // boundary, so no retry fires; every budget needs a finite window, so no stub
+    // is attached — and the one thing that must not happen is a boundary read as
+    // `floor(Infinity)`, which would make every result "over".
+    const touched = Date.now() - 2 * 60 * 60 * 1000;
+    const file = path.join(workDir, 'epsilon.ts');
+    writeFileSync(file, "export const MARKER = 'UNIQUE_MARKER_epsilon.ts';\n");
+    const result = await compact({
+      messages: base(14),
+      numCtx: Number.POSITIVE_INFINITY,
+      respond: () => ({ text: 'SUMMARY ONE' }),
+      recentFiles: [{ path: file, tool: 'read_file', hits: 1, lastSeenAt: touched }],
+    });
+    const { progress, value, error } = result;
+    expect(error).toBeUndefined();
+    expect(diagnostics[0]).toMatchObject({ retried: false, retry: false });
+    expect(progress.join('\n')).not.toMatch(/retrying|Re-attached/);
+    expect(value.newMessages.some((message) => message.content.includes('UNIQUE_MARKER'))).toBe(
+      false
+    );
+    expect(value.stats.newTokenCount).toBeLessThan(value.stats.oldTokenCount);
+  });
+});
+
 describe('a compaction that cannot proceed says why', () => {
   test('a history too short to summarise', async () => {
     const result = await compact({

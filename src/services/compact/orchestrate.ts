@@ -25,7 +25,12 @@ import {
   TOOL_DISTILL_EXTRA_CALLS_MAX,
 } from './constants';
 import { distillToolMessages } from './distill';
-import { createDistillBudget, remainingDistillBudgetTokens } from './distillPlan';
+import {
+  createDistillBudget,
+  type DistillBudget,
+  type DistillResult,
+  remainingDistillBudgetTokens,
+} from './distillPlan';
 import { measureConversationTokens } from './measure';
 import {
   buildSizeDiagnostic,
@@ -181,6 +186,195 @@ async function compactWithPin(
   }
 }
 
+/**
+ * What every phase of ONE pass reads and none of them changes: the request, the
+ * system prompt's size, the OLD count, the acceptance boundary and the
+ * distillation caps — plus the ONE deliberately mutable object, the prefill
+ * budget the phases charge as they spend it.
+ */
+interface PassEnv {
+  readonly request: CompactionRequest;
+  readonly model: string;
+  /** The `system` rows of the input. Empty on a retry pass, whose array has none. */
+  readonly systemMessages: ChatMessage[];
+  /** The tokens of the system prompt the next request carries (borrowed on a retry). */
+  readonly systemPromptTokens: number;
+  /** The tokens of the history being replaced, system prompt included. */
+  readonly oldTokenCount: number;
+  /** `floor(numCtx * COMPACT_ACCEPTANCE_HEADROOM)` — where the result has to land. */
+  readonly acceptanceBudget: number;
+  /** How many distillation calls this pass may make in total. */
+  readonly distillCallCap: number;
+  /** The prefill budget of this pass, shared by every distillation pass (mutable). */
+  readonly distillBudget: DistillBudget;
+}
+
+/**
+ * The compaction's result as the phases build it: a summary, the preserved
+ * window, where each window row came from, and the array and count the two
+ * produce.
+ *
+ * WHY a value and not a handful of `let`s: every phase that changes the result
+ * has to RE-MEASURE it and RE-TAKE the "is it over?" verdict, and a phase that
+ * forgot one of the two steps made a stale number decide. {@link draftResult}
+ * does both in one place, so the count and the verdict always belong to the
+ * array they are about.
+ */
+interface ResultDraft {
+  readonly summary: ChatMessage;
+  readonly window: ChatMessage[];
+  /**
+   * The index each row of `window` came from in the ORIGINAL preserved window.
+   * The trimmer cuts a prefix and may hoist the anchor, so the two index spaces
+   * are not the same — and the extra distillation pass has to know which rows are
+   * already digests IN THE SPACE OF THE ARRAY IT IS ABOUT TO WALK.
+   */
+  readonly windowSources: readonly number[];
+  /** The array the caller replaces its history with: the summary, then the window. */
+  readonly messages: ChatMessage[];
+  /** The tokens of `messages` plus the system prompt the caller re-prepends. */
+  readonly tokens: number;
+  /** Whether `tokens` is over the acceptance boundary. */
+  readonly overBudget: boolean;
+}
+
+/** Builds the draft for a summary and a window, measuring it. */
+function draftResult(
+  env: PassEnv,
+  summary: ChatMessage,
+  window: ChatMessage[],
+  windowSources: readonly number[],
+  tokens?: number
+): ResultDraft {
+  const messages = [summary, ...window];
+  const measured = tokens ?? resultTokens(env, messages);
+  return {
+    summary,
+    window,
+    windowSources,
+    messages,
+    tokens: measured,
+    overBudget: exceedsAcceptance(env, measured),
+  };
+}
+
+/** The same draft carrying a different array (a message inserted, not a part replaced). */
+function withMessages(env: PassEnv, draft: ResultDraft, messages: ChatMessage[]): ResultDraft {
+  const tokens = resultTokens(env, messages);
+  return { ...draft, messages, tokens, overBudget: exceedsAcceptance(env, tokens) };
+}
+
+/**
+ * Everything the phases read about one pass, derived once.
+ *
+ * The system prompt is NOT part of the compacted array (the caller injects its
+ * own), but it IS part of every request the history is sent in — so it is
+ * charged to the OLD count as well as the NEW one. `messages` carries its own
+ * `system` rows, which `countMessagesTokens` already counts; only a BORROWED
+ * count (the retry pass, whose array has no system row) has to be added here.
+ * Doing it on both sides keeps the `aborted` verdict (new >= old) comparing like
+ * with like: on the retry pass the history has no `system` row, and charging the
+ * system prompt to the new count alone could make a genuinely smaller history
+ * look like it did not shrink at all.
+ *
+ * ONE UNIT SYSTEM: both counts are CALIBRATED counts (the tokenizer's own count
+ * is never compared against a token budget), and both are in the `chat` class —
+ * the compacted history is the MAIN chat request's content, so it is measured the
+ * way a chat request is shaped. The acceptance boundary is a share of the model's
+ * context window, which is denominated in provider tokens, so the estimate has to
+ * be in provider tokens too. (The summariser's own requests are measured in the
+ * `summarise` class, in `reduce.ts`.)
+ */
+function createPassEnv(
+  request: CompactionRequest,
+  messages: ChatMessage[],
+  attempt: CompactionAttempt
+): PassEnv {
+  const { model, numCtx } = request;
+  const { systemPromptTokens: borrowedSystemPromptTokens } = attempt;
+  const systemMessages = messages.filter((message) => message.role === 'system');
+  const systemPromptTokens =
+    borrowedSystemPromptTokens ?? countMessagesTokens(systemMessages, model);
+  const oldTokenCount =
+    countMessagesTokens(messages, model) + (systemMessages.length === 0 ? systemPromptTokens : 0);
+  return {
+    request,
+    model,
+    systemMessages,
+    systemPromptTokens,
+    oldTokenCount,
+    acceptanceBudget: Math.floor(numCtx * COMPACT_ACCEPTANCE_HEADROOM),
+    distillCallCap: computeDistillCallCap(numCtx),
+    distillBudget: createDistillBudget(numCtx),
+  };
+}
+
+/** The tokens of an array as the caller's next request carries it: plus the system prompt. */
+function resultTokens(env: PassEnv, messages: readonly ChatMessage[]): number {
+  return countMessagesTokens([...messages], env.model) + env.systemPromptTokens;
+}
+
+/**
+ * Whether a count is over the acceptance boundary.
+ *
+ * A window of 0 or less means "no window": nothing is over a boundary that does
+ * not exist. (`budget.ts` asks the same question with a different finite check,
+ * because it must also refuse `Infinity`; the two are deliberately not merged.)
+ */
+function exceedsAcceptance(env: PassEnv, tokens: number): boolean {
+  return env.request.numCtx > 0 && tokens > env.acceptanceBudget;
+}
+
+/**
+ * One distillation pass over a slice, charged to this pass's prefill budget.
+ *
+ * The CALL cap is the caller's to decide (`maxCalls`); the BUDGET is not — the
+ * pass spends what is left of the compaction's one budget, and the charge is made
+ * here so that no caller (there are three) can forget it.
+ */
+async function distillPass(
+  env: PassEnv,
+  historyMessages: ChatMessage[],
+  options: { maxCalls: number; skipIndices?: ReadonlySet<number> | undefined }
+): Promise<DistillResult> {
+  const { ctx, model, numCtx, onProgress, signal, reasoningEffort, onTps } = env.request;
+  const result = await distillToolMessages({
+    ctx,
+    model,
+    numCtx,
+    historyMessages,
+    maxCalls: options.maxCalls,
+    onProgress,
+    signal,
+    reasoningEffort,
+    onTps,
+    budget: env.distillBudget,
+    ...(options.skipIndices === undefined ? {} : { skipIndices: options.skipIndices }),
+  });
+  env.distillBudget.usedTokens += result.prefillTokens;
+  return result;
+}
+
+/** Where each original window row ended up in a draft's current window. */
+function windowPositionsBySource(draft: ResultDraft): Map<number, number> {
+  const positions = new Map<number, number>();
+  draft.windowSources.forEach((source, position) => positions.set(source, position));
+  return positions;
+}
+
+/** The current positions of some original rows, dropping the ones the trimmer removed. */
+function positionsOf(
+  sources: readonly number[],
+  positions: ReadonlyMap<number, number>
+): Set<number> {
+  const found = new Set<number>();
+  for (const source of sources) {
+    const position = positions.get(source);
+    if (position !== undefined) found.add(position);
+  }
+  return found;
+}
+
 /** The compaction itself — one pass, with the calibration already pinned. */
 async function runPinnedAttempt(
   request: CompactionRequest,
@@ -188,47 +382,10 @@ async function runPinnedAttempt(
   attempt: CompactionAttempt,
   recentFiles?: RecentFilesInput
 ): Promise<CompactResult> {
-  const {
-    ctx,
-    model,
-    numCtx,
-    onProgress,
-    signal,
-    reasoningEffort,
-    onTps,
-    redactSecrets = true,
-    focus,
-  } = request;
-  const { aggressiveFactor, remainingRetries, systemPromptTokens } = attempt;
-  // The system prompt is NOT part of the compacted array (the caller injects
-  // its own), but it IS part of every request the history is sent in — so it
-  // is charged to the OLD count as well as the NEW one. `messages` carries its
-  // own `system` rows, which `countMessagesTokens` already counts; only a
-  // BORROWED count (the retry pass, whose array has no system row) has to be
-  // added here. Doing it on both sides keeps the `aborted` verdict
-  // (new >= old) comparing like with like: on the retry pass the history has no
-  // `system` row, and charging the system prompt to the new count alone could
-  // make a genuinely smaller history look like it did not shrink at all.
-  //
-  // ONE UNIT SYSTEM: both counts are CALIBRATED counts (the tokenizer's own
-  // count is never compared against a token budget), and both are in the
-  // `chat` class — the compacted history is the MAIN chat request's content,
-  // so it is measured the way a chat request is shaped. The acceptance
-  // boundary below is a share of the model's context window, which is
-  // denominated in provider tokens, so the estimate has to be in provider
-  // tokens too. (The summariser's own requests are measured in the
-  // `summarise` class, in `reduce.ts`.)
-  const systemMessages = messages.filter((message) => message.role === 'system');
-  const resolvedSystemPromptTokens =
-    systemPromptTokens ?? countMessagesTokens(systemMessages, model);
-
-  // Both counts are LOCAL tokenizer estimates, never live requests: the
-  // tokenizer is free (one cached encoder per model) and counts the same
-  // bytes the request will carry. A live measurement is now only paid for
-  // where it can change the outcome — see the size decision below.
-  const oldTokenCount =
-    countMessagesTokens(messages, model) +
-    (systemMessages.length === 0 ? resolvedSystemPromptTokens : 0);
+  const env = createPassEnv(request, messages, attempt);
+  const { ctx, model, numCtx, onProgress, signal, reasoningEffort, onTps } = request;
+  const { aggressiveFactor, remainingRetries } = attempt;
+  const { focus, redactSecrets = true } = request;
 
   // Filter out system messages — the system prompt is injected on-the-fly by
   // the caller and should not be preserved through compaction.
@@ -286,26 +443,13 @@ async function runPinnedAttempt(
   // the summariser. Spending the call budget on the window is therefore what
   // turns the budget into a smaller RESULT, not just a cheaper summary
   // request.
-  const distillCallCap = computeDistillCallCap(numCtx);
-  // The PREFILL budget of this compaction: the total number of tokens its
-  // distillation calls may read, across BOTH passes. The call cap bounds how
-  // MANY calls there are; the budget bounds what they may COST — eight calls
-  // at half a million tokens each is several windows' worth of prefill
-  // inside one compaction.
-  const distillBudget = createDistillBudget(numCtx);
-  const recentDistill = await distillToolMessages({
-    ctx,
-    model,
-    numCtx,
-    historyMessages: historySplit.preservedRecentMessages,
-    maxCalls: distillCallCap,
-    onProgress,
-    signal,
-    reasoningEffort,
-    onTps,
-    budget: distillBudget,
+  //
+  // The PREFILL budget of this compaction bounds what the calls may COST — eight
+  // calls at half a million tokens each is several windows' worth of prefill
+  // inside one compaction — beside the call cap, which bounds how MANY there are.
+  const recentDistill = await distillPass(env, historySplit.preservedRecentMessages, {
+    maxCalls: env.distillCallCap,
   });
-  distillBudget.usedTokens += recentDistill.prefillTokens;
   const preparedRecentMessages = recentDistill.messages;
 
   // The older slice gets whatever the window did not spend — the CALL budget
@@ -315,19 +459,9 @@ async function runPinnedAttempt(
   // still cost a model call (and its prefill), so it spends the cap. Counting
   // only the successes would let a flaky provider push the compaction past
   // its call budget.
-  const historyDistill = await distillToolMessages({
-    ctx,
-    model,
-    numCtx,
-    historyMessages: historySplit.messagesToSummarise,
-    maxCalls: Math.max(0, distillCallCap - recentDistill.attemptedCount),
-    onProgress,
-    signal,
-    reasoningEffort,
-    onTps,
-    budget: distillBudget,
+  const historyDistill = await distillPass(env, historySplit.messagesToSummarise, {
+    maxCalls: Math.max(0, env.distillCallCap - recentDistill.attemptedCount),
   });
-  distillBudget.usedTokens += historyDistill.prefillTokens;
   const preparedHistoryMessages = historyDistill.messages;
 
   // The report is ALWAYS emitted, not only when something was left behind: its
@@ -336,8 +470,8 @@ async function runPinnedAttempt(
   for (const line of formatDistillationReport({
     window: recentDistill,
     history: historyDistill,
-    budgetTotalTokens: distillBudget.totalTokens,
-    callCap: distillCallCap,
+    budgetTotalTokens: env.distillBudget.totalTokens,
+    callCap: env.distillCallCap,
     numCtx,
   })) {
     onProgress?.(line);
@@ -381,12 +515,6 @@ async function runPinnedAttempt(
     content: `${SUMMARY_PREAMBLE}\n\n${summary}`,
   };
 
-  // The acceptance boundary is PURE — `floor(numCtx * headroom)` — and the
-  // recent-files stub needs it BEFORE the result is assembled (the stub is only
-  // allowed to spend what is left below it), so it is computed here and used
-  // again further down for the retry/trim decision.
-  const acceptanceBudget = Math.floor(numCtx * COMPACT_ACCEPTANCE_HEADROOM);
-
   // ── The result, WITHOUT the recent-files stub ─────────────────────
   //
   // The stub is re-attached BELOW, once, against the FINAL history. It is
@@ -408,40 +536,18 @@ async function runPinnedAttempt(
   // stub at all after the user had been told the files were re-attached; or the
   // trim paid for the stub's tokens out of the preserved window, dropping turns
   // to fund a convenience.
-  // The summary message the result carries, and the preserved window beside
-  // it. The result is always `[summary, ...window]`, and BOTH halves are
-  // reassembled whenever the window changes — the trimmer drops messages
-  // from it, the extra distillation pass replaces rows in it.
-  let resultSummary = summaryMessage;
-  let resultWindow = preparedRecentMessages;
-  // The index each row of `resultWindow` came from in the ORIGINAL preserved
-  // window. The trimmer cuts a PREFIX of the window (and may hoist the anchor
-  // to the front), so the two index spaces are NOT the same — and the extra
-  // distillation pass has to know which rows are already digests IN THE INDEX
-  // SPACE OF THE ARRAY IT IS ABOUT TO WALK.
-  let resultWindowSources: number[] = preparedRecentMessages.map((_, index) => index);
+  let draft = draftResult(
+    env,
+    summaryMessage,
+    preparedRecentMessages,
+    preparedRecentMessages.map((_, index) => index)
+  );
 
-  let newMessages: ChatMessage[] = [resultSummary, ...resultWindow];
-
-  // The NEW count is a local estimate too — with ONE correction: the system
-  // prompt is added to it. `newMessages` deliberately excludes the system
-  // prompt (the caller re-prepends its own), while `messages` includes it, so
-  // comparing the two raw counts made every compaction look smaller than it
-  // really is by the size of the system prompt. That asymmetry is also why the
-  // route's `stats.newTokenCount > effectiveNumCtx` overflow check
-  // under-reports, so the stats stay on this corrected estimate and never mix
-  // in a live measurement.
-  //
-  // The count comes from `resolvedSystemPromptTokens`, which the caller may
-  // have PROVIDED: the retry recursion passes a history with no `system` row,
-  // so deriving it here would compute 0 for the inner pass.
-  let newTokenCount = countMessagesTokens(newMessages, model) + resolvedSystemPromptTokens;
-
-  const verdict = evaluateCompactionSizes(oldTokenCount, newTokenCount, numCtx);
+  const verdict = evaluateCompactionSizes(env.oldTokenCount, draft.tokens, numCtx);
 
   if (verdict.aborted) {
     throw new Error(
-      `Compaction failed to reduce history size (old: ${oldTokenCount}, new: ${newTokenCount} tokens). ` +
+      `Compaction failed to reduce history size (old: ${env.oldTokenCount}, new: ${draft.tokens} tokens). ` +
         'Aborting to avoid increasing context usage.'
     );
   }
@@ -469,18 +575,19 @@ async function runPinnedAttempt(
     // A borrowed system prompt (the retry pass) cannot be sent with the
     // measurement — the text is not in this array — so its tokens are added to
     // whatever the provider (or the fallback estimate) reports.
-    const borrowedSystemPromptTokens = systemMessages.length === 0 ? resolvedSystemPromptTokens : 0;
+    const borrowedSystemPromptTokens =
+      env.systemMessages.length === 0 ? env.systemPromptTokens : 0;
     confirmedTokenCount =
       (await measureConversationTokens(
         ctx,
-        [...systemMessages, ...newMessages],
+        [...env.systemMessages, ...draft.messages],
         model,
         numCtx,
         onProgress,
         signal,
         reasoningEffort
       )) + borrowedSystemPromptTokens;
-    shouldRetry = numCtx > 0 && confirmedTokenCount > acceptanceBudget;
+    shouldRetry = exceedsAcceptance(env, confirmedTokenCount);
   }
 
   // ── Drop the oldest preserved messages BEFORE re-summarising ──────────────
@@ -496,51 +603,50 @@ async function runPinnedAttempt(
   // The budget for the window is what the acceptance boundary leaves once
   // everything the result can NOT drop has been paid for: the summary message
   // (preamble + summary + notice) and — the part that used to be missing — the
-  // SYSTEM PROMPT. The post-trim total below INCLUDES the system prompt and is
-  // what `shouldRetry` compares against `acceptanceBudget`; a planner that
-  // never paid for it trimmed until the WINDOW fitted, the total stayed over by
-  // exactly the system prompt, and the summary-of-a-summary recursion fired
-  // anyway. See `computePreservedWindowBudget` for the measurement.
+  // SYSTEM PROMPT. A planner that never paid for it trimmed until the WINDOW
+  // fitted, the total stayed over by exactly the system prompt, and the
+  // summary-of-a-summary recursion fired anyway. See
+  // `computePreservedWindowBudget` for the measurement.
   //
-  // The notice is charged at its WORST CASE (every
-  // preserved message dropped), so the budget is fixed before the planner runs
-  // instead of depending on how much it ends up dropping — a notice that only
-  // shows up after the trim would otherwise push the result a few tokens back
-  // over the boundary and trigger the re-summary this whole block exists to
-  // avoid.
+  // The notice is charged at its WORST CASE (every preserved message dropped),
+  // so the budget is fixed before the planner runs instead of depending on how
+  // much it ends up dropping — a notice that only shows up after the trim would
+  // otherwise push the result a few tokens back over the boundary and trigger
+  // the re-summary this whole block exists to avoid.
   let trim: WindowTrimPlan | undefined;
   if (shouldRetry) {
     // The header the trim charges is the SUMMARY alone. The stub is attached
     // afterwards, out of whatever room the trimmed result leaves — so it can
     // never cause a preserved turn to be dropped to fund it, and the planner
     // is still not allowed to drop anything it cannot see.
-    const headerTokens = countMessagesTokens([summaryMessage], model);
+    const headerTokens = countMessagesTokens([draft.summary], model);
     const noticeTokens = countMessageTokens(
       {
         role: 'assistant',
-        content: formatWindowTrimNotice(preparedRecentMessages.length),
+        content: formatWindowTrimNotice(draft.window.length),
       },
       model
     );
     const windowBudget = computePreservedWindowBudget({
-      acceptanceBudget,
+      acceptanceBudget: env.acceptanceBudget,
       headerTokens,
       noticeTokens,
-      systemPromptTokens: resolvedSystemPromptTokens,
+      systemPromptTokens: env.systemPromptTokens,
     });
-    const trimPlan = planWindowTrim(preparedRecentMessages, windowBudget, model);
+    const trimPlan = planWindowTrim(draft.window, windowBudget, model);
     if (trimPlan.droppedCount > 0) {
-      resultSummary = {
-        ...summaryMessage,
-        content: `${summaryMessage.content}${formatWindowTrimNotice(trimPlan.droppedCount)}`,
-      };
-      resultWindow = trimPlan.messages;
-      resultWindowSources = trimPlan.keptIndices;
-      newMessages = [resultSummary, ...resultWindow];
-      newTokenCount = countMessagesTokens(newMessages, model) + resolvedSystemPromptTokens;
-      shouldRetry = numCtx > 0 && newTokenCount > acceptanceBudget;
+      draft = draftResult(
+        env,
+        {
+          ...draft.summary,
+          content: `${draft.summary.content}${formatWindowTrimNotice(trimPlan.droppedCount)}`,
+        },
+        trimPlan.messages,
+        trimPlan.keptIndices
+      );
+      shouldRetry = draft.overBudget;
       trim = trimPlan;
-      onProgress?.(formatTrimLine(trimPlan, shouldRetry, newTokenCount, acceptanceBudget));
+      onProgress?.(formatTrimLine(trimPlan, shouldRetry, draft.tokens, env.acceptanceBudget));
     }
   }
 
@@ -569,8 +675,8 @@ async function runPinnedAttempt(
   // what makes it too big, so the leftover budget is worth more spent than
   // idle.
   //
-  // THE BUDGET IS THE SAME BUDGET: `distillBudget.usedTokens` is charged with
-  // the extra calls, so the total prefill of ONE compaction still respects
+  // THE BUDGET IS THE SAME BUDGET: the extra calls are charged to it (by
+  // `distillPass`), so the total prefill of ONE compaction still respects
   // `computeDistillPrefillBudgetTokens(numCtx)`. The call ceiling
   // (`TOOL_DISTILL_EXTRA_CALLS_MAX`) is the other bound — it keeps the
   // latency of the extra spend finite.
@@ -590,44 +696,15 @@ async function runPinnedAttempt(
     //
     // What is left is exactly the set the extra spend targets: the oversized
     // outputs the call cap or the prefill budget never ATTEMPTED.
-    const digestedRows = new Set<number>();
-    const failedRows = new Set<number>();
-    const sourcePositions = new Map<number, number>();
-    resultWindowSources.forEach((source, position) => {
-      sourcePositions.set(source, position);
-    });
-    for (const source of recentDistill.distilledIndices) {
-      const position = sourcePositions.get(source);
-      if (position !== undefined) {
-        digestedRows.add(position);
-      }
-    }
-    for (const source of recentDistill.failedIndices) {
-      const position = sourcePositions.get(source);
-      if (position !== undefined) {
-        failedRows.add(position);
-      }
-    }
+    const positions = windowPositionsBySource(draft);
+    const digestedRows = positionsOf(recentDistill.distilledIndices, positions);
+    const failedRows = positionsOf(recentDistill.failedIndices, positions);
     const handledRows = new Set([...digestedRows, ...failedRows]);
-
-    const leftoverBudgetTokens = remainingDistillBudgetTokens(distillBudget);
-    const extraDistill = await distillToolMessages({
-      ctx,
-      model,
-      numCtx,
-      historyMessages: resultWindow,
+    const leftoverBudgetTokens = remainingDistillBudgetTokens(env.distillBudget);
+    const extraDistill = await distillPass(env, draft.window, {
       maxCalls: TOOL_DISTILL_EXTRA_CALLS_MAX,
-      onProgress,
-      signal,
-      reasoningEffort,
-      onTps,
-      budget: distillBudget,
       skipIndices: handledRows,
     });
-    // The SAME budget: the extra calls are charged against it, so the total
-    // prefill of this compaction never exceeds
-    // `computeDistillPrefillBudgetTokens(numCtx)`.
-    distillBudget.usedTokens += extraDistill.prefillTokens;
     extraDistillSummary = {
       distilledCount: extraDistill.distilledCount,
       prefillTokens: extraDistill.prefillTokens,
@@ -638,22 +715,23 @@ async function runPinnedAttempt(
       // is the model's own answer about the output, and on a small output it
       // can be longer than the output itself. Spending the budget must never
       // make the result bigger.
-      const digestedMessages = [resultSummary, ...extraDistill.messages];
-      const distilledTokens =
-        countMessagesTokens(digestedMessages, model) + resolvedSystemPromptTokens;
-      if (distilledTokens < newTokenCount) {
-        resultWindow = extraDistill.messages;
-        newMessages = digestedMessages;
-        newTokenCount = distilledTokens;
-        shouldRetry = numCtx > 0 && newTokenCount > acceptanceBudget;
+      const digested = draftResult(
+        env,
+        draft.summary,
+        extraDistill.messages,
+        draft.windowSources
+      );
+      if (digested.tokens < draft.tokens) {
+        draft = digested;
+        shouldRetry = draft.overBudget;
         onProgress?.(
           formatExtraDistillOutcome({
             kind: 'kept',
             distilledCount: extraDistill.distilledCount,
             prefillTokens: extraDistill.prefillTokens,
             stillOverBudget: shouldRetry,
-            newTokenCount,
-            acceptanceBudget,
+            newTokenCount: draft.tokens,
+            acceptanceBudget: env.acceptanceBudget,
           })
         );
       } else {
@@ -699,29 +777,33 @@ async function runPinnedAttempt(
 
   let retried = false;
   if (shouldRetry && remainingRetries > 0) {
-    const retryFactor = Math.max(1.5, newTokenCount / (numCtx * 0.75));
-    onProgress?.(formatRetryLine(newTokenCount, numCtx, retryFactor, remainingRetries));
+    const retryFactor = Math.max(1.5, draft.tokens / (numCtx * 0.75));
+    onProgress?.(formatRetryLine(draft.tokens, numCtx, retryFactor, remainingRetries));
     // The recursion is handed the STUB-LESS array, and it does not receive the
     // rows: a second stub would be built on top of a first one, charged twice,
     // and — worse — the summariser would read a few thousand tokens of file
     // heads as part of the history it is compressing. The stub is attached
-    // once, below, to whatever this returns.
-    const retryResult = await compactWithPin(request, newMessages, {
+    // once, below, to whatever this returns. The note survives the retry
+    // because `request` carries it: a second pass re-summarises the
+    // already-compacted array, which is exactly where a note the user cares
+    // about would otherwise be lost.
+    const retryResult = await compactWithPin(request, draft.messages, {
       aggressiveFactor: retryFactor,
       remainingRetries: remainingRetries - 1,
       // The inner pass sees a history WITHOUT the `system` row, so it cannot
       // work the system prompt out for itself: pass the number through, or its
       // retry/confirm decision, its trim budget and its `stats.newTokenCount`
       // would all be short by the whole system prompt.
-      systemPromptTokens: resolvedSystemPromptTokens,
+      systemPromptTokens: env.systemPromptTokens,
     });
-    // The note survives the retry because `request` carries it: a second pass
-    // re-summarises the already-compacted array, which is exactly where a note
-    // the user cares about would otherwise be lost — the retry's summary becomes
-    // the ONLY record of the older turns, so it has to be told what matters too.
     retried = true;
-    newMessages = retryResult.newMessages;
-    newTokenCount = retryResult.stats.newTokenCount;
+    draft = draftResult(
+      env,
+      retryResult.newMessages[0] ?? draft.summary,
+      retryResult.newMessages.slice(1),
+      [],
+      retryResult.stats.newTokenCount
+    );
   }
 
   // ── The recent-files stub: built ONCE, against the FINAL history ──────
@@ -747,20 +829,19 @@ async function runPinnedAttempt(
   //     invites the model to answer the content of a file instead of the user's
   //     request.
   //
-  // The budget is charged against `newTokenCount` — everything the finished
+  // The budget is charged against `draft.tokens` — everything the finished
   // result already carries, system prompt included — and capped by
   // `min(acceptanceBudget, oldTokenCount - 1)`, so the stub can never push the
   // result past the acceptance boundary, and never back to (or past) the size
   // of the history it replaced: that would trip the `aborted` verdict above and
   // throw "failed to reduce history".
   let recentFilesPlan: RecentFilesPlan | undefined;
-  let recentFilesMessage: ChatMessage | undefined;
   if (recentFiles !== undefined && recentFiles.rows.length > 0) {
     const budgetTokens = computeBudgetForResult({
       numCtx,
-      acceptanceBudget,
-      oldTokenCount,
-      resultTokens: newTokenCount,
+      acceptanceBudget: env.acceptanceBudget,
+      oldTokenCount: env.oldTokenCount,
+      resultTokens: draft.tokens,
     });
     if (budgetTokens > 0) {
       // The reader is confined to the agent's working directory: the rows carry
@@ -779,33 +860,28 @@ async function runPinnedAttempt(
         // not reproduced: the window is several turns and usually contains the
         // `read_file` result the model itself asked for, so a second copy of
         // the same head is pure waste.
-        inContextPaths: [...pathsNamedInToolCalls(newMessages, root)],
+        inContextPaths: [...pathsNamedInToolCalls(draft.messages, root)],
       });
       if (plan.text !== '') {
-        recentFilesPlan = plan;
-        recentFilesMessage = { role: 'assistant', content: recentFilesPlan.text };
         // The attach is a CHECKED step, not a `splice`: it returns `null` when
         // the stub would un-shrink the history or push it past the acceptance
         // boundary, and `null` is the only path on which nothing is claimed.
         const stubbedMessages = attachRecentFilesMessage({
-          messages: newMessages,
-          message: recentFilesMessage,
+          messages: draft.messages,
+          message: { role: 'assistant', content: plan.text },
           model,
-          systemPromptTokens: resolvedSystemPromptTokens,
-          oldTokenCount,
-          acceptanceBudget,
+          systemPromptTokens: env.systemPromptTokens,
+          oldTokenCount: env.oldTokenCount,
+          acceptanceBudget: env.acceptanceBudget,
         });
-        if (stubbedMessages === null) {
-          recentFilesPlan = undefined;
-          recentFilesMessage = undefined;
-        } else {
-          newMessages = stubbedMessages;
-          newTokenCount = countMessagesTokens(newMessages, model) + resolvedSystemPromptTokens;
+        if (stubbedMessages !== null) {
+          recentFilesPlan = plan;
+          draft = withMessages(env, draft, stubbedMessages);
           // The line says WHAT was re-attached, because "paths only" and "with
           // excerpts" are very different amounts of context for the same count —
           // and it is emitted HERE, after the stub is in the array that is
           // returned, so the claim and the result cannot disagree.
-          onProgress?.(formatStubLine(recentFilesPlan));
+          onProgress?.(formatStubLine(plan));
         }
       }
     }
@@ -814,10 +890,10 @@ async function runPinnedAttempt(
   debugLog.diagnostic(
     buildSizeDiagnostic({
       numCtx,
-      acceptanceBudget,
-      oldTokenCount,
-      estimatedNewTokens: newTokenCount,
-      systemPromptTokens: resolvedSystemPromptTokens,
+      acceptanceBudget: env.acceptanceBudget,
+      oldTokenCount: env.oldTokenCount,
+      estimatedNewTokens: draft.tokens,
+      systemPromptTokens: env.systemPromptTokens,
       confirmedNewTokens: confirmedTokenCount,
       recentFiles: recentFilesPlan,
       trim,
@@ -828,10 +904,10 @@ async function runPinnedAttempt(
   );
 
   return {
-    newMessages,
+    newMessages: draft.messages,
     stats: {
-      oldTokenCount,
-      newTokenCount,
+      oldTokenCount: env.oldTokenCount,
+      newTokenCount: draft.tokens,
     },
   };
 }
