@@ -1,6 +1,6 @@
 # Compaction refactor plan (`src/services/compact/`)
 
-Status: **Phases 0-3 done** (2026-11-12, branch `refactor/compaction`); Phases 4-5 not started. Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
+Status: **Phases 0-4 done** (2026-11-12, branch `refactor/compaction`); Phase 5 (CLAUDE.md references) is done as part of 4.3; what remains is the merge to `dev`. Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
 
 Line numbers are as of commit `40f214d`. They are hints and shift as each step lands; the **symbol names are authoritative**.
 
@@ -28,6 +28,9 @@ Line numbers are as of commit `40f214d`. They are hints and shift as each step l
 | 3.2 `produceConversationSummary` | `0e38af6` | `ConversationSummaryParams`; one `chunkBase`; `countSerializedHistoryTokens` |
 | 3.3 `distillToolMessages` | `cb57b04` | `DistillPassOptions`; pure core in `distillPlan.ts`, shell `distill.ts` 380 -> 249; 16 new tests |
 | 3.4 `compactHistory` | `300a0ff` | `CompactHistoryOptions`; private `CompactionAttempt`; `compactWithPin`; `onStats` removed |
+| 4a behavioural pins | `cdf6d7c` | 23 mutations first; 8 escaped, so 7 scenarios and an `expectCountsAgree` invariant on every scenario; ~20 source checks retired |
+| 4.1 `PassEnv`, `ResultDraft` | `2f75874` | one pass environment, one result draft, `distillPass` charges the budget; `orchestrate.ts` 837 -> 913 (comments moved in), then |
+| 4.2 `pass.ts`, `phases.ts` | `eaef47b` | `pass.ts` (254) and `phases.ts` (357); `orchestrate.ts` 913 -> 430; 22 unit tests; 9 mutations caught |
 
 What Phase 0 found that the plan did not expect:
 
@@ -170,6 +173,8 @@ Fix the dead anchor at `compact-trim.test.mjs:813` and add `> -1` guards to ever
 **3.4 `compactHistory(options: CompactHistoryOptions)`.** Public options: `llm`, `model`, `messages`, `numCtx`, `onProgress?`, `signal?`, `reasoningEffort?`, `onTps?`, `redactSecrets?`, `focus?`, `recentFiles?: { rows, root }`. Remove `onStats` (no caller supplies it, and the retry forwards it, so it would fire twice). `aggressiveFactor`, `remainingRetries` and `systemPromptTokens` leave the public API (every caller passes `1`, `2`, `undefined`) and become a private `CompactionAttempt` used by the retry; the retry calls `runPinnedAttempt(req, draft.messages, next)` with no files, so "the retry never re-reads files" holds by construction. Grouping `rows` with `root` removes the unused `?? getAgentWorkingDirectory()` default and orchestrate's `@/tools` import (the compact route already passes `getAgentWorkingDirectory()` itself). Update the three callers (`chat/route.ts:1646`, `compact/route.ts:307`, `subAgentTool.ts:516`). Keep `const { model } = req` inside the pin wrapper and a `systemPromptTokens` field name. Replace the source checks at `compact-budget:1391-1405`, `compact-focus:183-205` and `compact-trim:781` with 0.5 assertions; the caller regexes at `compact-summary.test.mjs:252-260` must still match (they check `redactSecrets ?? true`).
 
 ### Phase 4: orchestrate becomes a pipeline of named phases
+
+**Done.** Deviations from the plan below: `PassEnv` and `ResultDraft` went to a new `pass.ts` rather than `phases.ts` (the phases import the pass, never the reverse); `runPinnedAttempt` kept its name instead of becoming `compactOnce`; `attachRecentFilesStub` takes a built plan rather than the rows, so the budgeted build stays in `orchestrate.ts` beside the reader it needs. The source checks the plan expected to replace were replaced one phase earlier, through mutations (step 4a), because a text check cannot survive the move it is meant to guard.
 
 **4.1 In place, inside `orchestrate.ts`:** `PassEnv` (read-only: request, system messages and tokens, old token count, acceptance budget, distill call cap, and the one deliberately mutable `DistillBudget`) from `createPassEnv`; `distillPass` (the call plus `usedTokens +=`, written three times today); `resultTokens(env, messages)` (`countMessagesTokens(...) + resolvedSystemPromptTokens`, four times); `exceedsAcceptance(env, tokens)` (`numCtx > 0 && tokens > acceptanceBudget`, three times; `budget.ts:189` uses a different finite check and is NOT merged, see Out of scope); `draftResult`. Each phase that tries to make the result fit returns a new `ResultDraft` (`{ summary, window, windowSources, messages, tokens, overBudget }`) instead of reassigning six `let`s. Replace the remaining literal checks (`compact-budget:1405`, `token-calibration:642`, `compact-trim:686-725`) with unit tests of `resultTokens` and `distillPass` plus 0.5's keep-only-if-smaller scenario.
 
