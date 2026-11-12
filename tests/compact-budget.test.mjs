@@ -44,6 +44,7 @@ import {
   computeDistillTimeoutMs,
   computeEffectiveInputBudget,
   computeSafeInputBudget,
+  computeSummaryOutputAllowance,
   DISTILL_CHARS_PER_TOKEN,
   DISTILL_OUTPUT_CHARS_PER_TOKEN,
   estimateDistillPrefillTokens,
@@ -84,11 +85,13 @@ import {
   truncateToolOutputForDistillation,
 } from '../src/services/compact/distill.ts';
 import {
-  batchReductionParts,
-  concatenateReductionParts,
   planSummarisationPrompt,
   produceConversationSummary,
 } from '../src/services/compact/reduce.ts';
+import {
+  batchReductionParts,
+  concatenateReductionParts,
+} from '../src/services/compact/reductionParts.ts';
 import {
   countRetryPromptTokens,
   countSummarisationPromptTokens,
@@ -1593,5 +1596,17 @@ describe('the recent-files stub budget', () => {
     // tokens), and `test-compact-recent-files` proves a budget of exactly the
     // floor really buys that stub.
     expect(RECENT_FILES_MIN_TOKENS).toBeGreaterThanOrEqual(280);
+  });
+});
+
+describe('the summary output allowance (num_predict of a summarisation request)', () => {
+  // target x 1.2, never below the minimum, never above the window.
+  test.each([
+    [{ targetSummaryTokens: 1000, minSummaryTokens: 600, maxSummaryTokens: 1800 }, 32_768, 1200],
+    [{ targetSummaryTokens: 100, minSummaryTokens: 300, maxSummaryTokens: 500 }, 32_768, 300],
+    [{ targetSummaryTokens: 1000, minSummaryTokens: 600, maxSummaryTokens: 1800 }, 800, 800],
+    [{ targetSummaryTokens: 104_857, minSummaryTokens: 50_000, maxSummaryTokens: 188_743 }, 1_048_576, 125_828],
+  ])('%j in a window of %p allows %p tokens', (budget, numCtx, expected) => {
+    expect(computeSummaryOutputAllowance(budget, numCtx)).toBe(expected);
   });
 });

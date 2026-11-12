@@ -24,7 +24,7 @@ import { LiveThroughputMeter } from '@/services/tokenThroughput';
 
 import type { SummaryBudget, ToolNameMap } from './types';
 
-import { SUMMARY_NUM_PREDICT_BUFFER_RATIO } from './constants';
+import { computeSummaryOutputAllowance } from './budget';
 import { serializeHistoryForSummaryText, type SerializeHistoryOptions } from './serialize';
 import {
   buildCompactSystemPrompt,
@@ -409,13 +409,7 @@ export async function summariseMessages(
    */
   focus?: string
 ): Promise<string> {
-  const summaryNumPredict = Math.min(
-    numCtx,
-    Math.max(
-      Math.floor(budget.targetSummaryTokens * SUMMARY_NUM_PREDICT_BUFFER_RATIO),
-      budget.minSummaryTokens
-    )
-  );
+  const summaryNumPredict = computeSummaryOutputAllowance(budget, numCtx);
 
   let text = await streamSummary(
     ctx,

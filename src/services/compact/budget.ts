@@ -29,6 +29,7 @@ import {
   SAFE_INPUT_BUDGET_RATIO,
   SOURCE_CAP_RATIO,
   SUMMARY_MAX_TOKENS_RATIO,
+  SUMMARY_NUM_PREDICT_BUFFER_RATIO,
   SUMMARY_TARGET_TOKENS_RATIO,
   TOOL_DISTILL_CALLS_PER_WINDOW,
   TOOL_DISTILL_DIGEST_MAX_CHARS_CEILING,
@@ -478,4 +479,25 @@ export function computeSummaryBudget(
   );
   const minSummaryTokens = Math.max(50, Math.floor(targetSummaryTokens * MIN_SUMMARY_TOKENS_RATIO));
   return { targetSummaryTokens, minSummaryTokens, maxSummaryTokens };
+}
+
+/**
+ * The output limit (`num_predict`) of one summarisation request: the target
+ * plus a buffer, never below the minimum, never above the window.
+ *
+ * The summary is the model's only memory of the compacted turns, so the limit
+ * must not cut it: the buffer lets a summary run a little over its target, and
+ * the window is the only hard ceiling.
+ *
+ * @param budget - the request's target/min/max summary budget.
+ * @param numCtx - the model's context window.
+ */
+export function computeSummaryOutputAllowance(budget: SummaryBudget, numCtx: number): number {
+  return Math.min(
+    numCtx,
+    Math.max(
+      Math.floor(budget.targetSummaryTokens * SUMMARY_NUM_PREDICT_BUFFER_RATIO),
+      budget.minSummaryTokens
+    )
+  );
 }
