@@ -1,6 +1,6 @@
 # Compaction refactor plan (`src/services/compact/`)
 
-Status: **Phases 0, 1 and 2 done** (2026-11-12, branch `refactor/compaction`); Phases 3-5 not started. Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
+Status: **Phases 0-3 done** (2026-11-12, branch `refactor/compaction`); Phases 4-5 not started. Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
 
 Line numbers are as of commit `40f214d`. They are hints and shift as each step lands; the **symbol names are authoritative**.
 
@@ -24,6 +24,10 @@ Line numbers are as of commit `40f214d`. They are hints and shift as each step l
 | 2.3 recent files | `3935d21` | `recentFilesRender.ts` (322) and `recentFilesDisk.ts` (153); `recentFiles.ts` 958 -> 535; `describeRecentFilesShape` |
 | 2.4 distill plan | `edab36b` | `distillPlan.ts` (412); `distill.ts` 767 -> 380; a source-text check became a test of `cutWithMarker` |
 | 2.5 progress text | `c099d52` | `progressText.ts` (292), 25 literal-string tests; the `'Re-attached the '` pin now looks for `formatStubLine(` |
+| 3.1 `CompactionLlmCall` | `f3cc142` | one object for a model call; the reduction's recursion is a loop; the 302-request round-cap scenario is unchanged |
+| 3.2 `produceConversationSummary` | `0e38af6` | `ConversationSummaryParams`; one `chunkBase`; `countSerializedHistoryTokens` |
+| 3.3 `distillToolMessages` | `cb57b04` | `DistillPassOptions`; pure core in `distillPlan.ts`, shell `distill.ts` 380 -> 249; 16 new tests |
+| 3.4 `compactHistory` | `300a0ff` | `CompactHistoryOptions`; private `CompactionAttempt`; `compactWithPin`; `onStats` removed |
 
 What Phase 0 found that the plan did not expect:
 
@@ -46,6 +50,14 @@ What Phase 2 found that the plan did not expect:
 - **The prompt rule dedupes saved no lines**, as the plan predicted ("about 0"); their value is that the full and the short prompt cannot drift apart. The golden prompts passed unchanged, which is the proof the bytes are identical.
 - **Two source-text checks needed more than a repoint:** `compact-prompt.test.mjs` (the marker's name in `distill.ts`) became a behavioural test of `cutWithMarker`, and `compact-trim.test.mjs` (`'Re-attached the '` in `orchestrate.ts`) now anchors on the `formatStubLine(` call. The checks that read code Phases 3 and 4 will move (`compact-budget:1391-1465`, `compact-focus:195-205`, `token-calibration:629-645`, the rest of `compact-trim`) are still in place and still pass.
 - **No test needed to change behaviourally in Phase 2:** the Phase 0 transcripts (prompts, pipeline, distill shell, orchestrate) passed untouched after every commit, so the moves did not change what the compaction says or sends.
+
+What Phase 3 found that the plan did not expect:
+
+- **Line counts barely moved, as expected for signature work:** `orchestrate.ts` 857 -> 837, `reduce.ts` 567 -> 520, `summarize.ts` 476 -> 429, `distill.ts` 380 -> 249, but `distillPlan.ts` grew 412 -> 658 because the distillation's pure core moved into it, so the folder is about the same size (7,708 lines). The gain is structure: no function in the compaction takes more than four positional parameters any more (16, 13, 11 and 7 before), and the retry's rules hold by construction.
+- **Names differ from the plan in small ways:** `CompactHistoryOptions` and the other options interfaces extend `CompactionLlmCall` (so the field is `ctx`, not `llm`), and the retry goes through `compactWithPin(request, messages, attempt, files?)`, not a bare `runPinnedAttempt`, so the calibration pin still nests exactly as before.
+- **The plan's "replace the source checks" turned out to need new behavioural assertions, not just removals:** once the focus note, the system prompt's size and the files live in `request` / `attempt`, the retry call's text no longer shows them. The orchestrate scenarios already proved the focus note and the files; one assertion was added for the system prompt (`diagnostics[0].systemPromptTokens` equals the outer pass's). Four mutations of the retry call fail those scenarios.
+- **A mutation script that crashed left `orchestrate.ts` mutated once;** it was reverted by hand and the scenarios re-run before anything else, and later runs used a backup-and-restore in a `finally`. No mutated code was ever committed (each commit's gate ran on restored files).
+- **Source-text checks still in place** (they read code that Phase 4 moves): `compact-trim` (ordering of trim, extra spend, retry, stub), `compact-budget:1391-1465` (system prompt arithmetic literals, one measurement call), `token-calibration:629-645` (the pin).
 
 ## Goal and ground rules
 
