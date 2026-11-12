@@ -1,6 +1,6 @@
 # Compaction refactor plan (`src/services/compact/`)
 
-Status: **Phases 0 and 1 done** (2026-11-12, branch `refactor/compaction`); Phases 2-5 not started. Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
+Status: **Phases 0, 1 and 2 done** (2026-11-12, branch `refactor/compaction`); Phases 3-5 not started. Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
 
 Line numbers are as of commit `40f214d`. They are hints and shift as each step lands; the **symbol names are authoritative**.
 
@@ -19,6 +19,11 @@ Line numbers are as of commit `40f214d`. They are hints and shift as each step l
 | 1.3 distill | `4af9c11` | the token-count fallback removed; alias locals; `largestFirst` |
 | 1.4 owner walk | `9199d04` | `findOwningAssistantIndex` in `split.ts`, used by the split and the distiller |
 | 1.5 fallback ladder | `802d597` | `planCompactionSplit` and `makeHistorySplit` in `split.ts`; `tests/compact-split-plan.test.mjs` |
+| 2.1 summary prompt | `3383e96` | `summaryPrompt.ts` (416 lines); `summarize.ts` 840 -> 476; golden prompts unchanged |
+| 2.2 reduction parts | `c76eecd` | `reductionParts.ts` (223); `computeSummaryOutputAllowance` went to `budget.ts`, the pure budget module, not `summarize.ts` |
+| 2.3 recent files | `3935d21` | `recentFilesRender.ts` (322) and `recentFilesDisk.ts` (153); `recentFiles.ts` 958 -> 535; `describeRecentFilesShape` |
+| 2.4 distill plan | `edab36b` | `distillPlan.ts` (412); `distill.ts` 767 -> 380; a source-text check became a test of `cutWithMarker` |
+| 2.5 progress text | `c099d52` | `progressText.ts` (292), 25 literal-string tests; the `'Re-attached the '` pin now looks for `formatStubLine(` |
 
 What Phase 0 found that the plan did not expect:
 
@@ -33,6 +38,14 @@ What Phase 1 found that the plan did not expect:
 - **Decision 1 turned out to have no practical effect.** Sharing the owner walk makes a `null` entry in `tool_calls` "not the call" instead of a throw, but the tokenizer throws on a `null` tool call before the split runs, so the pipeline still fails there. The walk itself is tested.
 - **The ladder's "anchor at index 0" case has one reachable sub-branch, not two.** The plain split never preserves index 0, so an anchor at 0 always triggers the anchor rescue, which leaves either nothing to summarise or at least `MIN_SUMMARISE_TOKENS`. The test for it uses the empty-slice case.
 - **Counting `[]` is exactly 0**, so `makeHistorySplit` can always count; no special case for an empty window was needed.
+
+What Phase 2 found that the plan did not expect:
+
+- **The folder got bigger, not smaller:** 7,283 lines before Phase 1, 7,682 now (about +400). Every new module carries a header, imports and exports, and several moves were line-neutral by design. The five big files are now 857 (`orchestrate.ts`), 567 (`reduce.ts`), 535 (`recentFiles.ts`), 476 (`summarize.ts`) and 380 (`distill.ts`), against 925, 766, 958, 840 and 767 at the start of Phase 2. `orchestrate.ts` only lost 68 lines (the progress strings), because its 775-line function body is what Phases 3 and 4 take apart; the plan's "orchestrate ~280" target depends on them.
+- **`computeSummaryOutputAllowance` lives in `budget.ts`**, beside `computeSummaryBudget`, not in `summarize.ts`; a table test pins four cases.
+- **The prompt rule dedupes saved no lines**, as the plan predicted ("about 0"); their value is that the full and the short prompt cannot drift apart. The golden prompts passed unchanged, which is the proof the bytes are identical.
+- **Two source-text checks needed more than a repoint:** `compact-prompt.test.mjs` (the marker's name in `distill.ts`) became a behavioural test of `cutWithMarker`, and `compact-trim.test.mjs` (`'Re-attached the '` in `orchestrate.ts`) now anchors on the `formatStubLine(` call. The checks that read code Phases 3 and 4 will move (`compact-budget:1391-1465`, `compact-focus:195-205`, `token-calibration:629-645`, the rest of `compact-trim`) are still in place and still pass.
+- **No test needed to change behaviourally in Phase 2:** the Phase 0 transcripts (prompts, pipeline, distill shell, orchestrate) passed untouched after every commit, so the moves did not change what the compaction says or sends.
 
 ## Goal and ground rules
 
