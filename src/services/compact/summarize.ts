@@ -8,21 +8,18 @@
  * step of the map-reduce path, so all requests stay bounded.
  */
 
-import type { ReasoningEffort } from '@/types/chatConfig';
-
 import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
 import {
   type ChatApiResponse,
   type ChatMessage,
   getLlmTurnStats,
-  type LlmRequestContext,
   sendLlmChatStream,
 } from '@/services/llm';
 import { recordTokenCalibrationSample } from '@/services/tokenCalibration';
 import { countMessagesTokens, countRawMessagesTokens } from '@/services/tokenizer';
 import { LiveThroughputMeter } from '@/services/tokenThroughput';
 
-import type { SummaryBudget, ToolNameMap } from './types';
+import type { CompactionLlmCall, SummaryBudget, ToolNameMap } from './types';
 
 import { computeSummaryOutputAllowance } from './budget';
 import { serializeHistoryForSummaryText, type SerializeHistoryOptions } from './serialize';
@@ -99,16 +96,11 @@ export function countRetryPromptTokens(
 }
 
 async function streamSummary(
-  ctx: LlmRequestContext,
-  model: string,
+  call: CompactionLlmCall,
   messages: ChatMessage[],
-  numCtx: number,
-  numPredict: number | undefined,
-  onProgress?: (message: string) => void,
-  signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void
+  numPredict: number | undefined
 ): Promise<string> {
+  const { ctx, model, numCtx, onProgress, signal, reasoningEffort, onTps } = call;
   let text = '';
   // The terminal chunk of the stream — the one that carries the provider's
   // PROMPT count. Kept so the calibration sample below can read it.
@@ -182,10 +174,7 @@ async function streamSummary(
   return text.trim();
 }
 
-interface SummariseChunkParams {
-  ctx: LlmRequestContext;
-  model: string;
-  numCtx: number;
+interface SummariseChunkParams extends CompactionLlmCall {
   historyMessages: ChatMessage[];
   budget: SummaryBudget;
   /**
@@ -212,11 +201,6 @@ interface SummariseChunkParams {
   focus?: string;
   /** Optional human-readable label for progress messages (e.g. "chunk 3/12"). */
   label?: string;
-  onProgress?: (message: string) => void;
-  signal?: AbortSignal;
-  reasoningEffort?: ReasoningEffort;
-  /** Optional live t/s reporter so the UI can show compaction speed. */
-  onTps?: (tps: number) => void;
   /**
    * Tool-call id → tool name, built from the FULL conversation. Threaded
    * through so a tool result that outlived its assistant row still renders
@@ -368,16 +352,10 @@ export async function summariseChunk(params: SummariseChunkParams): Promise<stri
   const forwardProgress = (message: string): void => onProgress?.(`${prefix}${message}`);
 
   return summariseMessages(
-    ctx,
-    model,
-    numCtx,
+    { ctx, model, numCtx, onProgress: forwardProgress, signal, reasoningEffort, onTps },
     summarisationMessages,
     historyText,
     budget,
-    forwardProgress,
-    signal,
-    reasoningEffort,
-    onTps,
     focus
   );
 }
@@ -389,16 +367,10 @@ export async function summariseChunk(params: SummariseChunkParams): Promise<stri
  * form, if the model returns nothing.
  */
 export async function summariseMessages(
-  ctx: LlmRequestContext,
-  model: string,
-  numCtx: number,
+  call: CompactionLlmCall,
   messages: ChatMessage[],
   sourceText: string,
   budget: SummaryBudget,
-  onProgress?: (message: string) => void,
-  signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void,
   /**
    * The user's `/compact` focus note.
    *
@@ -409,19 +381,10 @@ export async function summariseMessages(
    */
   focus?: string
 ): Promise<string> {
+  const { numCtx, onProgress } = call;
   const summaryNumPredict = computeSummaryOutputAllowance(budget, numCtx);
 
-  let text = await streamSummary(
-    ctx,
-    model,
-    messages,
-    numCtx,
-    summaryNumPredict,
-    onProgress,
-    signal,
-    reasoningEffort,
-    onTps
-  );
+  let text = await streamSummary(call, messages, summaryNumPredict);
 
   // If the model returned nothing (can happen with very small inputs and a
   // large target), retry once with the same section contract in short form.
@@ -452,17 +415,7 @@ export async function summariseMessages(
         content: `${SUMMARY_RETRY_USER_PREFIX}${sourceText}`,
       },
     ];
-    text = await streamSummary(
-      ctx,
-      model,
-      retryMessages,
-      numCtx,
-      summaryNumPredict,
-      onProgress,
-      signal,
-      reasoningEffort,
-      onTps
-    );
+    text = await streamSummary(call, retryMessages, summaryNumPredict);
   }
 
   if (!text) {

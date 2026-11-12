@@ -15,7 +15,7 @@ import type { ReasoningEffort } from '@/types/chatConfig';
 import { type ChatMessage, type LlmRequestContext } from '@/services/llm';
 import { countCalibratedTextTokens, countMessagesTokens } from '@/services/tokenizer';
 
-import type { ToolNameMap } from './types';
+import type { CompactionLlmCall, ToolNameMap } from './types';
 
 import {
   computeEffectiveInputBudget,
@@ -374,15 +374,9 @@ export async function produceConversationSummary(
 
   onProgress?.('Reducing chunk summaries...');
   return reduceSummaryGroups(
-    ctx,
-    model,
-    numCtx,
+    { ctx, model, numCtx, onProgress, signal, reasoningEffort, onTps },
     aggressiveFactor,
     chunkSummaries,
-    onProgress,
-    signal,
-    reasoningEffort,
-    onTps,
     focus
   );
 }
@@ -442,126 +436,72 @@ function countReductionRequestOverhead(model: string, focus?: string): number {
  * model call.
  */
 export async function reduceSummaryGroups(
-  ctx: LlmRequestContext,
-  model: string,
-  numCtx: number,
+  call: CompactionLlmCall,
   aggressiveFactor: number,
   summaries: string[],
-  onProgress?: (message: string) => void,
-  signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void,
   focus?: string
 ): Promise<string> {
-  return reduceSummaryGroupsAtRound(
-    ctx,
-    model,
-    numCtx,
-    aggressiveFactor,
-    summaries,
-    0,
-    onProgress,
-    signal,
-    reasoningEffort,
-    onTps,
-    focus
-  );
-}
+  const { model, numCtx, onProgress } = call;
+  let current = summaries;
 
-/**
- * One reduction round, with the round counter that bounds the recursion.
- */
-async function reduceSummaryGroupsAtRound(
-  ctx: LlmRequestContext,
-  model: string,
-  numCtx: number,
-  aggressiveFactor: number,
-  summaries: string[],
-  round: number,
-  onProgress?: (message: string) => void,
-  signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void,
-  focus?: string
-): Promise<string> {
-  if (summaries.length === 1) {
-    return summaries[0]!;
-  }
-
-  // The combine request's own prompt comes out of the safe input budget
-  // first: what is left is what the partial summaries may use.
-  const partsBudget = computeEffectiveInputBudget(
-    computeSafeInputBudget(numCtx),
-    countReductionRequestOverhead(model, focus)
-  );
-
-  const parts: ReductionPart[] = summaries.map((text, index) => ({ number: index + 1, text }));
-
-  // The hard cap: after MAX_REDUCTION_ROUNDS the parts are merged WITHOUT a
-  // model call. The reduction is lossy at every level, so this is the last
-  // resort — but a summary that keeps every fact beats an endless loop.
-  if (round >= MAX_REDUCTION_ROUNDS) {
-    onProgress?.(
-      `Reduction round limit reached (${MAX_REDUCTION_ROUNDS}) — merging the ${parts.length} ` +
-        'remaining partial summaries without another model call.'
+  // One round per pass. `!== 1` (not `> 1`) on purpose: an EMPTY list keeps
+  // running rounds until the cap and returns '', exactly as the recursion this
+  // loop replaced did.
+  for (let round = 0; current.length !== 1; round += 1) {
+    // The combine request's own prompt comes out of the safe input budget
+    // first: what is left is what the partial summaries may use. (Counted every
+    // round, never hoisted: the calibrated counts are only constant while the
+    // caller holds the calibration pin.)
+    const partsBudget = computeEffectiveInputBudget(
+      computeSafeInputBudget(numCtx),
+      countReductionRequestOverhead(model, focus)
     );
-    return concatenateReductionParts(parts);
-  }
 
-  const batches = batchReductionParts(parts, partsBudget, model);
+    const parts: ReductionPart[] = current.map((text, index) => ({ number: index + 1, text }));
 
-  const batchSummaries: string[] = [];
-  for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-    const batch = batches[batchIndex];
-    if (!batch) {
-      continue;
+    // The hard cap: after MAX_REDUCTION_ROUNDS the parts are merged WITHOUT a
+    // model call. The reduction is lossy at every level, so this is the last
+    // resort — but a summary that keeps every fact beats an endless loop.
+    if (round >= MAX_REDUCTION_ROUNDS) {
+      onProgress?.(
+        `Reduction round limit reached (${MAX_REDUCTION_ROUNDS}) — merging the ${parts.length} ` +
+          'remaining partial summaries without another model call.'
+      );
+      return concatenateReductionParts(parts);
     }
-    const label =
-      batches.length > 1 ? `reduction group ${batchIndex + 1}/${batches.length}` : undefined;
 
-    const batchText = buildReductionBatchText(batch);
-    const batchMessages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: buildReductionCombineSystemPrompt(focus),
-      },
-      {
-        role: 'user',
-        content: `${REDUCTION_REQUEST_USER_PREFIX}${batchText}`,
-      },
-    ];
+    const batches = batchReductionParts(parts, partsBudget, model);
 
-    const sourceEstimate = countMessagesTokens(batchMessages, model, 'summarise');
-    const budget = computeSummaryBudget(numCtx, aggressiveFactor, sourceEstimate);
-    onProgress?.(label ? `Reducing ${label}...` : 'Reducing summaries...');
+    const batchSummaries: string[] = [];
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      const batch = batches[batchIndex];
+      if (!batch) {
+        continue;
+      }
+      const label =
+        batches.length > 1 ? `reduction group ${batchIndex + 1}/${batches.length}` : undefined;
 
-    const combined = await summariseMessages(
-      ctx,
-      model,
-      numCtx,
-      batchMessages,
-      batchText,
-      budget,
-      onProgress,
-      signal,
-      reasoningEffort,
-      onTps,
-      focus
-    );
-    batchSummaries.push(combined);
+      const batchText = buildReductionBatchText(batch);
+      const batchMessages: ChatMessage[] = [
+        {
+          role: 'system',
+          content: buildReductionCombineSystemPrompt(focus),
+        },
+        {
+          role: 'user',
+          content: `${REDUCTION_REQUEST_USER_PREFIX}${batchText}`,
+        },
+      ];
+
+      const sourceEstimate = countMessagesTokens(batchMessages, model, 'summarise');
+      const budget = computeSummaryBudget(numCtx, aggressiveFactor, sourceEstimate);
+      onProgress?.(label ? `Reducing ${label}...` : 'Reducing summaries...');
+
+      batchSummaries.push(await summariseMessages(call, batchMessages, batchText, budget, focus));
+    }
+
+    current = batchSummaries;
   }
 
-  return reduceSummaryGroupsAtRound(
-    ctx,
-    model,
-    numCtx,
-    aggressiveFactor,
-    batchSummaries,
-    round + 1,
-    onProgress,
-    signal,
-    reasoningEffort,
-    onTps,
-    focus
-  );
+  return current[0]!;
 }

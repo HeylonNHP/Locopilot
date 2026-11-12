@@ -177,7 +177,11 @@ describe('the reduction terminates', () => {
     const { fake, progress, value, error } = await scenario(
       ({ index }) => ({ text: `COMBINED ${index} ${'x'.repeat(2400)}` }),
       (ctx, log) =>
-        reduceSummaryGroups(ctx, MODEL, NUM_CTX, 1, summaries, (message) => log.push(message))
+        reduceSummaryGroups(
+          { ctx, model: MODEL, numCtx: NUM_CTX, onProgress: (message) => log.push(message) },
+          1,
+          summaries
+        )
     );
     expect(error).toBeUndefined();
     expect(fake.unexpected).toStrictEqual([]);
@@ -196,7 +200,11 @@ describe('the reduction terminates', () => {
     const { fake, progress, value, error } = await scenario(
       ({ index }) => ({ text: `COMBINED ${index} ${'x'.repeat(2400)}` }),
       (ctx, log) =>
-        reduceSummaryGroups(ctx, MODEL, NUM_CTX, 1, summaries, (message) => log.push(message))
+        reduceSummaryGroups(
+          { ctx, model: MODEL, numCtx: NUM_CTX, onProgress: (message) => log.push(message) },
+          1,
+          summaries
+        )
     );
     expect(error).toBeUndefined();
     expect(fake.unexpected).toStrictEqual([]);
