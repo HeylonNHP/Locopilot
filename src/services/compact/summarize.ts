@@ -369,10 +369,6 @@ Return ONLY plain summary text (no markdown syntax — no bullets, no bold, no c
  * instructions" rule as the full prompt, and it needs a token target —
  * without one the model writes as much as it likes, which is exactly the
  * unbounded output that feeds the reduction's blow-up.
- */
-/**
- * The prompt used when the first summarisation attempt came back empty, and
- * when the context window is too small for the full prompt.
  *
  * Exported so the retry's contract is asserted offline: the retry must ask
  * for the SAME shape as the normal path, or a conversation whose first
@@ -420,10 +416,22 @@ export function countSummarisationPromptTokens(
   params: BuildCompactSystemPromptParams,
   model: string
 ): number {
+  return countPromptOverhead(buildCompactSystemPrompt(params), SUMMARY_REQUEST_USER_PREFIX, model);
+}
+
+/**
+ * The token cost of a request's FRAME: one system prompt and the fixed prefix of
+ * the user message, in the `summarise` class.
+ *
+ * ONE helper for every place that charges a prompt against the safe input
+ * budget (the full prompt, the short prompt, and both halves of the reduction's
+ * combine overhead in `reduce.ts`), so they all measure the same way.
+ */
+export function countPromptOverhead(system: string, userPrefix: string, model: string): number {
   return countMessagesTokens(
     [
-      { role: 'system', content: buildCompactSystemPrompt(params) },
-      { role: 'user', content: SUMMARY_REQUEST_USER_PREFIX },
+      { role: 'system', content: system },
+      { role: 'user', content: userPrefix },
     ],
     model,
     'summarise'
@@ -445,14 +453,7 @@ export function countRetryPromptTokens(
   params: BuildRetrySystemPromptParams,
   model: string
 ): number {
-  return countMessagesTokens(
-    [
-      { role: 'system', content: buildRetrySystemPrompt(params) },
-      { role: 'user', content: SUMMARY_REQUEST_USER_PREFIX },
-    ],
-    model,
-    'summarise'
-  );
+  return countPromptOverhead(buildRetrySystemPrompt(params), SUMMARY_REQUEST_USER_PREFIX, model);
 }
 
 async function streamSummary(
@@ -600,20 +601,7 @@ export interface SummarisationInput {
   historyText: string;
 }
 
-/**
- * Builds the summarisation request for a chunk of history.
- *
- * The history is rendered with the tool-aware serialiser, so the model sees
- * the ACTION (which command was run, which file was written) next to the
- * OUTPUT (the tool result) instead of a flat list of role/content pairs that
- * silently dropped every tool call.
- *
- * The `options` carry the three policies the serialiser needs: the tool-name
- * map, the redaction switch and the cap for a tool result.
- *
- * Exported so the exact request can be inspected without issuing a model
- * call — the compaction pipeline has no other seam for that.
- */
+/** The optional extras of {@link buildSummarisationInput}. */
 export interface BuildSummarisationInputExtras {
   /**
    * Which system prompt the request carries. `short` drops the explanation

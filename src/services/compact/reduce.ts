@@ -34,6 +34,7 @@ import { splitHistoryIntoChunks } from './split';
 import {
   type BuildCompactSystemPromptParams,
   buildRetrySystemPrompt,
+  countPromptOverhead,
   countRetryPromptTokens,
   countSummarisationPromptTokens,
   summariseChunk,
@@ -418,32 +419,23 @@ const REDUCTION_REQUEST_USER_PREFIX =
  * @param focus - the user's `/compact` note, or `undefined`.
  */
 function countReductionRequestOverhead(model: string, focus?: string): number {
-  const combineOverhead = countMessagesTokens(
-    [
-      { role: 'system', content: buildReductionCombineSystemPrompt(focus) },
-      { role: 'user', content: REDUCTION_REQUEST_USER_PREFIX },
-    ],
-    model,
-    'summarise'
+  const combineOverhead = countPromptOverhead(
+    buildReductionCombineSystemPrompt(focus),
+    REDUCTION_REQUEST_USER_PREFIX,
+    model
   );
-  const retryOverhead = countMessagesTokens(
-    [
-      {
-        role: 'system',
-        content: buildRetrySystemPrompt({
-          // The largest budget the retry can be given, so the measured
-          // overhead is an upper bound for every request.
-          targetSummaryTokens: 1200,
-          minSummaryTokens: 600,
-          maxSummaryTokens: 1200,
-          numCtx: 200000,
-          ...(focus === undefined ? {} : { focus }),
-        }),
-      },
-      { role: 'user', content: REDUCTION_REQUEST_USER_PREFIX },
-    ],
-    model,
-    'summarise'
+  const retryOverhead = countPromptOverhead(
+    buildRetrySystemPrompt({
+      // The largest budget the retry can be given, so the measured
+      // overhead is an upper bound for every request.
+      targetSummaryTokens: 1200,
+      minSummaryTokens: 600,
+      maxSummaryTokens: 1200,
+      numCtx: 200000,
+      ...(focus === undefined ? {} : { focus }),
+    }),
+    REDUCTION_REQUEST_USER_PREFIX,
+    model
   );
   return Math.max(combineOverhead, retryOverhead);
 }
