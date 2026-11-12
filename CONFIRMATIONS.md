@@ -127,6 +127,31 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **How to reproduce:** `POST /tokenize` with `{"model": "<name>", "content": "..."}` counts tokens exactly. Then send `POST /v1/chat/completions` with `max_tokens: 1` and a prompt just above the expected size. The error body names the enforced value.
 - **Could not verify (per the research):** whether `GET /props?model=` loads an unloaded model, the owner's GGUF `rope_freq_scale_train`, and the `--parallel` behaviour on the owner's build. The owner's router log line "custom YaRN scaling detected" would confirm the YaRN rewrite.
 
+### C-015 — The reduction's overhead is measured with a made-up window (`numCtx: 200000`)
+
+- **Status:** Not verified. Read from the code on 2026-11-12; found while planning the compaction refactor (`docs/COMPACTION_REFACTOR_PLAN.md`).
+- **Claim:** `countReductionRequestOverhead` (`src/services/compact/reduce.ts`, around line 420) counts what a combine request carries besides the partial summaries. For the empty-response retry it builds the short prompt with fixed numbers (`targetSummaryTokens` 1200, `minSummaryTokens` 600, `maxSummaryTokens` 1200, `numCtx` 200000) and with the combine request's user prefix. Its comment calls that "an upper bound". The real retry (`summariseMessages` in `src/services/compact/summarize.ts`) builds the prompt from the real budget (`computeSummaryBudget`, which scales with the window) and sends a different user prefix (`Summarise this conversation:`). The two prompts differ by the digits of the budget numbers and by the prefix, so the measured overhead may be a few tokens off at a large window, which moves the parts budget and so the batching by the same few tokens.
+- **Impact if true:** small (a handful of tokens in a budget of tens of thousands). Behaviour is deliberately left as it is in the refactor, because changing it moves the batch boundaries.
+- **How to confirm:** at `numCtx` 1,048,576, build the retry prompt with `computeSummaryBudget(1048576, 1, <safe input budget>)` and the real user prefix, count it with `countMessagesTokens(..., 'summarise')`, and compare with the number `countReductionRequestOverhead` returns for the same model and focus.
+- **Needs:** nothing but the repository.
+
+### C-016 — Does tiktoken's WASM counter fail above about 524,288 characters?
+
+- **Status:** Not reproduced (2026-11-12).
+- **Claim (from a comment, not measured here):** `countDistillRequestTokens` in `src/services/compact/distill.ts` says the counter throws `RuntimeError: unreachable` above about 524,288 characters, which is why it has a heuristic fallback. The summariser's calibration sample (`summarize.ts`, around line 528) counts one blob of up to 0.6 x the window with no fallback, inside a `try`, so a throw there would skip the sample silently.
+- **Measured on 2026-11-12** (this machine, the installed `@dqbd/tiktoken`, `countRawMessagesTokens`, model `test-model`, so `cl100k_base`): ordinary text of 100,000 / 400,000 / 524,000 / 530,000 / 600,000 / 1,000,000 / 2,400,000 / 4,000,000 characters all counted without an error, the largest in 563 ms (4,000,000 characters, 1,000,008 tokens).
+- **So:** the failure is not a plain length limit. It may depend on the input's shape, or on another version of the package. Nothing here shows which. The refactor plan (step 1.3) removes the fallback only because the distiller's per-call cap is 112,000 characters, far below every size that counted fine here, and pins that bound with a test.
+- **How to confirm:** ask the owner what input produced the `RuntimeError` (the comment does not say), then count that input with `countRawMessagesTokens`. If it is reproducible, decide whether the summariser's sample needs the same fallback.
+- **Needs:** the input that failed, or the production machine's log with the error.
+
+### C-017 — Counting a long run of one repeated character is very slow
+
+- **Status:** Observed (2026-11-12); real-world occurrence not checked.
+- **Observed** (this machine, `countRawMessagesTokens`, `cl100k_base`, a message that is `"x"` repeated): 10,000 characters took 87 ms, 20,000 took 210 ms, 40,000 took 845 ms, 80,000 took 3.4 s and 160,000 took 13.9 s. The time roughly quadruples each time the length doubles. Ordinary varied text of 4,000,000 characters took 563 ms.
+- **Why it matters:** every history count (the compaction trigger, `countMessagesTokens` before and after a compaction, the preserved-window budget) runs over whole tool outputs. A tool output that is one long run (a rule of `=` signs, padding, a minified blob) could stall a turn for seconds, and a larger one for minutes. The distiller's 112,000-character input cap does not help, because the whole history is counted before it is cut.
+- **Not verified:** whether real tool outputs reach such lengths; other repeated patterns (a repeated word, base64); the production Node and WASM build.
+- **How to confirm:** time `countMessagesTokens([{ role: 'user', content: 'x'.repeat(n) }], model)` for growing `n`, then try a long base64 string and a minified file of the same size. If real outputs are affected, the fix belongs in `src/services/tokenizer.ts` (for example, estimate by length above a size or run threshold), and it changes every count, so it needs its own change.
+
 ---
 
 ## Pending actions

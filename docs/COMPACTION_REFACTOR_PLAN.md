@@ -1,8 +1,26 @@
 # Compaction refactor plan (`src/services/compact/`)
 
-Status: **proposed, not started** (2026-11-12). Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
+Status: **Phase 0 done** (2026-11-12, branch `refactor/compaction`); Phases 1-5 not started. Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
 
 Line numbers are as of commit `40f214d`. They are hints and shift as each step lands; the **symbol names are authoritative**.
+
+## Progress
+
+| Step                  | Commit      | Notes                                                                                                                                                                                         |
+| --------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1 fake provider     | `c68cdf8`   | `tests/helpers/fakeOllama.mjs` (+ `enterScratchCwd`)                                                                                                                                          |
+| 0.2 golden prompts    | `6740197`   | 23 prompts; a one-character prompt edit fails 13 cases                                                                                                                                        |
+| 0.3 summary pipeline  | `3f27502`   | the round cap is reached through `reduceSummaryGroups` with 300 parts (302 requests); its transcript is too long to store, so it asserts the request count and the closing line               |
+| 0.4 distill shell     | `2d1a198`   | also added `tests/helpers/compactionHarness.mjs`, shared by 0.3-0.5 (not in the plan)                                                                                                         |
+| 0.5 orchestrate       | `b81b4c3`   | 16 scenarios at a 4096-token window; five breakages of `orchestrate.ts` each fail; the stub scenarios mask path-dependent token counts; the dead check in `compact-trim.test.mjs` is repaired |
+| 0.6 unverified claims | this commit | `CONFIRMATIONS.md` C-015, C-016, C-017                                                                                                                                                        |
+
+What Phase 0 found that the plan did not expect:
+
+- **The tiktoken "524,288 characters" claim is not reproduced** (C-016): ordinary text up to 4,000,000 characters counted without an error. Step 1.3 still holds, because it rests on the distiller's 112,000-character cap, and the invariant test from 0.4 pins that bound; but the claim in the `distill.ts` comment is now unexplained.
+- **Counting a long run of one repeated character is quadratic** (C-017): 13.9 s at 160,000 characters. Out of scope for the refactor; it is a tokenizer change.
+- **A retry whose pass gets a summary as big as the first one fails** with "failed to reduce history size" (the recursion re-summarises an already-compacted array). The retry scenarios therefore script a small answer for the retry's pass; the plan's retry rules are unchanged.
+- **Some tests keep source-text checks that still pass** (for example `compact-budget:1391-1465`, `compact-focus:195-205`, `token-calibration:629-645`). Phase 3 and 4 replace them with the behavioural scenarios as the code they read moves.
 
 ## Goal and ground rules
 
