@@ -689,7 +689,10 @@ describe('the leftover distillation budget is spent before the re-summary', () =
       'utf8'
     );
     const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
-    const extraCall = source.slice(extraIndex, source.indexOf('\n    );', extraIndex));
+    expect(extraIndex).not.toBe(-1);
+    const extraEnd = source.indexOf('\n    );', extraIndex);
+    expect(extraEnd).toBeGreaterThan(extraIndex);
+    const extraCall = source.slice(extraIndex, extraEnd);
     // The budget object is handed to the extra pass…
     expect(extraCall).toMatch(/\bdistillBudget\b/u);
     // …and the extra pass's prefill is charged back to it, so the total
@@ -706,7 +709,10 @@ describe('the leftover distillation budget is spent before the re-summary', () =
       'utf8'
     );
     const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
-    const extraCall = source.slice(extraIndex, source.indexOf('\n    );', extraIndex));
+    expect(extraIndex).not.toBe(-1);
+    const extraEnd = source.indexOf('\n    );', extraIndex);
+    expect(extraEnd).toBeGreaterThan(extraIndex);
+    const extraCall = source.slice(extraIndex, extraEnd);
     expect(extraCall).toMatch(/handledRows/u);
     // The bookkeeping is per-ROW and per-PASS: the digests and the failures of
     // the WINDOW pass are what is excluded, and the exclusion set is built in
@@ -780,8 +786,12 @@ describe('the trim budget and the recent-files stub', () => {
     expect(source).toContain('planWindowTrim(preparedRecentMessages, windowBudget, model)');
     // And the retry does not forward the rows — `newMessages` has no stub at that
     // point, so a second one would be stacked on the recursion's result.
-    const retry = source.slice(source.indexOf('const retryResult = await compactHistory('));
-    const retryCall = retry.slice(0, retry.indexOf('\n    );'));
+    const retryStart = source.indexOf('const retryResult = await compactHistory(');
+    expect(retryStart).not.toBe(-1);
+    const retry = source.slice(retryStart);
+    const retryEnd = retry.indexOf('\n    );');
+    expect(retryEnd).toBeGreaterThan(0);
+    const retryCall = retry.slice(0, retryEnd);
     // Comments are stripped first: the call carries a comment that names the two
     // parameters, and a check the comment can satisfy would pass on a regression.
     const retryArguments = retryCall.replaceAll(/\/\/[^\n]*/gu, '');
@@ -809,10 +819,17 @@ describe('the retry invariant', () => {
     // The summariser's input: nothing between the result array and the recursion
     // may build, splice or mention a stub, so the array the summariser sees has
     // none — and no file content is summarised into prose.
-    const beforeRetry = source.slice(
-      source.indexOf('let newMessages: ChatMessage[] = [summaryMessage'),
-      retryIndex
+    const resultStart = source.indexOf(
+      'let newMessages: ChatMessage[] = [resultSummary, ...resultWindow];'
     );
+    // The anchor must EXIST: with `indexOf` returning -1, `slice(-1, n)` is the
+    // empty string and every "must not contain" check below passes on nothing.
+    // (This anchor used to name `[summaryMessage` after the code had moved on to
+    // `[resultSummary`, and the three checks ran on an empty string.)
+    expect(resultStart).not.toBe(-1);
+    expect(resultStart).toBeLessThan(retryIndex);
+    const beforeRetry = source.slice(resultStart, retryIndex);
+    expect(beforeRetry.length).toBeGreaterThan(500);
     for (const forbidden of [
       'buildRecentFilesMessage',
       'attachRecentFilesMessage',
