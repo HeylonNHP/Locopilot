@@ -15,7 +15,7 @@
 
 import type { DiagnosticTraceEntry } from '@/app/lib/debugLogger';
 
-import type { DistillResult } from './distill';
+import type { DistillResult } from './distillPlan';
 import type { RecentFilesPlan } from './recentFiles';
 import type { WindowTrimPlan } from './windowTrim';
 

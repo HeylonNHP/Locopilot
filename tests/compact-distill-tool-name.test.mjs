@@ -120,13 +120,13 @@ describe('a digest names the call it answers', () => {
   afterAll(() => fake.close());
 
   test('every output of a multi-call turn is labelled with its own tool', async () => {
-    const result = await distillToolMessages(
-      { baseUrl: fake.baseUrl },
-      multiCallHistory(),
-      32768,
-      MODEL,
-      3
-    );
+    const result = await distillToolMessages({
+      ctx: { baseUrl: fake.baseUrl },
+      model: MODEL,
+      numCtx: 32_768,
+      historyMessages: multiCallHistory(),
+      maxCalls: 3,
+    });
     expect(result.distilledCount).toBe(3);
 
     const expected = ['web_fetch', 'read_file', 'run_command'];

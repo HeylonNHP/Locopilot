@@ -14,14 +14,19 @@
 import { type ChatMessage, type ToolCall } from '@/services/llm';
 
 import {
+  computeDistillDigestMaxChars,
+  computeDistillInputMaxChars,
+  computeDistillNumPredict,
   computeDistillPrefillBudgetTokens,
   estimateDistillPrefillTokens,
 } from './budget';
 import {
   TOOL_DISTILL_CHAR_THRESHOLD,
   TOOL_DISTILL_INPUT_OVERHEAD_TOKENS,
+  TOOL_DISTILL_SYSTEM_PROMPT,
   TOOL_DISTILL_TRUNCATION_MARKER,
 } from './constants';
+import { toolCallName, UNKNOWN_TOOL_NAME } from './serialize';
 import { findOwningAssistantIndex } from './split';
 
 /**
@@ -409,4 +414,245 @@ export function planDistillation(
     .sort((left, right) => left - right);
 
   return { selected, skipped: candidates.length - selected.length, orphans };
+}
+
+/**
+ * The result of one {@link distillToolMessages} pass.
+ *
+ * `skippedCount` is what the call cap left verbatim — it is reported so the
+ * orchestrator can say so once, in a single progress line, instead of the
+ * caller having to diff the arrays to find out. `orphanCount` and `failedCount`
+ * are the OTHER reasons a large output stayed at full size, and they are kept
+ * apart on purpose: the cap did not choose to leave an orphan (distillation
+ * cannot legally touch it) and it did not choose to leave a failed row (the
+ * call was made and did not return).
+ *
+ * `distilledIndices` and `failedIndices` are the ROWS the pass dealt with, in
+ * the index space of the array it was given. They are what lets a SECOND pass
+ * over the same slice know which rows are already digests (`distilledIndices`)
+ * and which rows already had their one attempt (`failedIndices`) — so the
+ * extra spend can target exactly the rows that were NEVER attempted, instead
+ * of re-digesting a digest or burning another call on a known failure.
+ */
+export interface DistillResult {
+  messages: ChatMessage[];
+  /** How many messages were replaced with a digest. */
+  distilledCount: number;
+  /** How many eligible messages the call cap left verbatim. */
+  skippedCount: number;
+  /** How many oversized tool rows have no owning assistant row in this slice. */
+  orphanCount: number;
+  /** How many distillation calls threw and left their message verbatim. */
+  failedCount: number;
+  /** How many model calls this pass made, the failed ones included. */
+  attemptedCount: number;
+  /** How many eligible outputs the prefill budget could not pay for. */
+  budgetSkippedCount: number;
+  /** How many eligible outputs there were in this slice. */
+  candidateCount: number;
+  /** The prefill tokens this pass charged against the budget. */
+  prefillTokens: number;
+  /** The indices (in the input array) of the rows this pass replaced. */
+  distilledIndices: number[];
+  /** The indices (in the input array) of the rows whose call failed. */
+  failedIndices: number[];
+}
+
+/** The three window-scaled caps of one distillation pass. */
+export interface DistillLimits {
+  /** The share of the window one tool output may take (characters). */
+  inputMaxChars: number;
+  /** How large a digest may be (characters). */
+  digestMaxChars: number;
+  /** What the model may write (`num_predict`); it is what actually decides the digest's size. */
+  numPredict: number;
+}
+
+/**
+ * Three caps, all of them window-scaled:
+ *
+ * - the INPUT cap is the share of the window the tool output may take
+ *   (`computeDistillInputMaxChars`), bounded by an ABSOLUTE ceiling so a single
+ *   call can never exceed what a typical provider accepts;
+ * - the DIGEST cap is the model's output capacity and the window's share
+ *   (`computeDistillDigestMaxChars`) — it never cuts the model's answer;
+ * - the OUTPUT limit (`computeDistillNumPredict`) is what the model may write,
+ *   and it is what actually decides the digest's size.
+ */
+export function computeDistillLimits(numCtx: number): DistillLimits {
+  return {
+    inputMaxChars: computeDistillInputMaxChars(numCtx),
+    digestMaxChars: computeDistillDigestMaxChars(numCtx),
+    numPredict: computeDistillNumPredict(numCtx),
+  };
+}
+
+/**
+ * The name of the tool whose call the tool row at `index` answers.
+ *
+ * Planned rows always have an owner (orphans are never planned), so the fallback
+ * is defensive only.
+ */
+export function distillToolName(historyMessages: ChatMessage[], index: number): string {
+  const owningCall = findOwningToolCall(historyMessages, index);
+  return owningCall ? toolCallName(owningCall) : UNKNOWN_TOOL_NAME;
+}
+
+/** One distillation request: exactly what the distiller is sent, and what was cut to send it. */
+export interface DistillRequest {
+  toolName: string;
+  /**
+   * The exact pair the distiller receives: the system prompt, then the one user
+   * message carrying the tool output. Hoisted out of the request literal so the
+   * calibration sample can count EXACTLY what was sent.
+   */
+  messages: ChatMessage[];
+  /** The tool output's length before any cut (characters). */
+  totalChars: number;
+  /** How much of it was sent (characters). */
+  keptChars: number;
+  /** True when the input was cut to fit the per-call cap. */
+  truncated: boolean;
+}
+
+/**
+ * Builds the request for one tool output.
+ *
+ * Guards against sending massive tool outputs to the distillation LLM: a single
+ * output can exceed the window, causing the distillation call itself to fail
+ * with a 400 — and a failed call leaves the output VERBATIM, which is the thing
+ * the distillation existed to avoid.
+ */
+export function buildDistillRequest(
+  message: ChatMessage,
+  toolName: string,
+  inputMaxChars: number
+): DistillRequest {
+  const { text, keptChars, totalChars, truncated } = truncateToolOutputForDistillation(
+    message.content,
+    inputMaxChars
+  );
+  const input =
+    `Tool name: ${toolName}\n` +
+    `Tool output length: ${totalChars} chars${
+      truncated ? ` (only the first ${keptChars} chars were sent to the distiller)` : ''
+    }\n\n` +
+    `Tool output:\n${text}`;
+  return {
+    toolName,
+    messages: [
+      { role: 'system', content: TOOL_DISTILL_SYSTEM_PROMPT },
+      { role: 'user', content: input },
+    ],
+    totalChars,
+    keptChars,
+    truncated,
+  };
+}
+
+/**
+ * The tool row the digest replaces: a wrapper that says what the digest is made
+ * of, then the digest.
+ *
+ * - A digest that was cut is MARKED as cut. The summariser's prompt asks the
+ *   model to copy names "character for character" and to report a value that was
+ *   cut as cut — but a digest that simply stops mid-sentence carries no such
+ *   signal. An EMPTY digest is replaced by the (cut) original.
+ * - The wrapper also says, when the INPUT was cut, what the distiller never saw:
+ *   a digest of a PARTIAL output looks exactly like a digest of a whole one
+ *   otherwise, and the summariser would report the missing part as if it had
+ *   been in the history.
+ */
+export function buildDistilledMessage(
+  original: ChatMessage,
+  request: DistillRequest,
+  rawDigest: string,
+  digestMaxChars: number
+): ChatMessage {
+  const digest = cutWithMarker(rawDigest.length > 0 ? rawDigest : original.content, digestMaxChars);
+  const wrapper = `[Distilled tool output from ${request.toolName}; original length ${request.totalChars} chars${
+    request.truncated ? `; only the first ${request.keptChars} chars were distilled` : ''
+  }]`;
+  return { ...original, content: `${wrapper}\n${digest}` };
+}
+
+/** What happened to one row the pass sent a call for. */
+export type DistillOutcome =
+  | { index: number; kind: 'digest'; message: ChatMessage }
+  | { index: number; kind: 'failed'; reason: string };
+
+/**
+ * Assembles the pass's result from its outcomes (in row order).
+ *
+ * A row without an outcome passes through verbatim. A DIGESTED row is remembered
+ * so a second pass over the same slice never distils a digest again (a digest can
+ * be longer than the output it replaced, so re-distilling it would make the
+ * history BIGGER); a FAILED row is remembered as ATTEMPTED so a second pass never
+ * spends another call on a failure that already happened.
+ */
+export function assembleDistillResult(
+  historyMessages: ChatMessage[],
+  plan: DistillPassPlan,
+  outcomes: readonly DistillOutcome[]
+): DistillResult {
+  const byIndex = new Map(outcomes.map((outcome) => [outcome.index, outcome]));
+  const messages: ChatMessage[] = [];
+  for (const [index, message] of historyMessages.entries()) {
+    if (!message) {
+      continue;
+    }
+    const outcome = byIndex.get(index);
+    messages.push(outcome?.kind === 'digest' ? outcome.message : message);
+  }
+  const distilledIndices = outcomes
+    .filter((outcome) => outcome.kind === 'digest')
+    .map((outcome) => outcome.index);
+  const failedIndices = outcomes
+    .filter((outcome) => outcome.kind === 'failed')
+    .map((outcome) => outcome.index);
+  return {
+    messages,
+    distilledCount: distilledIndices.length,
+    skippedCount: plan.capSkipped,
+    orphanCount: plan.orphanCount,
+    failedCount: failedIndices.length,
+    attemptedCount: outcomes.length,
+    budgetSkippedCount: plan.budgetSkipped,
+    candidateCount: plan.candidateCount,
+    prefillTokens: plan.prefillTokens,
+    distilledIndices,
+    failedIndices,
+  };
+}
+
+/**
+ * The notices after a pass: the failure line (with the REASONS named) and the
+ * budget line.
+ *
+ * WHY the reason is named: a failed call leaves the tool output VERBATIM — the
+ * very thing the distillation existed to prevent — so a progress line that only
+ * said "N calls failed" left the user (and the compaction's own log) unable to
+ * tell a rejected request from a timeout. The compaction CONTINUES either way: an
+ * undistilled output costs tokens, a lost compaction costs the conversation.
+ */
+export function formatDistillPassNotices(
+  outcomes: readonly DistillOutcome[],
+  budgetSkipped: number
+): string[] {
+  const lines: string[] = [];
+  const failed = outcomes.filter((outcome) => outcome.kind === 'failed');
+  if (failed.length > 0) {
+    const reasons = [...new Set(failed.map((outcome) => outcome.reason))].join('; ');
+    lines.push(
+      `${failed.length} of ${outcomes.length} tool distillation call(s) failed (${reasons}) — ` +
+        `those tool output(s) stay verbatim and the compaction continues.`
+    );
+  }
+  if (budgetSkipped > 0) {
+    lines.push(
+      `${budgetSkipped} oversized tool output(s) were left verbatim: the compaction's ` +
+        `distillation prefill budget ran out.`
+    );
+  }
+  return lines;
 }

@@ -1145,18 +1145,13 @@ describe('the extra distillation spend plans the leftovers', () => {
     // is not retried here: the provider that just refused the request will
     // refuse it again, and the extra spend may make up to 32 calls.
     const history = distillFailureFixture();
-    const first = await distillToolMessages(
-      REFUSING_CTX,
-      history,
-      8192,
-      MODEL,
-      2,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined
-    );
+    const first = await distillToolMessages({
+      ctx: REFUSING_CTX,
+      model: MODEL,
+      numCtx: 8192,
+      historyMessages: history,
+      maxCalls: 2,
+    });
     expect(first.failedCount).toBe(2);
     expect(first.failedIndices).toStrictEqual([1, 4]);
     expect(first.distilledIndices).toStrictEqual([]);
@@ -1319,9 +1314,14 @@ describe('a failed distillation does not cost the whole compaction', () => {
   test('a failing distillation call keeps its message verbatim, and the pass goes on', async () => {
     const history = distillFailureFixture();
     const progress = [];
-    const result = await distillToolMessages(REFUSING_CTX, history, 8192, MODEL, 2, (message) =>
-      progress.push(message)
-    );
+    const result = await distillToolMessages({
+      ctx: REFUSING_CTX,
+      model: MODEL,
+      numCtx: 8192,
+      historyMessages: history,
+      maxCalls: 2,
+      onProgress: (message) => progress.push(message),
+    });
     // Two candidates, two failed calls: the loop did not stop after the first
     // throw, and nothing was replaced.
     expect(result.failedCount).toBe(2);
@@ -1348,15 +1348,14 @@ describe('a failed distillation does not cost the whole compaction', () => {
     const controller = new AbortController();
     controller.abort();
     await expect(
-      distillToolMessages(
-        REFUSING_CTX,
-        distillFailureFixture(),
-        8192,
-        MODEL,
-        2,
-        undefined,
-        controller.signal
-      )
+      distillToolMessages({
+        ctx: REFUSING_CTX,
+        model: MODEL,
+        numCtx: 8192,
+        historyMessages: distillFailureFixture(),
+        maxCalls: 2,
+        signal: controller.signal,
+      })
     ).rejects.toThrow();
   });
 
@@ -1367,18 +1366,15 @@ describe('a failed distillation does not cost the whole compaction', () => {
     const history = distillFailureFixture();
     const budget = { totalTokens: 1, usedTokens: 0 };
     const progress = [];
-    const result = await distillToolMessages(
-      REFUSING_CTX,
-      history,
-      8192,
-      MODEL,
-      2,
-      (message) => progress.push(message),
-      undefined,
-      undefined,
-      undefined,
-      budget
-    );
+    const result = await distillToolMessages({
+      ctx: REFUSING_CTX,
+      model: MODEL,
+      numCtx: 8192,
+      historyMessages: history,
+      maxCalls: 2,
+      onProgress: (message) => progress.push(message),
+      budget,
+    });
     expect(result.distilledCount).toBe(0);
     expect(result.attemptedCount).toBe(0);
     expect(result.budgetSkippedCount).toBe(2);

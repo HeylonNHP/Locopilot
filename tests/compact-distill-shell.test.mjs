@@ -136,7 +136,15 @@ describe('a mixed pass: one digest, one failure, one empty digest', () => {
           }
         }
       },
-      (ctx, log) => distillToolMessages(ctx, history, NUM_CTX, MODEL, 3, (line) => log.push(line))
+      (ctx, log) =>
+        distillToolMessages({
+          ctx,
+          model: MODEL,
+          numCtx: NUM_CTX,
+          historyMessages: history,
+          maxCalls: 3,
+          onProgress: (line) => log.push(line),
+        })
     );
     expect(error).toBeUndefined();
     expect(fake.unexpected).toStrictEqual([]);
@@ -225,7 +233,15 @@ describe('an input larger than the window allows', () => {
     const history = threeOutputs([6000, 100, 100]);
     const { fake, progress, value, error } = await scenario(
       () => ({ text: 'SHORT DIGEST' }),
-      (ctx, log) => distillToolMessages(ctx, history, NUM_CTX, MODEL, 1, (line) => log.push(line))
+      (ctx, log) =>
+        distillToolMessages({
+          ctx,
+          model: MODEL,
+          numCtx: NUM_CTX,
+          historyMessages: history,
+          maxCalls: 1,
+          onProgress: (line) => log.push(line),
+        })
     );
     expect(error).toBeUndefined();
     expect(fake.requests).toHaveLength(1);
@@ -256,21 +272,15 @@ describe('a prefill budget that pays for one call only', () => {
     const { fake, progress, value, error } = await scenario(
       () => ({ text: 'DIGEST' }),
       (ctx, log) =>
-        distillToolMessages(
+        distillToolMessages({
           ctx,
-          history,
-          NUM_CTX,
-          MODEL,
-          3,
-          (line) => log.push(line),
-          undefined,
-          undefined,
-          undefined,
-          {
-            totalTokens: 9000,
-            usedTokens: 0,
-          }
-        )
+          model: MODEL,
+          numCtx: NUM_CTX,
+          historyMessages: history,
+          maxCalls: 3,
+          onProgress: (line) => log.push(line),
+          budget: { totalTokens: 9000, usedTokens: 0 },
+        })
     );
     expect(error).toBeUndefined();
     expect(fake.requests).toHaveLength(1);

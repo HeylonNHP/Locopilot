@@ -690,7 +690,7 @@ describe('the leftover distillation budget is spent before the re-summary', () =
     );
     const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
     expect(extraIndex).not.toBe(-1);
-    const extraEnd = source.indexOf('\n    );', extraIndex);
+    const extraEnd = source.indexOf('\n    });', extraIndex);
     expect(extraEnd).toBeGreaterThan(extraIndex);
     const extraCall = source.slice(extraIndex, extraEnd);
     // The budget object is handed to the extra pass…
@@ -710,7 +710,7 @@ describe('the leftover distillation budget is spent before the re-summary', () =
     );
     const extraIndex = source.indexOf('const extraDistill = await distillToolMessages(');
     expect(extraIndex).not.toBe(-1);
-    const extraEnd = source.indexOf('\n    );', extraIndex);
+    const extraEnd = source.indexOf('\n    });', extraIndex);
     expect(extraEnd).toBeGreaterThan(extraIndex);
     const extraCall = source.slice(extraIndex, extraEnd);
     expect(extraCall).toMatch(/handledRows/u);

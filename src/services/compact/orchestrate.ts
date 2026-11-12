@@ -297,18 +297,18 @@ async function compactHistoryPinned(
   // at half a million tokens each is several windows' worth of prefill
   // inside one compaction.
   const distillBudget = createDistillBudget(numCtx);
-  const recentDistill = await distillToolMessages(
+  const recentDistill = await distillToolMessages({
     ctx,
-    historySplit.preservedRecentMessages,
-    numCtx,
     model,
-    distillCallCap,
+    numCtx,
+    historyMessages: historySplit.preservedRecentMessages,
+    maxCalls: distillCallCap,
     onProgress,
     signal,
     reasoningEffort,
     onTps,
-    distillBudget
-  );
+    budget: distillBudget,
+  });
   distillBudget.usedTokens += recentDistill.prefillTokens;
   const preparedRecentMessages = recentDistill.messages;
 
@@ -319,18 +319,18 @@ async function compactHistoryPinned(
   // still cost a model call (and its prefill), so it spends the cap. Counting
   // only the successes would let a flaky provider push the compaction past
   // its call budget.
-  const historyDistill = await distillToolMessages(
+  const historyDistill = await distillToolMessages({
     ctx,
-    historySplit.messagesToSummarise,
-    numCtx,
     model,
-    Math.max(0, distillCallCap - recentDistill.attemptedCount),
+    numCtx,
+    historyMessages: historySplit.messagesToSummarise,
+    maxCalls: Math.max(0, distillCallCap - recentDistill.attemptedCount),
     onProgress,
     signal,
     reasoningEffort,
     onTps,
-    distillBudget
-  );
+    budget: distillBudget,
+  });
   distillBudget.usedTokens += historyDistill.prefillTokens;
   const preparedHistoryMessages = historyDistill.messages;
 
@@ -615,19 +615,19 @@ async function compactHistoryPinned(
     const handledRows = new Set([...digestedRows, ...failedRows]);
 
     const leftoverBudgetTokens = remainingDistillBudgetTokens(distillBudget);
-    const extraDistill = await distillToolMessages(
+    const extraDistill = await distillToolMessages({
       ctx,
-      resultWindow,
-      numCtx,
       model,
-      TOOL_DISTILL_EXTRA_CALLS_MAX,
+      numCtx,
+      historyMessages: resultWindow,
+      maxCalls: TOOL_DISTILL_EXTRA_CALLS_MAX,
       onProgress,
       signal,
       reasoningEffort,
       onTps,
-      distillBudget,
-      handledRows
-    );
+      budget: distillBudget,
+      skipIndices: handledRows,
+    });
     // The SAME budget: the extra calls are charged against it, so the total
     // prefill of this compaction never exceeds
     // `computeDistillPrefillBudgetTokens(numCtx)`.
