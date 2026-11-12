@@ -15,7 +15,7 @@
 
 import type { ReasoningEffort } from '@/types/chatConfig';
 
-import { APPROX_CHARS_PER_TOKEN, TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
+import { TPS_STATUS_MIN_INTERVAL_MS } from '@/constants';
 import {
   type ChatMessage,
   getLlmTurnStats,
@@ -215,6 +215,14 @@ export interface DistillCallPlan {
   prefillTokens: number;
 }
 
+/** Largest output first; the same size is ordered by index, so the plan is deterministic. */
+function largestFirst(
+  left: { index: number; length: number },
+  right: { index: number; length: number }
+): number {
+  return right.length - left.length || left.index - right.index;
+}
+
 /**
  * Turns the selected candidates into the calls that can be AFFORDED.
  *
@@ -241,7 +249,7 @@ export function planDistillCalls(
 ): DistillCallPlan {
   const candidates = selectedIndices
     .map((index) => ({ index, length: historyMessages[index]?.content?.length ?? 0 }))
-    .sort((left, right) => right.length - left.length || left.index - right.index);
+    .sort(largestFirst);
 
   let remaining = budgetTokens;
   let budgetSkipped = 0;
@@ -357,35 +365,6 @@ function describeDistillFailure(err: unknown): string {
 }
 
 /**
- * The token count of the distillation request, for the calibration sample.
- *
- * WHY the fallback: tiktoken's WASM throws `RuntimeError: unreachable` above
- * about 524 288 characters, so a LARGE distillation request — which is
- * exactly what the scaled input cap produces — cannot be counted by the
- * tokenizer. The count used to be computed as an ARGUMENT of the calibration
- * call, so the throw skipped the whole sample: the calibration could never
- * learn from a large distillation request at all. The heuristic fallback
- * keeps the sample, and it is the same four-characters-per-token estimate
- * the tokenizer itself falls back to.
- *
- * @param messages - the request's messages.
- * @param model    - the model whose encoder measures them.
- */
-function countDistillRequestTokens(messages: ChatMessage[], model: string): number {
-  try {
-    return countRawMessagesTokens(messages, model);
-  } catch {
-    let total = 0;
-    for (const message of messages) {
-      total += 4;
-      total += Math.ceil(message.role.length / APPROX_CHARS_PER_TOKEN);
-      total += Math.ceil(message.content.length / APPROX_CHARS_PER_TOKEN);
-    }
-    return messages.length > 0 ? total + 2 : 0;
-  }
-}
-
-/**
  * The result of one {@link distillToolMessages} pass.
  *
  * `skippedCount` is what the call cap left verbatim — it is reported so the
@@ -491,7 +470,7 @@ export function planDistillation(
     candidates.push({ index, length });
   }
 
-  candidates.sort((left, right) => right.length - left.length || left.index - right.index);
+  candidates.sort(largestFirst);
 
   const selected = candidates
     .slice(0, limit)
@@ -609,15 +588,15 @@ export async function distillToolMessages(
     // A single tool output can exceed numCtx, causing the distillation call
     // itself to fail with a 400 — and a failed call leaves the output
     // VERBATIM, which is the thing the distillation existed to avoid.
-    const truncation = truncateToolOutputForDistillation(message.content, inputMaxChars);
-    const distillInputContent = truncation.text;
-    const keptChars = truncation.keptChars;
-    const totalChars = truncation.totalChars;
+    const { text: distillInputContent, keptChars, totalChars, truncated } = truncateToolOutputForDistillation(
+      message.content,
+      inputMaxChars
+    );
 
     const input =
       `Tool name: ${toolName}\n` +
       `Tool output length: ${totalChars} chars${
-        truncation.truncated
+        truncated
           ? ` (only the first ${keptChars} chars were sent to the distiller)`
           : ''
       }\n\n` +
@@ -711,7 +690,11 @@ export async function distillToolMessages(
         recordTokenCalibrationSample({
           model,
           provider: ctx.provider ?? 'ollama',
-          estimatedTokens: countDistillRequestTokens(distillRequestMessages, model),
+          // The request is capped at `computeDistillInputMaxChars` (at most
+          // 112 000 characters), far below any size the counter has failed at
+          // (see CONFIRMATIONS.md C-016), and the surrounding `try` keeps the
+          // sample best-effort anyway.
+          estimatedTokens: countRawMessagesTokens(distillRequestMessages, model),
           authoritativeTokens: stats.promptEvalCount,
           overheadTokens: 0,
           hasImages: false,
@@ -737,7 +720,7 @@ export async function distillToolMessages(
     // exactly like a digest of a whole one otherwise, and the summariser
     // would report the missing part as if it had been in the history.
     const wrapper = `[Distilled tool output from ${toolName}; original length ${totalChars} chars${
-      truncation.truncated ? `; only the first ${keptChars} chars were distilled` : ''
+      truncated ? `; only the first ${keptChars} chars were distilled` : ''
     }]`;
 
     distilledMessages.push({
