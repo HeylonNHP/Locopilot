@@ -10,9 +10,7 @@
  * no stage ever needs the whole conversation to fit into one context window.
  */
 
-import type { ReasoningEffort } from '@/types/chatConfig';
-
-import { type ChatMessage, type LlmRequestContext } from '@/services/llm';
+import { type ChatMessage } from '@/services/llm';
 import { countCalibratedTextTokens, countMessagesTokens } from '@/services/tokenizer';
 
 import type { CompactionLlmCall, ToolNameMap } from './types';
@@ -61,6 +59,25 @@ const SERIALIZED_BLOCK_SEPARATOR = '\n\n';
  * one — and it never falls below the floor that keeps a tool result legible.
  */
 const MIN_TOOL_RESULT_CHARS = 2000;
+
+/**
+ * The calibrated token count of a slice of history AS THE SUMMARISER RECEIVES IT:
+ * serialised with the tool-aware serialiser, in the `summarise` class.
+ *
+ * ONE helper for the fit test, the chunk boundaries and each chunk's summary
+ * budget, so they all measure the same text the same way.
+ */
+function countSerializedHistoryTokens(
+  messages: ChatMessage[],
+  options: SerializeHistoryOptions,
+  model: string
+): number {
+  return countCalibratedTextTokens(
+    serializeHistoryForSummaryText(messages, options),
+    model,
+    'summarise'
+  );
+}
 
 /**
  * Estimates how many tokens one message contributes to the SERIALISED history
@@ -162,21 +179,14 @@ export function planSummarisationPrompt(
     };
   }
 
-  const shortPromptTokens = countRetryPromptTokens(
-    {
-      targetSummaryTokens: params.targetSummaryTokens,
-      minSummaryTokens: params.minSummaryTokens,
-      maxSummaryTokens: params.maxSummaryTokens,
-      numCtx: params.numCtx,
-      // The focus note is part of the short prompt too (it is rule 6), so it is
-      // part of what has be measured. Measuring a focus-free prompt here
-      // understated the request by the size of the note — measured at numCtx
-      // 2048: 557 tokens without the note against 851 with it, a ~24 %
-      // overstatement of the history budget that every chunk then inherited.
-      ...(params.focus === undefined ? {} : { focus: params.focus }),
-    },
-    model
-  );
+  // The short prompt is measured with the SAME parameters that will be sent,
+  // INCLUDING the focus note (it is rule 6): measuring a focus-free prompt here
+  // understated the request by the size of the note — measured at numCtx 2048:
+  // 557 tokens without the note against 851 with it, a ~24 % overstatement of
+  // the history budget that every chunk then inherited. The short prompt reads
+  // only the target, min, max, window and focus, so the full prompt's
+  // parameters are passed as they are.
+  const shortPromptTokens = countRetryPromptTokens(params, model);
   const shortHistoryBudget = computeEffectiveInputBudget(safeInputBudget, shortPromptTokens);
   if (shortHistoryBudget >= MIN_HISTORY_ALLOWANCE_TOKENS) {
     return {
@@ -192,6 +202,38 @@ export function planSummarisationPrompt(
   return null;
 }
 
+/** The inputs of {@link produceConversationSummary}. */
+export interface ConversationSummaryParams extends CompactionLlmCall {
+  /** >1 when the caller wants stronger compression (the retry pass). */
+  aggressiveFactor: number;
+  /** The older-history slice to summarise (its large tool outputs already distilled). */
+  historyMessages: ChatMessage[];
+  /**
+   * Tool-call id → tool name, built from the FULL conversation. A tool result can
+   * outlive the assistant row that issued it, so the map must not be derived from
+   * the slice alone.
+   */
+  toolNames?: ToolNameMap | undefined;
+  /**
+   * Whether secrets are redacted out of the projected arguments AND the tool
+   * results. Defaults to true.
+   */
+  redactSecrets?: boolean | undefined;
+  /**
+   * How many tokens of NEWER turns are preserved OUTSIDE this summary (their
+   * large tool outputs arrive as distilled digests). `undefined` when the caller
+   * does not know; the prompt then does not claim that the summary is the only
+   * record of the older turns.
+   */
+  preservedRecentTokens?: number | undefined;
+  /**
+   * The user's `/compact` note about what to keep. It reaches every prompt the
+   * pipeline builds — the single pass, each chunk and every reduction round —
+   * because a note that only shaped one chunk would be diluted away by the merge.
+   */
+  focus?: string | undefined;
+}
+
 /**
  * Produces the final conversation summary from an older-history slice.
  *
@@ -199,38 +241,24 @@ export function planSummarisationPrompt(
  * request is used (the common case). Otherwise the slice is split into bounded
  * chunks which are summarised independently and then reduced hierarchically.
  *
- * @param toolNames - Tool-call id → tool name, built from the FULL
- *                    conversation. A tool result can outlive the assistant row
- *                    that issued it, so the map must not be derived from the
- *                    slice alone.
- * @param redactSecrets - Whether secrets are redacted out of the projected
- *                        arguments AND the tool results. Defaults to true.
- * @param preservedRecentTokens - How many tokens of NEWER turns are preserved
- *                                OUTSIDE this summary (their large tool
- *                                outputs arrive as distilled digests).
- *                                `undefined` when the caller does not know;
- *                                the prompt then does not claim that the
- *                                summary is the only record of the older turns.
- * @param focus - The user's `/compact` note about what to keep. It reaches
- *                every prompt this function builds — the single pass, each
- *                chunk and every reduction round — because a note that only
- *                shaped one chunk would be diluted away by the merge.
+ * @see ConversationSummaryParams for what each input means.
  */
-export async function produceConversationSummary(
-  ctx: LlmRequestContext,
-  model: string,
-  numCtx: number,
-  aggressiveFactor: number,
-  preparedHistoryMessages: ChatMessage[],
-  onProgress?: (message: string) => void,
-  signal?: AbortSignal,
-  reasoningEffort?: ReasoningEffort,
-  onTps?: (tps: number) => void,
-  toolNames?: ToolNameMap | undefined,
-  redactSecrets?: boolean | undefined,
-  preservedRecentTokens?: number | undefined,
-  focus?: string | undefined
-): Promise<string> {
+export async function produceConversationSummary(params: ConversationSummaryParams): Promise<string> {
+  const {
+    ctx,
+    model,
+    numCtx,
+    aggressiveFactor,
+    historyMessages,
+    onProgress,
+    signal,
+    reasoningEffort,
+    onTps,
+    toolNames,
+    redactSecrets,
+    preservedRecentTokens,
+    focus,
+  } = params;
   const safeInputBudget = computeSafeInputBudget(numCtx);
 
   // The tool result is the only unbounded part of the serialised input, so it
@@ -256,10 +284,10 @@ export async function produceConversationSummary(
   // body is megabytes of source code the summariser never sees), so sizing
   // the summary against it asks for a summary of something the model was
   // never given.
-  const serializedEstimate = countCalibratedTextTokens(
-    serializeHistoryForSummaryText(preparedHistoryMessages, serializeOptions),
-    model,
-    'summarise'
+  const serializedEstimate = countSerializedHistoryTokens(
+    historyMessages,
+    serializeOptions,
+    model
   );
 
   const singlePassBudget = computeSummaryBudget(numCtx, aggressiveFactor, serializedEstimate);
@@ -300,28 +328,34 @@ export async function produceConversationSummary(
   const chunkHistoryBudget = plan.chunkHistoryBudget;
   const promptMode = plan.mode;
 
+  // What every summarisation request of this pass shares. `ctx`, `signal`,
+  // `reasoningEffort` and `onTps` ride along from the caller's object.
+  const chunkBase = {
+    ctx,
+    model,
+    numCtx,
+    onProgress,
+    signal,
+    reasoningEffort,
+    onTps,
+    ...(preservedRecentTokens === undefined ? {} : { preservedRecentTokens }),
+    promptMode,
+    ...(toolNames ? { toolNames } : {}),
+    redactSecrets: redactSecrets ?? true,
+    maxToolResultChars,
+    ...(focus === undefined ? {} : { focus }),
+  };
+
   if (serializedEstimate <= historyBudget) {
     return summariseChunk({
-      ctx,
-      model,
-      numCtx,
-      historyMessages: preparedHistoryMessages,
+      ...chunkBase,
+      historyMessages,
       budget: singlePassBudget,
-      ...(preservedRecentTokens === undefined ? {} : { preservedRecentTokens }),
-      promptMode,
-      ...(onProgress ? { onProgress } : {}),
-      ...(signal ? { signal } : {}),
-      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-      ...(onTps ? { onTps } : {}),
-      ...(toolNames ? { toolNames } : {}),
-      redactSecrets: redactSecrets ?? true,
-      maxToolResultChars,
-      ...(focus === undefined ? {} : { focus }),
     });
   }
 
   const chunks = splitHistoryIntoChunks(
-    preparedHistoryMessages,
+    historyMessages,
     chunkHistoryBudget,
     model,
     (message) => estimateSerializedMessageTokens(message, serializeOptions, model)
@@ -339,46 +373,25 @@ export async function produceConversationSummary(
     }
     // The chunk's budget is sized against the SERIALISED chunk — the same
     // number the chunk boundary was drawn with.
-    const chunkSerializedEstimate = countCalibratedTextTokens(
-      serializeHistoryForSummaryText(chunk, serializeOptions),
-      model,
-      'summarise'
-    );
+    const chunkSerializedEstimate = countSerializedHistoryTokens(chunk, serializeOptions, model);
     const chunkBudget = computeSummaryBudget(numCtx, aggressiveFactor, chunkSerializedEstimate);
     const label = `chunk ${index + 1}/${chunks.length}`;
     const summary = await summariseChunk({
-      ctx,
-      model,
-      numCtx,
+      ...chunkBase,
       historyMessages: chunk,
       budget: chunkBudget,
-      ...(preservedRecentTokens === undefined ? {} : { preservedRecentTokens }),
-      promptMode,
       // The chunker knows how many slices there are: the prompt then says
       // that THIS request covers one slice and that the sibling slices are
       // summarised separately.
       chunkCount: chunks.length,
       chunkIndex: index + 1,
       label,
-      ...(onProgress ? { onProgress } : {}),
-      ...(signal ? { signal } : {}),
-      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-      ...(onTps ? { onTps } : {}),
-      ...(toolNames ? { toolNames } : {}),
-      redactSecrets: redactSecrets ?? true,
-      maxToolResultChars,
-      ...(focus === undefined ? {} : { focus }),
     });
     chunkSummaries.push(summary);
   }
 
   onProgress?.('Reducing chunk summaries...');
-  return reduceSummaryGroups(
-    { ctx, model, numCtx, onProgress, signal, reasoningEffort, onTps },
-    aggressiveFactor,
-    chunkSummaries,
-    focus
-  );
+  return reduceSummaryGroups(params, aggressiveFactor, chunkSummaries, focus);
 }
 
 

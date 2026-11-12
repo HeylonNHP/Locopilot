@@ -240,13 +240,13 @@ describe('the prompt mode at a small context window', () => {
     ];
     // The context is never reached: the budget check fails BEFORE any model
     // call, so this test spends no quota.
-    const rejection = produceConversationSummary(
-      { baseUrl: 'http://127.0.0.1:1/never-called' },
-      MODEL,
-      512,
-      1,
-      history
-    );
+    const rejection = produceConversationSummary({
+      ctx: { baseUrl: 'http://127.0.0.1:1/never-called' },
+      model: MODEL,
+      numCtx: 512,
+      aggressiveFactor: 1,
+      historyMessages: history,
+    });
     await expect(rejection).rejects.toThrow(/too small to compact/i);
     // the error names the context size
     await expect(rejection).rejects.toThrow(/512/);

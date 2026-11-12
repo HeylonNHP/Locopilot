@@ -198,7 +198,9 @@ describe('the wiring', () => {
     // The note has to reach `produceConversationSummary`, and the retry recursion
     // has to carry it too — the retry re-summarises an already-compacted array,
     // which is exactly where a note would otherwise be lost.
-    const forwardIndex = source.indexOf('historySplit.preservedRecentTokens,\n    focus');
+    const forwardIndex = source.indexOf(
+      'preservedRecentTokens: historySplit.preservedRecentTokens,\n    focus,'
+    );
     expect(forwardIndex).not.toBe(-1);
     const retryIndex = source.indexOf('const retryResult = await compactHistory(');
     expect(retryIndex).not.toBe(-1);

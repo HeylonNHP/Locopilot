@@ -85,23 +85,19 @@ const SMALL_HISTORY = [
   { role: 'assistant', content: 'Renamed it in two files and updated the three call sites.' },
 ];
 
-/** The arguments of `produceConversationSummary` after `ctx` and `progress`. */
+/** Run `produceConversationSummary` for a history, collecting progress lines into `progress`. */
 function summarise(ctx, progress, history, numCtx, extra = {}) {
-  return produceConversationSummary(
+  return produceConversationSummary({
     ctx,
-    MODEL,
+    model: MODEL,
     numCtx,
-    1,
-    history,
-    (message) => progress.push(message),
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    true,
-    extra.preservedRecentTokens,
-    extra.focus
-  );
+    aggressiveFactor: 1,
+    historyMessages: history,
+    onProgress: (message) => progress.push(message),
+    redactSecrets: true,
+    preservedRecentTokens: extra.preservedRecentTokens,
+    focus: extra.focus,
+  });
 }
 
 describe('a history that fits is summarised in one pass', () => {

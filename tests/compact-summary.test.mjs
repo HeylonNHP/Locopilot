@@ -375,7 +375,9 @@ describe('the summary budget', () => {
     expect(body).toMatch(
       /computeSummaryBudget\(\s*numCtx,\s*aggressiveFactor,\s*chunkSerializedEstimate\s*\)/
     );
-    expect(body).not.toMatch(/countMessagesTokens\(preparedHistoryMessages/);
+    // The RAW count of the history is never what sizes the summary.
+    expect(body).not.toMatch(/countMessagesTokens\(historyMessages/);
+    expect(body).toMatch(/countSerializedHistoryTokens\(\s*historyMessages,/);
   });
 
   test('the serialised estimate is far smaller than the raw one for file writes', () => {

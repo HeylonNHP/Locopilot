@@ -362,21 +362,21 @@ async function compactHistoryPinned(
   // ("the count is measured before tool outputs are distilled, so it can
   // overstate the window") and does not claim the preserved turns are
   // verbatim — their large tool outputs arrive as digests.
-  const summary = await produceConversationSummary(
+  const summary = await produceConversationSummary({
     ctx,
     model,
     numCtx,
     aggressiveFactor,
-    preparedHistoryMessages,
+    historyMessages: preparedHistoryMessages,
     onProgress,
     signal,
     reasoningEffort,
     onTps,
     toolNames,
     redactSecrets,
-    historySplit.preservedRecentTokens,
-    focus
-  );
+    preservedRecentTokens: historySplit.preservedRecentTokens,
+    focus,
+  });
 
   // Rebuild the message history: a single assistant message holds the preamble
   // + summary, followed by the distilled recent messages.
