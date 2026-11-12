@@ -578,7 +578,7 @@ export const RECENT_FILES_MAX_READ_BYTES = 16_384;
  * What the stub's message framing costs, charged before any content.
  *
  * WHY a constant rather than a measurement: the budget is computed BEFORE the
- * stub exists (`computeRecentFilesBudget`), so the framing has to be charged
+ * stub exists (`computeBudgetForResult`), so the framing has to be charged
  * from a fixed number. It covers the tokenizer's per-message base (4 tokens)
  * and the per-array overhead (2 tokens), and the slack is deliberate — it is
  * what keeps the stub from pushing the result back to (or past) the size of

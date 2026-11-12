@@ -15,7 +15,7 @@
  * 1. THE STUB HAS TO FIT. It is paid for out of the context a compaction just
  *    freed, so the cap per file, the cap on the whole stub, its share of the
  *    window and the room left below the acceptance boundary all have to hold —
- *    and `computeRecentFilesBudget` must never return a number that would make
+ *    and `computeBudgetForResult` must never return a number that would make
  *    the compacted result no smaller than the history it replaced (that trips
  *    `evaluateCompactionSizes`' `aborted` verdict and throws).
  * 2. THE CONTENT HAS TO BE WHOLE OR ABSENT. A `read_file` shows the model the
@@ -66,7 +66,6 @@ import {
 import {
   attachRecentFilesMessage,
   buildRecentFilesMessage,
-  computeRecentFilesBudget,
   formatRelativeAge,
   pathsNamedInToolCalls,
   readRecentFileFromDisk,
@@ -74,6 +73,7 @@ import {
   sortFilesForExcerpts,
 } from '../src/services/compact/recentFiles.ts';
 import { countMessageTokens, countTextTokens } from '../src/services/tokenizer.ts';
+import { computeRecentFilesBudget } from './helpers/recentFilesBudget.mjs';
 
 const MODEL = 'gpt-4o';
 /** A fixed "now" so ages are exact rather than dependent on the clock. */

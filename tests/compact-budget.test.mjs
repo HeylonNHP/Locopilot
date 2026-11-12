@@ -83,7 +83,6 @@ import {
   planDistillPass,
   truncateToolOutputForDistillation,
 } from '../src/services/compact/distill.ts';
-import { computeRecentFilesBudget } from '../src/services/compact/recentFiles.ts';
 import {
   batchReductionParts,
   concatenateReductionParts,
@@ -96,6 +95,7 @@ import {
 } from '../src/services/compact/summarize.ts';
 import { countMessageTokens, countTextTokens } from '../src/services/tokenizer.ts';
 import { forwardableReasoningEffort } from '../src/types/chatConfig.ts';
+import { computeRecentFilesBudget } from './helpers/recentFilesBudget.mjs';
 
 const MODEL = 'gpt-4o';
 

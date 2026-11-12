@@ -18,7 +18,7 @@
  * 1. IT MUST FIT. The stub is paid for out of the context the compaction just
  *    freed, so it can only ever be a fixed fraction of the window and of the
  *    room left below the acceptance boundary
- *    (see {@link computeRecentFilesBudget}) — and it must never make the
+ *    (see {@link computeBudgetForResult}) — and it must never make the
  *    result no smaller than the history it replaced, or the compaction would
  *    abort on its own `new >= old` guard.
  * 2. IT MUST BE WHOLE OR NOTHING. A `read_file` hands the model the whole
@@ -83,7 +83,7 @@ export type RecentFileReader = (absPath: string) => Promise<string | null>;
 export interface RecentFilesPlanInput {
   /** The rows to consider, newest first (as `loadRecentFiles` returns them). */
   files: RecentFileRow[];
-  /** The most tokens the stub's TEXT may occupy — see {@link computeRecentFilesBudget}. */
+  /** The most tokens the stub's TEXT may occupy — see {@link computeBudgetForResult}. */
   budgetTokens: number;
   /** The model whose tokenizer measures the stub. */
   model: string;
@@ -340,11 +340,14 @@ export function selectRecentFiles(files: readonly RecentFileRow[]): RecentFileRo
       lastSeenAt: isFiniteNumber(row.lastSeenAt) ? row.lastSeenAt : 0,
     });
   }
-  valid.sort((left, right) => {
-    if (right.lastSeenAt !== left.lastSeenAt) return right.lastSeenAt - left.lastSeenAt;
-    return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
-  });
+  valid.sort(byRecencyThenPath);
   return valid.slice(0, RECENT_FILES_LOAD_LIMIT);
+}
+
+/** Newest first; the same millisecond is ordered by path, so the order is deterministic. */
+function byRecencyThenPath(left: RecentFileRow, right: RecentFileRow): number {
+  if (right.lastSeenAt !== left.lastSeenAt) return right.lastSeenAt - left.lastSeenAt;
+  return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
 }
 
 /**
@@ -366,8 +369,7 @@ export function sortFilesForExcerpts(files: readonly RecentFileRow[]): RecentFil
     const leftTier = tier(left);
     const rightTier = tier(right);
     if (leftTier !== rightTier) return leftTier - rightTier;
-    if (right.lastSeenAt !== left.lastSeenAt) return right.lastSeenAt - left.lastSeenAt;
-    return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+    return byRecencyThenPath(left, right);
   });
 }
 
@@ -428,17 +430,14 @@ function languageFor(absPath: string): string {
 }
 
 /**
- * How many lines a body carries (a trailing newline does not count, and a
- * trailing truncation marker is not a line).
+ * How many lines a body carries (a trailing newline does not count).
  *
- * WHY the marker is stripped first: `readRecentFileFromDisk` appends it AFTER a
- * final newline, so counting line breaks would report one line more than the
- * file has. The count is rendered to the model as a fact, so it has to be one.
+ * The body must already be free of the reader's truncation marker:
+ * `readRecentFileFromDisk` appends it AFTER a final newline, so counting line
+ * breaks with it would report one line more than the file has, and the count is
+ * rendered to the model as a fact. `inspectFile` strips it before it counts.
  */
-function countLines(content: string): number {
-  const body = content.endsWith(RECENT_FILES_TRUNCATION_MARKER)
-    ? content.slice(0, content.length - RECENT_FILES_TRUNCATION_MARKER.length)
-    : content;
+function countLines(body: string): number {
   if (body === '') return 0;
   const trimmed = body.endsWith('\n') ? body.slice(0, -1) : body;
   return trimmed.split('\n').length;
@@ -560,7 +559,14 @@ async function inspectFile(
 }
 
 /**
- * Computes how many tokens the recent-files stub's TEXT may occupy. Pure.
+ * Computes how many tokens the recent-files stub's TEXT may occupy, charged
+ * against a result that already EXISTS. Pure.
+ *
+ * The stub is built after the compaction's final message list is known, and
+ * that list is the only thing it has to fit next to. After a retry the final
+ * history's summary, window and system prompt are not separable cheaply (the
+ * retry returns messages, not a breakdown), but their SUM is exactly
+ * `stats.newTokenCount` — which is all the arithmetic needs.
  *
  * Two ceilings, and the smaller wins:
  *
@@ -582,40 +588,6 @@ async function inspectFile(
  *
  * Returns 0 — never a token count too small to buy anything — below
  * {@link RECENT_FILES_MIN_TOKENS}, so the caller has one condition to test.
- */
-export function computeRecentFilesBudget(params: {
-  /** The context window the compaction runs against. */
-  numCtx: number;
-  /** `floor(numCtx * COMPACT_ACCEPTANCE_HEADROOM)` — where the result must land. */
-  acceptanceBudget: number;
-  /** The tokens of the history being replaced (the abort guard's left side). */
-  oldTokenCount: number;
-  /** The tokens of the summary message the result always carries. */
-  headerTokens: number;
-  /** The tokens of the preserved window the result always carries. */
-  windowTokens: number;
-  /** The tokens of the system prompt the next request carries. */
-  systemPromptTokens: number;
-}): number {
-  const charge = (value: number) => (isFiniteNumber(value) ? value : 0);
-  return computeBudgetForResult({
-    numCtx: params.numCtx,
-    acceptanceBudget: params.acceptanceBudget,
-    oldTokenCount: params.oldTokenCount,
-    resultTokens:
-      charge(params.headerTokens) + charge(params.windowTokens) + charge(params.systemPromptTokens),
-  });
-}
-
-/**
- * The same budget, charged against a result that already EXISTS: the
- * recent-files stub is built after the compaction's final message list is
- * known, and that list is the only thing it has to fit next to.
- *
- * WHY a separate entry point rather than re-deriving the split: after a retry
- * the final history's summary, window and system prompt are not separable
- * cheaply (the retry returns messages, not a breakdown), but their SUM is
- * exactly `stats.newTokenCount` — which is all the arithmetic needs.
  */
 export function computeBudgetForResult(params: {
   /** The context window the compaction runs against. */
@@ -694,6 +666,19 @@ export function attachRecentFilesMessage(params: {
 }
 
 /**
+ * Adds every form a path may be matched by: as written, resolved against the
+ * process cwd, and (when a `root` is given) resolved against that root.
+ *
+ * The rows are stored absolute and the model writes relative paths as often as
+ * absolute ones, so a path is compared in all of its forms.
+ */
+function addPathForms(forms: Set<string>, rawPath: string, root?: string): void {
+  forms.add(rawPath);
+  forms.add(path.resolve(rawPath));
+  if (typeof root === 'string' && root.trim() !== '') forms.add(path.resolve(root, rawPath));
+}
+
+/**
  * The paths a history's tool calls name, resolved as far as `root` allows.
  *
  * WHY this exists: the preserved window is several turns of verbatim history, so
@@ -713,11 +698,7 @@ export function pathsNamedInToolCalls(
   root?: string
 ): Set<string> {
   const found = new Set<string>();
-  const remember = (rawPath: string) => {
-    found.add(rawPath);
-    found.add(path.resolve(rawPath));
-    if (typeof root === 'string' && root.trim() !== '') found.add(path.resolve(root, rawPath));
-  };
+  const remember = (rawPath: string) => addPathForms(found, rawPath, root);
   for (const message of Array.isArray(messages) ? messages : []) {
     if (typeof message !== 'object' || message === null) continue;
     if (message.role !== 'assistant') continue;
@@ -784,8 +765,7 @@ export async function buildRecentFilesMessage(
   const inContext = new Set<string>();
   for (const rawPath of input.inContextPaths ?? []) {
     if (typeof rawPath !== 'string' || rawPath.trim() === '') continue;
-    inContext.add(rawPath);
-    inContext.add(path.resolve(rawPath));
+    addPathForms(inContext, rawPath);
   }
 
   // 1. The slot walk. Readable files take the slots; unreadable candidates are
