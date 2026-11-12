@@ -76,14 +76,14 @@ import {
   TOOL_DISTILL_TIMEOUT_MAX_MS,
   TOOL_DISTILL_TRUNCATION_MARKER,
 } from '../src/services/compact/constants.ts';
+import { distillToolMessages } from '../src/services/compact/distill.ts';
 import {
   createDistillBudget,
-  distillToolMessages,
   planDistillation,
   planDistillCalls,
   planDistillPass,
   truncateToolOutputForDistillation,
-} from '../src/services/compact/distill.ts';
+} from '../src/services/compact/distillPlan.ts';
 import {
   planSummarisationPrompt,
   produceConversationSummary,

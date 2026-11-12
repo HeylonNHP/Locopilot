@@ -26,7 +26,8 @@ import {
   SUMMARY_PREAMBLE,
   TOOL_DISTILL_EXTRA_CALLS_MAX,
 } from './constants';
-import { createDistillBudget, distillToolMessages, remainingDistillBudgetTokens } from './distill';
+import { distillToolMessages } from './distill';
+import { createDistillBudget, remainingDistillBudgetTokens } from './distillPlan';
 import { measureConversationTokens } from './measure';
 import {
   attachRecentFilesMessage,

@@ -68,7 +68,9 @@ import {
   buildReductionCombineSystemPrompt,
   REDUCTION_COMBINE_SYSTEM_PROMPT,
   SUMMARY_SECTIONS,
+  TOOL_DISTILL_TRUNCATION_MARKER,
 } from '../src/services/compact/constants.ts';
+import { cutWithMarker } from '../src/services/compact/distillPlan.ts';
 import {
   buildToolNameMap,
   serializeHistoryForSummaryText,
@@ -744,19 +746,14 @@ describe('the prompt tells the truth about the input', () => {
   });
 
   test('the distiller marks a cut digest instead of stopping mid-sentence', () => {
-    const source = fs.readFileSync(
-      path.join(
-        path.dirname(fileURLToPath(import.meta.url)),
-        '..',
-        'src',
-        'services',
-        'compact',
-        'distill.ts'
-      ),
-      'utf8'
-    );
-    expect(source).toContain('TOOL_DISTILL_TRUNCATION_MARKER');
-    expect(source).not.toMatch(/rawDigest\.slice\(0,\s*TOOL_DISTILL_MAX_CHARS\)/);
+    // BEHAVIOUR, not source text: a digest that fits is returned as it is, and a
+    // digest that is cut ends with the marker, within the limit. (This used to
+    // read distill.ts and look for the marker's name, which a move would have
+    // satisfied vacuously.)
+    expect(cutWithMarker('a complete digest', 100)).toBe('a complete digest');
+    const cut = cutWithMarker('word '.repeat(200), 100);
+    expect(cut.endsWith(TOOL_DISTILL_TRUNCATION_MARKER)).toBe(true);
+    expect(cut.length).toBeLessThanOrEqual(100);
   });
 
   test('the run_subagents call is not projected to an empty object', () => {

@@ -16,7 +16,8 @@
 
 import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 
-import { distillToolMessages, findOwningToolCall } from '../src/services/compact/distill.ts';
+import { distillToolMessages } from '../src/services/compact/distill.ts';
+import { findOwningToolCall } from '../src/services/compact/distillPlan.ts';
 import { findOwningAssistantIndex } from '../src/services/compact/split.ts';
 import { startFakeOllama } from './helpers/fakeOllama.mjs';
 
