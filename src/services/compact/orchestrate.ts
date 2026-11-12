@@ -33,10 +33,11 @@ import {
   buildRecentFilesMessage,
   computeBudgetForResult,
   pathsNamedInToolCalls,
-  readRecentFileFromDisk,
   type RecentFileReader,
   type RecentFilesPlan,
 } from './recentFiles';
+import { readRecentFileFromDisk } from './recentFilesDisk';
+import { describeRecentFilesShape } from './recentFilesRender';
 import { produceConversationSummary } from './reduce';
 import { buildToolNameMap } from './serialize';
 import { planCompactionSplit } from './split';
@@ -850,16 +851,7 @@ async function compactHistoryPinned(
           // excerpts" are very different amounts of context for the same count —
           // and it is emitted HERE, after the stub is in the array that is
           // returned, so the claim and the result cannot disagree.
-          const shape =
-            attached.dropped === 'none'
-              ? 'with whole-file excerpts'
-              : attached.dropped === 'unreadable'
-                ? 'as paths only (none could be read)'
-                : attached.dropped === 'oversize'
-                  ? 'as paths only (too large to include whole)'
-                  : attached.dropped === 'in-context'
-                    ? 'as paths only (already in the preserved window)'
-                    : 'as paths only (no room for excerpts)';
+          const shape = describeRecentFilesShape(attached.dropped);
           onProgress?.(
             `Re-attached the ${included} most recently touched ${filesSubject} ${shape} (~${attached.tokensUsed} tokens).`
           );

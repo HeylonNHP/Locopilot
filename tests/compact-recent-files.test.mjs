@@ -66,12 +66,15 @@ import {
 import {
   attachRecentFilesMessage,
   buildRecentFilesMessage,
-  formatRelativeAge,
   pathsNamedInToolCalls,
-  readRecentFileFromDisk,
   selectRecentFiles,
   sortFilesForExcerpts,
 } from '../src/services/compact/recentFiles.ts';
+import { readRecentFileFromDisk } from '../src/services/compact/recentFilesDisk.ts';
+import {
+  describeRecentFilesShape,
+  formatRelativeAge,
+} from '../src/services/compact/recentFilesRender.ts';
 import { countMessageTokens, countTextTokens } from '../src/services/tokenizer.ts';
 import { computeRecentFilesBudget } from './helpers/recentFilesBudget.mjs';
 
@@ -1337,5 +1340,21 @@ describe('the store degrades instead of taking the app down', () => {
     // Nothing was invented: the touch could not be stored, and the read still
     // answers [] rather than a phantom row.
     expect(probed.after).toStrictEqual([]);
+  });
+});
+
+describe('the progress line describes the stub by why it is incomplete', () => {
+  // These strings are the progress line the compaction prints after "Re-attached
+  // the N most recently touched files"; they were a nested ternary in
+  // orchestrate.ts. `no-budget` and `no-files` read the same on purpose.
+  test.each([
+    ['none', 'with whole-file excerpts'],
+    ['unreadable', 'as paths only (none could be read)'],
+    ['oversize', 'as paths only (too large to include whole)'],
+    ['in-context', 'as paths only (already in the preserved window)'],
+    ['no-budget', 'as paths only (no room for excerpts)'],
+    ['no-files', 'as paths only (no room for excerpts)'],
+  ])('%p reads %p', (dropped, expected) => {
+    expect(describeRecentFilesShape(dropped)).toBe(expected);
   });
 });
