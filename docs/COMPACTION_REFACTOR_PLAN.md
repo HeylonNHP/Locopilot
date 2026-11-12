@@ -31,6 +31,7 @@ Line numbers are as of commit `40f214d`. They are hints and shift as each step l
 | 4a behavioural pins | `cdf6d7c` | 23 mutations first; 8 escaped, so 7 scenarios and an `expectCountsAgree` invariant on every scenario; ~20 source checks retired |
 | 4.1 `PassEnv`, `ResultDraft` | `2f75874` | one pass environment, one result draft, `distillPass` charges the budget; `orchestrate.ts` 837 -> 913 (comments moved in), then |
 | 4.2 `pass.ts`, `phases.ts` | `eaef47b` | `pass.ts` (254) and `phases.ts` (357); `orchestrate.ts` 913 -> 430; 22 unit tests; 9 mutations caught |
+| 4.3 comments + docs | `5060010` | one WHY per phase; `orchestrate.ts` comment lines 391 -> 165; `CLAUDE.md` cites symbols, not lines |
 
 What Phase 0 found that the plan did not expect:
 
