@@ -1,6 +1,6 @@
 # Compaction refactor plan (`src/services/compact/`)
 
-Status: **Phase 0 done** (2026-11-12, branch `refactor/compaction`); Phases 1-5 not started. Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
+Status: **Phases 0 and 1 done** (2026-11-12, branch `refactor/compaction`); Phases 2-5 not started. Built from four read-only reviews of the code and the tests; the claims the plan depends on were re-checked by hand.
 
 Line numbers are as of commit `40f214d`. They are hints and shift as each step lands; the **symbol names are authoritative**.
 
@@ -14,6 +14,11 @@ Line numbers are as of commit `40f214d`. They are hints and shift as each step l
 | 0.4 distill shell     | `2d1a198`   | also added `tests/helpers/compactionHarness.mjs`, shared by 0.3-0.5 (not in the plan)                                                                                                         |
 | 0.5 orchestrate       | `b81b4c3`   | 16 scenarios at a 4096-token window; five breakages of `orchestrate.ts` each fail; the stub scenarios mask path-dependent token counts; the dead check in `compact-trim.test.mjs` is repaired |
 | 0.6 unverified claims | this commit | `CONFIRMATIONS.md` C-015, C-016, C-017                                                                                                                                                        |
+| 1.1 prompt overhead | `1edfabd` | `countPromptOverhead` replaces four copies; two orphaned docs merged |
+| 1.2 recent files | `46488a2` | `computeRecentFilesBudget` removed (11 test call sites use `tests/helpers/recentFilesBudget.mjs`); comparator, path forms, `countLines` |
+| 1.3 distill | `4af9c11` | the token-count fallback removed; alias locals; `largestFirst` |
+| 1.4 owner walk | `9199d04` | `findOwningAssistantIndex` in `split.ts`, used by the split and the distiller |
+| 1.5 fallback ladder | `802d597` | `planCompactionSplit` and `makeHistorySplit` in `split.ts`; `tests/compact-split-plan.test.mjs` |
 
 What Phase 0 found that the plan did not expect:
 
@@ -21,6 +26,13 @@ What Phase 0 found that the plan did not expect:
 - **Counting a long run of one repeated character is quadratic** (C-017): 13.9 s at 160,000 characters. Out of scope for the refactor; it is a tokenizer change.
 - **A retry whose pass gets a summary as big as the first one fails** with "failed to reduce history size" (the recursion re-summarises an already-compacted array). The retry scenarios therefore script a small answer for the retry's pass; the plan's retry rules are unchanged.
 - **Some tests keep source-text checks that still pass** (for example `compact-budget:1391-1465`, `compact-focus:195-205`, `token-calibration:629-645`). Phase 3 and 4 replace them with the behavioural scenarios as the code they read moves.
+
+What Phase 1 found that the plan did not expect:
+
+- **The net saving in `src/` is small: 24 lines** (229 added, 253 removed, across seven files, counting the new helpers' doc comments). The plan's estimate for Phase 1 (about 100 lines) assumed the deletions would not be offset by the new shared helpers and their docs. The value of Phase 1 is fewer copies of the same logic (four prompt-overhead counts, two comparators, two path-form builders, two owner walks, seven hand-built splits) rather than fewer lines; the big line reductions are in Phases 2-4, where code leaves its files.
+- **Decision 1 turned out to have no practical effect.** Sharing the owner walk makes a `null` entry in `tool_calls` "not the call" instead of a throw, but the tokenizer throws on a `null` tool call before the split runs, so the pipeline still fails there. The walk itself is tested.
+- **The ladder's "anchor at index 0" case has one reachable sub-branch, not two.** The plain split never preserves index 0, so an anchor at 0 always triggers the anchor rescue, which leaves either nothing to summarise or at least `MIN_SUMMARISE_TOKENS`. The test for it uses the empty-slice case.
+- **Counting `[]` is exactly 0**, so `makeHistorySplit` can always count; no special case for an empty window was needed.
 
 ## Goal and ground rules
 
