@@ -39,7 +39,7 @@ import {
 } from './recentFiles';
 import { produceConversationSummary } from './reduce';
 import { buildToolNameMap } from './serialize';
-import { findLatestUserMessageIndex, splitHistoryForCompaction } from './split';
+import { planCompactionSplit } from './split';
 import { computePreservedWindowBudget, planWindowTrim, type WindowTrimPlan } from './windowTrim';
 
 /**
@@ -247,44 +247,16 @@ async function compactHistoryPinned(
   // refuse to compact when fewer than 4 messages exist; this guard is the
   // final safety net against a confusing near-zero-token estimate.
 
-  let historySplit = splitHistoryForCompaction(historyMessages, model, numCtx, aggressiveFactor);
-
-  // If the split leaves too little content to summarize, expand the summarised
-  // section only when there is pre-anchor history to include. Otherwise keep
-  // the anchored split and let the too-short guard abort compaction.
-  const splitEstimate = countMessagesTokens(historySplit.messagesToSummarise, model);
-  if (splitEstimate < MIN_SUMMARISE_TOKENS && historySplit.preservedRecentMessages.length > 0) {
-    const anchorIndex = findLatestUserMessageIndex(historyMessages);
-    if (anchorIndex > 0) {
-      historySplit = {
-        messagesToSummarise: historyMessages.slice(0, anchorIndex),
-        preservedRecentMessages: historyMessages.slice(anchorIndex),
-        preservedRecentTokens: countMessagesTokens(historyMessages.slice(anchorIndex), model),
-      };
-    } else if (anchorIndex < 0) {
-      // No user anchor found — fall back to summarising the full history as a
-      // last resort.
-      historySplit = {
-        messagesToSummarise: historyMessages,
-        preservedRecentMessages: [],
-        preservedRecentTokens: 0,
-      };
-    } else {
-      // anchorIndex === 0: the first history message is the latest user prompt.
-      // There is no pre-anchor history, but if the split left nothing to
-      // summarise, fall back to summarising the whole history so we don't abort
-      // with a confusing near-zero token estimate.
-      if (historySplit.messagesToSummarise.length === 0) {
-        historySplit = {
-          messagesToSummarise: historyMessages,
-          preservedRecentMessages: [],
-          preservedRecentTokens: 0,
-        };
-      }
-    }
-  }
-
-  const fullEstimate = countMessagesTokens(historySplit.messagesToSummarise, model);
+  // The split also carries the fallback ladder for a history that leaves too
+  // little to summarise: widen the summarised slice to the anchor, or summarise
+  // everything as a last resort (see `planCompactionSplit`). What is still too
+  // short after that is refused below.
+  const { split: historySplit, summariseTokens: fullEstimate } = planCompactionSplit(
+    historyMessages,
+    model,
+    numCtx,
+    aggressiveFactor
+  );
   if (fullEstimate < MIN_SUMMARISE_TOKENS) {
     throw new Error(
       `The conversation history is too short to compact (~${fullEstimate} tokens). ` +

@@ -162,11 +162,7 @@ export function splitHistoryForCompaction(
   aggressiveFactor: number = 1
 ): HistorySplit {
   if (historyMessages.length <= 1) {
-    return {
-      messagesToSummarise: historyMessages,
-      preservedRecentMessages: [],
-      preservedRecentTokens: 0,
-    };
+    return makeHistorySplit(historyMessages, [], model);
   }
 
   const preserveRecentTokenBudget = clamp(
@@ -230,11 +226,11 @@ export function splitHistoryForCompaction(
   // If the anchor is already inside the preserved window (or there is no user
   // message at all), the normal result is correct — return it directly.
   if (latestUserIndex < 0 || latestUserIndex >= windowSplitIndex) {
-    return {
-      messagesToSummarise: historyMessages.slice(0, windowSplitIndex),
-      preservedRecentMessages: windowPreservedMessages,
-      preservedRecentTokens: countMessagesTokens(windowPreservedMessages, model),
-    };
+    return makeHistorySplit(
+      historyMessages.slice(0, windowSplitIndex),
+      windowPreservedMessages,
+      model
+    );
   }
 
   // The user prompt sits in the "to-summarise" portion — it must be rescued.
@@ -250,16 +246,11 @@ export function splitHistoryForCompaction(
     // code excluded `postPromptPreWindowMessages` from BOTH
     // `messagesToSummarise` and `preservedRecentMessages`, so compaction
     // permanently lost that conversation content.
-    const preservedMessages = [
-      anchorMessage,
-      ...postPromptPreWindowMessages,
-      ...windowPreservedMessages,
-    ];
-    return {
-      messagesToSummarise: prePromptMessages,
-      preservedRecentMessages: preservedMessages,
-      preservedRecentTokens: countMessagesTokens(preservedMessages, model),
-    };
+    return makeHistorySplit(
+      prePromptMessages,
+      [anchorMessage, ...postPromptPreWindowMessages, ...windowPreservedMessages],
+      model
+    );
   }
 
   // Try B: pre-prompt content alone is too small. Also fold in the post-prompt
@@ -267,29 +258,88 @@ export function splitHistoryForCompaction(
   // boundary. The user prompt itself is still held out verbatim.
   const combinedToSummarise = [...prePromptMessages, ...postPromptPreWindowMessages];
   if (countMessagesTokens(combinedToSummarise, model) >= MIN_SUMMARISE_TOKENS) {
-    const preservedMessages = [anchorMessage, ...windowPreservedMessages];
-    return {
-      messagesToSummarise: combinedToSummarise,
-      preservedRecentMessages: preservedMessages,
-      preservedRecentTokens: countMessagesTokens(preservedMessages, model),
-    };
+    return makeHistorySplit(
+      combinedToSummarise,
+      [anchorMessage, ...windowPreservedMessages],
+      model
+    );
   }
 
   // Fallback: still not enough. Return the pre-prompt slice; the caller's
   // MIN_SUMMARISE_TOKENS guard will decide whether to abort or expand.
   // As in Try A, the post-prompt assistant/tool turns are preserved (not
   // dropped) so the anchor prompt's response survives compaction intact.
-  const preservedMessages = [
-    anchorMessage,
-    ...postPromptPreWindowMessages,
-    ...windowPreservedMessages,
-  ];
-  return {
-    messagesToSummarise: prePromptMessages,
-    preservedRecentMessages: preservedMessages,
-    preservedRecentTokens: countMessagesTokens(preservedMessages, model),
-  };
+  return makeHistorySplit(
+    prePromptMessages,
+    [anchorMessage, ...postPromptPreWindowMessages, ...windowPreservedMessages],
+    model
+  );
   // ── End anchor adjustment ─────────────────────────────────────────────
+}
+
+/**
+ * The split the compaction actually runs on: {@link splitHistoryForCompaction},
+ * then — when it leaves too little to summarise — the fallback ladder.
+ *
+ * The ladder only runs when the slice to summarise is under
+ * `MIN_SUMMARISE_TOKENS` AND something is preserved:
+ *
+ * - the latest real user prompt (the anchor) is NOT the first message: cut at
+ *   the anchor, so everything before it is summarised and the anchor and what
+ *   followed stay verbatim;
+ * - there is no real user prompt at all: summarise everything, preserve
+ *   nothing (a last resort);
+ * - the anchor IS the first message: there is no older history to widen into,
+ *   so the split is kept as it is, unless it left NOTHING to summarise, in
+ *   which case everything is summarised.
+ *
+ * Returns the split together with the tokens of the slice to summarise AFTER
+ * the ladder (counted once), so the caller can refuse a history that is still
+ * too short without counting it again.
+ */
+export function planCompactionSplit(
+  historyMessages: ChatMessage[],
+  model: string,
+  numCtx: number,
+  aggressiveFactor: number = 1
+): { split: HistorySplit; summariseTokens: number } {
+  const split = splitHistoryForCompaction(historyMessages, model, numCtx, aggressiveFactor);
+  const summariseTokens = countMessagesTokens(split.messagesToSummarise, model);
+  if (summariseTokens >= MIN_SUMMARISE_TOKENS || split.preservedRecentMessages.length === 0) {
+    return { split, summariseTokens };
+  }
+
+  const anchorIndex = findLatestUserMessageIndex(historyMessages);
+  let widened: HistorySplit | undefined;
+  if (anchorIndex > 0) {
+    widened = makeHistorySplit(
+      historyMessages.slice(0, anchorIndex),
+      historyMessages.slice(anchorIndex),
+      model
+    );
+  } else if (anchorIndex < 0 || split.messagesToSummarise.length === 0) {
+    widened = makeHistorySplit(historyMessages, [], model);
+  }
+  if (widened === undefined) {
+    return { split, summariseTokens };
+  }
+  return {
+    split: widened,
+    summariseTokens: countMessagesTokens(widened.messagesToSummarise, model),
+  };
+}
+
+/** A split with its preserved-window token count filled in (0 for an empty window). */
+function makeHistorySplit(
+  messagesToSummarise: ChatMessage[],
+  preservedRecentMessages: ChatMessage[],
+  model: string
+): HistorySplit {
+  return {
+    messagesToSummarise,
+    preservedRecentMessages,
+    preservedRecentTokens: countMessagesTokens(preservedRecentMessages, model),
+  };
 }
 
 /**
