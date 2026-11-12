@@ -30,6 +30,15 @@ import { distillToolMessages } from './distill';
 import { createDistillBudget, remainingDistillBudgetTokens } from './distillPlan';
 import { measureConversationTokens } from './measure';
 import {
+  buildSizeDiagnostic,
+  formatDistillationReport,
+  formatExtraDistillOutcome,
+  formatPreparingLine,
+  formatRetryLine,
+  formatStubLine,
+  formatTrimLine,
+} from './progressText';
+import {
   attachRecentFilesMessage,
   buildRecentFilesMessage,
   computeBudgetForResult,
@@ -38,7 +47,6 @@ import {
   type RecentFilesPlan,
 } from './recentFiles';
 import { readRecentFileFromDisk } from './recentFilesDisk';
-import { describeRecentFilesShape } from './recentFilesRender';
 import { produceConversationSummary } from './reduce';
 import { buildToolNameMap } from './serialize';
 import { planCompactionSplit } from './split';
@@ -267,7 +275,10 @@ async function compactHistoryPinned(
   }
 
   onProgress?.(
-    `Preparing compaction: summarizing ${historySplit.messagesToSummarise.length} messages, preserving ${historySplit.preservedRecentMessages.length} recent messages`
+    formatPreparingLine(
+      historySplit.messagesToSummarise.length,
+      historySplit.preservedRecentMessages.length
+    )
   );
 
   // ── Distillation, PRESERVED WINDOW FIRST ────────────────────────────────
@@ -323,53 +334,17 @@ async function compactHistoryPinned(
   distillBudget.usedTokens += historyDistill.prefillTokens;
   const preparedHistoryMessages = historyDistill.messages;
 
-  const skippedDistillations = recentDistill.skippedCount + historyDistill.skippedCount;
-  const orphanDistillations = recentDistill.orphanCount + historyDistill.orphanCount;
-  const budgetStoppedDistillations =
-    recentDistill.budgetSkippedCount + historyDistill.budgetSkippedCount;
-  const failedDistillations = recentDistill.failedCount + historyDistill.failedCount;
-  const candidateDistillations = recentDistill.candidateCount + historyDistill.candidateCount;
-  const distilledTotal = recentDistill.distilledCount + historyDistill.distilledCount;
-  const prefillTokens = recentDistill.prefillTokens + historyDistill.prefillTokens;
-
-  // The summary line is ALWAYS emitted, not only when something was left
-  // behind: these numbers are the only record of what the distillation cost
-  // and of what it did NOT manage to do, and a compaction whose distillation
-  // silently did nothing is the case that has to be visible.
-  onProgress?.(
-    `Tool distillation: distilled ${distilledTotal} of ${candidateDistillations} oversized tool ` +
-      `output(s) (~${prefillTokens} tokens of prefill of a ${distillBudget.totalTokens}-token budget; ` +
-      `${failedDistillations} call(s) failed and stay verbatim)`
-  );
-
-  if (skippedDistillations > 0 || orphanDistillations > 0 || budgetStoppedDistillations > 0) {
-    // WHY the orphan clause: `skippedCount` is what the CALL CAP left verbatim,
-    // and a `tool` row whose owning assistant is not in the slice is never a
-    // candidate for the cap — it is passed through because distillation could
-    // not legally touch it. Reporting only `skippedCount` as "what stays
-    // verbatim" was therefore untrue of the window as a whole.
-    const verbatimParts: string[] = [];
-    if (skippedDistillations > 0) {
-      verbatimParts.push(
-        `${skippedDistillations} oversized tool output(s) the call cap left verbatim ` +
-          `(${recentDistill.skippedCount} in the preserved window, ${historyDistill.skippedCount} in the older history)`
-      );
-    }
-    if (orphanDistillations > 0) {
-      verbatimParts.push(
-        `${orphanDistillations} oversized tool result(s) left verbatim because their assistant call is not in the same slice`
-      );
-    }
-    if (budgetStoppedDistillations > 0) {
-      verbatimParts.push(
-        `${budgetStoppedDistillations} oversized tool output(s) left verbatim because the compaction's ` +
-          `distillation prefill budget ran out`
-      );
-    }
-    onProgress?.(
-      `Tool distillation is capped at ${distillCallCap} model call(s) for a ${numCtx}-token context — ` +
-        `${verbatimParts.join('; ')}.`
-    );
+  // The report is ALWAYS emitted, not only when something was left behind: its
+  // numbers are the only record of what the distillation cost and of what it did
+  // NOT manage to do (see `formatDistillationReport`).
+  for (const line of formatDistillationReport({
+    window: recentDistill,
+    history: historyDistill,
+    budgetTotalTokens: distillBudget.totalTokens,
+    callCap: distillCallCap,
+    numCtx,
+  })) {
+    onProgress?.(line);
   }
 
   // Generate the summary: single-shot when it fits, bounded map-reduce when the
@@ -569,14 +544,7 @@ async function compactHistoryPinned(
       newTokenCount = countMessagesTokens(newMessages, model) + resolvedSystemPromptTokens;
       shouldRetry = numCtx > 0 && newTokenCount > acceptanceBudget;
       trim = trimPlan;
-      onProgress?.(
-        `Dropped the ${trimPlan.droppedCount} oldest preserved message(s) (~${trimPlan.droppedTokens} tokens) ` +
-          `to make room — the history was trimmed rather than re-summarised.${
-            shouldRetry
-              ? ` Still ${newTokenCount} tokens against a ${acceptanceBudget}-token target.`
-              : ''
-          }`
-      );
+      onProgress?.(formatTrimLine(trimPlan, shouldRetry, newTokenCount, acceptanceBudget));
     }
   }
 
@@ -683,19 +651,22 @@ async function compactHistoryPinned(
         newTokenCount = distilledTokens;
         shouldRetry = numCtx > 0 && newTokenCount > acceptanceBudget;
         onProgress?.(
-          `Spent the leftover distillation budget on ${extraDistill.distilledCount} more oversized tool ` +
-            `output(s) of the preserved window (~${extraDistill.prefillTokens} tokens of prefill) — the ` +
-            `compacted history is ${
-              shouldRetry
-                ? `still over budget (${newTokenCount} tokens against a ${acceptanceBudget}-token budget)`
-                : `now within budget (${newTokenCount} tokens against a ${acceptanceBudget}-token budget)`
-            }.`
+          formatExtraDistillOutcome({
+            kind: 'kept',
+            distilledCount: extraDistill.distilledCount,
+            prefillTokens: extraDistill.prefillTokens,
+            stillOverBudget: shouldRetry,
+            newTokenCount,
+            acceptanceBudget,
+          })
         );
       } else {
         onProgress?.(
-          `Spent the leftover distillation budget on ${extraDistill.distilledCount} more oversized tool ` +
-            `output(s) of the preserved window (~${extraDistill.prefillTokens} tokens of prefill) — but the ` +
-            `digests were no smaller than the outputs they replace, so the window is unchanged.`
+          formatExtraDistillOutcome({
+            kind: 'rejected',
+            distilledCount: extraDistill.distilledCount,
+            prefillTokens: extraDistill.prefillTokens,
+          })
         );
       }
     } else if (extraDistill.candidateCount === 0) {
@@ -703,26 +674,29 @@ async function compactHistoryPinned(
       // no oversized output at all, or every oversized output in it was
       // already distilled or already attempted (and failed).
       onProgress?.(
-        failedRows.size > 0
-          ? `No un-digested oversized tool output(s) left in the preserved window that the leftover ` +
-              `distillation budget (~${leftoverBudgetTokens} tokens) may spend on — the only oversized ` +
-              `output(s) left are ${failedRows.size} whose distillation call(s) failed, and a failure is not ` +
-              `retried here.`
-          : `No un-digested oversized tool output(s) left in the preserved window — the leftover ` +
-              `distillation budget (~${leftoverBudgetTokens} tokens) has nothing to spend on.`
+        formatExtraDistillOutcome({
+          kind: 'nothing-left',
+          leftoverBudgetTokens,
+          failedRows: failedRows.size,
+        })
       );
     } else if (extraDistill.attemptedCount === 0) {
       // The leftover budget cannot pay for even ONE call — the candidates are
       // all bigger than what is left of the budget.
       onProgress?.(
-        `The leftover distillation budget (~${leftoverBudgetTokens} tokens) cannot pay for another ` +
-          `distillation call — ${extraDistill.candidateCount} un-digested oversized tool output(s) stay ` +
-          `verbatim in the preserved window.`
+        formatExtraDistillOutcome({
+          kind: 'unaffordable',
+          leftoverBudgetTokens,
+          candidateCount: extraDistill.candidateCount,
+        })
       );
     } else {
       onProgress?.(
-        `All ${extraDistill.attemptedCount} extra distillation call(s) failed — ${extraDistill.candidateCount} ` +
-          `un-digested oversized tool output(s) stay verbatim in the preserved window.`
+        formatExtraDistillOutcome({
+          kind: 'all-failed',
+          attemptedCount: extraDistill.attemptedCount,
+          candidateCount: extraDistill.candidateCount,
+        })
       );
     }
   }
@@ -730,10 +704,7 @@ async function compactHistoryPinned(
   let retried = false;
   if (shouldRetry && remainingRetries > 0) {
     const retryFactor = Math.max(1.5, newTokenCount / (numCtx * 0.75));
-    onProgress?.(
-      `Compacted to ${newTokenCount} tokens but limit is ${numCtx} — ` +
-        `retrying with ${retryFactor.toFixed(1)}x stronger compression (${remainingRetries} attempt(s) left)...`
-    );
+    onProgress?.(formatRetryLine(newTokenCount, numCtx, retryFactor, remainingRetries));
     // The recursion is handed the STUB-LESS array, and it does not receive the
     // rows: a second stub would be built on top of a first one, charged twice,
     // and — worse — the summariser would read a few thousand tokens of file
@@ -845,63 +816,31 @@ async function compactHistoryPinned(
         } else {
           newMessages = stubbedMessages;
           newTokenCount = countMessagesTokens(newMessages, model) + resolvedSystemPromptTokens;
-          const attached = recentFilesPlan;
-          const included = attached.included.length;
-          const filesSubject = included === 1 ? 'file' : 'files';
           // The line says WHAT was re-attached, because "paths only" and "with
           // excerpts" are very different amounts of context for the same count —
           // and it is emitted HERE, after the stub is in the array that is
           // returned, so the claim and the result cannot disagree.
-          const shape = describeRecentFilesShape(attached.dropped);
-          onProgress?.(
-            `Re-attached the ${included} most recently touched ${filesSubject} ${shape} (~${attached.tokensUsed} tokens).`
-          );
+          onProgress?.(formatStubLine(recentFilesPlan));
         }
       }
     }
   }
 
-  // Which method decided the retry is a diagnostic, not a stat: `CompactStats`
-  // is what the UI shows and it must stay reproducible from the stored history.
-  debugLog.diagnostic({
-    layer: 'compact',
-    phase: 'compaction_size',
-    method: confirmedTokenCount === undefined ? 'local-estimate' : 'live-confirmed',
-    numCtx,
-    acceptanceBudget,
-    oldTokenCount,
-    estimatedNewTokens: newTokenCount,
-    systemPromptTokens: resolvedSystemPromptTokens,
-    ...(confirmedTokenCount === undefined ? {} : { confirmedNewTokens: confirmedTokenCount }),
-    ...(recentFilesPlan === undefined
-      ? {}
-      : {
-          recentFiles: {
-            included: recentFilesPlan.included.length,
-            tokens: recentFilesPlan.tokensUsed,
-            dropped: recentFilesPlan.dropped,
-          },
-        }),
-    ...(trim === undefined
-      ? {}
-      : {
-          windowTrim: {
-            droppedCount: trim.droppedCount,
-            droppedTokens: trim.droppedTokens,
-            stopReason: trim.stopReason,
-          },
-        }),
-    ...(extraDistillSummary === undefined
-      ? {}
-      : {
-          extraDistill: {
-            distilledCount: extraDistillSummary.distilledCount,
-            prefillTokens: extraDistillSummary.prefillTokens,
-          },
-        }),
-    retried,
-    retry: shouldRetry,
-  });
+  debugLog.diagnostic(
+    buildSizeDiagnostic({
+      numCtx,
+      acceptanceBudget,
+      oldTokenCount,
+      estimatedNewTokens: newTokenCount,
+      systemPromptTokens: resolvedSystemPromptTokens,
+      confirmedNewTokens: confirmedTokenCount,
+      recentFiles: recentFilesPlan,
+      trim,
+      extraDistill: extraDistillSummary,
+      retried,
+      retry: shouldRetry,
+    })
+  );
 
   onStats?.({
     oldTokenCount,

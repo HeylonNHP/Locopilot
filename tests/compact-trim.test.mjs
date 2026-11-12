@@ -809,7 +809,9 @@ describe('the retry invariant', () => {
     const retryIndex = source.indexOf('const retryResult = await compactHistory(');
     const buildIndex = source.indexOf('await buildRecentFilesMessage(');
     const attachIndex = source.indexOf('attachRecentFilesMessage(');
-    const progressIndex = source.indexOf('Re-attached the ');
+    // The progress line's TEXT lives in progressText.ts ("Re-attached the ..."); what
+    // matters here is where orchestrate asks for it: only after the stub is attached.
+    const progressIndex = source.indexOf('formatStubLine(');
     expect(
       retryIndex !== -1 && buildIndex !== -1 && attachIndex !== -1 && progressIndex !== -1
     ).toBeTruthy();
