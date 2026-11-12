@@ -28,19 +28,15 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-import {
-  classifyCompactionRequest,
-  enterScratchCwd,
-  startFakeOllama,
-} from './helpers/fakeOllama.mjs';
+import { createGoldenFile, describeRequests, runScenario } from './helpers/compactionHarness.mjs';
+import { enterScratchCwd } from './helpers/fakeOllama.mjs';
 
 const MODEL = 'test-model';
 const FOCUS = 'keep the auth refactor details and the failing test output';
-const GOLDEN_PATH = new URL('fixtures/compact-summary-pipeline.golden.json', import.meta.url);
-const WRITE_GOLDEN = process.env['LOCOPILOT_TEST_WRITE_GOLDEN'] === '1';
+const goldenFile = createGoldenFile(
+  new URL('fixtures/compact-summary-pipeline.golden.json', import.meta.url)
+);
 
 let scratch;
 let produceConversationSummary;
@@ -49,9 +45,6 @@ let buildReductionCombineSystemPrompt;
 let TOOL_DISTILL_SYSTEM_PROMPT;
 let resetTokenCalibration;
 
-let golden = {};
-const written = {};
-
 beforeAll(async () => {
   scratch = enterScratchCwd('locopilot-summary-pipeline');
   ({ produceConversationSummary, reduceSummaryGroups } =
@@ -59,18 +52,11 @@ beforeAll(async () => {
   ({ buildReductionCombineSystemPrompt, TOOL_DISTILL_SYSTEM_PROMPT } =
     await import('../src/services/compact/constants.ts'));
   ({ resetTokenCalibration } = await import('../src/services/tokenCalibration.ts'));
-  if (!WRITE_GOLDEN) {
-    if (!existsSync(GOLDEN_PATH)) {
-      throw new Error('Missing golden file: run with LOCOPILOT_TEST_WRITE_GOLDEN=1 once.');
-    }
-    golden = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8'));
-  }
+  goldenFile.load();
 });
 
 afterAll(() => {
-  if (WRITE_GOLDEN) {
-    writeFileSync(GOLDEN_PATH, `${JSON.stringify(written, null, 2)}\n`);
-  }
+  goldenFile.save();
   scratch?.leave();
 });
 
@@ -78,59 +64,13 @@ beforeEach(() => {
   resetTokenCalibration();
 });
 
-const sha = (text) => createHash('sha256').update(text).digest('hex').slice(0, 12);
-
-/**
- * Run one scenario against a fresh fake provider.
- *
- * @param {(call: object) => object} respond - scripted replies.
- * @param {(ctx: object, progress: string[]) => Promise<any>} run
- */
-async function scenario(respond, run) {
-  const fake = await startFakeOllama(respond, {
-    classify: (body) => classifyCompactionRequest(body, TOOL_DISTILL_SYSTEM_PROMPT),
-  });
-  const progress = [];
-  try {
-    const outcome = await run({ baseUrl: fake.baseUrl }, progress).then(
-      (value) => ({ value }),
-      (err) => ({ error: err })
-    );
-    return { fake, progress, ...outcome };
-  } finally {
-    await fake.close();
-  }
-}
-
-/** What a test records about one request: enough to notice any change, small enough to read. */
-function describeRequests(fake) {
-  return fake.requests.map(({ index, kind, body }) => {
-    const system = body.messages.find((message) => message.role === 'system')?.content ?? '';
-    const user = body.messages.findLast((message) => message.role === 'user')?.content ?? '';
-    return {
-      index,
-      kind,
-      stream: body.stream,
-      options: body.options,
-      tools: body.tools ?? null,
-      systemSha: sha(system),
-      systemHead: system.slice(0, 60),
-      userChars: user.length,
-      userHead: user.slice(0, 80),
-    };
-  });
-}
+/** Run one scenario against a fresh fake provider (see `runScenario`). */
+const scenario = (respond, run) =>
+  runScenario({ distillSystemPrompt: TOOL_DISTILL_SYSTEM_PROMPT, respond, run });
 
 /** Compare a scenario's transcript with the stored copy (or record it). */
-function expectGolden(name, fake, progress) {
-  const transcript = { requests: describeRequests(fake), progress };
-  if (WRITE_GOLDEN) {
-    written[name] = transcript;
-    return;
-  }
-  expect(golden[name]).toBeDefined();
-  expect(transcript).toStrictEqual(golden[name]);
-}
+const expectGolden = (name, fake, progress) =>
+  goldenFile.check(name, { requests: describeRequests(fake), progress });
 
 /** `count` alternating user/assistant messages of about `chars` characters each. */
 function bigHistory(count, chars) {

@@ -1,0 +1,218 @@
+{
+  "mixed pass": {
+    "requests": [
+      {
+        "index": 1,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 32768,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 21818,
+        "userHead": "Tool name: read_file\nTool output length: 21751 chars\n\nTool output:\nout-0 line 0:"
+      },
+      {
+        "index": 2,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 32768,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 25804,
+        "userHead": "Tool name: run_command\nTool output length: 25735 chars\n\nTool output:\nout-1 line "
+      },
+      {
+        "index": 3,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 32768,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 17794,
+        "userHead": "Tool name: web_fetch\nTool output length: 17727 chars\n\nTool output:\nout-2 line 0:"
+      }
+    ],
+    "progress": [
+      "Distilling tool output 4/5 (run_command)... (7 chars)",
+      "Distilling tool output 4/5 (run_command)... (11 chars)",
+      "Distilled tool output 1/3 (run_command)",
+      "Distilled tool output 2/3 (web_fetch)",
+      "1 of 3 tool distillation call(s) failed (the provider returned an error) — those tool output(s) stay verbatim and the compaction continues."
+    ],
+    "counters": {
+      "distilledCount": 2,
+      "skippedCount": 0,
+      "orphanCount": 0,
+      "failedCount": 1,
+      "attemptedCount": 3,
+      "budgetSkippedCount": 0,
+      "candidateCount": 3,
+      "prefillTokens": 19401,
+      "distilledIndices": [
+        3,
+        4
+      ],
+      "failedIndices": [
+        2
+      ]
+    },
+    "messages": [
+      {
+        "role": "user",
+        "chars": 11,
+        "head": "look around",
+        "tail": "look around"
+      },
+      {
+        "role": "assistant",
+        "chars": 0,
+        "head": "",
+        "tail": ""
+      },
+      {
+        "role": "tool",
+        "chars": 21751,
+        "head": "out-0 line 0: value=0 token-0\nout-0 line 1: value=856 token-1\nout-0 line 2: value=703 token-2\nout-0 line 3: value=550 to",
+        "tail": "610: value=507 token-610\nout-0 line 611: value=354 token-611"
+      },
+      {
+        "role": "tool",
+        "chars": 81,
+        "head": "[Distilled tool output from run_command; original length 25735 chars]\nDIGEST OF B",
+        "tail": "t from run_command; original length 25735 chars]\nDIGEST OF B"
+      },
+      {
+        "role": "tool",
+        "chars": 5208,
+        "head": "[Distilled tool output from web_fetch; original length 17727 chars]\nout-2 line 0: value=0 token-0\nout-2 line 1: value=85",
+        "tail": "716 token-147\nout-2 line 148: value=563 … [digest truncated]"
+      }
+    ]
+  },
+  "cut input": {
+    "requests": [
+      {
+        "index": 1,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 1024,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 1913,
+        "userHead": "Tool name: read_file\nTool output length: 5776 chars (only the first 1640 chars w"
+      }
+    ],
+    "progress": [
+      "Distilling tool output 3/5 (read_file)... (12 chars)",
+      "Distilled tool output 1/1 (read_file)"
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "chars": 11,
+        "head": "look around",
+        "tail": "look around"
+      },
+      {
+        "role": "assistant",
+        "chars": 0,
+        "head": "",
+        "tail": ""
+      },
+      {
+        "role": "tool",
+        "chars": 121,
+        "head": "[Distilled tool output from read_file; original length 5776 chars; only the first 1640 chars were distilled]\nSHORT DIGES",
+        "tail": "hars; only the first 1640 chars were distilled]\nSHORT DIGEST"
+      },
+      {
+        "role": "tool",
+        "chars": 93,
+        "head": "out-1 line 0: value=0 token-0\nout-1 line 1: value=856 token-1\nout-1 line 2: value=703 token-2",
+        "tail": "-1 line 1: value=856 token-1\nout-1 line 2: value=703 token-2"
+      },
+      {
+        "role": "tool",
+        "chars": 93,
+        "head": "out-2 line 0: value=0 token-0\nout-2 line 1: value=856 token-1\nout-2 line 2: value=703 token-2",
+        "tail": "-2 line 1: value=856 token-1\nout-2 line 2: value=703 token-2"
+      }
+    ]
+  },
+  "budget for one call": {
+    "requests": [
+      {
+        "index": 1,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 32768,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 25804,
+        "userHead": "Tool name: run_command\nTool output length: 25735 chars\n\nTool output:\nout-1 line "
+      }
+    ],
+    "progress": [
+      "Distilling tool output 4/5 (run_command)... (6 chars)",
+      "Distilled tool output 1/1 (run_command)",
+      "2 oversized tool output(s) were left verbatim: the compaction's distillation prefill budget ran out."
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "chars": 11,
+        "head": "look around",
+        "tail": "look around"
+      },
+      {
+        "role": "assistant",
+        "chars": 0,
+        "head": "",
+        "tail": ""
+      },
+      {
+        "role": "tool",
+        "chars": 21751,
+        "head": "out-0 line 0: value=0 token-0\nout-0 line 1: value=856 token-1\nout-0 line 2: value=703 token-2\nout-0 line 3: value=550 to",
+        "tail": "610: value=507 token-610\nout-0 line 611: value=354 token-611"
+      },
+      {
+        "role": "tool",
+        "chars": 76,
+        "head": "[Distilled tool output from run_command; original length 25735 chars]\nDIGEST",
+        "tail": "output from run_command; original length 25735 chars]\nDIGEST"
+      },
+      {
+        "role": "tool",
+        "chars": 17727,
+        "head": "out-2 line 0: value=0 token-0\nout-2 line 1: value=856 token-1\nout-2 line 2: value=703 token-2\nout-2 line 3: value=550 to",
+        "tail": "498: value=490 token-498\nout-2 line 499: value=337 token-499"
+      }
+    ]
+  }
+}
