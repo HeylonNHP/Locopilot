@@ -16,6 +16,7 @@ export default function StatusBar() {
     tokenStats,
     model,
     compactionModel,
+    defaultCompactionModel,
     messages,
     effectiveNumCtx,
     modelMaxNumCtx,
@@ -31,6 +32,10 @@ export default function StatusBar() {
     activeProviderId,
     modelSwitchPendingSessions,
   } = state;
+  // The compaction model the conversation actually uses: its own, or the
+  // global one it inherits. The server resolves the same way.
+  const effectiveCompactionModel = compactionModel ?? defaultCompactionModel;
+
   // Whether the conversation on screen is the one with a model switch still
   // waiting to be applied — another conversation's pending switch is not
   // shown here.
@@ -268,7 +273,7 @@ export default function StatusBar() {
               }
             }}
           >
-            / {compactionModel || 'Same as main'}
+            / {effectiveCompactionModel || 'Same as main'}
           </span>
         )}
       </span>

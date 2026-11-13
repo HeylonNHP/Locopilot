@@ -251,6 +251,9 @@ export function useChatStream(
             id: realId,
             name: DEFAULT_SESSION_NAME,
             model: refs.modelRef.current,
+            provider_id: refs.activeProviderIdRef.current,
+            compaction_model: refs.compactionModelRef.current,
+            compaction_provider_id: refs.compactionProviderIdRef.current,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -636,8 +639,12 @@ export function useChatStream(
         yolo: refs.yoloRef.current,
         think: refs.thinkingEnabledRef.current,
         reasoningEffort: refs.reasoningEffortRef.current,
-        compactionModel: refs.compactionModelRef.current,
-        compactionProviderId: refs.compactionProviderIdRef.current,
+        // A conversation that has not pinned a compaction model of its own
+        // inherits the global one. The field is OMITTED in that case, so the
+        // server's own resolution decides — the client does not repeat that
+        // rule in a second place.
+        compactionModel: refs.compactionModelRef.current ?? undefined,
+        compactionProviderId: refs.compactionProviderIdRef.current ?? undefined,
         chatTimeoutMs: refs.chatTimeoutMsRef.current,
         webSearch: refs.webSearchRef.current,
         completionMode: refs.completionModeRef.current,

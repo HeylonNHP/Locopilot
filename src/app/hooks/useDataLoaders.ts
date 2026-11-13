@@ -191,6 +191,24 @@ export function useDataLoaders(refs: StableRefs) {
             ...(allowEmptyWhileStreaming ? { allowEmptyWhileStreaming: true } : {}),
           });
         }
+
+        // The conversation's own model selection. It is applied only when the
+        // conversation is being OPENED: a background refresh (the
+        // end-of-turn reload) must not move the model of a conversation the
+        // user is reading, and a model the user has just picked may not
+        // have reached the server yet.
+        if (!background && data.session && typeof data.session.model === 'string') {
+          dispatch({
+            type: 'APPLY_SESSION_SELECTION',
+            sessionId,
+            selection: {
+              model: data.session.model,
+              providerId: data.session.provider_id ?? null,
+              compactionModel: data.session.compaction_model ?? null,
+              compactionProviderId: data.session.compaction_provider_id ?? null,
+            },
+          });
+        }
         // The window is the server's: `loadNumCtx` fetches it and every
         // turn's status event refreshes it (both land in
         // state.effectiveNumCtx through SET_TOKEN_STATS).
@@ -287,19 +305,21 @@ export function useDataLoaders(refs: StableRefs) {
   // Reconcile the active provider against the loaded model list. This runs
   // reactively (keyed on state, not refs) so it converges correctly no matter
   // which mount fetch finishes first:
-  //   - No model selected yet → adopt the first model and its provider.
+  //   - No model selected yet → adopt the first model and its provider as the
+  //     default a new conversation starts with.
   //   - Model selected but no active provider (e.g. a legacy config migrated
   //     with `model` but no `activeProviderId`) → derive the provider from
   //     the selected model so the next turn uses the right credentials.
   useEffect(() => {
     if (state.models.length === 0) return;
-    if (!state.model) {
+    if (!state.model && !state.defaultModel) {
       const first = state.models[0];
       if (first?.name) {
-        dispatch({ type: 'SET_MODEL', model: first.name });
-        if (first.providerId) {
-          dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: first.providerId });
-        }
+        dispatch({
+          type: 'SET_DEFAULT_SELECTION',
+          model: first.name,
+          providerId: first.providerId ?? null,
+        });
       }
       return;
     }
@@ -312,7 +332,7 @@ export function useDataLoaders(refs: StableRefs) {
         dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: match.providerId });
       }
     }
-  }, [state.models, state.model, state.activeProviderId, dispatch]);
+  }, [state.models, state.model, state.activeProviderId, state.defaultModel, dispatch]);
 
   /**
    * Ask the server for the context window of the model that is selected now
@@ -394,9 +414,11 @@ export function useDataLoaders(refs: StableRefs) {
           type: 'SET_CONFIG',
           config: {
             providers: config.providers ?? state.providers,
-            activeProviderId: config.activeProviderId ?? state.activeProviderId,
+            defaultProviderId: config.activeProviderId ?? null,
             ...(persistedNumCtx === null ? {} : { requestedNumCtx: persistedNumCtx }),
-            model: config.model || config.lastModel || refs.modelRef.current,
+            // The model a NEW conversation starts with. A conversation that
+            // already exists keeps the model of its own.
+            defaultModel: config.model || config.lastModel || '',
             yolo: config.yolo ?? state.yolo,
             thinkingEnabled: config.thinkingEnabled ?? state.thinkingEnabled,
             reasoningEffort: config.reasoningEffort ?? state.reasoningEffort,
@@ -405,7 +427,7 @@ export function useDataLoaders(refs: StableRefs) {
             promptTimestamps: config.promptTimestamps ?? state.promptTimestamps,
             citeSources: config.citeSources ?? state.citeSources,
             redactSecrets: config.redactSecrets ?? state.redactSecrets,
-            compactionModel: config.compactionModel ?? state.compactionModel,
+            defaultCompactionModel: config.compactionModel ?? '',
             chatTimeoutMs: config.chatTimeoutMs ?? state.chatTimeoutMs,
             webSearch: config.webSearch ?? state.webSearch,
             completionMode: config.completionMode ?? state.completionMode,

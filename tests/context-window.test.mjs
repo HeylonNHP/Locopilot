@@ -216,7 +216,7 @@ describe('the store: no placeholder, and the sequence that failed', () => {
   test('replay: a model maximum below the setting is shown, and clears on a model change', () => {
     let state = chatReducer(initialState, {
       type: 'SET_CONFIG',
-      config: { requestedNumCtx: 1_000_000, model: 'small', activeProviderId: 'p1' },
+      config: { requestedNumCtx: 1_000_000, defaultModel: 'small', defaultProviderId: 'p1' },
     });
     state = chatReducer(state, {
       type: 'SET_TOKEN_STATS',
@@ -231,7 +231,15 @@ describe('the store: no placeholder, and the sequence that failed', () => {
     expect(windowOf(state)).toStrictEqual({ limit: 262_144, cappedAt: 262_144, maxUnknown: false });
 
     // Re-selecting the same model must not forget what the server reported.
-    const same = chatReducer(state, { type: 'SET_MODEL', model: 'small' });
+    const same = chatReducer(state, {
+      type: 'SET_SESSION_SELECTION',
+      selection: {
+        model: 'small',
+        providerId: 'p1',
+        compactionModel: null,
+        compactionProviderId: null,
+      },
+    });
     expect(same.tokenStats.modelContextLimit).toBe(262_144);
     expect(same.modelMaxNumCtx).toBe(262_144);
     expect(same.effectiveNumCtx).toBe(state.effectiveNumCtx);
@@ -241,10 +249,17 @@ describe('the store: no placeholder, and the sequence that failed', () => {
     // A real change drops the previous model's maximum and window: the bar shows
     // "—" until the server answers for the new model.
     for (const next of [
-      chatReducer(state, { type: 'SET_MODEL', model: 'big' }),
+      chatReducer(state, {
+        type: 'SET_SESSION_SELECTION',
+        selection: {
+          model: 'big',
+          providerId: 'p1',
+          compactionModel: null,
+          compactionProviderId: null,
+        },
+      }),
       chatReducer(state, { type: 'SET_ACTIVE_PROVIDER', providerId: 'p2' }),
-      chatReducer(state, { type: 'SET_CONFIG', config: { model: 'big' } }),
-      chatReducer(state, { type: 'SET_CONFIG', config: { activeProviderId: 'p2' } }),
+      chatReducer(state, { type: 'SET_DEFAULT_SELECTION', model: 'big', providerId: 'p1' }),
     ]) {
       expect(next.tokenStats.modelContextLimit).toBeNull();
       expect(next.modelMaxNumCtx).toBeNull();
@@ -263,7 +278,7 @@ describe('the store: no placeholder, and the sequence that failed', () => {
     // A SET_CONFIG that does not change the selection leaves the maximum alone.
     const unrelated = chatReducer(state, {
       type: 'SET_CONFIG',
-      config: { model: 'small', yolo: true },
+      config: { yolo: true },
     });
     expect(unrelated.tokenStats.modelContextLimit).toBe(262_144);
     expect(unrelated.modelMaxNumCtx).toBe(262_144);
@@ -276,7 +291,7 @@ describe('the store: no placeholder, and the sequence that failed', () => {
     // unknown" for a model whose maximum the server had reported.
     let state = chatReducer(initialState, {
       type: 'SET_CONFIG',
-      config: { model: 'm', activeProviderId: 'p1' },
+      config: { defaultModel: 'm', defaultProviderId: 'p1' },
     });
     state = serverAnswer(state, { effective: 262_144, modelMax: 262_144 });
     const expected = { limit: 262_144, cappedAt: 262_144, maxUnknown: false };

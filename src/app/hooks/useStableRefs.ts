@@ -39,13 +39,11 @@ export interface StableRefs {
   thinkingEnabledRef: WritableRef<boolean>;
   reasoningEffortRef: WritableRef<ReasoningEffort>;
   compactionReasoningEffortRef: WritableRef<ReasoningEffort>;
-  compactionModelRef: WritableRef<string>;
+  compactionModelRef: WritableRef<string | null>;
   /**
-   * Transient companion to `compactionModelRef`: the provider the
-   * compaction model belongs to. Captured at model-pick time in the
-   * ModelSelector so the compaction LLM call can target a different
-   * provider than the main chat. `null` for "Same as main model" (the
-   * route falls back to the active provider's context).
+   * The provider the conversation on screen's compaction model belongs to,
+   * so a compaction model on a different provider than the main one can be
+   * used for compaction. `null` for "the main model's provider".
    */
   compactionProviderIdRef: WritableRef<string | null>;
   chatTimeoutMsRef: WritableRef<number>;
@@ -76,7 +74,7 @@ interface StableRefsInput {
   thinkingEnabled: boolean;
   reasoningEffort: ReasoningEffort;
   compactionReasoningEffort: ReasoningEffort;
-  compactionModel: string;
+  compactionModel: string | null;
   compactionProviderId: string | null;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
@@ -119,12 +117,19 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   // guard and contaminate the new session's message list.
   sessionIdRef.current = state.currentSessionId;
 
+  // The selection refs are updated the same way, for the same reason: the
+  // request body is built from them, and switching conversations changes the
+  // model the next turn must run on. An effect would leave a window in which
+  // a turn sent right after the switch carried the previous conversation's
+  // model.
+  modelRef.current = state.model;
+  activeProviderIdRef.current = state.activeProviderId;
+  compactionModelRef.current = state.compactionModel;
+  compactionProviderIdRef.current = state.compactionProviderId;
+
   useEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
-  useEffect(() => {
-    modelRef.current = state.model;
-  }, [state.model]);
   useEffect(() => {
     effectiveNumCtxRef.current = state.effectiveNumCtx;
   }, [state.effectiveNumCtx]);
@@ -141,9 +146,6 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
     providersRef.current = state.providers;
   }, [state.providers]);
   useEffect(() => {
-    activeProviderIdRef.current = state.activeProviderId;
-  }, [state.activeProviderId]);
-  useEffect(() => {
     yoloRef.current = state.yolo;
   }, [state.yolo]);
   useEffect(() => {
@@ -155,12 +157,6 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   useEffect(() => {
     compactionReasoningEffortRef.current = state.compactionReasoningEffort;
   }, [state.compactionReasoningEffort]);
-  useEffect(() => {
-    compactionModelRef.current = state.compactionModel;
-  }, [state.compactionModel]);
-  useEffect(() => {
-    compactionProviderIdRef.current = state.compactionProviderId;
-  }, [state.compactionProviderId]);
   useEffect(() => {
     chatTimeoutMsRef.current = state.chatTimeoutMs;
   }, [state.chatTimeoutMs]);

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 import { useChat } from '@/app/lib/chatStore';
 import { describeContextWindow, interpretNumCtxInput } from '@/app/lib/contextWindow';
+import { saveSessionSelection } from '@/app/lib/sessionSelectionClient';
 import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
@@ -16,6 +17,13 @@ import {
 import ProviderSection from './ProviderSection';
 
 import './SettingsModal.scss';
+
+/**
+ * The dropdown value that means "inherit the default compaction model".
+ * The empty string already means "same as the main model", so the two
+ * choices need two values.
+ */
+const INHERIT_COMPACTION_VALUE = '__inherit__';
 
 interface Props {
   onClose: () => void;
@@ -42,7 +50,7 @@ export default function SettingsModal({ onClose }: Props) {
   const [promptTimestamps, setPromptTimestamps] = useState(state.promptTimestamps ?? true);
   const [citeSources, setCiteSources] = useState(state.citeSources ?? true);
   const [redactSecrets, setRedactSecrets] = useState(state.redactSecrets ?? true);
-  const [compactionModel, setCompactionModel] = useState(state.compactionModel || '');
+  const [compactionModel, setCompactionModel] = useState<string | null>(state.compactionModel);
   // The provider that owns the selected main model / compaction model. These
   // are tracked separately so the user can run the main chat on one provider
   // and compaction on a different one. `compactionProviderId` is transient
@@ -150,6 +158,10 @@ export default function SettingsModal({ onClose }: Props) {
   })();
 
   const selectedCompactionValue = (() => {
+    // `null` is the conversation's own "inherit the default" state; the
+    // empty string is "same as the main model". They are different choices,
+    // so the dropdown tells them apart.
+    if (compactionModel === null) return INHERIT_COMPACTION_VALUE;
     if (!compactionModel) return '';
     if (
       compactionProviderId &&
@@ -177,6 +189,11 @@ export default function SettingsModal({ onClose }: Props) {
   };
 
   const handleCompactionModelChange = (value: string) => {
+    if (value === INHERIT_COMPACTION_VALUE) {
+      setCompactionModel(null);
+      setCompactionProviderId(null);
+      return;
+    }
     if (!value) {
       setCompactionModel('');
       setCompactionProviderId(null);
@@ -230,19 +247,12 @@ export default function SettingsModal({ onClose }: Props) {
     // back would be a no-op write that could still overwrite a value
     // another tab had just persisted.)
     const clientConfig: Record<string, unknown> = {
-      model,
-      // Persist the selected model's provider so the next request is sent to
-      // the right endpoint/credentials. Omitting it (the old behaviour) let a
-      // model that belongs to a non-active provider be saved against a stale
-      // activeProviderId, sending the turn to the wrong provider.
-      ...(mainProviderId ? { activeProviderId: mainProviderId } : {}),
       yolo,
       thinkingEnabled,
       reasoningEffort,
       promptTimestamps,
       citeSources,
       redactSecrets,
-      compactionModel,
       chatTimeoutMs: parsedChatTimeoutMs,
       webSearch: {
         maxQueries: parsedWebMaxQueries,
@@ -255,6 +265,21 @@ export default function SettingsModal({ onClose }: Props) {
     }
 
     try {
+      // The model selection belongs to the conversation on screen, and the
+      // global default follows it so the next new conversation starts on it.
+      // It is written first: a selection the server does not know about is a
+      // selection that is lost on the next reload.
+      const selection = {
+        model,
+        providerId: mainProviderId,
+        compactionModel,
+        compactionProviderId,
+      };
+      const selectionSaved = await saveSessionSelection(state.currentSessionId, selection);
+      if (!selectionSaved) {
+        throw new Error('The model could not be saved for this conversation.');
+      }
+
       const response = await fetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -290,17 +315,12 @@ export default function SettingsModal({ onClose }: Props) {
       dispatch({
         type: 'SET_CONFIG',
         config: {
-          model,
           yolo,
           thinkingEnabled,
           reasoningEffort,
           promptTimestamps,
           citeSources,
           redactSecrets,
-          compactionModel,
-          // Transient: captured here so the compaction route can resolve the
-          // compaction provider even when it differs from the main model's.
-          compactionProviderId,
           chatTimeoutMs: parsedChatTimeoutMs,
           webSearch: {
             maxQueries: parsedWebMaxQueries,
@@ -311,11 +331,9 @@ export default function SettingsModal({ onClose }: Props) {
         },
       });
 
-      // Sync the chosen main-model provider into the store (mirrors the
-      // ModelSelector main-model branch).
-      if (mainProviderId) {
-        dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: mainProviderId });
-      }
+      // The conversation on screen now runs on the selection that was just
+      // saved; the global default follows it.
+      dispatch({ type: 'SET_SESSION_SELECTION', selection });
 
       // Carry a model change into a turn that is already streaming, so the
       // running turn (and its sub-agents) switch at their next tool step
@@ -350,7 +368,7 @@ export default function SettingsModal({ onClose }: Props) {
           {
             ...(modelChanged ? { model } : {}),
             ...(sendProviderId ? { providerId: sendProviderId } : {}),
-            ...(compactionChanged ? { compactionModel } : {}),
+            ...(compactionChanged && compactionModel !== null ? { compactionModel } : {}),
             ...(compactionChanged && compactionProviderId ? { compactionProviderId } : {}),
           },
           // Attach to the running turn's signal — looked up per session
@@ -430,6 +448,7 @@ export default function SettingsModal({ onClose }: Props) {
                 onChange={(e) => handleCompactionModelChange(e.target.value)}
                 className="settings-input"
               >
+                <option value={INHERIT_COMPACTION_VALUE}>Use the default</option>
                 <option value="">Same as main model</option>
                 {renderModelOptions()}
               </select>

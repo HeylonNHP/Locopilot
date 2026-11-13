@@ -25,6 +25,11 @@ import {
   DEFAULT_PROVIDER,
   DEFAULT_WEB_SEARCH_SETTINGS,
 } from '@/services/configDefaults';
+import {
+  selectionFromColumns,
+  selectionToColumns,
+  type SessionSelection,
+} from '@/services/sessionSelection';
 
 export interface ChatMessage {
   /**
@@ -70,7 +75,14 @@ function withId(msg: ChatMessage): ChatMessage {
 export interface Session {
   id: number;
   name: string;
+  /** The conversation's main model. */
   model: string;
+  /** The provider that serves `model`, or `null` when it is not pinned. */
+  provider_id: string | null;
+  /** The conversation's compaction model, or `null` to inherit the global default. */
+  compaction_model: string | null;
+  /** The provider that serves `compaction_model`, or `null` when it is not pinned. */
+  compaction_provider_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -159,6 +171,12 @@ export interface ChatState {
   messages: ChatMessage[];
   sessions: Session[];
   currentSessionId: number | null;
+  /**
+   * The main model of the conversation on screen. It is a projection of that
+   * conversation's own selection (`sessions.model`), NOT a global setting:
+   * switching conversations changes it, and a conversation keeps its model
+   * when the user comes back to it.
+   */
   model: string;
   models: LLmModel[];
   modelsLoading: boolean;
@@ -169,8 +187,27 @@ export interface ChatState {
    * fields are still present for backward compatibility.
    */
   providers: ProviderConfig[];
-  /** The id of the currently selected provider, used to pick credentials. */
+  /**
+   * The provider that serves {@link model} — the conversation on screen's own
+   * provider, or `null` when it has not pinned one. The provider is part of
+   * the selection: a model name alone does not say which endpoint serves it.
+   */
   activeProviderId: string | null;
+  /**
+   * The model a NEW conversation starts with, and the one the new-chat view
+   * runs on. This one IS a global setting (it lives in `config.json`), and it
+   * is what picking a model updates: the user expects the next "New chat" to
+   * start on the model they just chose.
+   */
+  defaultModel: string;
+  /** The provider that serves {@link defaultModel}, or `null` when it has none. */
+  defaultProviderId: string | null;
+  /**
+   * The compaction model a NEW conversation starts with, and the one a
+   * conversation that has not pinned a compaction model of its own inherits.
+   * `''` means "the conversation's own main model".
+   */
+  defaultCompactionModel: string;
   baseUrl: string;
   /**
    * The GLOBAL context-window setting as saved in config.json: what the
@@ -259,14 +296,18 @@ export interface ChatState {
   citeSources: boolean;
   /** `Config.redactSecrets` for the persisted counterpart. */
   redactSecrets: boolean;
-  compactionModel: string;
   /**
-   * Transient: which provider the compaction model belongs to. Captured
-   * when the user picks a compaction model in the ModelSelector (so a model
-   * on a different provider than the main one can be used for compaction)
-   * and reset to `null` for "Same as main model". Not persisted to
-   * config.json — the right provider is re-derived when the user re-picks
-   * a model in the grouped selector.
+   * The conversation on screen's own compaction model. `null` means the
+   * conversation inherits the global default ({@link defaultCompactionModel});
+   * `''` means it compacts with its own main model. The request body OMITS
+   * the field when it is `null`, which is how the server is told to fall
+   * back to the global setting.
+   */
+  compactionModel: string | null;
+  /**
+   * Which provider the conversation on screen's compaction model belongs to,
+   * so a compaction model on a different provider than the main one can be
+   * used for compaction. `null` for "the main model's provider".
    */
   compactionProviderId: string | null;
   chatTimeoutMs: number;
@@ -426,10 +467,56 @@ export type ChatAction =
   | { type: 'SET_MODELS'; models: LLmModel[] }
   | { type: 'SET_MODELS_LOADING'; modelsLoading: boolean }
   | { type: 'SET_PROVIDERS'; providers: ProviderConfig[] }
-  | { type: 'SET_ACTIVE_PROVIDER'; providerId: string | null }
-  | { type: 'SET_MODEL'; model: string }
+  | {
+      type: 'SET_ACTIVE_PROVIDER';
+      providerId: string | null;
+    }
+  | {
+      type: 'SET_SESSION_SELECTION';
+      /**
+       * The model selection the user picked for the conversation on screen.
+       * It pins that conversation AND updates the global defaults: picking a
+       * model is also what a new conversation starts with.
+       */
+      selection: SessionSelection;
+    }
+  | {
+      type: 'APPLY_SESSION_SELECTION';
+      /**
+       * A conversation's selection as the server knows it — the row of a
+       * conversation that was just loaded, or a change another tab made. The
+       * row is patched; the mirror follows only when that conversation is
+       * the one on screen, so another tab's change never moves the model
+       * under the user.
+       */
+      sessionId: number;
+      selection: SessionSelection;
+    }
+  | {
+      type: 'SET_DEFAULT_SELECTION';
+      /**
+       * The model a new conversation starts with. The new-chat view runs on
+       * it; a conversation on screen keeps its own selection.
+       */
+      model: string;
+      providerId: string | null;
+      /** The compaction model a new conversation starts with. */
+      compactionModel?: string | undefined;
+    }
   | { type: 'SET_ERROR'; error: string | null; targetSessionId?: number }
-  | { type: 'SET_CONFIG'; config: Partial<ChatState> }
+  | {
+      type: 'SET_CONFIG';
+      /**
+       * The global settings. The model selection is deliberately NOT among
+       * them: a conversation's model belongs to the conversation
+       * (`SET_SESSION_SELECTION`), and the model a new conversation starts
+       * with belongs to the defaults (`SET_DEFAULT_SELECTION`).
+       */
+      config: Omit<
+        Partial<ChatState>,
+        'model' | 'activeProviderId' | 'compactionModel' | 'compactionProviderId'
+      >;
+    }
   | { type: 'SET_ACTIVE_SUBAGENT'; agentId: string | null; targetSessionId?: number }
   | { type: 'SET_STEER_DRAFT'; sessionId: number; draft: PendingSteerDraft | null }
   | { type: 'CLEAR_STEER_RESTORE'; sessionId: number }
@@ -676,6 +763,99 @@ function staleModelCapReset(
     ...(state.tokenStats === null
       ? {}
       : { tokenStats: { ...state.tokenStats, modelContextLimit: null } }),
+  };
+}
+
+/**
+ * The mirror of a conversation's selection: what the status bar shows and
+ * what the next turn sends.
+ */
+function selectionMirror(
+  selection: SessionSelection
+): Pick<ChatState, 'model' | 'activeProviderId' | 'compactionModel' | 'compactionProviderId'> {
+  return {
+    model: selection.model,
+    activeProviderId: selection.providerId,
+    compactionModel: selection.compactionModel,
+    compactionProviderId: selection.compactionProviderId,
+  };
+}
+
+/**
+ * Write a conversation's selection into the row that carries it.
+ *
+ * The row in `state.sessions` is the conversation's own record, so a change
+ * to a conversation's model has to land there: that row is what the sidebar
+ * list holds, what switching to that conversation restores, and what the
+ * next turn's selection is read from.
+ */
+function patchSessionSelection(
+  sessions: Session[],
+  sessionId: number | null,
+  selection: SessionSelection
+): Session[] {
+  if (sessionId === null) return sessions;
+  const index = sessions.findIndex((s) => s.id === sessionId);
+  if (index === -1) return sessions;
+  const current = sessions[index];
+  if (!current) return sessions;
+  const columns = selectionToColumns(selection);
+  if (
+    current.model === columns.model &&
+    current.provider_id === columns.provider_id &&
+    current.compaction_model === columns.compaction_model &&
+    current.compaction_provider_id === columns.compaction_provider_id
+  ) {
+    return sessions;
+  }
+  const next = [...sessions];
+  next[index] = { ...current, ...columns };
+  return next;
+}
+
+/**
+ * The selection a conversation runs on.
+ *
+ * A conversation that is not in the list yet — the list has not loaded, or
+ * the conversation was opened before it did — falls back to the global
+ * default, so the UI is never left without a model.
+ */
+function selectionForSession(state: ChatState, sessionId: number | null): SessionSelection {
+  if (sessionId !== null) {
+    const row = state.sessions.find((s) => s.id === sessionId);
+    if (row) {
+      return selectionFromColumns({
+        model: row.model,
+        provider_id: row.provider_id,
+        compaction_model: row.compaction_model,
+        compaction_provider_id: row.compaction_provider_id,
+      });
+    }
+  }
+  return {
+    model: state.defaultModel,
+    providerId: state.defaultProviderId,
+    compactionModel: null,
+    compactionProviderId: null,
+  };
+}
+
+/**
+ * Put a conversation's selection on screen.
+ *
+ * The cached context-window answers describe the model that was selected
+ * when the server reported them, so they are dropped whenever the selection
+ * really changes — a conversation on another model must not keep showing the
+ * previous one's window.
+ */
+function applySelection(state: ChatState, selection: SessionSelection): ChatState {
+  const mirror = selectionMirror(selection);
+  const changed =
+    state.model !== mirror.model || state.activeProviderId !== mirror.activeProviderId;
+  return {
+    ...state,
+    ...mirror,
+    ...(changed ? staleModelCapReset(state) : {}),
   };
 }
 
@@ -1179,7 +1359,14 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
             pendingApprovalId: null,
           };
 
-      return { ...nextState, inputDraft: '', historyIndex: null };
+      // The conversation on screen runs on ITS OWN model selection. This is
+      // the point of the whole feature: switching conversations switches the
+      // model with them, and the model of the conversation left behind is
+      // still there when the user comes back to it.
+      return applySelection(
+        { ...nextState, inputDraft: '', historyIndex: null },
+        selectionForSession(nextState, action.id)
+      );
     }
     case 'SET_MODELS': {
       return { ...state, models: action.models };
@@ -1191,18 +1378,51 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, providers: action.providers };
     }
     case 'SET_ACTIVE_PROVIDER': {
+      // The provider of the conversation on screen. The reconciler uses this
+      // to repair a provider that does not serve the selected model; it does
+      // not re-pin the conversation, whose own record keeps the provider the
+      // user chose.
       return {
         ...state,
         activeProviderId: action.providerId,
         ...(action.providerId === state.activeProviderId ? {} : staleModelCapReset(state)),
       };
     }
-    case 'SET_MODEL': {
-      return {
+    case 'SET_SESSION_SELECTION': {
+      const { selection } = action;
+      const sessions = patchSessionSelection(state.sessions, state.currentSessionId, selection);
+      // Picking a model is also what a new conversation starts with: the
+      // user expects the next "New chat" to start on the model they just
+      // chose.
+      const nextState: ChatState = {
         ...state,
-        model: action.model,
-        ...(action.model === state.model ? {} : staleModelCapReset(state)),
+        sessions,
+        defaultModel: selection.model,
+        defaultProviderId: selection.providerId,
+        defaultCompactionModel: selection.compactionModel ?? '',
       };
+      return applySelection(nextState, selection);
+    }
+    case 'APPLY_SESSION_SELECTION': {
+      const sessions = patchSessionSelection(state.sessions, action.sessionId, action.selection);
+      const nextState = { ...state, sessions };
+      // Another tab's change must not move the model under the user: only
+      // the conversation on screen follows its own selection.
+      if (action.sessionId !== state.currentSessionId) return nextState;
+      return applySelection(nextState, action.selection);
+    }
+    case 'SET_DEFAULT_SELECTION': {
+      const nextState: ChatState = {
+        ...state,
+        defaultModel: action.model,
+        defaultProviderId: action.providerId,
+        ...(action.compactionModel === undefined
+          ? {}
+          : { defaultCompactionModel: action.compactionModel }),
+      };
+      // A conversation on screen keeps the selection of its own; the
+      // new-chat view follows the default.
+      return applySelection(nextState, selectionForSession(nextState, nextState.currentSessionId));
     }
     case 'SET_ERROR': {
       if (targetsBackgroundSession(state, action.targetSessionId)) {
@@ -1218,15 +1438,18 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // The clamp is the server's responsibility. SET_CONFIG only
       // stores the user's requested value; the effective value is
       // updated by SET_TOKEN_STATS when the server reports back.
-      const { model, activeProviderId } = action.config;
-      const selectionChanged =
-        (model !== undefined && model !== state.model) ||
-        (activeProviderId !== undefined && activeProviderId !== state.activeProviderId);
-      return {
+      const { defaultModel, defaultProviderId, defaultCompactionModel, ...rest } = action.config;
+      const nextState: ChatState = {
         ...state,
-        ...action.config,
-        ...(selectionChanged ? staleModelCapReset(state) : {}),
+        ...rest,
+        ...(defaultModel === undefined ? {} : { defaultModel }),
+        ...(defaultProviderId === undefined ? {} : { defaultProviderId }),
+        ...(defaultCompactionModel === undefined ? {} : { defaultCompactionModel }),
       };
+      // A conversation on screen keeps the selection of its own; the
+      // new-chat view — and a conversation whose row has not loaded yet —
+      // follows the default.
+      return applySelection(nextState, selectionForSession(nextState, nextState.currentSessionId));
     }
     case 'SET_ACTIVE_SUBAGENT': {
       if (targetsBackgroundSession(state, action.targetSessionId)) {
@@ -1634,6 +1857,9 @@ export const initialState: ChatState = {
   sessions: [],
   currentSessionId: null,
   model: '',
+  defaultModel: '',
+  defaultProviderId: null,
+  defaultCompactionModel: '',
   models: [],
   modelsLoading: true,
   providers: [],
@@ -1654,7 +1880,7 @@ export const initialState: ChatState = {
   promptTimestamps: true,
   citeSources: true,
   redactSecrets: true,
-  compactionModel: '',
+  compactionModel: null,
   compactionProviderId: null,
   chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS },

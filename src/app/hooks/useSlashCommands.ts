@@ -5,6 +5,7 @@ import { type Dispatch, type SetStateAction, useCallback } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { positiveInteger } from '@/app/lib/contextWindow';
+import { saveSessionSelection } from '@/app/lib/sessionSelectionClient';
 import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
 import { COMPACT_FOCUS_MAX_CHARS, normaliseCompactionFocus } from '@/services/compact/focus';
 import { formatCompactionReceipt } from '@/services/compact/receipt';
@@ -332,22 +333,21 @@ export function useSlashCommands({
               const modelName = typeof matched === 'string' ? matched : matched.name;
               const selectedProviderId =
                 typeof matched === 'string' ? undefined : matched.providerId;
-              dispatch({ type: 'SET_MODEL', model: modelName });
-              if (selectedProviderId) {
-                dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: selectedProviderId });
+              // The conversation on screen keeps the model of its own; the
+              // global default follows, so the next new conversation starts
+              // on it.
+              const selection = {
+                model: modelName,
+                providerId: selectedProviderId ?? refs.activeProviderIdRef.current,
+                compactionModel: refs.compactionModelRef.current,
+                compactionProviderId: refs.compactionProviderIdRef.current,
+              };
+              const saved = await saveSessionSelection(refs.sessionIdRef.current, selection);
+              if (!saved) {
+                addSystem('The model could not be saved for this conversation.');
+                return;
               }
-              try {
-                await fetch('/api/config', {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    model: modelName,
-                    ...(selectedProviderId ? { activeProviderId: selectedProviderId } : {}),
-                  }),
-                });
-              } catch {
-                // Ignore save errors
-              }
+              dispatch({ type: 'SET_SESSION_SELECTION', selection });
               addSystem(
                 `Model set to ${typeof matched === 'string' ? matched : (matched.displayName ?? matched.name)}`
               );
@@ -430,8 +430,11 @@ export function useSlashCommands({
                 model: refs.modelRef.current,
                 providerId: refs.activeProviderIdRef.current,
                 baseUrl: refs.baseUrlRef.current,
-                compactionModel: refs.compactionModelRef.current,
-                compactionProviderId: refs.compactionProviderIdRef.current,
+                // Omitted when the conversation inherits the global
+                // compaction model, so the server resolves it the same way
+                // it does for a chat turn.
+                compactionModel: refs.compactionModelRef.current ?? undefined,
+                compactionProviderId: refs.compactionProviderIdRef.current ?? undefined,
                 compactionReasoningEffort: refs.compactionReasoningEffortRef.current,
                 sessionId: compactSessionId,
                 // The text after `/compact`, if any: what the summary should
@@ -627,8 +630,8 @@ export function useSlashCommands({
                 model: refs.modelRef.current,
                 providerId: refs.activeProviderIdRef.current,
                 baseUrl: refs.baseUrlRef.current,
-                compactionModel: refs.compactionModelRef.current,
-                compactionProviderId: refs.compactionProviderIdRef.current,
+                compactionModel: refs.compactionModelRef.current ?? undefined,
+                compactionProviderId: refs.compactionProviderIdRef.current ?? undefined,
                 sessionId: refs.sessionIdRef.current,
                 think: refs.thinkingEnabledRef.current,
                 reasoningEffort: refs.reasoningEffortRef.current,

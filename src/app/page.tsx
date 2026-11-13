@@ -110,7 +110,15 @@ function HomeInner() {
     loadSessions,
     loadSessionMessages,
     navigation: sessionNavigation,
-    model: state.model,
+    // A new conversation is born with the selection of the conversation on
+    // screen: the new-chat view runs on the global default, and a
+    // conversation that has a model of its own hands it on.
+    selection: {
+      model: state.model,
+      providerId: state.activeProviderId,
+      compactionModel: state.compactionModel,
+      compactionProviderId: state.compactionProviderId,
+    },
   });
 
   const handleDeletePromptCallback = useCallback(

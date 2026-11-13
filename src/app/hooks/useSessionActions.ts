@@ -2,8 +2,9 @@
 
 import { type Dispatch, useCallback, useRef, useState } from 'react';
 
-import type { ChatMessage } from '@/app/lib/chatStore';
+import type { ChatMessage, Session } from '@/app/lib/chatStore';
 import type { LatestGate } from '@/app/lib/latestGate';
+import type { SessionSelection } from '@/services/sessionSelection';
 
 import { DEFAULT_SESSION_NAME } from '@/constants';
 
@@ -12,10 +13,7 @@ import type { WritableRef } from './useStableRefs';
 // Minimal set of action shapes consumed here
 type SessionAction =
   | { type: 'SET_CURRENT_SESSION'; id: number | null }
-  | {
-      type: 'ADD_SESSION';
-      session: { id: number; name: string; model: string; created_at: string; updated_at: string };
-    }
+  | { type: 'ADD_SESSION'; session: Session }
   | { type: 'DISCARD_SESSION'; sessionId: number }
   | { type: 'CLEAR_MESSAGES' }
   | {
@@ -37,7 +35,8 @@ interface UseSessionActionsOptions {
   ) => Promise<void>;
   /** The order of the user's navigations; the last click decides the view. */
   navigation: LatestGate;
-  model: string;
+  /** The model selection the new conversation is born with. */
+  selection: SessionSelection;
 }
 
 interface UseSessionActionsResult {
@@ -62,7 +61,7 @@ export function useSessionActions({
   loadSessions,
   loadSessionMessages,
   navigation,
-  model,
+  selection,
 }: UseSessionActionsOptions): UseSessionActionsResult {
   const currentSearchQueryRef = useRef('');
   const deletePromptRequestIdRef = useRef(0);
@@ -87,18 +86,16 @@ export function useSessionActions({
       const res = await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: DEFAULT_SESSION_NAME, model }),
+        body: JSON.stringify({
+          name: DEFAULT_SESSION_NAME,
+          model: selection.model,
+          providerId: selection.providerId,
+          compactionModel: selection.compactionModel,
+          compactionProviderId: selection.compactionProviderId,
+        }),
       });
       if (res.ok) {
-        const data = (await res.json()) as {
-          session: {
-            id: number;
-            name: string;
-            model: string;
-            created_at: string;
-            updated_at: string;
-          };
-        };
+        const data = (await res.json()) as { session: Session };
         dispatch({ type: 'ADD_SESSION', session: data.session });
         if (navigation.isLatest(turn)) {
           dispatch({ type: 'SET_CURRENT_SESSION', id: data.session.id });
@@ -113,7 +110,7 @@ export function useSessionActions({
       dispatch({ type: 'SET_CURRENT_SESSION', id: null });
     }
     await loadSessions();
-  }, [dispatch, loadSessions, model, navigation]);
+  }, [dispatch, loadSessions, navigation, selection]);
 
   const handleSelectSession = useCallback(
     async (sessionId: number) => {

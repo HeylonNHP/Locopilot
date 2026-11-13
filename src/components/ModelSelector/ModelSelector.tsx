@@ -2,8 +2,11 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import type { SessionSelection } from '@/services/sessionSelection';
+
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { type LLmModel, useChat } from '@/app/lib/chatStore';
+import { saveSessionSelection } from '@/app/lib/sessionSelectionClient';
 import { type MidTurnModelSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 
 import { toggleProviderCollapsed, useCollapsedProviders } from './collapsedProviders';
@@ -253,17 +256,19 @@ export default function ModelSelector({
     models,
     model,
     activeProviderId,
-    yolo,
-    thinkingEnabled,
     compactionModel,
     compactionProviderId,
-    chatTimeoutMs,
-    webSearch,
+    defaultCompactionModel,
     currentSessionId,
     streamingSessions,
   } = state;
 
+  // The conversation's OWN compaction model, which is `null` when it
+  // inherits the global default. The pickers show what the conversation
+  // chose; the status bar shows what is actually used.
   const activeModel = mode === 'compaction' ? compactionModel : model;
+
+  const inheritedCompactionName = defaultCompactionModel || model || 'the main model';
 
   // The session whose turn can still take a model switch on board, or null
   // when nothing is streaming and the config update alone is enough.
@@ -396,106 +401,71 @@ export default function ModelSelector({
   // Close on outside click and Escape
   useClickOutsideEscape(panelRef, { isOpen, onClose });
 
-  const handleSelect = useCallback(
-    async (modelName: string, providerId?: string) => {
-      if (modelName === activeModel && (!providerId || providerId === activeProviderId)) {
-        onClose();
-        return;
-      }
-
-      if (mode === 'compaction') {
-        // `compactionProviderId` is transient (in-memory + request bodies,
-        // not persisted to config.json). It captures the picked model's
-        // provider so the server's compaction route can resolve the
-        // compaction provider precisely, even when the compaction model
-        // belongs to a different provider than the active chat model.
-        // "Same as main model" passes '' + null together.
-        const nextCompactionProviderId = providerId ?? null;
+  /**
+   * Apply a selection to the conversation on screen.
+   *
+   * The conversation's own row is written before anything changes on screen:
+   * a selection the server does not know about is a selection that is lost
+   * on the next reload.
+   */
+  const applySelection = useCallback(
+    async (selection: SessionSelection, midTurn: MidTurnModelSwitch) => {
+      const saved = await saveSessionSelection(currentSessionId, selection);
+      if (!saved) {
         dispatch({
-          type: 'SET_CONFIG',
-          config: {
-            compactionModel: modelName,
-            compactionProviderId: nextCompactionProviderId,
-          },
+          type: 'SET_ERROR',
+          error: 'The model could not be saved for this conversation.',
         });
-
-        try {
-          await fetch('/api/config', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model,
-              yolo,
-              thinkingEnabled,
-              compactionModel: modelName,
-              chatTimeoutMs,
-              webSearch,
-            }),
-          });
-        } catch {
-          // Silently ignore
-        }
-
-        await switchMidTurn({
-          compactionModel: modelName,
-          ...(providerId ? { compactionProviderId: providerId } : {}),
-        });
-
         onClose();
         return;
       }
 
-      const selectedProviderId = providerId ?? null;
-      dispatch({ type: 'SET_ACTIVE_PROVIDER', providerId: selectedProviderId });
-      dispatch({ type: 'SET_CONFIG', config: { model: modelName } });
-
-      try {
-        // Only persist the model/provider change; do NOT send numCtx so the user's
-        // configured maximum context size is preserved in config.json.
-        // The effective (clamped) limit is now applied by the server
-        // via the cap resolver and reported back on the next chat
-        // turn's `status` event. The client no longer pre-fetches the
-        // cap; the server is authoritative.
-        const config = {
-          activeProviderId: selectedProviderId,
-          model: modelName,
-          yolo,
-          thinkingEnabled,
-          compactionModel,
-          chatTimeoutMs,
-          webSearch,
-        };
-        await fetch('/api/config', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(config),
-        });
-      } catch {
-        // Silently ignore
-      }
-
-      await switchMidTurn({
-        model: modelName,
-        ...(selectedProviderId ? { providerId: selectedProviderId } : {}),
-      });
-
+      dispatch({ type: 'SET_SESSION_SELECTION', selection });
+      await switchMidTurn(midTurn);
       onClose();
     },
-    [
-      dispatch,
-      onClose,
-      activeModel,
-      activeProviderId,
-      mode,
-      model,
-      yolo,
-      thinkingEnabled,
-      compactionModel,
-      chatTimeoutMs,
-      webSearch,
-      switchMidTurn,
-    ]
+    [currentSessionId, dispatch, onClose, switchMidTurn]
   );
+
+  const handleSelectModel = useCallback(
+    (modelName: string, providerId?: string | null) =>
+      applySelection(
+        {
+          model: modelName,
+          providerId: providerId ?? null,
+          compactionModel,
+          compactionProviderId,
+        },
+        {
+          model: modelName,
+          ...(providerId ? { providerId } : {}),
+        }
+      ),
+    [applySelection, compactionModel, compactionProviderId]
+  );
+
+  const handleSelectCompaction = useCallback(
+    (nextCompactionModel: string | null, providerId?: string | null) =>
+      applySelection(
+        {
+          model,
+          providerId: activeProviderId,
+          compactionModel: nextCompactionModel,
+          compactionProviderId: providerId ?? null,
+        },
+        {
+          // `null` means "inherit the global default", which the mid-turn
+          // switch has no way to express: the running turn keeps the model
+          // it has until the next turn sends the resolved one.
+          ...(nextCompactionModel === null ? {} : { compactionModel: nextCompactionModel }),
+          ...(providerId ? { compactionProviderId: providerId } : {}),
+        }
+      ),
+    [activeProviderId, applySelection, model]
+  );
+
+  const handleSelect: (modelName: string, providerId?: string) => void =
+    mode === 'compaction' ? handleSelectCompaction : handleSelectModel;
 
   if (!isOpen) return null;
 
@@ -525,7 +495,7 @@ export default function ModelSelector({
           <button
             key="__same-as-main__"
             className={`model-selector-item ${activeModel === '' ? 'model-selector-item-active' : ''}`}
-            onClick={() => handleSelect('')}
+            onClick={() => handleSelectCompaction('', null)}
             title="Use the currently selected chat model for compaction"
           >
             <span className="model-selector-check">
@@ -543,6 +513,31 @@ export default function ModelSelector({
             </span>
             <span className="model-selector-content">
               <span className="model-selector-name">Same as main model</span>
+            </span>
+          </button>
+        )}
+        {mode === 'compaction' && (
+          <button
+            key="__use-the-default__"
+            className={`model-selector-item ${activeModel === null ? 'model-selector-item-active' : ''}`}
+            onClick={() => handleSelectCompaction(null, null)}
+            title={`Use the default compaction model (${inheritedCompactionName})`}
+          >
+            <span className="model-selector-check">
+              {activeModel === null && (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M3 8.5L6.5 12L13 5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </span>
+            <span className="model-selector-content">
+              <span className="model-selector-name">Use the default</span>
             </span>
           </button>
         )}

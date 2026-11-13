@@ -2,11 +2,13 @@
 
 import { useEffect } from 'react';
 
+import type { SessionSelection } from '@/services/sessionSelection';
+
 import { useChat } from '@/app/lib/chatStore';
 import { SESSIONS_SSE_EVENT_NAME } from '@/services/sseNames';
 
 /**
- * Keeps the session list's titles live by subscribing to
+ * Keeps the session list live by subscribing to
  * `GET /api/sessions/events`.
  *
  * A brand-new chat is created as "New chat" and only gets its real title once
@@ -17,6 +19,9 @@ import { SESSIONS_SSE_EVENT_NAME } from '@/services/sseNames';
  * `document.title` (`DocumentHead` derives from `state.sessions`), so neither
  * can go stale again.
  *
+ * A conversation's model selection rides the same bus: the row it names is
+ * patched, and the selection of the conversation on screen follows.
+ *
  * Reconnect: `EventSource` retries transient drops by itself, but it gives up
  * permanently when the endpoint answers with a non-2xx (e.g. the dev server is
  * restarting). In that case we reopen with exponential backoff so titles keep
@@ -26,7 +31,56 @@ import { SESSIONS_SSE_EVENT_NAME } from '@/services/sseNames';
 const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
 
-type SessionRename = { sessionId: number; name: string };
+type SessionRename = { kind: 'renamed'; sessionId: number; name: string };
+type SessionModelChange = { kind: 'model-changed'; sessionId: number; selection: SessionSelection };
+
+/**
+ * Validates one `session-updated` frame's `data` payload.
+ *
+ * Exported for the test that pins the wire contract: the producer
+ * (`services/sessionEvents.ts` → `api/sessions/events`) and this consumer are
+ * in different processes, so nothing but a test keeps the JSON shape honest.
+ */
+export function parseSessionEvent(
+  data: string
+): { kind: 'renamed'; sessionId: number; name: string } | SessionModelChange | null {
+  try {
+    const payload = JSON.parse(data) as {
+      kind?: unknown;
+      sessionId?: unknown;
+      name?: unknown;
+      model?: unknown;
+      providerId?: unknown;
+      compactionModel?: unknown;
+      compactionProviderId?: unknown;
+    };
+    if (typeof payload.sessionId !== 'number') return null;
+    if (payload.kind === 'renamed') {
+      if (typeof payload.name !== 'string') return null;
+      return { kind: 'renamed', sessionId: payload.sessionId, name: payload.name };
+    }
+    if (payload.kind === 'model-changed') {
+      if (typeof payload.model !== 'string') return null;
+      return {
+        kind: 'model-changed',
+        sessionId: payload.sessionId,
+        selection: {
+          model: payload.model,
+          providerId: typeof payload.providerId === 'string' ? payload.providerId : null,
+          compactionModel:
+            typeof payload.compactionModel === 'string' ? payload.compactionModel : null,
+          compactionProviderId:
+            typeof payload.compactionProviderId === 'string' ? payload.compactionProviderId : null,
+        },
+      };
+    }
+    return null;
+  } catch {
+    // A malformed frame is not worth breaking the stream over — the next
+    // full session load is still authoritative.
+    return null;
+  }
+}
 
 /**
  * Validates one `session-renamed` frame's `data` payload.
@@ -36,16 +90,9 @@ type SessionRename = { sessionId: number; name: string };
  * in different processes, so nothing but a test keeps the JSON shape honest.
  */
 export function parseRenameEvent(data: string): SessionRename | null {
-  try {
-    const payload = JSON.parse(data) as { kind?: unknown; sessionId?: unknown; name?: unknown };
-    if (payload.kind !== 'renamed') return null;
-    if (typeof payload.sessionId !== 'number' || typeof payload.name !== 'string') return null;
-    return { sessionId: payload.sessionId, name: payload.name };
-  } catch {
-    // A malformed frame is not worth breaking the stream over — the next
-    // full session load is still authoritative.
-    return null;
-  }
+  const event = parseSessionEvent(data);
+  if (!event || event.kind !== 'renamed') return null;
+  return { kind: 'renamed', sessionId: event.sessionId, name: event.name };
 }
 
 export function useSessionEvents(): void {
@@ -63,9 +110,17 @@ export function useSessionEvents(): void {
       source = es;
 
       es.addEventListener(SESSIONS_SSE_EVENT_NAME, (event: MessageEvent<string>) => {
-        const renamed = parseRenameEvent(event.data);
-        if (!renamed) return;
-        dispatch({ type: 'RENAME_SESSION', sessionId: renamed.sessionId, name: renamed.name });
+        const parsed = parseSessionEvent(event.data);
+        if (!parsed) return;
+        if (parsed.kind === 'renamed') {
+          dispatch({ type: 'RENAME_SESSION', sessionId: parsed.sessionId, name: parsed.name });
+          return;
+        }
+        dispatch({
+          type: 'APPLY_SESSION_SELECTION',
+          sessionId: parsed.sessionId,
+          selection: parsed.selection,
+        });
       });
 
       es.addEventListener('open', () => {
