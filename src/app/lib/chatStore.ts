@@ -28,6 +28,7 @@ import {
 import {
   selectionFromColumns,
   selectionToColumns,
+  type SessionDefaults,
   type SessionSelection,
 } from '@/services/sessionSelection';
 
@@ -475,10 +476,17 @@ export type ChatAction =
       type: 'SET_SESSION_SELECTION';
       /**
        * The model selection the user picked for the conversation on screen.
-       * It pins that conversation AND updates the global defaults: picking a
-       * model is also what a new conversation starts with.
+       * It pins that conversation AND updates the global defaults, because
+       * picking a model is also what a new conversation starts with.
+       *
+       * The defaults are stated rather than derived: a pick of the MAIN
+       * model changes the main defaults and leaves the compaction default
+       * alone, and a pick of the COMPACTION model changes the compaction
+       * default and leaves the main ones alone. The two pickers are separate
+       * controls, so each says which it is.
        */
       selection: SessionSelection;
+      defaults: SessionDefaults;
     }
   | {
       type: 'APPLY_SESSION_SELECTION';
@@ -814,11 +822,25 @@ function patchSessionSelection(
 }
 
 /**
+ * The selection the conversation on screen runs on, as it stands in the
+ * store.
+ */
+function mirrorSelection(state: ChatState): SessionSelection {
+  return {
+    model: state.model,
+    providerId: state.activeProviderId,
+    compactionModel: state.compactionModel,
+    compactionProviderId: state.compactionProviderId,
+  };
+}
+
+/**
  * The selection a conversation runs on.
  *
  * A conversation that is not in the list yet — the list has not loaded, or
  * the conversation was opened before it did — falls back to the global
- * default, so the UI is never left without a model.
+ * default, so the UI is never left without a model. The row that arrives
+ * (or the conversation's own detail fetch) replaces it.
  */
 function selectionForSession(state: ChatState, sessionId: number | null): SessionSelection {
   if (sessionId !== null) {
@@ -1252,7 +1274,20 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case 'SET_SESSIONS': {
-      return { ...state, sessions: action.sessions };
+      // The list is the server's snapshot, but the conversation on screen
+      // keeps the selection it has: a model the user has just picked may
+      // not be in the list yet, because the write that carries it is still
+      // in flight, and a list that is a moment older must not roll the pick
+      // back. The push from the server (the session event) is what changes
+      // it.
+      const active = state.currentSessionId;
+      const sessions =
+        active === null
+          ? action.sessions
+          : action.sessions.map((row) =>
+              row.id === active ? { ...row, ...selectionToColumns(mirrorSelection(state)) } : row
+            );
+      return { ...state, sessions };
     }
     case 'ADD_SESSION': {
       // Prepend the new session so it appears at the top of the sidebar
@@ -1389,17 +1424,19 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case 'SET_SESSION_SELECTION': {
-      const { selection } = action;
+      const { selection, defaults } = action;
       const sessions = patchSessionSelection(state.sessions, state.currentSessionId, selection);
       // Picking a model is also what a new conversation starts with: the
       // user expects the next "New chat" to start on the model they just
-      // chose.
+      // chose. The defaults say WHICH part of the selection the pick
+      // changed, so picking the compaction model does not move the default
+      // main model.
       const nextState: ChatState = {
         ...state,
         sessions,
-        defaultModel: selection.model,
-        defaultProviderId: selection.providerId,
-        defaultCompactionModel: selection.compactionModel ?? '',
+        defaultModel: defaults.model,
+        defaultProviderId: defaults.providerId,
+        defaultCompactionModel: defaults.compactionModel,
       };
       return applySelection(nextState, selection);
     }
@@ -1420,9 +1457,11 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           ? {}
           : { defaultCompactionModel: action.compactionModel }),
       };
-      // A conversation on screen keeps the selection of its own; the
-      // new-chat view follows the default.
-      return applySelection(nextState, selectionForSession(nextState, nextState.currentSessionId));
+      // A conversation on screen keeps the selection of its own. Only the
+      // new-chat view follows the default: a conversation whose row has not
+      // loaded yet must not be moved to the default behind the user's back.
+      if (state.currentSessionId !== null) return nextState;
+      return applySelection(nextState, selectionForSession(nextState, null));
     }
     case 'SET_ERROR': {
       if (targetsBackgroundSession(state, action.targetSessionId)) {
@@ -1446,10 +1485,11 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...(defaultProviderId === undefined ? {} : { defaultProviderId }),
         ...(defaultCompactionModel === undefined ? {} : { defaultCompactionModel }),
       };
-      // A conversation on screen keeps the selection of its own; the
-      // new-chat view — and a conversation whose row has not loaded yet —
-      // follows the default.
-      return applySelection(nextState, selectionForSession(nextState, nextState.currentSessionId));
+      // A conversation on screen keeps the selection of its own. Only the
+      // new-chat view follows the default: a conversation whose row has not
+      // loaded yet must not be moved to the default behind the user's back.
+      if (state.currentSessionId !== null) return nextState;
+      return applySelection(nextState, selectionForSession(nextState, null));
     }
     case 'SET_ACTIVE_SUBAGENT': {
       if (targetsBackgroundSession(state, action.targetSessionId)) {

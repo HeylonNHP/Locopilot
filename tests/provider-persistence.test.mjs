@@ -46,12 +46,16 @@ describe('provider persistence', () => {
   describe('the /model command', () => {
     test('the provider of the picked model travels with the model', async () => {
       const writes = await captureWrites(() =>
-        saveSessionSelection(7, {
-          model: 'qwen3-coder:30b',
-          providerId: 'openrouter',
-          compactionModel: null,
-          compactionProviderId: null,
-        })
+        saveSessionSelection(
+          7,
+          {
+            model: 'qwen3-coder:30b',
+            providerId: 'openrouter',
+            compactionModel: null,
+            compactionProviderId: null,
+          },
+          { model: 'qwen3-coder:30b', providerId: 'openrouter', compactionModel: '' }
+        )
       );
 
       expect(writes.sessionRow).toStrictEqual({
@@ -63,33 +67,71 @@ describe('provider persistence', () => {
       expect(writes.config).toStrictEqual({
         model: 'qwen3-coder:30b',
         activeProviderId: 'openrouter',
+        compactionModel: '',
       });
     });
 
-    test('a conversation that inherits the global compaction model leaves it alone', async () => {
+    test('the global defaults are written, not the conversation’s selection', async () => {
+      // A pick of the main model must not move the default compaction model,
+      // and a pick of the compaction model must not move the default main
+      // model: the two pickers are separate controls.
       const writes = await captureWrites(() =>
-        saveSessionSelection(7, {
-          model: 'qwen3-coder:30b',
-          providerId: 'openrouter',
-          compactionModel: null,
-          compactionProviderId: null,
-        })
+        saveSessionSelection(
+          7,
+          {
+            model: 'qwen3-coder:30b',
+            providerId: 'openrouter',
+            compactionModel: 'cheap-compactor',
+            compactionProviderId: 'openrouter',
+          },
+          { model: 'qwen3-coder:30b', providerId: 'openrouter', compactionModel: 'cheap-compactor' }
+        )
       );
 
-      // Writing the empty string here would turn "inherit" into "compact
-      // with the main model" for every conversation.
-      expect(writes.config).not.toHaveProperty('compactionModel');
+      expect(writes.config).toStrictEqual({
+        model: 'qwen3-coder:30b',
+        activeProviderId: 'openrouter',
+        compactionModel: 'cheap-compactor',
+      });
+    });
+
+    test('a conversation that inherits the global compaction model keeps inheriting it', async () => {
+      const writes = await captureWrites(() =>
+        saveSessionSelection(
+          7,
+          {
+            model: 'qwen3-coder:30b',
+            providerId: 'openrouter',
+            compactionModel: null,
+            compactionProviderId: null,
+          },
+          {
+            model: 'qwen3-coder:30b',
+            providerId: 'openrouter',
+            compactionModel: 'global-compactor',
+          }
+        )
+      );
+
+      // The conversation's own row keeps "inherit"; the global it inherits
+      // is written as the global it is, so the two cannot drift apart.
+      expect(writes.sessionRow.compactionModel).toBeNull();
+      expect(writes.config.compactionModel).toBe('global-compactor');
     });
 
     test('a failed save is reported instead of swallowed', async () => {
       const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false });
       try {
-        const saved = await saveSessionSelection(7, {
-          model: 'qwen3-coder:30b',
-          providerId: 'openrouter',
-          compactionModel: null,
-          compactionProviderId: null,
-        });
+        const saved = await saveSessionSelection(
+          7,
+          {
+            model: 'qwen3-coder:30b',
+            providerId: 'openrouter',
+            compactionModel: null,
+            compactionProviderId: null,
+          },
+          { model: 'qwen3-coder:30b', providerId: 'openrouter', compactionModel: '' }
+        );
         expect(saved).toBe(false);
       } finally {
         fetchSpy.mockRestore();
@@ -120,12 +162,16 @@ describe('provider persistence', () => {
 
     test('the model selector persists the selected provider ID', async () => {
       const writes = await captureWrites(() =>
-        saveSessionSelection(7, {
-          model: 'qwen3-coder:30b',
-          providerId: 'openrouter',
-          compactionModel: null,
-          compactionProviderId: null,
-        })
+        saveSessionSelection(
+          7,
+          {
+            model: 'qwen3-coder:30b',
+            providerId: 'openrouter',
+            compactionModel: null,
+            compactionProviderId: null,
+          },
+          { model: 'qwen3-coder:30b', providerId: 'openrouter', compactionModel: '' }
+        )
       );
       expect(writes.config.activeProviderId).toBe('openrouter');
     });

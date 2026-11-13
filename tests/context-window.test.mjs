@@ -239,6 +239,7 @@ describe('the store: no placeholder, and the sequence that failed', () => {
         compactionModel: null,
         compactionProviderId: null,
       },
+      defaults: { model: 'small', providerId: 'p1', compactionModel: '' },
     });
     expect(same.tokenStats.modelContextLimit).toBe(262_144);
     expect(same.modelMaxNumCtx).toBe(262_144);
@@ -257,6 +258,7 @@ describe('the store: no placeholder, and the sequence that failed', () => {
           compactionModel: null,
           compactionProviderId: null,
         },
+        defaults: { model: 'big', providerId: 'p1', compactionModel: '' },
       }),
       chatReducer(state, { type: 'SET_ACTIVE_PROVIDER', providerId: 'p2' }),
       chatReducer(state, { type: 'SET_DEFAULT_SELECTION', model: 'big', providerId: 'p1' }),

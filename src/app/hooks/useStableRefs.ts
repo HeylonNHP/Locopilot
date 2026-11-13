@@ -46,6 +46,12 @@ export interface StableRefs {
    * used for compaction. `null` for "the main model's provider".
    */
   compactionProviderIdRef: WritableRef<string | null>;
+  /**
+   * The compaction model a NEW conversation starts with, and the one a
+   * conversation that has not pinned a compaction model of its own inherits.
+   * A pick of the main model does not change it.
+   */
+  defaultCompactionModelRef: WritableRef<string>;
   chatTimeoutMsRef: WritableRef<number>;
   webSearchRef: WritableRef<WebSearchConfig>;
   completionModeRef: WritableRef<CompletionMode>;
@@ -76,6 +82,7 @@ interface StableRefsInput {
   compactionReasoningEffort: ReasoningEffort;
   compactionModel: string | null;
   compactionProviderId: string | null;
+  defaultCompactionModel: string;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
   completionMode: CompletionMode;
@@ -104,6 +111,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const compactionReasoningEffortRef = useRef(state.compactionReasoningEffort);
   const compactionModelRef = useRef(state.compactionModel);
   const compactionProviderIdRef = useRef(state.compactionProviderId);
+  const defaultCompactionModelRef = useRef(state.defaultCompactionModel);
   const chatTimeoutMsRef = useRef(state.chatTimeoutMs);
   const webSearchRef = useRef(state.webSearch);
   const completionModeRef = useRef(state.completionMode);
@@ -126,6 +134,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   activeProviderIdRef.current = state.activeProviderId;
   compactionModelRef.current = state.compactionModel;
   compactionProviderIdRef.current = state.compactionProviderId;
+  defaultCompactionModelRef.current = state.defaultCompactionModel;
 
   useEffect(() => {
     messagesRef.current = state.messages;
@@ -194,6 +203,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       compactionReasoningEffortRef,
       compactionModelRef,
       compactionProviderIdRef,
+      defaultCompactionModelRef,
       chatTimeoutMsRef,
       webSearchRef,
       completionModeRef,

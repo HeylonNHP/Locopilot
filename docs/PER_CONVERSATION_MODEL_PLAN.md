@@ -63,7 +63,7 @@ Three actions own the selection, and nothing else writes it:
 
 | Action                    | Who dispatches it                                            | What it does                                                               |
 | ------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| `SET_SESSION_SELECTION`   | the pickers, `/model`                                        | pins the conversation's row and updates the global default                 |
+| `SET_SESSION_SELECTION`   | the pickers, `/model`                                        | pins the conversation's row and updates the global defaults                |
 | `APPLY_SESSION_SELECTION` | the server (a row that was just loaded) and the session push | patches the row; the mirror follows only if that conversation is on screen |
 | `SET_DEFAULT_SELECTION`   | the boot reconciliation, the config load                     | changes the global default                                                 |
 
@@ -72,7 +72,18 @@ Three actions own the selection, and nothing else writes it:
 **Writes.** `PATCH /api/sessions/[id]` writes the selection, queued with the
 session's message writes. `saveSessionSelection`
 (`src/app/lib/sessionSelectionClient.ts`) is the one place a pick is saved: the
-conversation's row first, then the global default.
+conversation's row first, then the global DEFAULTS - not the conversation's
+selection, which is what keeps a pick of one field from moving the other.
+
+**The two copies.** The selection exists twice in the store: in the
+conversation's row, and in the mirror the conversation on screen is projected
+onto. Two rules keep them together, and both are pinned by tests:
+
+- A session list that is a moment older does not roll back a pick. The list
+  is the server's snapshot, but the write that carries a fresh pick may still
+  be in flight, so the conversation on screen keeps the selection it has.
+- A config that arrives late does not move the model of a conversation that
+  is open. Only the new-chat view follows the global default.
 
 **The push.** The SSE event is `session-updated` and the payload discriminates on
 `kind` (`renamed` / `model-changed`).

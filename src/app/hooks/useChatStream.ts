@@ -244,20 +244,25 @@ export function useChatStream(
           setRetryPayload(realId, retryBodyForSession(pendingRetry, realId));
         }
         refs.sessionIdRef.current = realId;
-        dispatch({ type: 'SET_CURRENT_SESSION', id: realId, adoptNewChat: true });
+        // The row is added BEFORE the view switches, so the reducer can
+        // restore the conversation's own model selection from it instead of
+        // falling back to the global default for an instant.
         dispatch({
           type: 'ADD_SESSION',
           session: {
             id: realId,
             name: DEFAULT_SESSION_NAME,
-            model: refs.modelRef.current,
-            provider_id: refs.activeProviderIdRef.current,
-            compaction_model: refs.compactionModelRef.current,
-            compaction_provider_id: refs.compactionProviderIdRef.current,
+            // The selection the server stored, not whatever happens to be on
+            // screen when the frame arrives.
+            model: data.model ?? refs.modelRef.current,
+            provider_id: data.providerId ?? null,
+            compaction_model: data.compactionModel ?? null,
+            compaction_provider_id: data.compactionProviderId ?? null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
         });
+        dispatch({ type: 'SET_CURRENT_SESSION', id: realId, adoptNewChat: true });
         return;
       }
 

@@ -51,6 +51,12 @@ export default function SettingsModal({ onClose }: Props) {
   const [citeSources, setCiteSources] = useState(state.citeSources ?? true);
   const [redactSecrets, setRedactSecrets] = useState(state.redactSecrets ?? true);
   const [compactionModel, setCompactionModel] = useState<string | null>(state.compactionModel);
+  // Which of the two selection fields the user actually touched. Only a
+  // field the user changed moves the global default a new conversation
+  // starts with; saving the modal must not quietly repoint the default at
+  // the model of the conversation that happens to be open.
+  const [modelEdited, setModelEdited] = useState(false);
+  const [compactionModelEdited, setCompactionModelEdited] = useState(false);
   // The provider that owns the selected main model / compaction model. These
   // are tracked separately so the user can run the main chat on one provider
   // and compaction on a different one. `compactionProviderId` is transient
@@ -176,6 +182,7 @@ export default function SettingsModal({ onClose }: Props) {
   })();
 
   const handleMainModelChange = (value: string) => {
+    setModelEdited(true);
     if (!value) {
       setModel('');
       setMainProviderId(null);
@@ -189,6 +196,7 @@ export default function SettingsModal({ onClose }: Props) {
   };
 
   const handleCompactionModelChange = (value: string) => {
+    setCompactionModelEdited(true);
     if (value === INHERIT_COMPACTION_VALUE) {
       setCompactionModel(null);
       setCompactionProviderId(null);
@@ -212,6 +220,7 @@ export default function SettingsModal({ onClose }: Props) {
   // new provider's group.
   const handleProviderAdded = (providerId: string, addedModel: string | undefined) => {
     if (addedModel !== undefined && model === '') {
+      setModelEdited(true);
       setModel(addedModel);
       setMainProviderId(providerId);
     }
@@ -265,19 +274,33 @@ export default function SettingsModal({ onClose }: Props) {
     }
 
     try {
-      // The model selection belongs to the conversation on screen, and the
-      // global default follows it so the next new conversation starts on it.
-      // It is written first: a selection the server does not know about is a
-      // selection that is lost on the next reload.
+      // The model selection belongs to the conversation on screen. Only the
+      // field the user actually changed moves the global default a new
+      // conversation starts with.
       const selection = {
         model,
         providerId: mainProviderId,
         compactionModel,
         compactionProviderId,
       };
-      const selectionSaved = await saveSessionSelection(state.currentSessionId, selection);
-      if (!selectionSaved) {
-        throw new Error('The model could not be saved for this conversation.');
+      const defaults = {
+        model: modelEdited ? model : state.defaultModel,
+        providerId: modelEdited ? mainProviderId : state.defaultProviderId,
+        compactionModel: compactionModelEdited
+          ? (compactionModel ?? state.defaultCompactionModel)
+          : state.defaultCompactionModel,
+      };
+      // A conversation always has a model: the "Select a model..." option
+      // cannot leave one without. The rest of the settings are still saved.
+      if (model.trim().length > 0) {
+        const selectionSaved = await saveSessionSelection(
+          state.currentSessionId,
+          selection,
+          defaults
+        );
+        if (!selectionSaved) {
+          throw new Error('The model could not be saved for this conversation.');
+        }
       }
 
       const response = await fetch('/api/config', {
@@ -332,8 +355,10 @@ export default function SettingsModal({ onClose }: Props) {
       });
 
       // The conversation on screen now runs on the selection that was just
-      // saved; the global default follows it.
-      dispatch({ type: 'SET_SESSION_SELECTION', selection });
+      // saved; the global default follows the fields the user changed.
+      if (model.trim().length > 0) {
+        dispatch({ type: 'SET_SESSION_SELECTION', selection, defaults });
+      }
 
       // Carry a model change into a turn that is already streaming, so the
       // running turn (and its sub-agents) switch at their next tool step

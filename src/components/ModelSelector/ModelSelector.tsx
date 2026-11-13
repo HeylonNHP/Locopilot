@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import type { SessionSelection } from '@/services/sessionSelection';
+import type { SessionDefaults, SessionSelection } from '@/services/sessionSelection';
 
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { type LLmModel, useChat } from '@/app/lib/chatStore';
@@ -258,6 +258,8 @@ export default function ModelSelector({
     activeProviderId,
     compactionModel,
     compactionProviderId,
+    defaultModel,
+    defaultProviderId,
     defaultCompactionModel,
     currentSessionId,
     streamingSessions,
@@ -409,8 +411,8 @@ export default function ModelSelector({
    * on the next reload.
    */
   const applySelection = useCallback(
-    async (selection: SessionSelection, midTurn: MidTurnModelSwitch) => {
-      const saved = await saveSessionSelection(currentSessionId, selection);
+    async (selection: SessionSelection, defaults: SessionDefaults, midTurn: MidTurnModelSwitch) => {
+      const saved = await saveSessionSelection(currentSessionId, selection, defaults);
       if (!saved) {
         dispatch({
           type: 'SET_ERROR',
@@ -420,7 +422,7 @@ export default function ModelSelector({
         return;
       }
 
-      dispatch({ type: 'SET_SESSION_SELECTION', selection });
+      dispatch({ type: 'SET_SESSION_SELECTION', selection, defaults });
       await switchMidTurn(midTurn);
       onClose();
     },
@@ -436,12 +438,18 @@ export default function ModelSelector({
           compactionModel,
           compactionProviderId,
         },
+        // The main model changed; the default compaction model is not touched.
+        {
+          model: modelName,
+          providerId: providerId ?? null,
+          compactionModel: defaultCompactionModel,
+        },
         {
           model: modelName,
           ...(providerId ? { providerId } : {}),
         }
       ),
-    [applySelection, compactionModel, compactionProviderId]
+    [applySelection, compactionModel, compactionProviderId, defaultCompactionModel]
   );
 
   const handleSelectCompaction = useCallback(
@@ -453,6 +461,12 @@ export default function ModelSelector({
           compactionModel: nextCompactionModel,
           compactionProviderId: providerId ?? null,
         },
+        // The compaction model changed; the default main model is not touched.
+        {
+          model: defaultModel,
+          providerId: defaultProviderId,
+          compactionModel: nextCompactionModel ?? defaultCompactionModel,
+        },
         {
           // `null` means "inherit the global default", which the mid-turn
           // switch has no way to express: the running turn keeps the model
@@ -461,7 +475,14 @@ export default function ModelSelector({
           ...(providerId ? { compactionProviderId: providerId } : {}),
         }
       ),
-    [activeProviderId, applySelection, model]
+    [
+      activeProviderId,
+      applySelection,
+      defaultCompactionModel,
+      defaultModel,
+      defaultProviderId,
+      model,
+    ]
   );
 
   const handleSelect: (modelName: string, providerId?: string) => void =

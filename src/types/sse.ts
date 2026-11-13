@@ -41,7 +41,18 @@ export interface SseTokenStats {
  * the producer and the consumer stay in sync at compile time.
  */
 export interface SseEventPayloadMap {
-  session_created: { sessionId: number };
+  session_created: {
+    sessionId: number;
+    /**
+     * The model selection the conversation was created with, so the browser
+     * can build its row from what the server actually stored rather than
+     * from whatever is on screen when the frame arrives.
+     */
+    model: string;
+    providerId: string | null;
+    compactionModel: string | null;
+    compactionProviderId: string | null;
+  };
   thinking: { content: string };
   chunk: { content: string };
   tool_call: { name: string; arguments: ToolCallArguments | Record<string, unknown> };

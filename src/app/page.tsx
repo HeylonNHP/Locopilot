@@ -110,14 +110,14 @@ function HomeInner() {
     loadSessions,
     loadSessionMessages,
     navigation: sessionNavigation,
-    // A new conversation is born with the selection of the conversation on
-    // screen: the new-chat view runs on the global default, and a
-    // conversation that has a model of its own hands it on.
+    // A new conversation starts on the global default: the model a new
+    // conversation starts with, which is what the last pick set. The
+    // conversation on screen keeps its own selection.
     selection: {
-      model: state.model,
-      providerId: state.activeProviderId,
-      compactionModel: state.compactionModel,
-      compactionProviderId: state.compactionProviderId,
+      model: state.defaultModel,
+      providerId: state.defaultProviderId,
+      compactionModel: null,
+      compactionProviderId: null,
     },
   });
 

@@ -858,18 +858,21 @@ export async function POST(req: NextRequest): Promise<Response> {
       try {
         if (!activeSessionId) {
           // The conversation is born with the selection this turn runs on, so
-          // it keeps that model when it is opened again later.
-          activeSessionId = createSession(DEFAULT_SESSION_NAME, {
+          // it keeps that model when it is opened again later. The frame
+          // carries the same selection, so the browser can build its row from
+          // what was stored rather than from what happens to be on screen.
+          const selection = {
             model: model as string,
             providerId: providerId ?? null,
             // A compaction model the request did not carry means "inherit the
             // global default", which is how the server reads it everywhere else.
             compactionModel: compactionModel ?? null,
             compactionProviderId: compactionProviderId ?? null,
-          });
+          };
+          activeSessionId = createSession(DEFAULT_SESSION_NAME, selection);
           // From here on every frame names the session the turn belongs to.
           frameIdentity.sessionId = activeSessionId;
-          sendEvent('session_created', { sessionId: activeSessionId });
+          sendEvent('session_created', { sessionId: activeSessionId, ...selection });
         }
         // Accept mid-turn model switches for this session from now until the
         // finally block below deregisters the turn.

@@ -237,6 +237,7 @@ describe('the selection in the store', () => {
         compactionModel: null,
         compactionProviderId: null,
       },
+      defaults: { model: 'gpt-5', providerId: 'openai', compactionModel: '' },
     });
 
     expect(state.model).toBe('gpt-5');
@@ -248,6 +249,95 @@ describe('the selection in the store', () => {
     // Picking a model is also what the next new conversation starts with.
     expect(state.defaultModel).toBe('gpt-5');
     expect(state.defaultProviderId).toBe('openai');
+  });
+
+  test('the defaults are the ones the pick states, not the conversation’s selection', () => {
+    // A pick of the MAIN model must not move the default compaction model,
+    // and a pick of the COMPACTION model must not move the default main
+    // model: the two pickers are separate controls.
+    let state = chatReducer(initialState, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, {})],
+    });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+
+    state = chatReducer(state, {
+      type: 'SET_SESSION_SELECTION',
+      selection: {
+        model: 'gpt-5',
+        providerId: 'openai',
+        compactionModel: null,
+        compactionProviderId: null,
+      },
+      defaults: { model: 'gpt-5', providerId: 'openai', compactionModel: 'cheap-compactor' },
+    });
+
+    expect(state.defaultCompactionModel).toBe('cheap-compactor');
+    expect(state.defaultModel).toBe('gpt-5');
+  });
+
+  test('a config that arrives after a conversation was opened does not move its model', () => {
+    // The conversation was opened before the list arrived, so its row was not
+    // known yet and the mirror fell back to the global default.
+    let state = chatReducer(initialState, {
+      type: 'SET_CONFIG',
+      config: { defaultModel: 'global-model', defaultProviderId: 'global-provider' },
+    });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+    expect(state.model).toBe('global-model');
+
+    // The conversation's own row arrives and says something else.
+    state = chatReducer(state, {
+      type: 'APPLY_SESSION_SELECTION',
+      sessionId: 1,
+      selection: {
+        model: 'conversation-model',
+        providerId: 'p1',
+        compactionModel: null,
+        compactionProviderId: null,
+      },
+    });
+    expect(state.model).toBe('conversation-model');
+
+    // The config arrives late. It must not move the model under the user.
+    state = chatReducer(state, {
+      type: 'SET_CONFIG',
+      config: { defaultModel: 'other-global-model', defaultProviderId: 'other-provider' },
+    });
+    expect(state.model).toBe('conversation-model');
+    expect(state.activeProviderId).toBe('p1');
+  });
+
+  test('a session list that is a moment older does not roll back a pick', () => {
+    let state = chatReducer(initialState, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, {})],
+    });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+    state = chatReducer(state, {
+      type: 'SET_SESSION_SELECTION',
+      selection: {
+        model: 'picked',
+        providerId: 'picked-provider',
+        compactionModel: null,
+        compactionProviderId: null,
+      },
+      defaults: { model: 'picked', providerId: 'picked-provider', compactionModel: '' },
+    });
+    expect(state.model).toBe('picked');
+
+    // A list fetched before the pick landed still carries the old model.
+    state = chatReducer(state, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, { model: 'old', provider_id: 'old-provider' })],
+    });
+    expect(state.model).toBe('picked');
+    expect(state.sessions[0].model).toBe('picked');
+
+    // Switching away and back keeps the pick.
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 2 });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+    expect(state.model).toBe('picked');
   });
 
   test("another tab's change does not move the model under the user", () => {

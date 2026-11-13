@@ -342,12 +342,23 @@ export function useSlashCommands({
                 compactionModel: refs.compactionModelRef.current,
                 compactionProviderId: refs.compactionProviderIdRef.current,
               };
-              const saved = await saveSessionSelection(refs.sessionIdRef.current, selection);
+              const defaults = {
+                model: selection.model,
+                providerId: selection.providerId,
+                // The main model changed; the default compaction model is not
+                // touched.
+                compactionModel: refs.defaultCompactionModelRef.current,
+              };
+              const saved = await saveSessionSelection(
+                refs.sessionIdRef.current,
+                selection,
+                defaults
+              );
               if (!saved) {
                 addSystem('The model could not be saved for this conversation.');
                 return;
               }
-              dispatch({ type: 'SET_SESSION_SELECTION', selection });
+              dispatch({ type: 'SET_SESSION_SELECTION', selection, defaults });
               addSystem(
                 `Model set to ${typeof matched === 'string' ? matched : (matched.displayName ?? matched.name)}`
               );

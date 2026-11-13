@@ -146,6 +146,16 @@ export function useDataLoaders(refs: StableRefs) {
         return;
       }
 
+      // The selection on screen when the fetch starts. A model the user
+      // picks while the fetch is in flight must not be overwritten by the
+      // row the server returns.
+      const selectionAtStart = {
+        model: refs.modelRef.current,
+        providerId: refs.activeProviderIdRef.current,
+        compactionModel: refs.compactionModelRef.current,
+        compactionProviderId: refs.compactionProviderIdRef.current,
+      };
+
       try {
         const res = await fetch(`/api/sessions/${sessionId}`);
         // Stale check: the user has navigated again (or another load of the
@@ -197,7 +207,17 @@ export function useDataLoaders(refs: StableRefs) {
         // end-of-turn reload) must not move the model of a conversation the
         // user is reading, and a model the user has just picked may not
         // have reached the server yet.
-        if (!background && data.session && typeof data.session.model === 'string') {
+        const selectionUnchanged =
+          refs.modelRef.current === selectionAtStart.model &&
+          refs.activeProviderIdRef.current === selectionAtStart.providerId &&
+          refs.compactionModelRef.current === selectionAtStart.compactionModel &&
+          refs.compactionProviderIdRef.current === selectionAtStart.compactionProviderId;
+        if (
+          !background &&
+          selectionUnchanged &&
+          data.session &&
+          typeof data.session.model === 'string'
+        ) {
           dispatch({
             type: 'APPLY_SESSION_SELECTION',
             sessionId,

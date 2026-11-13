@@ -47,6 +47,23 @@ export interface SessionSelection {
   compactionProviderId: string | null;
 }
 
+/**
+ * The global settings a NEW conversation starts with.
+ *
+ * They are separate from a conversation's selection because a pick of one
+ * does not change the other: picking the main model leaves the default
+ * compaction model alone, and picking the compaction model leaves the
+ * default main model alone.
+ */
+export interface SessionDefaults {
+  /** The model a new conversation starts with. */
+  model: string;
+  /** The provider that serves `model`, or `null` when it is not pinned. */
+  providerId: string | null;
+  /** The compaction model a new conversation starts with. `''` for the main model. */
+  compactionModel: string;
+}
+
 /** The selection as it arrives on the wire, where every key is optional. */
 export interface SessionSelectionPayload {
   model?: unknown;
