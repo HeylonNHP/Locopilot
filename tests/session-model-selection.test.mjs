@@ -308,6 +308,22 @@ describe('the selection in the store', () => {
     expect(state.activeProviderId).toBe('p1');
   });
 
+  test('a session list does not erase a conversation’s model while the mirror has none', () => {
+    // The conversation was opened before its row arrived, so the mirror has
+    // no model yet. The list carries the server's model, and it must reach
+    // the row: writing the empty mirror into it would erase the model the
+    // server has.
+    let state = chatReducer(initialState, { type: 'SET_CURRENT_SESSION', id: 1 });
+    expect(state.model).toBe('');
+
+    state = chatReducer(state, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, { model: 'conversation-model', provider_id: 'p1' })],
+    });
+    expect(state.sessions[0].model).toBe('conversation-model');
+    expect(state.sessions[0].provider_id).toBe('p1');
+  });
+
   test('a session list that is a moment older does not roll back a pick', () => {
     let state = chatReducer(initialState, {
       type: 'SET_SESSIONS',

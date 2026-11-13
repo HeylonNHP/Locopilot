@@ -97,6 +97,15 @@ onto. Two rules keep them together, and both are pinned by tests:
 | 3    | `test(sessions): pin the per-conversation model selection`   | the feature's own checks; the tests whose contract moved                                    |
 | 4    | `docs: record the per-conversation model selection`          | this plan, the changelog, `CLAUDE.md`, `CONFIRMATIONS.md`                                   |
 
+## Known limitations
+
+- A change another tab makes to the conversation ON SCREEN reaches this tab
+  through the push (`session-updated`). If that push is missed - the tab was
+  reconnecting - the change is not picked up from the session list, because a
+  list is a snapshot from before the change and must not roll a pick back. The
+  conversation shows its own model until a reload. The other conversations are
+  unaffected: their rows come straight from the list.
+
 ## Out of scope
 
 - The reasoning effort, the completion mode and the context window stay global.

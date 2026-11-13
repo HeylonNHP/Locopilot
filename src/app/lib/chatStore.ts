@@ -1280,12 +1280,17 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // in flight, and a list that is a moment older must not roll the pick
       // back. The push from the server (the session event) is what changes
       // it.
+      //
+      // A mirror with no model yet (the conversation was opened before its
+      // row arrived) contributes nothing: writing it into the row would
+      // erase the model the server has.
       const active = state.currentSessionId;
+      const activeSelection = mirrorSelection(state);
       const sessions =
-        active === null
+        active === null || activeSelection.model === ''
           ? action.sessions
           : action.sessions.map((row) =>
-              row.id === active ? { ...row, ...selectionToColumns(mirrorSelection(state)) } : row
+              row.id === active ? { ...row, ...selectionToColumns(activeSelection) } : row
             );
       return { ...state, sessions };
     }

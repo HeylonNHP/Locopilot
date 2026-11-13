@@ -8,7 +8,10 @@
 import { describe, expect, jest, test } from '@jest/globals';
 import { readFile } from 'node:fs/promises';
 
-import { saveSessionSelection } from '../src/app/lib/sessionSelectionClient.ts';
+import {
+  saveSessionDefaults,
+  saveSessionSelection,
+} from '../src/app/lib/sessionSelectionClient.ts';
 
 const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), 'utf8');
 
@@ -16,6 +19,9 @@ const dataLoaders = await read('../src/app/hooks/useDataLoaders.ts');
 const modelSelector = await read('../src/components/ModelSelector/ModelSelector.tsx');
 const completionSelector = await read(
   '../src/components/CompletionModeSelector/CompletionModeSelector.tsx'
+);
+const reasoningEffortSelector = await read(
+  '../src/components/ReasoningEffortSelector/ReasoningEffortSelector.tsx'
 );
 
 /**
@@ -137,6 +143,24 @@ describe('provider persistence', () => {
         fetchSpy.mockRestore();
       }
     });
+
+    test('the defaults alone can be saved, without a conversation to pin', async () => {
+      const writes = await captureWrites(() =>
+        saveSessionDefaults({
+          model: 'qwen3-coder:30b',
+          providerId: 'openrouter',
+          compactionModel: 'cheap-compactor',
+        })
+      );
+
+      // No conversation's row is written: there is none to write.
+      expect(writes.sessionRow).toBeUndefined();
+      expect(writes.config).toStrictEqual({
+        model: 'qwen3-coder:30b',
+        activeProviderId: 'openrouter',
+        compactionModel: 'cheap-compactor',
+      });
+    });
   });
 
   describe('refresh reconciliation', () => {
@@ -158,6 +182,18 @@ describe('provider persistence', () => {
 
     test('the completion selector payload does not send a top-level baseUrl', () => {
       expect(completionSelector).not.toContain('body: JSON.stringify({\n              baseUrl,');
+    });
+
+    test('the completion and reasoning-effort payloads do not send the model selection', () => {
+      // The model selection belongs to the conversation now, and the config's
+      // `model` is the default a NEW conversation starts with. Sending the
+      // conversation's value here repoints that default - and a conversation
+      // that inherits the default compaction model sends a null, which the
+      // config route rejects with a 400, losing the setting the user chose.
+      for (const source of [completionSelector, reasoningEffortSelector]) {
+        expect(source).not.toMatch(/body: JSON\.stringify\({[^}]*\bmodel,/);
+        expect(source).not.toMatch(/body: JSON\.stringify\({[^}]*\bcompactionModel,/);
+      }
     });
 
     test('the model selector persists the selected provider ID', async () => {

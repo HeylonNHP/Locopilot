@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 import { useChat } from '@/app/lib/chatStore';
 import { describeContextWindow, interpretNumCtxInput } from '@/app/lib/contextWindow';
-import { saveSessionSelection } from '@/app/lib/sessionSelectionClient';
+import { saveSessionDefaults, saveSessionSelection } from '@/app/lib/sessionSelectionClient';
 import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
@@ -291,7 +291,9 @@ export default function SettingsModal({ onClose }: Props) {
           : state.defaultCompactionModel,
       };
       // A conversation always has a model: the "Select a model..." option
-      // cannot leave one without. The rest of the settings are still saved.
+      // cannot leave one without, so the conversation's own row is not
+      // written. The DEFAULTS are still saved, so an edit of the compaction
+      // model is not lost, and the rest of the modal saves.
       if (model.trim().length > 0) {
         const selectionSaved = await saveSessionSelection(
           state.currentSessionId,
@@ -301,6 +303,8 @@ export default function SettingsModal({ onClose }: Props) {
         if (!selectionSaved) {
           throw new Error('The model could not be saved for this conversation.');
         }
+      } else {
+        await saveSessionDefaults(defaults);
       }
 
       const response = await fetch('/api/config', {

@@ -157,10 +157,14 @@ export default function ReasoningEffortSelector({
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model,
+            // The model selection is NOT sent: it belongs to the conversation,
+            // and the config's `model` is the default a new conversation
+            // starts with. Sending the conversation's value here would
+            // repoint that default, and a conversation that inherits the
+            // default compaction model sends a null the config route
+            // rejects - which would lose this setting.
             yolo,
             thinkingEnabled,
-            compactionModel,
             chatTimeoutMs,
             webSearch,
             ...config,
@@ -170,7 +174,7 @@ export default function ReasoningEffortSelector({
         /* ignore */
       }
     },
-    [dispatch, model, yolo, thinkingEnabled, compactionModel, chatTimeoutMs, webSearch]
+    [dispatch, yolo, thinkingEnabled, chatTimeoutMs, webSearch]
   );
 
   const handleChangeMain = useCallback(
