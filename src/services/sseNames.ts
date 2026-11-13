@@ -47,10 +47,15 @@ export const MCP_SSE_EVENT_NAME = 'mcp-state';
 
 /**
  * Wrapper event name for the session-metadata SSE endpoint
- * (`GET /api/sessions/events`). Fired whenever a session is renamed, which is
- * how a browser learns the LLM-generated title of a brand-new conversation.
+ * (`GET /api/sessions/events`). Fired whenever a session's title or its
+ * model selection changes, which is how a browser learns the LLM-generated
+ * title of a brand-new conversation and how another tab learns that a
+ * conversation's model was changed.
+ *
+ * The payload discriminates on `kind` (see `services/sessionEvents.ts`), so
+ * one event name carries every kind of session change.
  */
-export const SESSIONS_SSE_EVENT_NAME = 'session-renamed';
+export const SESSIONS_SSE_EVENT_NAME = 'session-updated';
 
 // ── `status.phase` ─────────────────────────────────────────────────────────
 

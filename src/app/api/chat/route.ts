@@ -857,7 +857,16 @@ export async function POST(req: NextRequest): Promise<Response> {
 
       try {
         if (!activeSessionId) {
-          activeSessionId = createSession(DEFAULT_SESSION_NAME, model as string);
+          // The conversation is born with the selection this turn runs on, so
+          // it keeps that model when it is opened again later.
+          activeSessionId = createSession(DEFAULT_SESSION_NAME, {
+            model: model as string,
+            providerId: providerId ?? null,
+            // A compaction model the request did not carry means "inherit the
+            // global default", which is how the server reads it everywhere else.
+            compactionModel: compactionModel ?? null,
+            compactionProviderId: compactionProviderId ?? null,
+          });
           // From here on every frame names the session the turn belongs to.
           frameIdentity.sessionId = activeSessionId;
           sendEvent('session_created', { sessionId: activeSessionId });

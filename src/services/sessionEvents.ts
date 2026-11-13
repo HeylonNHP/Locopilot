@@ -16,6 +16,10 @@
  * synchronous fallback title, the background LLM upgrade, and `/title` —
  * without any of them having to remember to announce itself.
  *
+ * A conversation's model selection rides the same bus: `updateSessionSelection`
+ * emits it, so a tab that picked a different model for a conversation learns
+ * about it without re-reading the whole session list.
+ *
  * Design notes:
  * - This is a singleton stashed on `globalThis` so Next.js's dev HMR (and
  *   separate route-handler module instances) can't end up with a second bus,
@@ -30,12 +34,25 @@
  * SQLite handle.
  */
 
-export type SessionEvent = {
-  kind: 'renamed';
-  sessionId: number;
-  /** The title exactly as committed — no further validation by consumers. */
-  name: string;
-};
+export type SessionEvent =
+  | {
+      kind: 'renamed';
+      sessionId: number;
+      /** The title exactly as committed — no further validation by consumers. */
+      name: string;
+    }
+  | {
+      kind: 'model-changed';
+      sessionId: number;
+      /** The conversation's main model after the change. */
+      model: string;
+      /** The provider that serves `model`, or `null` when it is not pinned. */
+      providerId: string | null;
+      /** The conversation's compaction model, `null` to inherit the global default, `''` for the main model. */
+      compactionModel: string | null;
+      /** The provider that serves `compactionModel`, or `null` when it is not pinned. */
+      compactionProviderId: string | null;
+    };
 
 type Listener = (event: SessionEvent) => void;
 

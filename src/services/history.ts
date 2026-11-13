@@ -18,6 +18,11 @@ import Database from 'better-sqlite3';
 
 import { debugLog } from '@/app/lib/debugLogger';
 import { DB_PATH } from '@/services/paths';
+import {
+  selectionToColumns,
+  type SessionSelection,
+  type SessionSelectionColumns,
+} from '@/services/sessionSelection';
 
 import { type ChatMessage, type PersistedChatMessage, type SubagentLogMessage } from './llm';
 import { emitSessionEvent } from './sessionEvents';
@@ -27,10 +32,9 @@ import { sanitizeChatMessage } from './textUtils';
 // Types
 // ---------------------------------------------------------------------------
 
-export interface Session {
+export interface Session extends SessionSelectionColumns {
   id: number;
   name: string;
-  model: string;
   created_at: string;
   updated_at: string;
   last_prompt_eval_count: number | null;
@@ -165,6 +169,13 @@ function addColumnIfMissing(sql: string): void {
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_prompt_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_eval_count INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_total_tokens INTEGER');
+// A conversation's own model selection. `sessions.model` already existed and
+// is the conversation's main model; these three pin the rest of it. They are
+// nullable on purpose: NULL means "not pinned", so a row written before this
+// feature keeps working without a backfill.
+addColumnIfMissing('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
+addColumnIfMissing('ALTER TABLE sessions ADD COLUMN compaction_model TEXT');
+addColumnIfMissing('ALTER TABLE sessions ADD COLUMN compaction_provider_id TEXT');
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT ''");
@@ -177,8 +188,22 @@ addColumnIfMissing('ALTER TABLE messages_staging ADD COLUMN created_at DATETIME'
 // Prepared statements (created once, reused on every call)
 // ---------------------------------------------------------------------------
 
-const stmtInsertSession = db.prepare<[string, string]>(
-  'INSERT INTO sessions (name, model) VALUES (?, ?)'
+const stmtInsertSession = db.prepare<[string, string, string | null, string | null, string | null]>(
+  'INSERT INTO sessions (name, model, provider_id, compaction_model, compaction_provider_id) VALUES (?, ?, ?, ?, ?)'
+);
+
+/**
+ * A conversation's model selection.
+ *
+ * Unlike the other `UPDATE sessions` statements this one does NOT bump
+ * `updated_at`: a model change is a setting change, not conversation
+ * activity, and bumping it would jump the conversation to the top of the
+ * sidebar for something the user did not do in the conversation.
+ */
+const stmtUpdateSessionSelection = db.prepare<
+  [string, string | null, string | null, string | null, number]
+>(
+  'UPDATE sessions SET model = ?, provider_id = ?, compaction_model = ?, compaction_provider_id = ? WHERE id = ?'
 );
 
 const stmtUpdateSessionName = db.prepare<[string, number]>(
@@ -304,12 +329,45 @@ export function sessionExists(sessionId: number): boolean {
 /**
  * Creates a new session and returns its id.
  *
- * @param name  – Human-readable title (will be updated from first user message).
- * @param model – Ollama model name used in this session.
+ * @param name      – Human-readable title (will be updated from first user message).
+ * @param selection – The model selection the conversation runs on.
  */
-export function createSession(name: string, model: string): number {
-  const result = stmtInsertSession.run(name, model);
+export function createSession(name: string, selection: SessionSelection): number {
+  const columns = selectionToColumns(selection);
+  const result = stmtInsertSession.run(
+    name,
+    columns.model,
+    columns.provider_id,
+    columns.compaction_model,
+    columns.compaction_provider_id
+  );
   return result.lastInsertRowid as number;
+}
+
+/**
+ * Records a conversation's model selection and announces it to open tabs.
+ *
+ * Like `renameSession`, this is the one place that writes the change and the
+ * one place that announces it, so every path that changes a conversation's
+ * model is covered without any of them having to remember to push it.
+ */
+export function updateSessionSelection(sessionId: number, selection: SessionSelection): void {
+  const columns = selectionToColumns(selection);
+  stmtUpdateSessionSelection.run(
+    columns.model,
+    columns.provider_id,
+    columns.compaction_model,
+    columns.compaction_provider_id,
+    sessionId
+  );
+  emitSessionEvent({
+    kind: 'model-changed',
+    sessionId,
+    model: selection.model,
+    providerId: selection.providerId,
+    compactionModel: selection.compactionModel,
+    compactionProviderId: selection.compactionProviderId,
+  });
 }
 
 /**
