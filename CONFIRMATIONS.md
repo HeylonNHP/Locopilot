@@ -224,6 +224,15 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Not verified:** which earlier run wrote the fixtures, and whether `Local Ollama` is the owner's own provider (the owner may have added it during the live check of A-006). To settle it, compare with the earlier `scripts/test-provider-add.mjs` in git history and ask the owner.
 - **Action with the owner's OK:** copy `config.json` aside, then remove the fixture providers by hand. Settings can add a provider but cannot remove one.
 
+### C-018 — The per-conversation model selection was not exercised in a browser
+
+- **Status:** Unconfirmed.
+- **Claim:** The per-conversation model selection (branch `feat/per-conversation-model`, 2026-11-13) is covered by unit tests and by the type checker, but the browser loop was not run: nobody picked a model in the status bar, switched conversations and watched the model and the compaction model follow, or opened a second tab to see the push arrive.
+- **Why it matters:** the pieces the tests cannot reach are the ones a user touches — the picker writes the conversation's row and then the global default, a failed save is supposed to be reported rather than swallowed, the status bar shows the compaction model the conversation actually uses, and the session push (`session-updated`) is supposed to patch the other tabs.
+- **How to confirm:** start the dev server (`npm run dev`), open two conversations, give each a different model, and check that (1) the status bar shows each conversation's own model and that switching moves it; (2) the next turn in each conversation reaches the model that conversation was given; (3) a conversation with no compaction model of its own compacts with the global one, and the picker's "Use the default" entry puts it back; (4) a second tab shows the new model without a refresh; (5) a failed save (stop the server, pick a model) reports the error and leaves the selection unchanged.
+- **Needs:** a dev server with at least two providers configured, and two browser tabs.
+- **Source:** the branch's own changelog entry and commit messages, 2026-11-13.
+
 ## Confirmed
 
 - **OpenAI output-cap field.** `max_output_tokens` is the cap on the Responses API (`/v1/responses`) and covers visible and reasoning tokens. Chat Completions uses `max_completion_tokens`. Source: OpenAI API reference, read through a mirror on 2026-11-11 (`platform.openai.com` returned 403). The installed `openai` SDK (6.48.0) types agree.
