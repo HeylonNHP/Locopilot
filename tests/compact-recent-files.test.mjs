@@ -1245,7 +1245,7 @@ describe('the store degrades instead of taking the app down', () => {
         'process.chdir(brokenDir);',
         'const url = pathToFileURL(historyFile).href;',
         'const seeded = await import(`${url}?seed=1`);',
-        "const sid = seeded.createSession('seed', 'test-model');",
+        "const sid = seeded.createSession('seed', { model: 'test-model', providerId: null, compactionModel: null, compactionProviderId: null });",
         "seeded.recordTouchedFile(sid, '/repo/seed.ts', 'read_file', 1000);",
         'const seededRows = seeded.loadRecentFiles(sid, 5).length;',
         // A CONSISTENT snapshot of the schema for the read-only case: the live
@@ -1265,7 +1265,7 @@ describe('the store degrades instead of taking the app down', () => {
         '  recorded = String(err && err.message);',
         '}',
         'const after = broken.loadRecentFiles(1, 5);',
-        "const rest = typeof broken.createSession('after', 'test-model');",
+        "const rest = typeof broken.createSession('after', { model: 'test-model', providerId: null, compactionModel: null, compactionProviderId: null });",
         // Prepare the read-only copy: no feature table, a self-contained
         // (non-WAL) file, and the write bit taken away.
         "const fixture = new Database(path.join(readonlyDir, 'locopilot.db'));",

@@ -12,7 +12,6 @@ import { saveSessionSelection } from '../src/app/lib/sessionSelectionClient.ts';
 
 const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), 'utf8');
 
-const slashCommands = await read('../src/app/hooks/useSlashCommands.ts');
 const dataLoaders = await read('../src/app/hooks/useDataLoaders.ts');
 const modelSelector = await read('../src/components/ModelSelector/ModelSelector.tsx');
 const completionSelector = await read(

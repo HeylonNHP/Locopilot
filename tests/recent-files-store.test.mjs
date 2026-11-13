@@ -30,6 +30,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const moduleUrl = (relative) => pathToFileURL(path.join(here, relative)).href;
 
+/**
+ * The model selection a session is created with. A conversation owns its
+ * model, its provider, its compaction model and that model's provider; the
+ * tests below only care that the row exists.
+ */
+const TEST_SELECTION = {
+  model: 'test-model',
+  providerId: null,
+  compactionModel: null,
+  compactionProviderId: null,
+};
+
 const root = mkdtempSync(path.join(tmpdir(), 'locopilot-recent-files-'));
 const previousCwd = process.cwd();
 
@@ -74,7 +86,7 @@ const replacementMessages = () => [
 describe('the recent files store', () => {
   describe('ordering and the limit', () => {
     test('the store keeps the 5 most recent of 7 paths, newest first', () => {
-      const sid = createSession('ordering', 'test-model');
+      const sid = createSession('ordering', TEST_SELECTION);
       // Explicit `now` values: the rows must be ordered by the stored stamp,
       // not by the order the INSERTs happened to run in.
       for (let index = 0; index < 7; index += 1) {
@@ -96,13 +108,13 @@ describe('the recent files store', () => {
     });
 
     test('a limit larger than the row count returns every row', () => {
-      const sid = createSession('limit-large', 'test-model');
+      const sid = createSession('limit-large', TEST_SELECTION);
       recordTouchedFile(sid, '/repo/only.ts', 'read_file', 5000);
       expect(loadRecentFiles(sid, 100)).toHaveLength(1);
     });
 
     test('a non-positive limit returns no rows', () => {
-      const sid = createSession('limit-zero', 'test-model');
+      const sid = createSession('limit-zero', TEST_SELECTION);
       recordTouchedFile(sid, '/repo/only.ts', 'read_file', 5000);
       expect(loadRecentFiles(sid, 0)).toStrictEqual([]);
       expect(loadRecentFiles(sid, -3)).toStrictEqual([]);
@@ -111,7 +123,7 @@ describe('the recent files store', () => {
 
   describe('the upsert', () => {
     test('re-touching a path increments hits and moves it to the top', () => {
-      const sid = createSession('upsert', 'test-model');
+      const sid = createSession('upsert', TEST_SELECTION);
       recordTouchedFile(sid, '/repo/a.ts', 'read_file', 1000);
       recordTouchedFile(sid, '/repo/b.ts', 'read_file', 2000);
       recordTouchedFile(sid, '/repo/c.ts', 'write_file', 3000);
@@ -130,8 +142,8 @@ describe('the recent files store', () => {
     });
 
     test('the same path in two sessions is two independent rows', () => {
-      const first = createSession('shared-a', 'test-model');
-      const second = createSession('shared-b', 'test-model');
+      const first = createSession('shared-a', TEST_SELECTION);
+      const second = createSession('shared-b', TEST_SELECTION);
       recordTouchedFile(first, '/repo/shared.ts', 'read_file', 1000);
       recordTouchedFile(second, '/repo/shared.ts', 'read_file', 2000);
       recordTouchedFile(second, '/repo/shared.ts', 'read_file', 3000);
@@ -143,7 +155,7 @@ describe('the recent files store', () => {
 
   describe('the prune', () => {
     test('30 distinct paths are pruned to the 24 most recent', () => {
-      const sid = createSession('prune', 'test-model');
+      const sid = createSession('prune', TEST_SELECTION);
       for (let index = 0; index < 30; index += 1) {
         recordTouchedFile(
           sid,
@@ -163,8 +175,8 @@ describe('the recent files store', () => {
     });
 
     test('pruning one session leaves another session untouched', () => {
-      const noisy = createSession('prune-noisy', 'test-model');
-      const quiet = createSession('prune-quiet', 'test-model');
+      const noisy = createSession('prune-noisy', TEST_SELECTION);
+      const quiet = createSession('prune-quiet', TEST_SELECTION);
       recordTouchedFile(quiet, '/repo/quiet.ts', 'read_file', 1_000_000);
       for (let index = 0; index < 30; index += 1) {
         recordTouchedFile(noisy, `/repo/noisy-${index}.ts`, 'read_file', index);
@@ -177,7 +189,7 @@ describe('the recent files store', () => {
 
   describe('The point', () => {
     test('the rows survive updateSessionMessages', () => {
-      const sid = createSession('survives-compaction', 'test-model');
+      const sid = createSession('survives-compaction', TEST_SELECTION);
       recordTouchedFile(sid, '/repo/keep-me.ts', 'read_file', Date.now() - 60_000);
       recordTouchedFile(sid, '/repo/keep-me-too.ts', 'write_file', Date.now());
 
@@ -193,7 +205,7 @@ describe('the recent files store', () => {
     });
 
     test('the rows survive an emptying updateSessionMessages too', () => {
-      const sid = createSession('survives-empty', 'test-model');
+      const sid = createSession('survives-empty', TEST_SELECTION);
       recordTouchedFile(sid, '/repo/empty-survivor.ts', 'patch_file', 1234);
       updateSessionMessages(sid, []);
       const rows = loadRecentFiles(sid, 10);
@@ -202,7 +214,7 @@ describe('the recent files store', () => {
     });
 
     test('a touch after a compaction still lands on the surviving row', () => {
-      const sid = createSession('touch-after-compaction', 'test-model');
+      const sid = createSession('touch-after-compaction', TEST_SELECTION);
       recordTouchedFile(sid, '/repo/again.ts', 'read_file', 1000);
       updateSessionMessages(sid, replacementMessages());
       recordTouchedFile(sid, '/repo/again.ts', 'patch_file', 2000);
@@ -216,7 +228,7 @@ describe('the recent files store', () => {
 
   describe('the cascade', () => {
     test('deleting the session removes its recent files', () => {
-      const sid = createSession('cascade', 'test-model');
+      const sid = createSession('cascade', TEST_SELECTION);
       recordTouchedFile(sid, '/repo/cascade.ts', 'read_file', 1000);
       expect(loadRecentFiles(sid, 10)).toHaveLength(1);
 
@@ -225,8 +237,8 @@ describe('the recent files store', () => {
     });
 
     test('deleting a session leaves the rows of the others alone', () => {
-      const doomed = createSession('cascade-doomed', 'test-model');
-      const survivor = createSession('cascade-survivor', 'test-model');
+      const doomed = createSession('cascade-doomed', TEST_SELECTION);
+      const survivor = createSession('cascade-survivor', TEST_SELECTION);
       recordTouchedFile(doomed, '/repo/doomed.ts', 'read_file', 1000);
       recordTouchedFile(survivor, '/repo/survivor.ts', 'read_file', 1000);
 
@@ -251,7 +263,7 @@ describe('the recent files store', () => {
     });
 
     test('an empty path is not recorded', () => {
-      const sid = createSession('empty-path', 'test-model');
+      const sid = createSession('empty-path', TEST_SELECTION);
       recordTouchedFile(sid, '   ', 'read_file', 1000);
       expect(loadRecentFiles(sid, 10)).toStrictEqual([]);
     });
@@ -286,7 +298,7 @@ describe('the recent files store', () => {
     });
 
     test('a failed tool result records nothing', () => {
-      const sid = createSession('hook-failure', 'test-model');
+      const sid = createSession('hook-failure', TEST_SELECTION);
       const context = { sessionId: sid, yoloMode: true };
       recordToolFileTouch(
         'read_file',
@@ -304,7 +316,7 @@ describe('the recent files store', () => {
     });
 
     test('only read_file, patch_file, and write_file record a touch', () => {
-      const sid = createSession('hook-tools', 'test-model');
+      const sid = createSession('hook-tools', TEST_SELECTION);
       const context = { sessionId: sid, yoloMode: true };
       recordToolFileTouch('read_pdf', { path: '/repo/doc.pdf' }, { content: 'pdf text' }, context);
       recordToolFileTouch('fetch_image', { source: '/repo/pic.png' }, { content: 'ok' }, context);
@@ -320,7 +332,7 @@ describe('the recent files store', () => {
 
     test('no session id means no touch', () => {
       // Sub-agents have no session id, and they bypass the hook anyway.
-      const sid = createSession('no-session-id', 'test-model');
+      const sid = createSession('no-session-id', TEST_SELECTION);
       recordToolFileTouch(
         'read_file',
         { path: '/repo/a.ts' },
@@ -334,7 +346,7 @@ describe('the recent files store', () => {
 
   describe('absolute paths', () => {
     test('a relative read_file path is recorded absolute, under the working directory', () => {
-      const sid = createSession('absolute', 'test-model');
+      const sid = createSession('absolute', TEST_SELECTION);
       const scope = new WorkingDirectoryScope();
       setAgentWorkingDirectory(scope, '/work/project');
 
@@ -352,7 +364,7 @@ describe('the recent files store', () => {
     });
 
     test('an absolute path is stored unchanged', () => {
-      const sid = createSession('absolute-input', 'test-model');
+      const sid = createSession('absolute-input', TEST_SELECTION);
       const scope = new WorkingDirectoryScope();
       setAgentWorkingDirectory(scope, '/work/project');
 
@@ -367,7 +379,7 @@ describe('the recent files store', () => {
     });
 
     test('a drifted working directory cannot re-key a file that was already seen', () => {
-      const sid = createSession('drift', 'test-model');
+      const sid = createSession('drift', TEST_SELECTION);
       const scope = new WorkingDirectoryScope();
       const context = { sessionId: sid, yoloMode: true, workingDirectoryScope: scope };
 

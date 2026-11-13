@@ -34,6 +34,17 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const moduleUrl = (relative) => pathToFileURL(path.join(here, relative)).href;
 
+/**
+ * The model selection a session is created with. A conversation owns its
+ * model, its provider, its compaction model and that model's provider.
+ */
+const TEST_SELECTION = {
+  model: 'test-model',
+  providerId: null,
+  compactionModel: null,
+  compactionProviderId: null,
+};
+
 const root = mkdtempSync(path.join(tmpdir(), 'locopilot-session-title-push-'));
 const previousCwd = process.cwd();
 
@@ -75,7 +86,7 @@ function capture() {
 
 describe('the rename bus', () => {
   test('renameSession announces the new title', () => {
-    const sessionId = createSession('New chat', 'test-model');
+    const sessionId = createSession('New chat', TEST_SELECTION);
     const { events, unsubscribe } = capture();
 
     try {
@@ -88,7 +99,7 @@ describe('the rename bus', () => {
   });
 
   test('unsubscribing stops delivery', () => {
-    const sessionId = createSession('New chat', 'test-model');
+    const sessionId = createSession('New chat', TEST_SELECTION);
     const { events, unsubscribe } = capture();
     unsubscribe();
 
@@ -98,7 +109,7 @@ describe('the rename bus', () => {
   });
 
   test('a throwing subscriber cannot break the rename or the other subscribers', () => {
-    const sessionId = createSession('New chat', 'test-model');
+    const sessionId = createSession('New chat', TEST_SELECTION);
     const { events, unsubscribe } = capture();
     const unsubscribeBad = subscribeSessionEvents(() => {
       throw new Error('this listener is broken');
@@ -205,15 +216,18 @@ describe('the SSE wire contract', () => {
     // The route writes `event: <name>\ndata: <json>`; the hook listens for the
     // name and parses the json. Nothing shares a type across that boundary, so
     // this pins both halves together.
-    expect(SESSIONS_SSE_EVENT_NAME).toBe('session-renamed');
+    // The event carries every kind of session change, so its name says so; the
+    // payload discriminates on `kind`.
+    expect(SESSIONS_SSE_EVENT_NAME).toBe('session-updated');
 
     const event = { kind: 'renamed', sessionId: 29, name: '👋 Greeting Exchange' };
     const frame = `event: ${SESSIONS_SSE_EVENT_NAME}\ndata: ${JSON.stringify(event)}\n\n`;
     const [eventLine, dataLine] = frame.split('\n');
 
-    expect(eventLine).toBe('event: session-renamed');
+    expect(eventLine).toBe('event: session-updated');
     expect(dataLine.startsWith('data: ')).toBe(true);
     expect(parseRenameEvent(dataLine.slice('data: '.length))).toEqual({
+      kind: 'renamed',
       sessionId: 29,
       name: '👋 Greeting Exchange',
     });
