@@ -190,6 +190,18 @@ export interface MCPSavedClientInformation {
    * triggers a one-time re-registration.
    */
   redirect_uris?: string[] | undefined;
+  /**
+   * The authorization server this client registration belongs to (the SDK's
+   * `issuer` stamp). The SDK refuses to present a registration to a
+   * DIFFERENT authorization server once it is stamped, so this is what stops
+   * a malicious MCP server from naming its own AS and collecting our client
+   * secret (GHSA-6qxp-vccf-f47h).
+   *
+   * Absent on entries written before the SDK upgrade — the SDK re-stamps
+   * those with the issuer of the first authorization server that accepts
+   * them.
+   */
+  issuer?: string | undefined;
 }
 
 /** Narrow slice of RFC 8414 authorization-server metadata kept for diagnostics. */
@@ -212,6 +224,19 @@ export interface MCPSavedOAuthTokens {
   expires_in?: number | undefined;
   scope?: string | undefined;
   refresh_token?: string | undefined;
+  /**
+   * The authorization server that issued these tokens (the SDK's `issuer`
+   * stamp). The SDK refuses to send a token set to a DIFFERENT authorization
+   * server once it is stamped, so this is what stops a malicious MCP server
+   * from naming its own AS and collecting our refresh token
+   * (GHSA-6qxp-vccf-f47h).
+   *
+   * Absent on entries written before the SDK upgrade. Those are treated as
+   * unbound: the refresh token is not handed to the SDK at all (see
+   * `oauthProvider.ts` → `tokens()`), so the user signs in again and the
+   * replacement token set arrives stamped.
+   */
+  issuer?: string | undefined;
 }
 
 /**

@@ -273,6 +273,23 @@ cause. The real authorization URL is stashed in memory
 (`peekAuthorizationUrl` / `clearAuthorizationUrl` in `oauthProvider.ts`) and
 rendered by the sidebar; no placeholder URL is ever fabricated.
 
+**Credentials are bound to their authorization server.** The SDK stamps every
+credential it saves with an `issuer` — the AS it belongs to — and refuses to
+send a stamped credential to a DIFFERENT one. That is what stops a malicious
+or compromised MCP server from naming its own AS and collecting our refresh
+token and client secret (GHSA-6qxp-vccf-f47h). The binding only works if the
+provider stores the stamp EXACTLY as the SDK gives it and hands it back
+unchanged, so `saveTokens()` / `saveClientInformation()` persist `issuer` and
+`tokens()` / `clientInformation()` return it. A token set written before the
+SDK upgrade has no stamp, so nothing says which AS it belongs to: the
+provider then WITHHOLDS its refresh token from the SDK (the access token is
+still presented to the MCP server itself, so the connection keeps working
+with no user interaction) — the refresh token is the credential that can be
+replayed elsewhere, and it is exactly what is given up. The SDK then has no
+refresh token, does not refresh, and the user signs in again when the access
+token expires; the replacement arrives stamped. Coverage lives in
+`tests/mcp-oauth-issuer.test.mjs`.
+
 MCP/OAuth diagnostics land in `logs/locopilot-debug.log` via
 `debugLog.diagnostic({ layer: 'mcp', phase: 'oauth_*', failureKind, … })`
 (`src/app/lib/debugLogger.ts`). Use the `oauth_discovery`, `oauth_redirect`,
@@ -368,7 +385,7 @@ The suite is Jest, in native ESM mode (the project is `"type": "module"`), and r
   - Next.js 15.5 always generates an internal Pages Router `_error`/`_document` fallback for `/404` and `/500`, even in pure App Router projects with no `pages/` directory. During static generation this throws `<Html> should not be imported outside of pages/_document`.
   - Correct App Router conventions that should still be followed: include `src/app/not-found.tsx`; `src/app/error.tsx` must not render `<html>` or `<body>` (only `layout.tsx` and `global-error.tsx` may own those tags).
   - Workarounds that do NOT work cleanly: adding a `pages/` directory triggers a separate Next.js 15.5 validator bug (`.next/types/validator.ts` hardcodes wrong `.js` paths when `src/` is used). Setting `typedRoutes: false` does not disable the validator.
-  - **Current status**: project is on Next.js 16.2.x; this 15.5 bug does not block the build anymore (`next build` completes successfully). The entry is kept as a reminder that any future attempt to add a `pages/` directory or pin to Next.js 15.x will re-expose these failures. Tracked as a pre-existing upstream bug.
+  - **Current status**: project is on Next.js 16.4.x; this 15.5 bug does not block the build anymore (`next build` completes successfully). The entry is kept as a reminder that any future attempt to add a `pages/` directory or pin to Next.js 15.x will re-expose these failures. Tracked as a pre-existing upstream bug.
 
 - **Stale / mid-write `.next/dev/types/routes.d.ts`** (known Next.js 16.2.x upstream bug — see vercel/next.js#94153, #95454/#95635 + PR #95638):
   - The dev server's `routes.d.ts` can be left with a truncated / duplicated `interface RouteContext` declaration when its write is interrupted or interleaved with another process touching `.next/`. The resulting file looks like a clean file followed by a partial fragment (`ce RouteContext<...> { ... } }`), which breaks `tsc --noEmit` with `TS1434`/`TS1005`/`TS1128`.

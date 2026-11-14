@@ -512,6 +512,12 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
         result.client_id_issued_at = saved.client_id_issued_at;
       if (saved.client_secret_expires_at !== undefined)
         result.client_secret_expires_at = saved.client_secret_expires_at;
+      // GHSA-6qxp-vccf-f47h: hand the SDK back the authorization server this
+      // registration belongs to. The SDK compares it with the AS it is about
+      // to talk to and refuses the registration (or throws) when they differ,
+      // so a malicious MCP server cannot name its own AS and collect our
+      // client secret.
+      if (saved.issuer !== undefined) result.issuer = saved.issuer;
       return result;
     }
     // Fall back to the statically-configured client_id if the
@@ -550,6 +556,11 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       stored.client_id_issued_at = info.client_id_issued_at;
     if (info.client_secret_expires_at !== undefined)
       stored.client_secret_expires_at = info.client_secret_expires_at;
+    // GHSA-6qxp-vccf-f47h: store the `issuer` stamp EXACTLY as the SDK gave
+    // it to us. The SDK stamps every value it hands to `saveClientInformation`
+    // / `saveTokens` with the authorization server it used; dropping the
+    // stamp is what leaves the credentials unbound.
+    if (info.issuer !== undefined) stored.issuer = info.issuer;
     // F10: persist the redirects the registration was made against so
     // `clientInformation()` can later tell whether the saved client is
     // still valid for the current loopback redirect.
@@ -573,7 +584,26 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     if (t.id_token !== undefined) out.id_token = t.id_token;
     if (t.expires_in !== undefined) out.expires_in = t.expires_in;
     if (t.scope !== undefined) out.scope = t.scope;
-    if (t.refresh_token !== undefined) out.refresh_token = t.refresh_token;
+    // GHSA-6qxp-vccf-f47h: a token set written BEFORE the SDK upgrade has no
+    // `issuer`, so nothing says which authorization server it belongs to.
+    // Handing the SDK such a refresh token is the exploit: the SDK refreshes
+    // it against whatever AS the MCP server names, posting the refresh token
+    // (and the client secret) to that server.
+    //
+    // So an UNBOUND token set gives up its refresh token and keeps only the
+    // access token. The access token is presented to the MCP server itself
+    // (it is that server's own token), so the connection keeps working with
+    // no user interaction. The refresh token is the credential that can be
+    // replayed elsewhere, and it is exactly what is withheld. The SDK then
+    // sees no refresh token, does not refresh, and when the access token
+    // expires the user signs in again — the replacement token set arrives
+    // stamped and is bound from then on.
+    if (t.refresh_token !== undefined && t.issuer !== undefined) {
+      out.refresh_token = t.refresh_token;
+    }
+    // The stamp itself goes back to the SDK unchanged, so it can compare it
+    // with the authorization server it is about to use.
+    if (t.issuer !== undefined) out.issuer = t.issuer;
     return out;
   }
 
@@ -588,6 +618,10 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     if (tokens.expires_in !== undefined) stored.expires_in = tokens.expires_in;
     if (tokens.scope !== undefined) stored.scope = tokens.scope;
     if (tokens.refresh_token !== undefined) stored.refresh_token = tokens.refresh_token;
+    // GHSA-6qxp-vccf-f47h: store the `issuer` stamp EXACTLY as the SDK gave
+    // it to us. This is what binds the token set to the authorization server
+    // that issued it; dropping the stamp is what leaves it unbound.
+    if (tokens.issuer !== undefined) stored.issuer = tokens.issuer;
     next.tokens = stored;
     // F18: a successful token exchange implies THIS flow's code
     // verifier has done its job. Remove only our entry (keyed by the

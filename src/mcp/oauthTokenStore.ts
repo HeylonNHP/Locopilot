@@ -199,6 +199,11 @@ function sanitiseState(raw: Record<string, unknown>): MCPSavedOAuthState {
       const uris = client.redirect_uris.filter((u): u is string => typeof u === 'string');
       if (uris.length > 0) info.redirect_uris = uris;
     }
+    // GHSA-6qxp-vccf-f47h: round-trip the authorization server this
+    // registration is bound to. Absence (a store written before the SDK
+    // upgrade) is preserved deliberately — the SDK re-stamps such an entry
+    // with the issuer of the first authorization server that accepts it.
+    if (typeof client.issuer === 'string') info.issuer = client.issuer;
     state.clientInformation = info;
   }
   const tokens = raw.tokens;
@@ -216,6 +221,11 @@ function sanitiseState(raw: Record<string, unknown>): MCPSavedOAuthState {
     if (typeof tokens.expires_in === 'number') t.expires_in = tokens.expires_in;
     if (typeof tokens.scope === 'string') t.scope = tokens.scope;
     if (typeof tokens.refresh_token === 'string') t.refresh_token = tokens.refresh_token;
+    // GHSA-6qxp-vccf-f47h: round-trip the authorization server that issued
+    // these tokens. Absence (a store written before the SDK upgrade) is
+    // preserved deliberately — the provider treats such a token set as
+    // unbound and withholds its refresh token.
+    if (typeof tokens.issuer === 'string') t.issuer = tokens.issuer;
     state.tokens = t;
   }
   if (typeof raw.codeVerifier === 'string' && raw.codeVerifier.length > 0) {

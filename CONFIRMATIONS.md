@@ -255,6 +255,15 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Claim:** The linkedom author's own benchmark reports about 1/9 of JSDOM's parse time. Readability's README lists linkedom as a JSDOM alternative. Neither is checked on Locopilot's pages.
 - **How to confirm:** for 20 saved result pages, time `new Readability(doc).parse()` with a JSDOM document and with a linkedom document, using a fresh document for each parse (Readability changes the DOM it is given). Diff the extracted text: any page whose text differs is a quality regression.
 
+### C-021 — The 2026-11-14 dependency upgrade was not checked live
+
+- **Status:** Unconfirmed.
+- **Claim:** the npm audit cleanup (see `docs/CHANGELOG.md`, 2026-11-14) is verified by the type checker, the linter, the full test suite, the coverage run and a production build — but three things were NOT exercised against a running app: (1) the look of a diagram in the browser after the mermaid 11 → 12 upgrade; (2) an MCP server that uses OAuth, against a real authorization server; (3) a `fetch_url` / `web_search` round trip, which is the only place the `axios` → `follow-redirects` bump can matter.
+- **Why it matters:** the mermaid upgrade pins `layout: 'dagre'`, `look: 'classic'` and `flowchart.minNodeWidth: 0` so the rendering is what 11.x drew, and `tests/mermaid/security.test.mjs` renders real diagrams in Chromium — but that test asserts STRUCTURE and SAFETY (that hostile markup does not survive), not that a diagram looks the same as before. The OAuth binding is verified offline against a stubbed network, not against a real AS. The axios bump changes redirect handling only in the credential-stripping edge cases that Locopilot does not use.
+- **How to confirm:** (1) render a diagram of each of the 12 supported types in a conversation and compare it with the same diagram rendered before the upgrade (a git stash of the mermaid change is enough); (2) configure an MCP server that needs OAuth, click "Authenticate", sign in, then check `~/.locopilot/mcp-oauth-tokens.json` — the saved `tokens.issuer` and `clientInformation.issuer` must both be present, and must name the AS that was used; then reconnect and confirm no second sign-in is asked for; (3) run a `web_search` and a `fetch_url` against a site that redirects, and confirm the page still loads.
+- **Needs:** a browser for (1); an MCP server with OAuth for (2); a network for (3).
+- **Source:** the 2026-11-14 changelog entry, 2026-11-14.
+
 ### A-010 — Web compaction silently cut pages to their first `perPageCharLimit` characters on a 429
 
 - **Status:** Done (2026-11-14). Found with 3 queries run in parallel against Ollama Cloud: 16 of 32 compactions got HTTP 429, and `ContentCompactor` kept `content.slice(0, limit)` without telling the model.

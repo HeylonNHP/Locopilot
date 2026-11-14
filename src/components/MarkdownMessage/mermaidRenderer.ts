@@ -100,12 +100,31 @@ async function ensureInitialised(theme: ResolvedTheme): Promise<Mermaid> {
     // installs the app's own inline error panel instead.
     suppressErrorRendering: true,
     theme: mermaidTheme,
+    // Mermaid 12 changed two defaults that would silently change every
+    // diagram we render, so both are pinned back to the 11.x behaviour.
+    //
+    // `layout`: 12 makes ELK the default layout engine instead of dagre.
+    // ELK runs on the main thread and is dramatically slower on large
+    // diagrams (mermaid-js/mermaid#8777 reports a 150-node flowchart going
+    // from ~2 s to ~36 s, with a ~24 s blocking task), and because it yields
+    // to the event loop the temporary container mermaid appends to
+    // `document.body` gets painted mid-render — a flash of the raw diagram
+    // over the chat on every render (#8391). dagre never yields, so it never
+    // painted. Pinning dagre keeps both the speed and the absence of flicker.
+    layout: 'dagre',
+    // `look`: 12 adds a per-diagram-type default of `neo` (a different node
+    // padding and border treatment). We render the classic look, which is
+    // what 11.x drew.
+    look: 'classic',
     themeVariables: collectThemeVariables(),
     fontFamily: 'inherit',
     markdownAutoWrap: true,
     htmlLabels: false,
     flowchart: {
       wrappingWidth: 140,
+      // 12 enforces a 120px minimum node width, which 11.x did not have.
+      // 0 keeps short labels on short nodes, as before.
+      minNodeWidth: 0,
     },
   });
 
