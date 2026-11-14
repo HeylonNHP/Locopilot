@@ -189,6 +189,20 @@ export interface FetchAndExtractOptions {
   browserPool?: BrowserPool;
 }
 
+/** What `fetchAndExtract` returns. */
+export interface FetchedPage {
+  title: string;
+  text: string;
+  finalUrl: string;
+  links: ExtractedLink[];
+  /**
+   * True when the text was cut to `perPageCharLimit` instead of summarised
+   * (it then ends with the truncation note). Such a page must not be reused
+   * from a cache: the failure that caused it may not repeat.
+   */
+  truncated: boolean;
+}
+
 /**
  * Fetches a webpage from the given URL, extracts its main content, title, final URL, and links,
  * and optionally applies Playwright rendering or text compaction if needed.
@@ -197,14 +211,14 @@ export interface FetchAndExtractOptions {
  * @param {WebExtractionSettings} settings - The settings used for web extraction, including request timeout and cookie headers.
  * @param {FetchAndExtractOptions} [options={}] - Optional parameters that specify extraction preferences such as Playwright usage and full content extraction.
  * @param {AbortSignal} [signal] - Optional signal to abort the request, typically used for canceling a fetch operation.
- * @return {Promise<{ title: string; text: string; finalUrl: string; links: ExtractedLink[] }>} A promise that resolves to an object containing the extracted title, main text, final URL, and list of links.
+ * @return {Promise<FetchedPage>} A promise that resolves to an object containing the extracted title, main text, final URL, list of links, and whether the text was cut instead of summarised.
  */
 export async function fetchAndExtract(
   url: string,
   settings: WebExtractionSettings,
   options: FetchAndExtractOptions = {},
   signal?: AbortSignal
-): Promise<{ title: string; text: string; finalUrl: string; links: ExtractedLink[] }> {
+): Promise<FetchedPage> {
   const effectiveSignal = signal ?? options.signal;
   const response = await axios.get<string>(url, {
     timeout: DEFAULT_WEB_REQUEST_TIMEOUT_MS,
@@ -265,7 +279,7 @@ export async function fetchAndExtract(
   const links = extractLinks(extractionHtml, extractionUrl);
 
   if (options.fullContent || settings.perPageCharLimit <= 0) {
-    return { title, text, finalUrl: extractionUrl, links };
+    return { title, text, finalUrl: extractionUrl, links, truncated: false };
   }
 
   // Use content compaction if text exceeds the character limit. Chat
@@ -288,5 +302,11 @@ export async function fetchAndExtract(
       ? `${compaction.text}\n\n${buildTruncationNote(compaction)}`
       : compaction.text;
 
-  return { title, text: processedText, finalUrl: extractionUrl, links };
+  return {
+    title,
+    text: processedText,
+    finalUrl: extractionUrl,
+    links,
+    truncated: compaction.outcome === 'truncated',
+  };
 }

@@ -53,6 +53,18 @@ export const WEB_COMPACTION_RETRY_BASE_DELAY_MS = 1_000;
 export const WEB_COMPACTION_RETRY_MAX_DELAY_MS = 16_000;
 
 /**
+ * How long `web_search` reuses a page it already extracted and compacted
+ * (same URL, same settings), so a repeat visit costs no download and no LLM
+ * call. ONLY `web_search` reads or writes this cache: `fetch_url` always reads
+ * the live page. 0 turns the cache off. The cache lives in memory and is gone
+ * when the server restarts.
+ */
+export const WEB_SEARCH_PAGE_CACHE_TTL_MS = 15 * 60_000;
+
+/** Most pages the `web_search` cache holds; the oldest entry goes first. */
+export const WEB_SEARCH_PAGE_CACHE_MAX_ENTRIES = 300;
+
+/**
  * DuckDuckGo searches in flight at once within one `web_search` call. The
  * queries run in parallel; this and the stagger below are what keep that from
  * looking like a burst to DuckDuckGo (which answers a burst with a CAPTCHA).

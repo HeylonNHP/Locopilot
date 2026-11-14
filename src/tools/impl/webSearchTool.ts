@@ -14,6 +14,7 @@ import {
 } from '@/constants';
 import { abortableSleep } from '@/services/retryable';
 import { cleanText, fetchAndExtract } from '@/tools/web/htmlExtractor';
+import { buildPageCacheKey, type PageCache, webSearchPageCache } from '@/tools/web/pageCache';
 import { BrowserPool, DEFAULT_USER_AGENT } from '@/tools/web/playwrightRenderer';
 import { ConcurrencyLimiter } from '@/util/concurrencyLimiter';
 
@@ -151,6 +152,8 @@ interface ExtractedPage {
   text: string;
   links: ExtractedLink[];
   usedPlaywright?: boolean;
+  /** Set when the page came from the `web_search` cache: how old that copy is. */
+  cachedAgeMs?: number;
 }
 
 /** What one query produced: its pages, or why it produced none. */
@@ -170,6 +173,14 @@ interface RunLimiters {
 export interface WebSearchOptions {
   settings: WebSearchSettings;
   onProgress?: (message: string) => void;
+  /** Replaceable for tests; defaults to the process-wide `webSearchPageCache`. */
+  pageCache?: PageCache;
+}
+
+/** "45 s", "4 min": how old a cached copy is, for the note the model reads. */
+function formatAge(ageMs: number): string {
+  const seconds = Math.max(0, Math.round(ageMs / 1000));
+  return seconds < 90 ? `${seconds} s` : `${Math.round(seconds / 60)} min`;
 }
 
 function clampToPositiveInt(value: number, fallback: number): number {
@@ -198,6 +209,7 @@ function isDdgCaptcha($: ReturnType<typeof cheerio.load>): boolean {
 export class WebSearchTool {
   private readonly settings: WebSearchSettings;
   private readonly onProgress: ((message: string) => void) | undefined;
+  private readonly pageCache: PageCache;
   /**
    * Shared Chromium browser for the lifetime of one `run()` call. Set in
    * `run()`, cleared in `finally`. Optional — when undefined, page
@@ -208,6 +220,7 @@ export class WebSearchTool {
   constructor(options: WebSearchOptions) {
     this.settings = options.settings;
     this.onProgress = options.onProgress;
+    this.pageCache = options.pageCache ?? webSearchPageCache;
   }
 
   async run(args: WebSearchToolArgs, signal?: AbortSignal): Promise<string> {
@@ -303,9 +316,13 @@ export class WebSearchTool {
               ? page.links.map((l) => `- [${l.text}](${l.url})`).join('\n')
               : '(none)';
 
-          const methodNote = page.usedPlaywright
-            ? '\n[Note: This page was rendered using Playwright (browser) because use_playwright was requested.]'
-            : '';
+          const methodNote =
+            (page.usedPlaywright
+              ? '\n[Note: This page was rendered using Playwright (browser) because use_playwright was requested.]'
+              : '') +
+            (page.cachedAgeMs === undefined
+              ? ''
+              : `\n[Note: This is a copy from the web_search cache, retrieved ${formatAge(page.cachedAgeMs)} ago. fetch_url always reads the live page.]`);
 
           resultLines.push(
             [
@@ -623,11 +640,43 @@ export class WebSearchTool {
     signal?: AbortSignal
   ): Promise<ExtractedPage | null> {
     try {
+      const cacheKey = buildPageCacheKey({
+        url: result.url,
+        usePlaywright: usePlaywright === true,
+        perPageCharLimit: this.settings.perPageCharLimit,
+        compactionModel: this.settings.compactionModel,
+      });
+      const hit = this.pageCache.get(cacheKey);
+      if (hit) {
+        this.progress(`Web search: using the cached copy of ${result.url}.`);
+        return {
+          url: result.url,
+          finalUrl: hit.page.finalUrl,
+          title: result.title,
+          snippet: result.snippet,
+          text: hit.page.text || '(no extractable text)',
+          links: hit.page.links,
+          usedPlaywright: usePlaywright === true,
+          cachedAgeMs: hit.ageMs,
+        };
+      }
+
       const extracted = await fetchAndExtract(result.url, this.settings, {
         usePlaywright: usePlaywright === true,
         ...(this.browserPool ? { browserPool: this.browserPool } : {}),
         ...(signal ? { signal } : {}),
       });
+
+      // Not stored: a page cut instead of summarised (the failure may not
+      // repeat) and a page with no text (a browser render that came back empty).
+      if (!extracted.truncated && extracted.text) {
+        this.pageCache.set(cacheKey, {
+          title: extracted.title,
+          text: extracted.text,
+          finalUrl: extracted.finalUrl,
+          links: extracted.links,
+        });
+      }
 
       return {
         url: result.url,
