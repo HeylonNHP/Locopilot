@@ -114,6 +114,59 @@ export function retryableErrorStatus(err: unknown): number | null {
 }
 
 /**
+ * Read one response header from an error, whichever shape carries it: the
+ * OpenAI SDK's `err.headers` (a `Headers` with `.get`), or axios's
+ * `err.response.headers` (an `AxiosHeaders` with `.get`, or a plain object).
+ */
+function readErrorHeader(err: unknown, name: string): string | null {
+  if (!err || typeof err !== 'object') return null;
+  const candidates = [
+    (err as { headers?: unknown }).headers,
+    (err as { response?: { headers?: unknown } }).response?.headers,
+  ];
+  for (const headers of candidates) {
+    if (!headers || typeof headers !== 'object') continue;
+    const get = (headers as { get?: unknown }).get;
+    if (typeof get === 'function') {
+      const value = (get as (key: string) => unknown).call(headers, name);
+      if (typeof value === 'string' && value.length > 0) return value;
+      continue;
+    }
+    const value = (headers as Record<string, unknown>)[name];
+    if (typeof value === 'string' && value.length > 0) return value;
+  }
+  return null;
+}
+
+/**
+ * A server-supplied retry delay in milliseconds, capped at `maxDelayMs`, or
+ * null when the error carries none. Reads `retry-after-ms` (Cloudflare-style
+ * milliseconds) and `retry-after` in its two forms: integer seconds and an
+ * HTTP-date.
+ */
+export function getRetryAfterDelayMs(err: unknown, maxDelayMs: number): number | null {
+  const msHeader = readErrorHeader(err, 'retry-after-ms');
+  if (msHeader) {
+    const n = Number(msHeader);
+    if (Number.isFinite(n) && n >= 0) return Math.min(n, maxDelayMs);
+  }
+
+  const header = readErrorHeader(err, 'retry-after');
+  if (!header) return null;
+
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(Math.round(seconds * 1000), maxDelayMs);
+  }
+
+  const dateMs = Date.parse(header);
+  if (Number.isFinite(dateMs)) {
+    return Math.min(Math.max(0, dateMs - Date.now()), maxDelayMs);
+  }
+  return null;
+}
+
+/**
  * Sleep for `ms`, but wake up immediately when `signal` aborts.
  *
  * Resolves `true` when the wait was cut short by an abort and `false` when

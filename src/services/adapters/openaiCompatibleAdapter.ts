@@ -26,6 +26,7 @@ import {
   getOpenAICompatibleContextLimit,
   parseUnsupportedParamFromError,
 } from '@/services/llmContextLimit';
+import { getRetryAfterDelayMs } from '@/services/retryable';
 import {
   isKnownSamplingParam,
   peekSamplingParamSupportMap,
@@ -1684,38 +1685,12 @@ function isAdapterRetryableError(err: unknown, retryableStatuses: readonly numbe
 
 /**
  * Read a server-supplied `Retry-After` hint in milliseconds, capped at
- * `maxDelayMs`. Returns null if absent or unparseable. Supports the two
- * forms gateways actually emit:
- *   - integer seconds (`retry-after: 8`)
- *   - HTTP-date (`retry-after: Wed, 21 Oct 2015 07:28:00 GMT`)
- * Also reads `retry-after-ms` (Cloudflare-style, milliseconds).
+ * `maxDelayMs`. Returns null if absent or unparseable. The parsing lives in
+ * `getRetryAfterDelayMs` (`src/services/retryable.ts`), shared with the web
+ * compactor's retry.
  */
 function getRetryAfterMs(err: unknown, maxDelayMs: number): number | null {
-  if (!err || typeof err !== 'object') return null;
-  const headers = (err as { headers?: { get?: (k: string) => string | null } }).headers;
-  if (!headers || typeof headers.get !== 'function') return null;
-
-  const msHeader = headers.get('retry-after-ms');
-  if (msHeader) {
-    const n = Number(msHeader);
-    if (Number.isFinite(n) && n >= 0) return Math.min(n, maxDelayMs);
-  }
-
-  const header = headers.get('retry-after');
-  if (!header) return null;
-
-  // Integer seconds form.
-  const seconds = Number(header);
-  if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.min(Math.round(seconds * 1000), maxDelayMs);
-  }
-
-  // HTTP-date form.
-  const dateMs = Date.parse(header);
-  if (Number.isFinite(dateMs)) {
-    return Math.min(Math.max(0, dateMs - Date.now()), maxDelayMs);
-  }
-  return null;
+  return getRetryAfterDelayMs(err, maxDelayMs);
 }
 
 /**

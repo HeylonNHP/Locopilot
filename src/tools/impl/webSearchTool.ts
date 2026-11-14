@@ -9,9 +9,13 @@ import type { ExtractedLink } from '@/tools/web/linkExtractor';
 import {
   DEFAULT_WEB_REQUEST_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES,
+  WEB_SEARCH_MAX_CONCURRENT_SEARCHES,
+  WEB_SEARCH_QUERY_START_STAGGER_MS,
 } from '@/constants';
+import { abortableSleep } from '@/services/retryable';
 import { cleanText, fetchAndExtract } from '@/tools/web/htmlExtractor';
 import { BrowserPool, DEFAULT_USER_AGENT } from '@/tools/web/playwrightRenderer';
+import { ConcurrencyLimiter } from '@/util/concurrencyLimiter';
 
 export const webSearchToolSchema: ToolSchema = {
   name: 'web_search',
@@ -149,6 +153,20 @@ interface ExtractedPage {
   usedPlaywright?: boolean;
 }
 
+/** What one query produced: its pages, or why it produced none. */
+interface QueryOutcome {
+  query: string;
+  pages: ExtractedPage[];
+  /** Set when the DuckDuckGo search itself failed (not when it simply found nothing). */
+  error?: { message: string; cause: unknown };
+}
+
+/** The limits one `run()` shares across all of its queries. */
+interface RunLimiters {
+  searches: ConcurrencyLimiter;
+  pages: ConcurrencyLimiter;
+}
+
 export interface WebSearchOptions {
   settings: WebSearchSettings;
   onProgress?: (message: string) => void;
@@ -214,36 +232,58 @@ export class WebSearchTool {
         `Web search: ${queries.length} quer${queries.length === 1 ? 'y' : 'ies'} selected.`
       );
 
-      const querySections: string[] = [];
+      // The queries run IN PARALLEL: each one's pages start loading the moment
+      // its own search returns. What stops that from being a burst is shared:
+      // the searches are staggered and capped (DuckDuckGo answers a burst with
+      // a CAPTCHA), the page downloads are capped across all queries, and the
+      // compaction requests have their own process-wide cap.
+      const limiters: RunLimiters = {
+        searches: new ConcurrencyLimiter(WEB_SEARCH_MAX_CONCURRENT_SEARCHES),
+        pages: new ConcurrencyLimiter(Math.max(1, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES)),
+      };
+      const outcomes = await Promise.all(
+        queries.map((query, queryIndex) =>
+          this.runQuery(
+            query,
+            queryIndex,
+            queries.length,
+            effectiveResultsPerQuery,
+            args.use_playwright,
+            limiters,
+            signal
+          )
+        )
+      );
+      signal?.throwIfAborted();
+
+      // One failed query must not throw away the others' pages. When EVERY
+      // query failed there is nothing to return, so the first error is raised,
+      // as it was when the queries ran one after another.
+      const failures = outcomes.filter((o) => o.error !== undefined);
+      if (failures.length === outcomes.length) {
+        throw failures[0]?.error?.cause;
+      }
+
       // Collect every fetched source across all queries so we can emit a
       // single deduplicated, numbered SOURCES block. Numbered citations in
       // the answer reference these indices. Always emitted (the instruction
-      // to cite is gated separately via RequestContext.citeSources).
+      // to cite is gated separately via RequestContext.citeSources). Built
+      // here, in query order, so the numbering does not depend on which
+      // query finished first.
+      const querySections: string[] = [];
       const allSources: { title: string; url: string }[] = [];
       const seenSourceUrls = new Set<string>();
-      for (const [queryIndex, query] of queries.entries()) {
-        this.progress(
-          `Web search: fetching DuckDuckGo results (${queryIndex + 1}/${queries.length}) for "${query}"...`
-        );
-
-        const searchResults = await this.fetchSearchResults(
-          query,
-          effectiveResultsPerQuery,
-          signal
-        );
-        if (searchResults.length === 0) {
+      for (const { query, pages, error } of outcomes) {
+        if (error) {
+          querySections.push(
+            [`query: ${query}`, 'results: 0', `search_error: ${error.message}`].join('\n')
+          );
+          continue;
+        }
+        if (pages.length === 0) {
           querySections.push([`query: ${query}`, 'results: 0'].join('\n'));
           continue;
         }
-
-        const fetched = await this.fetchPagesWithConcurrency(
-          searchResults,
-          queryIndex,
-          queries.length,
-          args.use_playwright,
-          signal
-        );
-        const pages: ExtractedPage[] = fetched.filter((p): p is ExtractedPage => p !== null);
 
         const resultLines: string[] = [`query: ${query}`, `results: ${pages.length}`];
 
@@ -306,6 +346,54 @@ export class WebSearchTool {
 
   private progress(message: string): void {
     if (this.onProgress) this.onProgress(message);
+  }
+
+  /**
+   * One query's whole pipeline: (staggered) search, then its pages. A search
+   * failure is returned as data so sibling queries keep going; an abort is
+   * not a failure and is rethrown.
+   */
+  private async runQuery(
+    query: string,
+    queryIndex: number,
+    totalQueries: number,
+    resultsPerQuery: number,
+    usePlaywright: boolean | undefined,
+    limiters: RunLimiters,
+    signal: AbortSignal | undefined
+  ): Promise<QueryOutcome> {
+    try {
+      if (queryIndex > 0 && (await abortableSleep(queryIndex * WEB_SEARCH_QUERY_START_STAGGER_MS, signal))) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+      this.progress(
+        `Web search: fetching DuckDuckGo results (${queryIndex + 1}/${totalQueries}) for "${query}"...`
+      );
+      const searchResults = await limiters.searches.run(
+        () => this.fetchSearchResults(query, resultsPerQuery, signal),
+        signal
+      );
+      if (searchResults.length === 0) {
+        return { query, pages: [] };
+      }
+
+      const fetched = await this.fetchPagesWithConcurrency(
+        searchResults,
+        queryIndex,
+        totalQueries,
+        usePlaywright,
+        limiters.pages,
+        signal
+      );
+      return { query, pages: fetched.filter((p): p is ExtractedPage => p !== null) };
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      return {
+        query,
+        pages: [],
+        error: { message: err instanceof Error ? err.message : String(err), cause: err },
+      };
+    }
   }
 
   private generateQueries(args: WebSearchToolArgs, maxQueries: number): string[] {
@@ -499,44 +587,34 @@ export class WebSearchTool {
   }
 
   /**
-   * Fetch and extract text for every result, with at most
-   * DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES in flight at once. Returns
-   * results in the same order as `results`; failed fetches are returned as
-   * null so callers can drop them.
+   * Fetch and extract text for every result of one query, through the limiter
+   * shared by ALL of the run's queries (so at most
+   * DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES pages are in flight in total).
+   * Returns results in the same order as `results`; failed fetches are
+   * returned as null so callers can drop them.
    */
   private async fetchPagesWithConcurrency(
     results: DuckDuckGoResult[],
     queryIndex: number,
     totalQueries: number,
     usePlaywright: boolean | undefined,
+    limiter: ConcurrencyLimiter,
     signal: AbortSignal | undefined
   ): Promise<(ExtractedPage | null)[]> {
-    if (results.length === 0) return [];
-
-    // Start every fetch eagerly so the workers below can fan out across the
-    // pool without serializing on the first await. Each task already swallows
-    // its own errors and resolves with either an ExtractedPage or null.
-    const tasks = results.map((result) => this.fetchAndExtractText(result, usePlaywright, signal));
-
-    const settled: (ExtractedPage | null | undefined)[] = Array.from({ length: tasks.length });
-    const limit = Math.max(1, DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES);
-
-    // Shared cursor — each worker pulls the next index until exhausted.
-    let cursor = 0;
-    const worker = async (): Promise<void> => {
-      while (true) {
-        const i = cursor++;
-        if (i >= tasks.length) return;
-        this.progress(
-          `Web search: loading page ${i + 1}/${results.length} for query ${queryIndex + 1}/${totalQueries}...`
-        );
-        settled[i] = await tasks[i];
-      }
-    };
-
-    await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
-
-    return settled as (ExtractedPage | null)[];
+    // Each task is queued at once but starts only when the limiter gives it a
+    // slot. (It used to be started here, before any worker ran, which made the
+    // cap a no-op.) A task swallows its own fetch errors and resolves with an
+    // ExtractedPage; only an abort while waiting for a slot rejects.
+    return Promise.all(
+      results.map((result, index) =>
+        limiter.run(() => {
+          this.progress(
+            `Web search: loading page ${index + 1}/${results.length} for query ${queryIndex + 1}/${totalQueries}...`
+          );
+          return this.fetchAndExtractText(result, usePlaywright, signal);
+        }, signal)
+      )
+    );
   }
 
   private async fetchAndExtractText(

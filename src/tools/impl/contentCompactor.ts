@@ -9,7 +9,14 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { APPROX_CHARS_PER_TOKEN } from '@/constants';
+import {
+  APPROX_CHARS_PER_TOKEN,
+  WEB_COMPACTION_MAX_CONCURRENT_REQUESTS,
+  WEB_COMPACTION_REQUEST_TIMEOUT_MS,
+  WEB_COMPACTION_RETRY_BASE_DELAY_MS,
+  WEB_COMPACTION_RETRY_MAX_ATTEMPTS,
+  WEB_COMPACTION_RETRY_MAX_DELAY_MS,
+} from '@/constants';
 import {
   type ChatMessage,
   type LlmRequestContext,
@@ -17,8 +24,10 @@ import {
   type StreamChatParams,
 } from '@/services/llm';
 import { countCalibratedTextTokens, countMessagesTokens } from '@/services/tokenizer';
+import { retryOnTransientError, type TransientRetryPolicy } from '@/services/transientRetry';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import { type WebExtractionSettings } from '@/tools/web/htmlExtractor';
+import { ConcurrencyLimiter } from '@/util/concurrencyLimiter';
 import { fillTemplate } from '@/util/fillTemplate';
 
 /**
@@ -195,6 +204,59 @@ function estimateCompactionContext(
   };
 }
 
+/**
+ * The ONE limiter every web-page compaction request goes through, shared by
+ * all queries of all `web_search` / `fetch_url` calls in the process. A
+ * provider's rate limit belongs to the account, not to a query, so the cap has
+ * to be process-wide.
+ */
+const sharedCompactionLimiter = new ConcurrencyLimiter(WEB_COMPACTION_MAX_CONCURRENT_REQUESTS);
+
+const DEFAULT_RETRY_POLICY: TransientRetryPolicy = {
+  maxAttempts: WEB_COMPACTION_RETRY_MAX_ATTEMPTS,
+  baseDelayMs: WEB_COMPACTION_RETRY_BASE_DELAY_MS,
+  maxDelayMs: WEB_COMPACTION_RETRY_MAX_DELAY_MS,
+};
+
+/**
+ * What became of the text:
+ * - `unchanged`: it was already within the limit.
+ * - `compacted`: the model summarised it to within the limit.
+ * - `truncated`: it was NOT summarised; the first `limit` characters were kept
+ *   (the model call failed, timed out, or never got the text under the limit).
+ *   The reader of the result must be told (`buildTruncationNote`).
+ */
+export type CompactionOutcome = 'unchanged' | 'compacted' | 'truncated';
+
+export interface CompactionResult {
+  text: string;
+  outcome: CompactionOutcome;
+  /** Why the text was truncated; set only when `outcome` is `truncated`. */
+  reason?: string;
+  originalLength: number;
+  limit: number;
+}
+
+/**
+ * The sentence appended to a page that was cut instead of summarised, so the
+ * LLM knows the page is incomplete and how to get the rest.
+ */
+export function buildTruncationNote(result: CompactionResult): string {
+  return (
+    `[Note: this page was NOT summarised. Its ${result.originalLength} characters were cut to the first ${result.limit} ` +
+    `because ${result.reason ?? 'compaction did not complete'}. The rest of the page is missing; ` +
+    `call fetch_url with this page's URL and full_content=true if you need all of it.]`
+  );
+}
+
+/** A compaction request that ran past `WEB_COMPACTION_REQUEST_TIMEOUT_MS`. */
+class CompactionTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`the compaction request timed out after ${Math.round(timeoutMs / 1000)} s`);
+    this.name = 'CompactionTimeoutError';
+  }
+}
+
 export interface ContentCompactorOptions {
   settings: WebExtractionSettings;
   /**
@@ -206,26 +268,65 @@ export interface ContentCompactorOptions {
    * compaction request uses the selected provider's endpoint and credentials.
    */
   llmRequestContext: LlmRequestContext;
+  /** Replaceable for tests; defaults to the real streaming call. */
+  streamChat?: typeof sendLlmChatStream;
+  /** Replaceable for tests; defaults to the process-wide limiter. */
+  limiter?: ConcurrencyLimiter;
+  /** Replaceable for tests; defaults to the `WEB_COMPACTION_RETRY_*` constants. */
+  retryPolicy?: TransientRetryPolicy;
+  /** Replaceable for tests; defaults to `WEB_COMPACTION_REQUEST_TIMEOUT_MS`. */
+  requestTimeoutMs?: number;
+  /** Replaceable for tests; resolves true when the sleep was cut short by an abort. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<boolean>;
 }
 
 export class ContentCompactor {
   private readonly settings: WebExtractionSettings;
   private readonly llmRequestContext: LlmRequestContext;
+  private readonly streamChat: typeof sendLlmChatStream;
+  private readonly limiter: ConcurrencyLimiter;
+  private readonly retryPolicy: TransientRetryPolicy;
+  private readonly requestTimeoutMs: number;
+  private readonly sleep: ContentCompactorOptions['sleep'];
   private debugLines: string[] = [];
 
   constructor(options: ContentCompactorOptions) {
     this.settings = options.settings;
     this.llmRequestContext = options.llmRequestContext;
+    this.streamChat = options.streamChat ?? sendLlmChatStream;
+    this.limiter = options.limiter ?? sharedCompactionLimiter;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? WEB_COMPACTION_REQUEST_TIMEOUT_MS;
+    // An OpenAI-compatible adapter already retries a transient failure before
+    // the error reaches us; retrying here too would multiply the attempts.
+    this.retryPolicy =
+      options.retryPolicy ??
+      (options.llmRequestContext.provider === 'openai-compatible'
+        ? { ...DEFAULT_RETRY_POLICY, maxAttempts: 1 }
+        : DEFAULT_RETRY_POLICY);
+    this.sleep = options.sleep;
   }
 
   /**
    * Compacts content if it exceeds the character limit.
-   * Returns the original content if it's within the limit or if compaction fails.
+   * Returns the original content if it's within the limit, and the first
+   * `limit` characters if compaction fails. Callers that must tell the reader
+   * about that cut use `compact` instead.
    */
-  async compactIfNeeded(content: string): Promise<string> {
+  async compactIfNeeded(content: string, signal?: AbortSignal): Promise<string> {
+    const result = await this.compact(content, signal);
+    return result.text;
+  }
+
+  /**
+   * Like `compactIfNeeded`, but says what happened to the text, so a page that
+   * was cut instead of summarised is never mistaken for a summary. An abort
+   * (`signal`) is NOT a failure to fall back from: it rejects.
+   */
+  async compact(content: string, signal?: AbortSignal): Promise<CompactionResult> {
     const limit = this.settings.perPageCharLimit;
+    const originalLength = content.length;
     if (limit <= 0 || content.length <= limit) {
-      return content;
+      return { text: content, outcome: 'unchanged', originalLength, limit };
     }
 
     this.debugLines = [];
@@ -235,12 +336,12 @@ export class ContentCompactor {
     try {
       let previousLength = content.length;
       for (let attempt = 1; attempt <= MAX_COMPACTION_ATTEMPTS; attempt += 1) {
-        compactedContent = await this.compactContent(compactedContent, attempt);
+        compactedContent = await this.compactContent(compactedContent, attempt, signal);
         this.logCompactionAttempt(attempt, compactedContent.length);
 
         if (compactedContent.length <= limit) {
           this.logCompactionComplete(content.length, compactedContent.length);
-          return compactedContent;
+          return { text: compactedContent, outcome: 'compacted', originalLength, limit };
         }
 
         if (compactedContent.length >= previousLength) {
@@ -252,15 +353,29 @@ export class ContentCompactor {
 
       const finalResult = compactedContent.slice(0, limit);
       this.logCompactionComplete(content.length, finalResult.length);
-      return finalResult;
+      return {
+        text: finalResult,
+        outcome: 'truncated',
+        reason: 'the model could not bring the summary under the limit',
+        originalLength,
+        limit,
+      };
     } catch (err) {
-      this.output.writeLine(
-        `Content compaction failed, returning truncated content: ${err instanceof Error ? err.message : String(err)}`
-      );
-      const finalResult =
-        compactedContent.length <= limit ? compactedContent : compactedContent.slice(0, limit);
+      if (signal?.aborted) throw err;
+      const reason = err instanceof Error ? err.message : String(err);
+      this.output.writeLine(`Content compaction failed, returning truncated content: ${reason}`);
+      // Any text that reached the catch is over the limit (a pass that landed
+      // under it returned above), so it is always cut: the first pass's
+      // failure leaves the page itself, a later one leaves an over-long summary.
+      const finalResult = compactedContent.slice(0, limit);
       this.logCompactionComplete(content.length, finalResult.length);
-      return finalResult;
+      return {
+        text: finalResult,
+        outcome: 'truncated',
+        reason: `summarising it failed (${reason})`,
+        originalLength,
+        limit,
+      };
     } finally {
       compactionDebugStore.enterWith([...this.debugLines]);
     }
@@ -269,7 +384,11 @@ export class ContentCompactor {
   /**
    * Uses LLM to compact the content according to the compaction guidelines.
    */
-  private async compactContent(content: string, attempt: number): Promise<string> {
+  private async compactContent(
+    content: string,
+    attempt: number,
+    signal: AbortSignal | undefined
+  ): Promise<string> {
     const model = this.settings.compactionModel.trim();
     if (!model) {
       throw new Error('No compaction model configured for web content compaction');
@@ -309,7 +428,6 @@ export class ContentCompactor {
       tools: [],
       numCtx,
       think: false,
-      timeoutMs: this.settings.requestTimeoutMs,
       maxOutputTokens: numPredict,
     };
 
@@ -321,7 +439,52 @@ export class ContentCompactor {
       `Web content compaction prompt: model=${model} numCtx=${numCtx} maxOutputTokens=${numPredict} (~${numPredict * 4} chars) promptTokens=${countMessagesTokens(messages, model, 'summarise')} targetBand=${minCharLimit}..${effectiveCharLimit} chars (hardLimit=${charLimit})`
     );
 
-    return await this.streamCompactionResponse(params);
+    // The slot is taken per REQUEST attempt and given back during a retry's
+    // backoff sleep, so a rate-limited provider is not kept saturated by
+    // requests that are only waiting.
+    return await retryOnTransientError(
+      (retryAttempt) =>
+        this.limiter.run(() => this.requestWithDeadline(params, signal, retryAttempt), signal),
+      {
+        ...this.retryPolicy,
+        signal,
+        ...(this.sleep ? { sleep: this.sleep } : {}),
+        onRetry: ({ attempt: n, maxAttempts, delayMs, status }) =>
+          this.logCompactionLine(
+            `Web content compaction: provider answered ${status ?? 'a transient error'}; retry ${n}/${maxAttempts - 1} in ${delayMs} ms.`
+          ),
+      }
+    );
+  }
+
+  /**
+   * One request, cut off after `requestTimeoutMs`. The deadline is a wall-clock
+   * cap on the whole request, including the stream; the adapter's own
+   * `timeoutMs` only covers a silent socket. Aborting the stream can end the
+   * iteration quietly with a PARTIAL text, so the deadline is checked after it.
+   */
+  private async requestWithDeadline(
+    params: StreamChatParams,
+    signal: AbortSignal | undefined,
+    retryAttempt: number
+  ): Promise<string> {
+    if (retryAttempt > 1) {
+      this.recordDebugLine(`Web content compaction: request attempt ${retryAttempt}.`);
+    }
+    const deadline = AbortSignal.timeout(this.requestTimeoutMs);
+    const requestParams: StreamChatParams = {
+      ...params,
+      timeoutMs: this.requestTimeoutMs,
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+    };
+    try {
+      const text = await this.streamCompactionResponse(requestParams);
+      if (deadline.aborted && !signal?.aborted) throw new CompactionTimeoutError(this.requestTimeoutMs);
+      return text;
+    } catch (err) {
+      if (deadline.aborted && !signal?.aborted) throw new CompactionTimeoutError(this.requestTimeoutMs);
+      throw err;
+    }
   }
 
   private async streamCompactionResponse(params: StreamChatParams): Promise<string> {
@@ -353,7 +516,7 @@ export class ContentCompactor {
     // carries the right provider + apiKey + baseUrl for the current
     // request, so the adapter is selected correctly and the Authorization
     // header (openai-compatible) matches the rest of the request.
-    for await (const chunk of sendLlmChatStream(this.llmRequestContext, params)) {
+    for await (const chunk of this.streamChat(this.llmRequestContext, params)) {
       chunkCount += 1;
       const thinking = chunk.message?.thinking ?? '';
       const content = chunk.message?.content ?? '';
@@ -437,9 +600,10 @@ export class ContentCompactor {
    */
   static create(
     settings: WebExtractionSettings,
-    llmRequestContext: LlmRequestContext
+    llmRequestContext: LlmRequestContext,
+    overrides: Omit<ContentCompactorOptions, 'settings' | 'llmRequestContext'> = {}
   ): ContentCompactor {
-    return new ContentCompactor({ settings, llmRequestContext });
+    return new ContentCompactor({ settings, llmRequestContext, ...overrides });
   }
 
   private get output(): ToolOutputSink {

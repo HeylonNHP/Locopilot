@@ -13,11 +13,54 @@ export const DEFAULT_WEB_REQUEST_TIMEOUT_MS = 15_000;
  */
 export const MODEL_LIST_TIMEOUT_MS = 60_000;
 /**
- * Maximum number of result pages to fetch in parallel for a single
- * `web_search` query. Higher values reduce wall-clock time but risk
- * rate-limiting by target sites.
+ * Maximum number of result pages one `web_search` call downloads and extracts
+ * at the same time, SHARED by all of its queries (they run in parallel). A page
+ * holds its slot until its compaction finishes, so this stays a little above
+ * `WEB_COMPACTION_MAX_CONCURRENT_REQUESTS`: the compaction slots stay full
+ * while a few more pages download. Higher values reduce wall-clock time but
+ * risk rate-limiting by target sites.
  */
-export const DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES = 5;
+export const DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES = 12;
+
+/**
+ * Longest a SINGLE web-page compaction request (one LLM call) may run before it
+ * is abandoned. The page then falls back to its first `perPageCharLimit`
+ * characters, and the tool result SAYS so (see `buildTruncationNote`). Before
+ * this existed the call inherited the 12-minute chat timeout, so one hung call
+ * held a whole query for 12 minutes. Raise it if you compact with a slow local
+ * model; lowering it trades summaries for speed.
+ */
+export const WEB_COMPACTION_REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * Most web-page compaction requests in flight at once, across EVERY query and
+ * every `web_search` / `fetch_url` call in the process. This is the throttle
+ * that keeps a 10-query search from sending 150 requests at a provider at once:
+ * Ollama Cloud answered 429 to about half of 32 simultaneous compactions
+ * (CONFIRMATIONS.md A-010). Raise it for a provider with a higher limit.
+ */
+export const WEB_COMPACTION_MAX_CONCURRENT_REQUESTS = 10;
+
+/**
+ * Retry policy for a compaction request that fails with a transient status
+ * (429, 5xx, ...). Total attempts, then an exponential backoff from the base
+ * delay up to the ceiling; a server `Retry-After` is honoured, up to the
+ * ceiling. Not used for an OpenAI-compatible provider, whose adapter retries
+ * on its own (see `src/services/adapters/openaiCompatibleAdapter.ts`).
+ */
+export const WEB_COMPACTION_RETRY_MAX_ATTEMPTS = 4;
+export const WEB_COMPACTION_RETRY_BASE_DELAY_MS = 1_000;
+export const WEB_COMPACTION_RETRY_MAX_DELAY_MS = 16_000;
+
+/**
+ * DuckDuckGo searches in flight at once within one `web_search` call. The
+ * queries run in parallel; this and the stagger below are what keep that from
+ * looking like a burst to DuckDuckGo (which answers a burst with a CAPTCHA).
+ */
+export const WEB_SEARCH_MAX_CONCURRENT_SEARCHES = 3;
+
+/** Query N waits N × this long before its first DuckDuckGo request. */
+export const WEB_SEARCH_QUERY_START_STAGGER_MS = 300;
 export const IMAGE_TOKEN_ESTIMATE = 1024;
 export const APPROX_CHARS_PER_TOKEN = 4;
 export const READ_FILE_TOKEN_WARN_PCT = 25;

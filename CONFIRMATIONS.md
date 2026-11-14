@@ -233,6 +233,33 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Needs:** a dev server with at least two providers configured, and two browser tabs.
 - **Source:** the branch's own changelog entry and commit messages, 2026-11-13.
 
+### C-019 — Projected speed-ups for the `web_search` refactoring options are not measured
+
+- **Status:** Unconfirmed (projections only, 2026-11-14).
+- **Claim:** A review of `src/tools/impl/webSearchTool.ts` produced a table of options with projected gains. These were NOT measured: skipping LLM compaction for pages up to about 1.2× `perPageCharLimit`; accepting a slightly-over first compaction instead of retrying; a query-focused compaction prompt that produces shorter output; a per-URL cache; parsing each page once instead of three times. The only measured baselines are below.
+- **Measured baselines** (this machine, 2026-11-14, Ollama Cloud, `deepseek-v4.1-flash:1017` as the compaction model, `perPageCharLimit` 5000):
+  - DuckDuckGo search: about 1.0–1.2 s per query.
+  - Page fetch: 0.4–6.7 s. Readability extraction: 18–371 ms of CPU. The extra JSDOM parse in `extractTitle`: 9–86 ms.
+  - One compaction: 2.7–3.5 s alone, 6.5 s with five at once. 13 of 14 pages were over the limit.
+  - 3 queries × 15 results, run one after another as today: 60 s wall time, 345,000 characters of output. One query of 15 results: 115,000 characters, of which 50,000 were the `result_N_links` lists.
+- **How to confirm:** build a harness that imports `WebSearchTool` from the repo with `tsx --tsconfig tsconfig.json`, using the active provider from `config.json`. Run the same queries before and after each change, and compare wall time, output size, and the number of `compaction complete: N -> 5000` lines (those lines mean the page was cut, not summarised).
+- **Needs:** Ollama Cloud calls (about 45 compactions per 3 × 15 run), which cost a little.
+- **After the 2026-11-14 change** (same 3 × 15 run, queries now parallel with the new limits): 38.8 s and 49.1 s against 60.4 s before; no 429; one of 90 pages came back cut, labelled as such (the model's summary stayed over the limit). Still projected, not measured: the effect of each remaining option (skipping compaction for pages just over the limit, URL cache, parsing each page once, query-focused compaction).
+- **Untuned:** `WEB_COMPACTION_MAX_CONCURRENT_REQUESTS` (10), `DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES` (12), `WEB_SEARCH_MAX_CONCURRENT_SEARCHES` (3), `WEB_SEARCH_QUERY_START_STAGGER_MS` (300) and `WEB_COMPACTION_REQUEST_TIMEOUT_MS` (60 s) are first guesses from two runs. Not checked: a 10-query × 15-result search (the owner's saved setting), a local Ollama (it may queue rather than run requests in parallel, and a 60 s deadline may be too short for a slow local model), and DuckDuckGo's reaction to 10 staggered queries (no CAPTCHA seen at 3).
+
+### C-020 — linkedom parses about 9× faster than JSDOM and works with Readability
+
+- **Status:** Unconfirmed.
+- **Claim:** The linkedom author's own benchmark reports about 1/9 of JSDOM's parse time. Readability's README lists linkedom as a JSDOM alternative. Neither is checked on Locopilot's pages.
+- **How to confirm:** for 20 saved result pages, time `new Readability(doc).parse()` with a JSDOM document and with a linkedom document, using a fresh document for each parse (Readability changes the DOM it is given). Diff the extracted text: any page whose text differs is a quality regression.
+
+### A-010 — Web compaction silently cut pages to their first `perPageCharLimit` characters on a 429
+
+- **Status:** Done (2026-11-14). Found with 3 queries run in parallel against Ollama Cloud: 16 of 32 compactions got HTTP 429, and `ContentCompactor` kept `content.slice(0, limit)` without telling the model.
+- **What changed:** a process-wide cap on compaction requests, a 429/5xx retry with backoff, a 60 s per-request deadline, a truncation note on every page that was cut, and a page limiter that actually limits. See `docs/CHANGELOG.md` (2026-11-14) and the "Scheduling and limits" bullet in `CLAUDE.md`.
+- **Verified:** `tests/content-compactor.test.mjs`, `tests/web-search-parallel.test.mjs`, `tests/concurrency-limiter.test.mjs`, `tests/transient-retry.test.mjs`; and live, twice (3 queries × 15 results, Ollama Cloud): no 429 and no failed compaction.
+- **Not verified:** the retry itself against a real 429 (the live runs never hit one, because the cap kept the load under the limit; the retry is covered by tests with an injected error). The Ollama Cloud limit itself (about 30 concurrent requests) is inferred from where the 429s appeared, not documented.
+
 ## Confirmed
 
 - **OpenAI output-cap field.** `max_output_tokens` is the cap on the Responses API (`/v1/responses`) and covers visible and reasoning tokens. Chat Completions uses `max_completion_tokens`. Source: OpenAI API reference, read through a mirror on 2026-11-11 (`platform.openai.com` returned 403). The installed `openai` SDK (6.48.0) types agree.
