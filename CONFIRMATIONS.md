@@ -271,6 +271,14 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Verified:** `tests/content-compactor.test.mjs`, `tests/web-search-parallel.test.mjs`, `tests/concurrency-limiter.test.mjs`, `tests/transient-retry.test.mjs`; and live, twice (3 queries × 15 results, Ollama Cloud): no 429 and no failed compaction.
 - **Not verified:** the retry itself against a real 429 (the live runs never hit one, because the cap kept the load under the limit; the retry is covered by tests with an injected error). The Ollama Cloud limit itself (about 30 concurrent requests) is inferred from where the 429s appeared, not documented.
 
+### C-022 — Does dropping "concise" from the sub-agent prompt make sub-agent reports richer?
+
+- **Status:** Unconfirmed (2026-11-14).
+- **Claim:** The sub-agent system prompt (`buildSubAgentSystemPrompt`, `src/tools/impl/subAgentTool.ts`) used to say "return one final concise, self-contained summary"; it now says "a final, self-contained report ... with as much detail as the findings warrant". The expectation, NOT measured, is that this, and not the provider's output limit, was what kept sub-agent returns short, and that returns now grow. Locopilot sets no `maxOutputTokens` on sub-agent calls, so the provider's own limit is the only other ceiling. The `run_subagents` tool description still says "only the final summary".
+- **How to confirm:** run the same two or three `run_subagents` research prompts on the same model before (`git stash` or the commit before this change) and after, and compare the character length of each `final_response` and the parent's prompt-token growth for the turn. Also check that no return is cut off at the provider's output limit.
+- **Needs:** a few real sub-agent runs on a configured provider.
+- **If it holds:** keep the wording and consider a parent-set detail level. **If returns stay short or the parent's context grows too much:** that is the evidence for the scratchpad (a notes tool whose contents are returned with a size cap).
+
 ## Confirmed
 
 - **OpenAI output-cap field.** `max_output_tokens` is the cap on the Responses API (`/v1/responses`) and covers visible and reasoning tokens. Chat Completions uses `max_completion_tokens`. Source: OpenAI API reference, read through a mirror on 2026-11-11 (`platform.openai.com` returned 403). The installed `openai` SDK (6.48.0) types agree.

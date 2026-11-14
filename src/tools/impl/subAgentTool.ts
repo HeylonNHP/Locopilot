@@ -277,7 +277,7 @@ export function buildSubAgentSystemPrompt(
     'You are isolated from the parent conversation. The parent agent will provide all required context in the user message.\n' +
     'Use the available tools when they materially help complete the task.\n' +
     'Work autonomously until the task is complete.\n' +
-    'When you are done, return one final concise, self-contained summary for the parent agent.\n' +
+    'When you are done, return a final, self-contained report for the parent agent, with as much detail as the findings warrant.\n' +
     'Do not ask the parent agent for missing context; instead, explain briefly what is missing if the task is blocked.\n' +
     'Do not mention internal chain-of-thought.\n' +
     '\n' +
@@ -376,7 +376,7 @@ export function makeAgentSink(baseSink: ToolOutputSink, id: string): ToolOutputS
  * throws if there isn't one), but this path did not: the compacted history was
  * spliced straight over the sub-agent's array, so index 0 became the assistant
  * summary and the agent ran the whole rest of its life with NO system prompt —
- * losing its role, the "return one concise self-contained summary" contract, the
+ * losing its role, the "return a final, self-contained report" contract, the
  * citation directive and the shared time-interpretation rule. A sub-agent has
  * exactly one system message, so capturing it and putting it back is enough.
  *
