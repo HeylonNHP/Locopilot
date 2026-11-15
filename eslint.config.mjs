@@ -17,6 +17,9 @@ export default tseslint.config(
       '**/dist/',
       'node_modules/',
       'coverage/',
+      // Git worktrees live inside the main checkout; each one is linted from
+      // its own root, never as part of the checkout that contains it.
+      '.claude/worktrees/',
       '*.db*',
       '*.wasm',
       'next-env.d.ts',

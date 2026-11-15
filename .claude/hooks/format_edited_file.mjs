@@ -1,6 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import process from 'node:process';
+import path from 'node:path';
+
+import {
+  editedFilePath,
+  isInsideRoot,
+  readHookInput,
+  resolveCheckoutRoot,
+} from './lib/hookContext.mjs';
 
 const relevantExtensions = new Set([
   '.ts',
@@ -18,21 +24,6 @@ const relevantExtensions = new Set([
   '.yaml',
 ]);
 
-function readInput() {
-  return process.stdin.isTTY ? '' : readFileSync(0, 'utf8');
-}
-
-function findEditedFile(inputData) {
-  if (!inputData.trim()) return null;
-
-  try {
-    const context = JSON.parse(inputData);
-    return context?.tool_input?.file_path || context?.tool_input?.path || null;
-  } catch {
-    return null;
-  }
-}
-
 function runPrettier(projectDir, filePath) {
   const result = spawnSync('npx', ['prettier', '--write', filePath], {
     cwd: projectDir,
@@ -43,9 +34,15 @@ function runPrettier(projectDir, filePath) {
   return result.status === 0;
 }
 
-const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-const filePath = findEditedFile(readInput());
+const input = readHookInput();
+const filePath = editedFilePath(input);
+// Format in the checkout that owns the edited file; ignore files outside it.
+const projectDir = resolveCheckoutRoot(input);
 
-if (filePath && relevantExtensions.has(filePath.slice(filePath.lastIndexOf('.')))) {
+if (
+  filePath &&
+  isInsideRoot(projectDir, filePath) &&
+  relevantExtensions.has(path.extname(filePath))
+) {
   runPrettier(projectDir, filePath);
 }
