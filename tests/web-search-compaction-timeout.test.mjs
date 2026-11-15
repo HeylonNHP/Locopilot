@@ -15,7 +15,7 @@ import { readFile } from 'node:fs/promises';
 import { MAX_CONFIG_TIMEOUT_MS } from '@/constants';
 import { DEFAULT_WEB_SEARCH_SETTINGS, defaultWebSearchSettings } from '@/services/configDefaults';
 
-const CHAT_TIMEOUT_DEFAULT_MS = 720_000; // DEFAULT_OLLAMA_CHAT_TIMEOUT_MS
+const COMPACTION_TIMEOUT_DEFAULT_MS = 60_000; // WEB_COMPACTION_REQUEST_TIMEOUT_MS
 
 const read = (relPath) => readFile(new URL(`../${relPath}`, import.meta.url), 'utf8');
 
@@ -24,15 +24,15 @@ describe('web-search compaction timeout defaults', () => {
     expect(MAX_CONFIG_TIMEOUT_MS).toBe(86_400_000);
   });
 
-  it('defaults to the 12-minute chat timeout', () => {
-    expect(DEFAULT_WEB_SEARCH_SETTINGS.requestTimeoutMs).toBe(CHAT_TIMEOUT_DEFAULT_MS);
-    expect(defaultWebSearchSettings().requestTimeoutMs).toBe(CHAT_TIMEOUT_DEFAULT_MS);
+  it('defaults to the 60-second compaction timeout', () => {
+    expect(DEFAULT_WEB_SEARCH_SETTINGS.requestTimeoutMs).toBe(COMPACTION_TIMEOUT_DEFAULT_MS);
+    expect(defaultWebSearchSettings().requestTimeoutMs).toBe(COMPACTION_TIMEOUT_DEFAULT_MS);
   });
 
   it('returns a copy, so mutating it cannot change the shared default', () => {
     const copy = defaultWebSearchSettings();
     copy.requestTimeoutMs = 1;
-    expect(DEFAULT_WEB_SEARCH_SETTINGS.requestTimeoutMs).toBe(CHAT_TIMEOUT_DEFAULT_MS);
+    expect(DEFAULT_WEB_SEARCH_SETTINGS.requestTimeoutMs).toBe(COMPACTION_TIMEOUT_DEFAULT_MS);
   });
 });
 
@@ -74,5 +74,14 @@ describe('client config hydration', () => {
   it('merges loaded webSearch over defaults so requestTimeoutMs is never undefined', async () => {
     const src = await read('src/app/hooks/useDataLoaders.ts');
     expect(src).toContain('{ ...DEFAULT_WEB_SEARCH_SETTINGS, ...config.webSearch }');
+  });
+});
+
+describe('web-page compaction call', () => {
+  it('passes the configured timeout into the compactor instead of the fixed default', async () => {
+    const src = await read('src/tools/web/htmlExtractor.ts');
+    expect(src).toMatch(
+      /ContentCompactor\.create\(\s*settings,\s*compactorContext,\s*{\s*requestTimeoutMs: settings\.requestTimeoutMs,?\s*}\s*\)/
+    );
   });
 });

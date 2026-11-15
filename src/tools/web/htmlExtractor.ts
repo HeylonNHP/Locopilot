@@ -32,6 +32,7 @@ import {
 import { buildWebRequestHeaders } from './webRequestHeaders';
 
 export interface WebExtractionSettings {
+  /** Timeout (ms) for each web-page compaction LLM call. */
   requestTimeoutMs: number;
   perPageCharLimit: number;
   baseUrl: string; // REQUIRED - always from config, never optional
@@ -293,7 +294,9 @@ export async function fetchAndExtract(
       ...(settings.provider ? { provider: settings.provider } : {}),
       ...(settings.apiKey ? { apiKey: settings.apiKey } : {}),
     });
-  const compactor = ContentCompactor.create(settings, compactorContext);
+  const compactor = ContentCompactor.create(settings, compactorContext, {
+    requestTimeoutMs: settings.requestTimeoutMs,
+  });
   const compaction = await compactor.compact(text, effectiveSignal);
   // A page that was cut instead of summarised must say so: the model would
   // otherwise read the first `perPageCharLimit` characters as the whole page.

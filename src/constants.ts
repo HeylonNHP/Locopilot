@@ -3,12 +3,6 @@ export const DEFAULT_OLLAMA_CHAT_TIMEOUT_MS = 720_000; // 12 minutes// connectio
 export const DEFAULT_WEB_SEARCH_MAX_QUERIES = 3;
 export const DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY = 3;
 export const DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT = 5000;
-/**
- * Per-call timeout for the LLM pass that compacts each fetched web page down
- * to the `perPageCharLimit` band. Defaults to the chat timeout because a
- * compaction call is a full generation on the compaction model.
- */
-export const DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS = DEFAULT_OLLAMA_CHAT_TIMEOUT_MS;
 /** Upper bound for user-configured request timeouts (24 hours). */
 export const MAX_CONFIG_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_WEB_REQUEST_TIMEOUT_MS = 15_000;
@@ -39,6 +33,13 @@ export const DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES = 12;
  * model; lowering it trades summaries for speed.
  */
 export const WEB_COMPACTION_REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * Default for `webSearch.requestTimeoutMs`: the per-call timeout for the LLM
+ * pass that compacts each fetched web page to `perPageCharLimit`. Equal to the
+ * compactor's own default, so an unset config behaves exactly as before.
+ */
+export const DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS = WEB_COMPACTION_REQUEST_TIMEOUT_MS;
 
 /**
  * Most web-page compaction requests in flight at once, across EVERY query and

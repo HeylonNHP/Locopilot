@@ -231,7 +231,7 @@ export interface Config {
     perPageCharLimit: number;
     /**
      * Timeout in ms for each LLM call that compacts a fetched web page down
-     * to `perPageCharLimit`. Defaults to the chat timeout. Set via the
+     * to `perPageCharLimit`. Defaults to 60 seconds. Set via the
      * "Web Search: Compaction Timeout" field in the Settings modal.
      */
     requestTimeoutMs?: number;

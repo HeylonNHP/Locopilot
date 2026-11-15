@@ -818,8 +818,8 @@ export default function SettingsModal({ onClose }: Props) {
               </div>
               <span className="font-12 text-secondary">
                 Maximum time allowed for each LLM call that compacts a fetched web page to the page
-                char limit. Defaults to the chat timeout. Increase it if slow compaction models time
-                out on large pages.
+                char limit. Defaults to 60 seconds. Increase it if slow compaction models time out
+                on large pages.
               </span>
             </div>
           </div>
