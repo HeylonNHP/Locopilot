@@ -6,12 +6,7 @@
  * from assistant content, tool results, and persisted messages so the
  * tokenizer and provider do not see invalid internal markers.
  */
-import type {
-  ChatMessage,
-  PersistedChatMessage,
-  SubagentLogMessage,
-  ToolCall,
-} from './adapters/llmAdapter';
+import type { ChatMessage, ToolCall } from './adapters/llmAdapter';
 
 const SPECIAL_LLM_TOKENS = [
   '<|fim_prefix|>',
@@ -55,24 +50,7 @@ export function stripSpecialTokens(text: string): string {
   return text.replace(SPECIAL_LLM_TOKENS_PATTERN, '');
 }
 
-export function sanitizeChatMessage(message: ChatMessage): ChatMessage;
-export function sanitizeChatMessage(message: SubagentLogMessage): SubagentLogMessage;
-export function sanitizeChatMessage(message: PersistedChatMessage): PersistedChatMessage;
-export function sanitizeChatMessage(message: PersistedChatMessage): PersistedChatMessage {
-  if (message.role === 'subagent_log') {
-    const sanitized: SubagentLogMessage = {
-      role: 'subagent_log',
-      content: stripSpecialTokens(message.content ?? ''),
-    };
-    if (message.subagentId) {
-      sanitized.subagentId = stripSpecialTokens(message.subagentId);
-    }
-    if (typeof message.id === 'number') {
-      sanitized.id = message.id;
-    }
-    return sanitized;
-  }
-
+export function sanitizeChatMessage(message: ChatMessage): ChatMessage {
   const sanitizedMessage: ChatMessage = {
     role: message.role,
     content: stripSpecialTokens(message.content ?? ''),
@@ -100,6 +78,13 @@ export function sanitizeChatMessage(message: PersistedChatMessage): PersistedCha
         ) as ToolCall['function']['arguments'],
       },
     })) as [ToolCall, ...ToolCall[]];
+  }
+
+  if (message.subagentTraces && message.subagentTraces.length > 0) {
+    sanitizedMessage.subagentTraces = message.subagentTraces.map((trace) => ({
+      agentId: stripSpecialTokens(trace.agentId),
+      content: stripSpecialTokens(trace.content ?? ''),
+    }));
   }
 
   if (typeof message.createdAt === 'string') {

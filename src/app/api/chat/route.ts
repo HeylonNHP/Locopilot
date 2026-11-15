@@ -60,6 +60,7 @@ import {
 } from '@/constants';
 import { getMCPToolsForRequest, parseMCPToolName } from '@/mcp';
 import { recordDiscoveredCap } from '@/services/capResolver';
+import { isChatMessage } from '@/services/chatMessageGuard';
 import { createSystemPrompt } from '@/services/chatSession';
 import {
   compactHistory,
@@ -99,7 +100,6 @@ import {
   getLlmModelSamplingParamSupportAsync,
   getLlmModelVisionSupportAsync,
   type LlmRequestContext,
-  type PersistedChatMessage,
   recordDiscoveredUnsupportedParam,
   type SamplingParamName,
   selectLlmAdapter,
@@ -127,6 +127,7 @@ import {
   getEnabledSkills,
   loadSkillState,
 } from '@/services/skillManager';
+import { SubagentTraceBook } from '@/services/subagentTraces';
 import { sanitizeChatMessage } from '@/services/textUtils';
 import { generateSessionTitle, sanitizeContentForTitle } from '@/services/titleGeneration';
 import { generateFallbackTitle } from '@/services/titleUtils';
@@ -146,7 +147,7 @@ import { maybeInjectPromptTimestamp } from '@/services/userMessageStamp';
 import { recordDiscoveredNonVision } from '@/services/visionCache';
 import { filterGrantedMCPTools, isAutoApprovedMCPTarget } from '@/tools/impl/mcpTool';
 import { enterRequestScope } from '@/tools/impl/runCommandTool';
-import { appendSubagentLineText, canonicalSubagentId } from '@/tools/toolOutput';
+import { canonicalSubagentId } from '@/tools/toolOutput';
 import {
   handleToolCall,
   type RequestContext,
@@ -191,31 +192,10 @@ function isKnownSamplingParam(name: string): boolean {
   return KNOWN_SAMPLING_PARAMS.has(name);
 }
 
-/** Client message shape: the LLM-protocol ChatMessage plus the UI-only subagent_log role. */
-type ClientChatMessage =
-  | ChatMessage
-  | { role: 'subagent_log'; content: string; subagentId?: string };
-
-function isClientChatMessage(value: unknown): value is ClientChatMessage {
-  if (typeof value !== 'object' || value === null) return false;
-  const msg = value as Record<string, unknown>;
-  if (typeof msg.role !== 'string' || typeof msg.content !== 'string') return false;
-  if (msg.role === 'subagent_log') return true;
-  return (
-    msg.role === 'system' || msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool'
-  );
-}
-
 /** Compare two persisted messages for the initial-state merge. */
-function messagesEqual(a: PersistedChatMessage, b: PersistedChatMessage): boolean {
+function messagesEqual(a: ChatMessage, b: ChatMessage): boolean {
   if (a.role !== b.role) return false;
   if (a.content !== b.content) return false;
-  if (a.role === 'subagent_log' && b.role === 'subagent_log') {
-    return (
-      (a as { role: 'subagent_log'; subagentId?: string }).subagentId ===
-      (b as { role: 'subagent_log'; subagentId?: string }).subagentId
-    );
-  }
   if (a.role === 'tool' || b.role === 'tool') {
     // Tool messages are identified by tool_call_id. Content is already
     // compared above, but we repeat the check here so this branch is
@@ -238,12 +218,9 @@ function messagesEqual(a: PersistedChatMessage, b: PersistedChatMessage): boolea
 /**
  * Merge the client's view of the conversation into the freshly-loaded DB state.
  * Preserves any messages already persisted (e.g. from a concurrent tab) and
- * appends only the client messages that are new, including subagent_log entries.
+ * appends only the client messages that are new.
  */
-function mergeClientMessages(
-  fresh: PersistedChatMessage[],
-  client: PersistedChatMessage[]
-): PersistedChatMessage[] {
+function mergeClientMessages(fresh: ChatMessage[], client: ChatMessage[]): ChatMessage[] {
   let prefix = 0;
   const maxPrefix = Math.min(fresh.length, client.length);
   while (prefix < maxPrefix && messagesEqual(fresh[prefix]!, client[prefix]!)) {
@@ -285,7 +262,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     );
   }
 
-  const messages: ClientChatMessage[] = body.messages as ClientChatMessage[];
+  const messages: ChatMessage[] = body.messages as ChatMessage[];
   // Mutable for the whole turn: /api/chat/switch-model can hot-swap the
   // model between tool-call loop iterations. See applyPendingModelSwitch.
   let model: string = body.model as string;
@@ -335,7 +312,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     );
   }
 
-  if (!Array.isArray(messages) || messages.length === 0 || !messages.every(isClientChatMessage)) {
+  if (!Array.isArray(messages) || messages.length === 0 || !messages.every(isChatMessage)) {
     return new Response(
       `event: error\ndata: ${JSON.stringify({ message: 'Messages array is required and must contain valid message objects' })}\n\n`,
       {
@@ -376,7 +353,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
   }
 
-  const typedMessages: ClientChatMessage[] = messages;
+  const typedMessages: ChatMessage[] = messages;
 
   const effectiveBaseUrl =
     typeof baseUrl === 'string' && baseUrl.trim() ? baseUrl.trim() : DEFAULT_OLLAMA_BASE_URL;
@@ -459,7 +436,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
       // Strip any system messages from the client and inject a fresh system prompt
       // so the model always sees the current date, tool definitions, and policy.
-      const conversationMessages: ClientChatMessage[] = structuredClone(typedMessages);
+      const conversationMessages: ChatMessage[] = structuredClone(typedMessages);
 
       let finalContent = '';
       let finalThinking = '';
@@ -519,37 +496,14 @@ export async function POST(req: NextRequest): Promise<Response> {
       // Server-generated messages that have not yet been persisted.
       // flushSessionState appends these to the fresh DB message list.
       // Compaction uses a full replacement instead.
-      const pendingAppends: PersistedChatMessage[] = [];
-      let pendingReplace: PersistedChatMessage[] | null = null;
-      // Sub-agent log accumulation. The per-agent bubbles are client-only
-      // during streaming; the subagentOutputSink appends every line/chunk
-      // here so the tool-loop push site can persist one subagent_log row
-      // per agentId alongside the run_subagents tool result. Without this
-      // the end-of-turn client reload (which reads the DB) wipes the
-      // bubbles the moment the turn completes.
-      const subagentLogContent = new Map<string, string>();
-
-      /** Build a subagent_log row and remove the agent from the pending map. */
-      function takeSubagentRow(agentId: string): PersistedChatMessage {
-        const row: PersistedChatMessage = {
-          role: 'subagent_log',
-          content: subagentLogContent.get(agentId) ?? '',
-          subagentId: agentId,
-        };
-        subagentLogContent.delete(agentId);
-        return row;
-      }
-
-      /**
-       * Flush any remaining sub-agent log rows into pendingAppends. Used on
-       * the abort/error paths where the run_subagents tool result push site
-       * may never be reached.
-       */
-      function flushRemainingSubagentLogs(): void {
-        for (const agentId of subagentLogContent.keys()) {
-          pendingAppends.push(takeSubagentRow(agentId));
-        }
-      }
+      const pendingAppends: ChatMessage[] = [];
+      let pendingReplace: ChatMessage[] | null = null;
+      // What each `run_subagents` call's agents printed, per call. The page's
+      // bubbles are live only (the end-of-turn reload reads the database), so
+      // each call's traces are persisted on the tool message that answers it —
+      // see SubagentTraceBook for why they hang there and why the key is the
+      // call id and not the agent id.
+      const subagentTraces = new SubagentTraceBook();
 
       /**
        * Fold any steering messages still queued when the turn is wrapping up
@@ -654,23 +608,14 @@ export async function POST(req: NextRequest): Promise<Response> {
         content: createSystemPrompt(undefined, effectiveYolo, effectiveCiteSources),
       };
 
-      // Snapshot the client's original non-system messages in their original order.
-      // These include subagent_log messages which are NOT sent to the LLM.
-      const originalClientMessages: ClientChatMessage[] = conversationMessages.filter(
-        (m): m is ClientChatMessage =>
-          typeof m === 'object' &&
-          m !== null &&
-          'role' in m &&
-          typeof (m as { role: unknown }).role === 'string' &&
-          (m as { role: string }).role !== 'system' &&
-          typeof (m as { content: unknown }).content === 'string'
+      // Snapshot the client's original non-system messages in their original
+      // order. The messages were validated on the way in (`isChatMessage`).
+      const originalClientMessages: ChatMessage[] = conversationMessages.filter(
+        (m) => m.role !== 'system'
       );
 
-      // Build the LLM working array: system prompt + client messages excluding subagent_log.
-      const currentMessages: ChatMessage[] = [
-        systemMessage,
-        ...originalClientMessages.filter((m): m is ChatMessage => m.role !== 'subagent_log'),
-      ];
+      // Build the LLM working array: system prompt + the client's messages.
+      const currentMessages: ChatMessage[] = [systemMessage, ...originalClientMessages];
 
       // Defensive: some tool responses may have been lost (e.g. a request
       // was interrupted mid-tool-loop). OpenAI requires every assistant
@@ -904,18 +849,17 @@ export async function POST(req: NextRequest): Promise<Response> {
         // finally block below deregisters the turn.
         registerActiveTurn(activeSessionId, requestId);
 
-        // Persist the client's messages (including subagent_log entries) as
-        // the base state for this request.  Merging avoids clobbering any
+        // Persist the client's messages as the base state for this request.  Merging avoids clobbering any
         // messages written concurrently from another tab.
         await enqueueSessionWrite(activeSessionId, (fresh) => {
           debugLog.messageArraySummary('merge: fresh (DB)', fresh, logCtx(activeSessionId));
           debugLog.messageArraySummary(
             'merge: client',
-            originalClientMessages as PersistedChatMessage[],
+            originalClientMessages,
             logCtx(activeSessionId)
           );
-          (originalClientMessages as PersistedChatMessage[]).forEach((m, idx) => {
-            if (m.role === 'tool' && !(m as { tool_call_id?: string }).tool_call_id) {
+          originalClientMessages.forEach((m, idx) => {
+            if (m.role === 'tool' && !m.tool_call_id) {
               debugLog.toolMessage({
                 layer: 'route',
                 action: 'merge',
@@ -930,10 +874,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               });
             }
           });
-          const merged = mergeClientMessages(
-            fresh,
-            originalClientMessages as PersistedChatMessage[]
-          );
+          const merged = mergeClientMessages(fresh, originalClientMessages);
           debugLog.messageArraySummary('merge: result', merged, logCtx(activeSessionId));
           return merged;
         });
@@ -2278,6 +2219,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               sendEvent('tool_call', {
                 name: toolName,
                 arguments: toolArgs,
+                toolCallId: tc.id,
               });
 
               // ── Approval gate for run_command (skipped in YOLO mode) ────
@@ -2463,48 +2405,45 @@ export async function POST(req: NextRequest): Promise<Response> {
 
               // Subagent output sink: retains the structured agent ID supplied
               // by makeLabeledSink and emits per-agent SSE events so the client
-              // can render each agent in its own bubble. Output text is kept
-              // free of transport/display prefixes. Every line is also
-              // accumulated so flushSessionState persists the bubbles for the
-              // end-of-turn client reload.
+              // can render each agent under the tool call that started it.
+              // Output text is kept free of transport/display prefixes. Every
+              // line is also accumulated per call, so the traces can be saved
+              // on the tool message that answers it.
+              //
               // The key an agent's output is filed under. EVERY write for one
               // agent uses this ONE spelling — the agent's own lines
               // (`appendSubagentLine`) and the streamed model text
-              // (`writeAgentChunk`) alike — so one agent is ONE bucket, ONE
-              // client bubble and ONE persisted `subagent_log` row. (Two
-              // spellings used to send an id with surrounding whitespace to
-              // two buckets: the bubble showed the text twice and the
-              // persisted history grew two rows for one agent.)
+              // (`writeAgentChunk`) alike — so one agent is ONE bucket and ONE
+              // trace. The canonicalisation lives in ONE shared function
+              // (`canonicalSubagentId`), because the sub-agent tool applies the
+              // SAME rule to the id it hands out: two spellings of the same
+              // rule would let an agent's bucket key and the id the client
+              // files the trace under drift apart.
               //
-              // The canonicalisation lives in ONE shared function
-              // (`canonicalSubagentId`), because the sub-agent tool applies
-              // the SAME rule to the id it hands out: two spellings of the
-              // same rule would let an agent's bucket key and the id the
-              // client files the bubble under drift apart.
-              const subagentLogKey = (agentId: string): string => canonicalSubagentId(agentId);
+              // The call id is in every event: the client files the text under
+              // the tool call, so an agent id that comes back in a later call
+              // (or a later turn) starts a trace of its own instead of
+              // continuing the old one.
+              const traceAgentId = (agentId: string): string => canonicalSubagentId(agentId);
               const appendSubagentLine = (agentId: string, message: string): void => {
-                const cleanAgentId = subagentLogKey(agentId);
+                const cleanAgentId = traceAgentId(agentId);
                 const text = sanitize(message).trimEnd();
                 if (text.trim()) {
-                  // The CLIENT's rule, exactly: a newline BETWEEN two
-                  // entries, none before the first one. The server's bucket
-                  // and the client's bubble are two copies of the same text,
-                  // and the clear that drops a failed turn's output
-                  // REPLACES the bubble with the server's copy — so the two
-                  // copies have to be byte-identical at every point. The
-                  // server used to append a trailing newline instead, which
-                  // put the newline in a different place than the client
-                  // did: the same characters in a different order, so the
-                  // replacement visibly reordered the surviving text.
+                  // The CLIENT's rule, exactly (a newline BETWEEN two entries,
+                  // none before the first one) — SubagentTraceBook applies it.
+                  // The clear that drops a failed turn's output REPLACES the
+                  // client's text with the server's copy, so the two copies
+                  // have to be byte-identical at every point.
                   //
                   // The `subagent_output` event still carries the bare line
                   // (`message: text`, no newline) — the client adds the
                   // separator itself, with this very rule.
-                  subagentLogContent.set(
-                    cleanAgentId,
-                    appendSubagentLineText(subagentLogContent.get(cleanAgentId) ?? '', text)
-                  );
-                  sendEvent('subagent_output', { agentId: cleanAgentId, message: text });
+                  subagentTraces.appendLine(tc.id, cleanAgentId, text);
+                  sendEvent('subagent_output', {
+                    toolCallId: tc.id,
+                    agentId: cleanAgentId,
+                    message: text,
+                  });
                 }
               };
               const subagentOutputSink: ToolOutputSink = {
@@ -2519,13 +2458,15 @@ export async function POST(req: NextRequest): Promise<Response> {
                 writeAgentChunk(agentId: string, type: 'thinking' | 'content', text: string): void {
                   if (text) {
                     // The SAME key — and the SAME id in the event — as the
-                    // agent's own lines: one agent, one bucket, one bubble.
-                    const cleanAgentId = subagentLogKey(agentId);
-                    subagentLogContent.set(
-                      cleanAgentId,
-                      (subagentLogContent.get(cleanAgentId) ?? '') + text
-                    );
-                    sendEvent('subagent_chunk', { agentId: cleanAgentId, type, text });
+                    // agent's own lines: one agent, one bucket, one trace.
+                    const cleanAgentId = traceAgentId(agentId);
+                    subagentTraces.appendChunk(tc.id, cleanAgentId, text);
+                    sendEvent('subagent_chunk', {
+                      toolCallId: tc.id,
+                      agentId: cleanAgentId,
+                      type,
+                      text,
+                    });
                   }
                 },
                 clearAgentContent(agentId: string, dropChars: number): void {
@@ -2539,45 +2480,32 @@ export async function POST(req: NextRequest): Promise<Response> {
                   // the turn that is being re-issued streamed (the tool
                   // counts every character it writes). A sub-agent is a
                   // MULTI-TURN loop and every turn streams into this same
-                  // bucket, so the text of the EARLIER turns has to survive:
-                  // only the re-issued turn streams its own text again,
-                  // never the earlier turns' text.
+                  // bucket, so the text of the EARLIER turns has to survive.
                   //
-                  // The bucket is what the persisted row is built from
-                  // (`takeSubagentRow`), so truncating it fixes the
-                  // `subagent_log` row too — no database change is needed.
-                  const cleanAgentId = subagentLogKey(agentId);
-                  const current = subagentLogContent.get(cleanAgentId) ?? '';
-                  const drop = Math.max(0, Number.isFinite(dropChars) ? dropChars : 0);
-                  // NOTHING TO DROP. The failure happened before the turn
-                  // streamed a single character, so there is no text to
-                  // remove — and the replacement would be a no-op that
-                  // still REWRITES the client's bubble with the server's
-                  // copy of it. So the event is not sent at all and the
-                  // bucket is left untouched.
-                  if (drop === 0) {
+                  // The bucket is what the saved trace is built from, so
+                  // truncating it fixes the persisted trace too — no database
+                  // change is needed.
+                  const cleanAgentId = traceAgentId(agentId);
+                  const remaining = subagentTraces.dropTail(tc.id, cleanAgentId, dropChars);
+                  // NOTHING CHANGED (nothing to drop, or the failure happened
+                  // before the turn streamed a character): a replacement would
+                  // be a no-op that still REWRITES the client's text with the
+                  // server's copy, so no event is sent.
+                  if (remaining === null) {
                     return;
-                  }
-                  const keep = Math.max(0, current.length - drop);
-                  const remaining = current.slice(0, keep);
-                  // The bucket did not change (it was shorter than the
-                  // drop), so there is nothing to replace either.
-                  if (remaining === current) {
-                    return;
-                  }
-                  if (remaining) {
-                    subagentLogContent.set(cleanAgentId, remaining);
-                  } else {
-                    subagentLogContent.delete(cleanAgentId);
                   }
                   // The client has to drop the text it already rendered for
                   // the failed attempt — and it has to end up with EXACTLY
                   // the text the server kept, so the event carries it: the
-                  // client REPLACES its bubble with `content`. That is also
+                  // client REPLACES its text with `content`. That is also
                   // what makes the event replay-safe: replaying it replaces
-                  // the bubble with the server's text again, instead of
-                  // bringing the failed attempt's chunks back.
-                  sendEvent('clear_subagent', { agentId: cleanAgentId, content: remaining });
+                  // the text with the server's again, instead of bringing the
+                  // failed attempt's chunks back.
+                  sendEvent('clear_subagent', {
+                    toolCallId: tc.id,
+                    agentId: cleanAgentId,
+                    content: remaining,
+                  });
                 },
                 reportTps(tps: number | null): void {
                   sendEvent('status', { phase: 'subagent', tps });
@@ -2669,6 +2597,12 @@ export async function POST(req: NextRequest): Promise<Response> {
               if (result.images && result.images.length > 0) {
                 toolMessage.images = result.images;
               }
+              // What this call's sub-agents printed rides on the message that
+              // answers the call (empty for every other tool).
+              const callTraces = subagentTraces.take(tc.id);
+              if (callTraces.length > 0) {
+                toolMessage.subagentTraces = callTraces;
+              }
               toolResults.push(toolMessage);
               debugLog.toolMessage({
                 layer: 'route',
@@ -2711,14 +2645,8 @@ export async function POST(req: NextRequest): Promise<Response> {
               }
             }
 
-            // Sub-agent log bubbles are client-only during streaming; persist
-            // them here (one row per agentId, before the tool results so the
-            // reloaded history matches the live streaming order) or the
-            // end-of-turn client reload wipes them from the UI.
-            const subagentRows = [...subagentLogContent.keys()].map(takeSubagentRow);
-
             currentMessages.push(assistantMessage, ...toolResults);
-            pendingAppends.push(...subagentRows, assistantMessage, ...toolResults);
+            pendingAppends.push(assistantMessage, ...toolResults);
             // A tool-call turn is productive regardless of its text.
             emptyResponseRecovery.reset();
             debugLog.messageArraySummary(
@@ -3095,10 +3023,11 @@ export async function POST(req: NextRequest): Promise<Response> {
         }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === 'AbortError') {
-          // Save whatever we have so far before closing. Sub-agent log
-          // rows are flushed too — an interrupted run_subagents batch
-          // should still leave its bubbles in the reloaded history.
-          flushRemainingSubagentLogs();
+          // Save whatever we have so far before closing. An interrupted
+          // run_subagents batch returns normally with an "interrupted" result
+          // (the tool catches the abort), so its traces are already on that
+          // tool message. A batch that never got that far is discarded with
+          // the rest of the unpushed assistant-plus-tools block.
           salvageSteerMessages();
           if (activeSessionId !== undefined && sessionExists(activeSessionId)) {
             await flushSessionState().catch((err_) => {

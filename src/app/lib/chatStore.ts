@@ -9,7 +9,7 @@ import React, {
   useState,
 } from 'react';
 
-import type { ToolCall } from '@/services/llm';
+import type { SubagentTrace, ToolCall } from '@/services/llm';
 import type { VisionSupportState } from '@/services/visionCache';
 import type { ToolCallArguments } from '@/tools/tools';
 import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
@@ -31,6 +31,7 @@ import {
   type SessionDefaults,
   type SessionSelection,
 } from '@/services/sessionSelection';
+import { appendSubagentLineText } from '@/tools/toolOutput';
 
 export interface ChatMessage {
   /**
@@ -39,13 +40,26 @@ export interface ChatMessage {
    * generated UUID. Never sent to the server.
    */
   id?: string | number;
-  role: 'user' | 'assistant' | 'tool' | 'system' | 'subagent_log';
+  role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
   thinking?: string;
   tool_calls?: [ToolCall, ...ToolCall[]];
   name?: string;
-  /** Set on subagent_log messages to identify which sub-agent produced the output. */
-  subagentId?: string;
+  /**
+   * What the sub-agents of a `run_subagents` call printed, one entry per
+   * agent. Lives on the tool message that belongs to the call: the saved result
+   * (`tool_call_id`) after a reload, and the live 🔧 card (`toolCallId`) while
+   * the call runs.
+   */
+  subagentTraces?: SubagentTrace[];
+  /**
+   * DISPLAY-ONLY. On the live 🔧 card of a call: the id of the call it
+   * announces, so the sub-agent events can find the card. It is deliberately
+   * NOT `tool_call_id`: a card without one is recognised as display-only and is
+   * neither sent to the server nor saved. The result's own `tool_call_id`
+   * arrives with the end-of-turn reload.
+   */
+  toolCallId?: string;
   /** Base64-encoded image data for vision-capable models. */
   images?: string[];
   /** OpenAI-compatible: identifies which tool call this result answers. */
@@ -441,16 +455,29 @@ export type ChatAction =
   | { type: 'UPDATE_LAST_MESSAGE'; content?: string; thinking?: string; targetSessionId?: number }
   | { type: 'APPLY_ASSISTANT_DELTA'; content?: string; thinking?: string; targetSessionId?: number }
   | { type: 'APPEND_TOOL_PROGRESS'; content: string; name?: string; targetSessionId?: number }
-  | { type: 'SUBAGENT_OUTPUT'; agentId: string; message: string; targetSessionId?: number }
-  | { type: 'SUBAGENT_CHUNK'; agentId: string; text: string; targetSessionId?: number }
+  | {
+      type: 'SUBAGENT_OUTPUT';
+      toolCallId: string;
+      agentId: string;
+      message: string;
+      targetSessionId?: number;
+    }
+  | {
+      type: 'SUBAGENT_CHUNK';
+      toolCallId: string;
+      agentId: string;
+      text: string;
+      targetSessionId?: number;
+    }
   | {
       type: 'CLEAR_SUBAGENT_CONTENT';
+      toolCallId: string;
       agentId: string;
       /**
        * The text that must REMAIN for that agent — what the server kept
-       * after dropping the failed turn's output. The bubble is REPLACED
+       * after dropping the failed turn's output. The trace is REPLACED
        * with it (not emptied), so the agent's earlier turns survive and the
-       * live bubble matches the text the server persists.
+       * live text matches what the server persists.
        */
       content: string;
       targetSessionId?: number;
@@ -657,6 +684,101 @@ export function hasLiveTranscript(state: ChatState, sessionId: number): boolean 
  * reducer case directly); when it does not match, the helper updates
  * the slot in `sessionStates`.
  */
+/**
+ * The tool message a call's traces belong to: the LIVE 🔧 card that announced
+ * the call (`toolCallId`) while it exists, otherwise a saved result of the call
+ * (`tool_call_id`).
+ *
+ * The order matters. Streamed text is held for up to 50 ms before it is
+ * flushed, but `tool_result` is applied at once and adds a ✅ card carrying the
+ * same id as `tool_call_id` — so a flush that fires after that would otherwise
+ * find the ✅ card first (both are searched from the end) and start a stray
+ * trace on it, leaving the live card without its tail.
+ */
+function findCallCardIndex(messages: ChatMessage[], toolCallId: string): number {
+  const lastIndexWhere = (matches: (message: ChatMessage) => boolean): number => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const candidate = messages[i];
+      if (candidate && candidate.role === 'tool' && matches(candidate)) return i;
+    }
+    return -1;
+  };
+  const live = lastIndexWhere((message) => message.toolCallId === toolCallId);
+  return live === -1 ? lastIndexWhere((message) => message.tool_call_id === toolCallId) : live;
+}
+
+/**
+ * Replace one agent's trace on the tool message that belongs to a call.
+ *
+ * The card is found by the call id (see `findCallCardIndex`), and only a tool
+ * message can match, so an agent id that comes back in a later call (or turn)
+ * can never continue an older call's trace. Only that one message is replaced
+ * (a copied `subagentTraces` array, every other message keeps its identity), so
+ * a streamed chunk redraws one bubble, not the conversation.
+ *
+ * Returns `null` when nothing changes: no card belongs to the call (the text is
+ * not lost — the server keeps its own copy, saves it on the tool message, and
+ * the end-of-turn reload brings it back), or the agent has no trace yet and
+ * `createIfMissing` is off.
+ */
+function replaceSubagentTrace(
+  messages: ChatMessage[],
+  toolCallId: string,
+  agentId: string,
+  update: (previous: string) => string,
+  createIfMissing: boolean
+): ChatMessage[] | null {
+  const index = findCallCardIndex(messages, toolCallId);
+  const card = messages[index];
+  if (!card) {
+    return null;
+  }
+  const traces = card.subagentTraces ?? [];
+  const at = traces.findIndex((trace) => trace.agentId === agentId);
+  if (at === -1 && !createIfMissing) {
+    return null;
+  }
+  const nextTraces =
+    at === -1
+      ? [...traces, { agentId, content: update('') }]
+      : traces.map((trace, i) => (i === at ? { ...trace, content: update(trace.content) } : trace));
+  const next = [...messages];
+  next[index] = { ...card, subagentTraces: nextTraces };
+  return next;
+}
+
+/** `replaceSubagentTrace` against the conversation on screen or a background slot. */
+function withSubagentTrace(
+  state: ChatState,
+  targetSessionId: number | undefined,
+  toolCallId: string,
+  agentId: string,
+  update: (previous: string) => string,
+  createIfMissing = true
+): ChatState {
+  if (targetsBackgroundSession(state, targetSessionId)) {
+    const { nextState } = applyToSession(state, targetSessionId, (slot) => {
+      const messages = replaceSubagentTrace(
+        slot.messages,
+        toolCallId,
+        agentId,
+        update,
+        createIfMissing
+      );
+      return messages === null ? slot : { ...slot, messages };
+    });
+    return nextState;
+  }
+  const messages = replaceSubagentTrace(
+    state.messages,
+    toolCallId,
+    agentId,
+    update,
+    createIfMissing
+  );
+  return messages === null ? state : { ...state, messages };
+}
+
 type SessionMutation = (slot: SessionState) => SessionState;
 type ApplyResult = { nextState: ChatState; fieldUpdated: boolean };
 
@@ -1136,56 +1258,15 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case 'SUBAGENT_CHUNK': {
-      // When the event targets a different session, route the bubble
-      // to that session's slot.  The agentId keying is unchanged — two
-      // sessions with the same agentId will both have a bubble each,
-      // and a session's own sub-agent_id is unique within that run.
-      if (targetsBackgroundSession(state, action.targetSessionId)) {
-        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
-          const msgs = [...slot.messages];
-          for (let i = msgs.length - 1; i >= 0; i -= 1) {
-            const candidate = msgs[i];
-            if (!candidate || candidate.role !== 'subagent_log') {
-              continue;
-            }
-            if (candidate.subagentId !== action.agentId) {
-              continue;
-            }
-            msgs[i] = { ...candidate, content: candidate.content + action.text };
-            return { ...slot, messages: msgs };
-          }
-          return {
-            ...slot,
-            messages: [
-              ...slot.messages,
-              withId({ role: 'subagent_log', content: action.text, subagentId: action.agentId }),
-            ],
-          };
-        });
-        return nextState;
-      }
-      // Append raw token text (thinking or content) inline to the same content
-      // field so it reads in order alongside tool call output.
-      const msgs = [...state.messages];
-      for (let i = msgs.length - 1; i >= 0; i -= 1) {
-        const candidate = msgs[i];
-        if (!candidate || candidate.role !== 'subagent_log') {
-          continue;
-        }
-        if (candidate.subagentId !== action.agentId) {
-          continue;
-        }
-        msgs[i] = { ...candidate, content: candidate.content + action.text };
-        return { ...state, messages: msgs };
-      }
-      // No bubble yet — create one.
-      return {
-        ...state,
-        messages: [
-          ...state.messages,
-          withId({ role: 'subagent_log', content: action.text, subagentId: action.agentId }),
-        ],
-      };
+      // Raw token text (thinking or content), appended as it arrives so it
+      // reads in order alongside the call's other output.
+      return withSubagentTrace(
+        state,
+        action.targetSessionId,
+        action.toolCallId,
+        action.agentId,
+        (previous) => previous + action.text
+      );
     }
     case 'CLEAR_SUBAGENT_CONTENT': {
       // A sub-agent's turn failed with a transient provider error and is
@@ -1193,129 +1274,27 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // while the text of the agent's EARLIER turns stays.
       //
       // The server already worked out what remains and sends it in the
-      // event, so the bubble is REPLACED with that text (not emptied): the
-      // bubble is not removed either, because the re-issued turn keeps
-      // streaming into the same bubble.
-      //
-      // The lookup mirrors SUBAGENT_CHUNK — the LAST bubble belonging to
-      // this agent, in the session the action targets.
-      if (targetsBackgroundSession(state, action.targetSessionId)) {
-        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
-          const msgs = [...slot.messages];
-          for (let i = msgs.length - 1; i >= 0; i -= 1) {
-            const candidate = msgs[i];
-            if (!candidate || candidate.role !== 'subagent_log') {
-              continue;
-            }
-            if (candidate.subagentId !== action.agentId) {
-              continue;
-            }
-            msgs[i] = { ...candidate, content: action.content };
-            return { ...slot, messages: msgs };
-          }
-          // No bubble for this agent in that session — but the server says
-          // there IS text that has to remain, so it is created rather than
-          // dropped (mirrors SUBAGENT_CHUNK's create-if-missing branch).
-          if (!action.content) {
-            return slot;
-          }
-          return {
-            ...slot,
-            messages: [
-              ...slot.messages,
-              withId({ role: 'subagent_log', content: action.content, subagentId: action.agentId }),
-            ],
-          };
-        });
-        return nextState;
-      }
-      const msgs = [...state.messages];
-      for (let i = msgs.length - 1; i >= 0; i -= 1) {
-        const candidate = msgs[i];
-        if (!candidate || candidate.role !== 'subagent_log') {
-          continue;
-        }
-        if (candidate.subagentId !== action.agentId) {
-          continue;
-        }
-        msgs[i] = { ...candidate, content: action.content };
-        return { ...state, messages: msgs };
-      }
-      // No bubble for this agent — but the server says there IS text that
-      // has to remain, so it is created rather than dropped (mirrors
-      // SUBAGENT_CHUNK's create-if-missing branch).
-      if (!action.content) {
-        return state;
-      }
-      return {
-        ...state,
-        messages: [
-          ...state.messages,
-          withId({ role: 'subagent_log', content: action.content, subagentId: action.agentId }),
-        ],
-      };
+      // event, so the trace is REPLACED with that text (not emptied): it is
+      // not removed either, because the re-issued turn keeps streaming into
+      // the same trace. An agent with no trace yet gets one only when the
+      // server says there IS text to keep, otherwise the text would be lost.
+      return withSubagentTrace(
+        state,
+        action.targetSessionId,
+        action.toolCallId,
+        action.agentId,
+        () => action.content,
+        action.content !== ''
+      );
     }
     case 'SUBAGENT_OUTPUT': {
-      if (targetsBackgroundSession(state, action.targetSessionId)) {
-        const { nextState } = applyToSession(state, action.targetSessionId, (slot) => {
-          const msgs = [...slot.messages];
-          for (let i = msgs.length - 1; i >= 0; i -= 1) {
-            const candidate = msgs[i];
-            if (!candidate || candidate.role !== 'subagent_log') {
-              continue;
-            }
-            if (candidate.subagentId !== action.agentId) {
-              continue;
-            }
-            msgs[i] = {
-              ...candidate,
-              content: candidate.content
-                ? `${candidate.content}\n${action.message}`
-                : action.message,
-            };
-            return { ...slot, messages: msgs };
-          }
-          return {
-            ...slot,
-            messages: [
-              ...slot.messages,
-              withId({
-                role: 'subagent_log',
-                content: action.message,
-                subagentId: action.agentId,
-              }),
-            ],
-          };
-        });
-        return nextState;
-      }
-      const msgs = [...state.messages];
-      for (let i = msgs.length - 1; i >= 0; i -= 1) {
-        const candidate = msgs[i];
-        if (!candidate || candidate.role !== 'subagent_log') {
-          continue;
-        }
-        if (candidate.subagentId !== action.agentId) {
-          continue;
-        }
-        msgs[i] = {
-          ...candidate,
-          content: candidate.content ? `${candidate.content}\n${action.message}` : action.message,
-        };
-        return { ...state, messages: msgs };
-      }
-      // No existing bubble for this agent — create one.
-      return {
-        ...state,
-        messages: [
-          ...state.messages,
-          withId({
-            role: 'subagent_log',
-            content: action.message,
-            subagentId: action.agentId,
-          }),
-        ],
-      };
+      return withSubagentTrace(
+        state,
+        action.targetSessionId,
+        action.toolCallId,
+        action.agentId,
+        (previous) => appendSubagentLineText(previous, action.message)
+      );
     }
     case 'SET_SESSIONS': {
       // The list is the server's snapshot, but the conversation on screen

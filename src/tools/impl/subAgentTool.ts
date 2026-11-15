@@ -630,8 +630,9 @@ function validateAgentSpecs(agents: SubAgentSpec[] | undefined): string | null {
  * collapse two agents into ONE bucket.
  *
  * WHY THE IDS ARE CANONICALISED HERE, AT THE SOURCE. The chat route files
- * every write for one sub-agent under ONE key — one bucket, one client
- * bubble, one persisted `subagent_log` row — and it derives that key with
+ * every write for one sub-agent of a call under ONE key — one bucket, one
+ * client trace, one trace saved on the call's tool message — and it derives
+ * that key with
  * `canonicalSubagentId` (src/tools/toolOutput.ts). Two agents whose ids
  * differ only in surrounding whitespace ("research" and " research ")
  * canonicalise to the SAME key, so their transcripts would merge into one
@@ -1019,7 +1020,7 @@ async function runSingleAgent(
   // a reason instead of stopping mid-log (which is indistinguishable from an
   // empty response in the UI). `writeLine` reaches the UI through the per-agent
   // sink (`writeAgentLine` → `appendSubagentLine` in the chat route), so the
-  // line is streamed live *and* persisted into the agent's `subagent_log` row.
+  // line is streamed live *and* saved in the agent's trace on the tool message.
   // Written at most once, so nested failure paths cannot stack notices.
   let terminalNoticeWritten = false;
   const writeTerminalNotice = (reason: string): void => {
@@ -1375,7 +1376,7 @@ async function runSingleAgent(
             // The failed attempt's streamed text has to go BEFORE the
             // marker, exactly as in the transient branch below: the re-issued
             // turn streams the same text again, so without the clear the
-            // agent's bubble (and the persisted `subagent_log` row) would
+            // agent's trace (and the one saved on the tool message) would
             // show it twice. The marker is written AFTER the clear so it
             // survives it: the user must still see WHY the turn is being
             // re-issued.
@@ -1411,7 +1412,7 @@ async function runSingleAgent(
           // Drop the failed attempt's OUTPUT before the marker is written: the
           // chunks that already streamed belong to the attempt that just died,
           // and the re-issued turn will stream the same text again — without
-          // this the agent's bubble (and the persisted `subagent_log` row)
+          // this the agent's trace (and the one saved on the tool message)
           // would show it twice. The drop is a TRUNCATION of the END of the
           // agent's output by exactly the number of characters THIS turn
           // wrote (`turnChunkChars`), so the text of the agent's earlier

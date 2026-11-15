@@ -60,11 +60,24 @@ export interface SseEventPayloadMap {
   };
   thinking: { content: string };
   chunk: { content: string };
-  tool_call: { name: string; arguments: ToolCallArguments | Record<string, unknown> };
+  /**
+   * A tool call is starting. `toolCallId` is the id the call's result will
+   * carry; it is how the live sub-agent traces find the card they belong to.
+   */
+  tool_call: {
+    name: string;
+    arguments: ToolCallArguments | Record<string, unknown>;
+    toolCallId: string;
+  };
   tool_result: { name: string; result: string; duration: number; toolCallId?: string };
   tool_progress: { name: string; message: string };
-  subagent_output: { agentId: string; message: string };
-  subagent_chunk: { agentId: string; type: SubagentChunkType; text: string };
+  /**
+   * The three sub-agent events below carry the id of the `run_subagents` call
+   * they belong to. The page files an agent's text under that call, so an agent
+   * id that comes back in a later call starts a trace of its own.
+   */
+  subagent_output: { toolCallId: string; agentId: string; message: string };
+  subagent_chunk: { toolCallId: string; agentId: string; type: SubagentChunkType; text: string };
   /**
    * The server dropped the END of a sub-agent's streamed output because the
    * agent's turn failed with a transient provider error and is re-issued —
@@ -80,7 +93,7 @@ export interface SseEventPayloadMap {
    * bubble ends up with the server's text again instead of the failed
    * attempt's chunks.
    */
-  clear_subagent: { agentId: string; content: string };
+  clear_subagent: { toolCallId: string; agentId: string; content: string };
   approval_request: {
     requestId: string;
     toolName: string;

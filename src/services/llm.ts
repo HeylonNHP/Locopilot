@@ -19,6 +19,7 @@ import {
   type SamplingParamSupportMap,
 } from './samplingParamsCache';
 import { resolveVisionSupport, type VisionSupportState } from './visionCache';
+import { toWireMessages } from './wireMessages';
 
 export type { LlmRequestContext } from './adapters/llmAdapter';
 
@@ -179,14 +180,25 @@ export function sendLlmChat(
   timeoutMs?: number,
   signal?: AbortSignal
 ): Promise<ChatApiResponse> {
-  return adapterForContext(ctx).sendChat(ctx, params, onChunk, timeoutMs, signal);
+  // Every request leaves through here, so the UI-only message fields are
+  // dropped here and nowhere else (see wireMessages.ts).
+  return adapterForContext(ctx).sendChat(
+    ctx,
+    { ...params, messages: toWireMessages(params.messages) },
+    onChunk,
+    timeoutMs,
+    signal
+  );
 }
 
 export function sendLlmChatStream(
   ctx: LlmRequestContext,
   params: StreamChatParams
 ): AsyncGenerator<ChatApiResponse> {
-  return adapterForContext(ctx).sendChatStream(ctx, params);
+  return adapterForContext(ctx).sendChatStream(ctx, {
+    ...params,
+    messages: toWireMessages(params.messages),
+  });
 }
 
 export function getLlmApiErrorMessage(ctx: LlmRequestContext, error: unknown): Promise<string> {
@@ -219,8 +231,7 @@ export {
   type LlmAdapter,
   type LlmModel,
   type LlmModelInfo,
-  type PersistedChatMessage,
-  type SubagentLogMessage,
+  type SubagentTrace,
   type ToolCall,
   type ToolDefinition,
 } from './adapters/llmAdapter';

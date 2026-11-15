@@ -288,6 +288,16 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Needs:** a browser and a configured provider (a turn does not have to complete; inspect the request body).
 - **Source:** the 2026-11-14 changelog entry.
 
+### C-024 — Sub-agent traces on the tool message were not exercised in a browser or on a real database
+
+- **Status:** Unconfirmed (2026-11-15).
+- **Claim:** the move of sub-agent traces onto the tool message of their call (see the 2026-11-15 changelog entry) is verified by the type checker, the linter, the unit tests and an in-process run of the real chat and compact routes against a scripted provider. Not verified: how it looks and behaves in the page, and the migration on the owner's real `locopilot.db`.
+- **Why it matters:** the rendering rules live in `ToolMessageBubble` (traces ABOVE a saved result, BELOW the live 🔧 card), so the order a user sees differs between the live card and the reloaded result; a trace that streams while the user is in another conversation is routed by the reducer's background-session path, which the tests cover only at the reducer level.
+- **How to confirm:** (1) back up `locopilot.db`, start the dev server, open a conversation that already has sub-agent logs (for example the "Microsoft 365 Outage" one the owner reported) and check each trace now sits on its own `run_subagents` call, none trails the final answer, and a session you did not touch is unchanged. (2) In a new chat ask for a `run_subagents` call with two agents; watch the traces stream into the call's card, then confirm the end-of-turn reload keeps them (above the result). (3) Run `/compact` and confirm the traces stay on their calls and nothing is added after the last answer. (4) Ask for a second call that reuses an agent id (for example `researcher`) in a later turn and confirm it gets its own trace, not the old one's. (5) Press Stop in the middle of a batch and confirm the interrupted result keeps its traces. (6) Start a call in conversation A, switch to B while it runs, switch back, and confirm A's traces are complete.
+- **Also:** an open tab on the OLD client that sends a `subagent_log` message gets a 400 until reloaded; a reload fixes it. Not checked in a real browser.
+- **Needs:** a browser and a configured provider (the first check also needs the owner's database; take a copy first, the migration deletes the old rows).
+- **Source:** the 2026-11-15 changelog entry.
+
 ## Confirmed
 
 - **OpenAI output-cap field.** `max_output_tokens` is the cap on the Responses API (`/v1/responses`) and covers visible and reasoning tokens. Chat Completions uses `max_completion_tokens`. Source: OpenAI API reference, read through a mirror on 2026-11-11 (`platform.openai.com` returned 403). The installed `openai` SDK (6.48.0) types agree.

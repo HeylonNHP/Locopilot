@@ -79,15 +79,15 @@ export interface SseRouteOutcome {
   /** Store actions to dispatch, in order. */
   actions: ChatAction[];
   /** Sub-agent text that must be coalesced and flushed by the caller. */
-  subagentChunk?: { agentId: string; text: string; owner?: number };
+  subagentChunk?: { toolCallId: string; agentId: string; text: string; owner?: number };
   /**
-   * The sub-agent whose streamed output was dropped by the server (its
-   * turn failed with a transient provider error and is re-issued). The
-   * caller owns the coalescing buffer, so it has to drop that agent's
-   * pending text too — otherwise the pending flush timer would append
-   * the failed attempt's text to the bubble the store just emptied.
+   * The sub-agent (of that call) whose streamed output was dropped by the
+   * server (its turn failed with a transient provider error and is
+   * re-issued). The caller owns the coalescing buffer, so it has to drop that
+   * agent's pending text too — otherwise the pending flush timer would append
+   * the failed attempt's text to the trace the store just replaced.
    */
-  clearedSubagentId?: string;
+  clearedSubagent?: { toolCallId: string; agentId: string };
   /** The turn failed, so its retry payload must be preserved. */
   markFailed?: boolean;
   /** The live t/s read-out for the routed owner must be cleared. */
@@ -169,6 +169,9 @@ export function routeSseEvent(
           role: 'tool',
           content: `🔧 **${data.name ?? ''}**\n\`\`\`json\n${JSON.stringify(data.arguments, null, 2)}\n\`\`\``,
           ...(data.name === undefined ? {} : { name: data.name }),
+          // Display-only (NOT `tool_call_id`, which would make this card look
+          // like a saved result): lets the sub-agent events find their card.
+          ...(typeof data.toolCallId === 'string' ? { toolCallId: data.toolCallId } : {}),
         },
         ...(targetSessionId === undefined ? {} : { targetSessionId }),
       });
@@ -239,6 +242,7 @@ export function routeSseEvent(
       actions.push(
         {
           type: 'SUBAGENT_OUTPUT',
+          toolCallId: typeof data.toolCallId === 'string' ? data.toolCallId : '',
           agentId: outputAgentId,
           message: typeof data.message === 'string' ? data.message : String(data.message ?? ''),
           ...(targetSessionId === undefined ? {} : { targetSessionId }),
@@ -265,6 +269,7 @@ export function routeSseEvent(
       return {
         actions,
         subagentChunk: {
+          toolCallId: typeof data.toolCallId === 'string' ? data.toolCallId : '',
           agentId,
           text,
           ...(subagentOwner === undefined ? {} : { owner: subagentOwner }),
@@ -284,10 +289,12 @@ export function routeSseEvent(
       // also makes the live bubble byte-identical to the text the server
       // persists for that agent.
       const agentId = typeof data.agentId === 'string' ? data.agentId : '__subagent__';
+      const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : '';
       const content = typeof data.content === 'string' ? data.content : String(data.content ?? '');
       actions.push(
         {
           type: 'CLEAR_SUBAGENT_CONTENT',
+          toolCallId,
           agentId,
           content,
           ...(targetSessionId === undefined ? {} : { targetSessionId }),
@@ -303,7 +310,7 @@ export function routeSseEvent(
       // failed attempt's partial text to be flushed AFTER the clear. The
       // text that is dropped is part of the `content` the server sent, so
       // nothing is lost by dropping it.
-      return { actions, clearedSubagentId: agentId };
+      return { actions, clearedSubagent: { toolCallId, agentId } };
     }
 
     case 'status': {

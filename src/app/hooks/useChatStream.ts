@@ -28,20 +28,25 @@ const trace = (label: string, data?: Record<string, unknown>) => {
 
 /**
  * Sub-agent text that is still being coalesced before it is flushed to the
- * store. Keyed by session AND agent: the agent ids are names the model picks
- * ("researcher"), so two conversations running batches at once can use the
- * same one, and one conversation's text must never be flushed into the
- * other's bubble.
+ * store. Keyed by session, tool call AND agent: the agent ids are names the
+ * model picks ("researcher"), so two conversations running batches at once —
+ * or two calls of one conversation — can use the same one, and text must never
+ * be flushed into another call's trace.
  */
 interface PendingSubagentText {
+  toolCallId: string;
   agentId: string;
   sessionId: number | undefined;
   text: string;
   timer: ReturnType<typeof setTimeout> | null;
 }
 
-function subagentBufferKey(sessionId: number | undefined, agentId: string): string {
-  return `${sessionId ?? ''}\u0000${agentId}`;
+function subagentBufferKey(
+  sessionId: number | undefined,
+  toolCallId: string,
+  agentId: string
+): string {
+  return `${sessionId ?? ''}\u0000${toolCallId}\u0000${agentId}`;
 }
 
 /** The error a failed turn shows, from whatever its stream threw. */
@@ -188,10 +193,13 @@ export function useChatStream(
   const flushSubagentText = useCallback(
     (entry: PendingSubagentText) => {
       if (entry.timer) clearTimeout(entry.timer);
-      subagentBufferRef.current.delete(subagentBufferKey(entry.sessionId, entry.agentId));
+      subagentBufferRef.current.delete(
+        subagentBufferKey(entry.sessionId, entry.toolCallId, entry.agentId)
+      );
       dispatchOwned(
         {
           type: 'SUBAGENT_CHUNK',
+          toolCallId: entry.toolCallId,
           agentId: entry.agentId,
           text: entry.text,
           ...(entry.sessionId === undefined ? {} : { targetSessionId: entry.sessionId }),
@@ -229,9 +237,14 @@ export function useChatStream(
         streamStateRef.current = migrateSessionKey(streamStateRef.current, realId);
         for (const entry of subagentBufferRef.current.values()) {
           if (entry.sessionId === NEW_SESSION_KEY || entry.sessionId === undefined) {
-            subagentBufferRef.current.delete(subagentBufferKey(entry.sessionId, entry.agentId));
+            subagentBufferRef.current.delete(
+              subagentBufferKey(entry.sessionId, entry.toolCallId, entry.agentId)
+            );
             entry.sessionId = realId;
-            subagentBufferRef.current.set(subagentBufferKey(realId, entry.agentId), entry);
+            subagentBufferRef.current.set(
+              subagentBufferKey(realId, entry.toolCallId, entry.agentId),
+              entry
+            );
           }
         }
         // The stored retry payload has to point at the session this turn was
@@ -303,10 +316,10 @@ export function useChatStream(
         dispatchOwned(action, owner);
       }
 
-      if (outcome.clearedSubagentId) {
+      if (outcome.clearedSubagent) {
         // The server dropped a sub-agent's streamed output because its turn
         // failed and is re-issued. The store action above REPLACED the
-        // bubble with the text the server kept, but the text that is still
+        // trace with the text the server kept, but the text that is still
         // COALESCING for that agent lives here — so its pending flush timer
         // has to be cancelled and the entry dropped, or the failed attempt's
         // text would be appended to the bubble AFTER the clear.
@@ -314,7 +327,11 @@ export function useChatStream(
         // Dropping it loses nothing: the server's replacement content
         // already includes those characters (the server counted them when
         // it truncated its own bucket).
-        const key = subagentBufferKey(owner, outcome.clearedSubagentId);
+        const key = subagentBufferKey(
+          owner,
+          outcome.clearedSubagent.toolCallId,
+          outcome.clearedSubagent.agentId
+        );
         const pending = subagentBufferRef.current.get(key);
         if (pending) {
           if (pending.timer) clearTimeout(pending.timer);
@@ -323,14 +340,14 @@ export function useChatStream(
       }
 
       if (outcome.subagentChunk) {
-        const { agentId, text, owner: chunkOwner } = outcome.subagentChunk;
-        const key = subagentBufferKey(chunkOwner, agentId);
+        const { toolCallId, agentId, text, owner: chunkOwner } = outcome.subagentChunk;
+        const key = subagentBufferKey(chunkOwner, toolCallId, agentId);
         let entry = subagentBufferRef.current.get(key);
         if (entry) {
           entry.text += text;
           if (entry.timer) clearTimeout(entry.timer);
         } else {
-          entry = { agentId, sessionId: chunkOwner, text, timer: null };
+          entry = { toolCallId, agentId, sessionId: chunkOwner, text, timer: null };
           subagentBufferRef.current.set(key, entry);
         }
         // The timer reads the entry it was given, not a captured session id,

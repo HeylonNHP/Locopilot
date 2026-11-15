@@ -6,6 +6,7 @@ import type { SseEventPayloadMap } from '@/types/sse';
 import { debugLog } from '@/app/lib/debugLogger';
 import { enqueueSessionWrite } from '@/app/lib/sessionWriteQueue';
 import { SSE_KEEPALIVE_MS } from '@/constants';
+import { isChatMessage } from '@/services/chatMessageGuard';
 import { compactHistory } from '@/services/compact';
 import { RECENT_FILES_LOAD_LIMIT } from '@/services/compact/constants';
 import {
@@ -23,8 +24,6 @@ import {
   type ChatMessage,
   getLlmApiErrorMessage,
   type LlmRequestContext,
-  type PersistedChatMessage,
-  type SubagentLogMessage,
 } from '@/services/llm';
 import { resolveCompactionModel } from '@/services/modelManager';
 import { resolveProviderRequestContext } from '@/services/providerResolver';
@@ -36,18 +35,6 @@ import {
 } from '@/types/chatConfig';
 
 export const dynamic = 'force-dynamic';
-
-function isPersistedChatMessage(value: unknown): value is PersistedChatMessage {
-  if (typeof value !== 'object' || value === null) return false;
-  const msg = value as Record<string, unknown>;
-  if (typeof msg.role !== 'string' || typeof msg.content !== 'string') return false;
-  if (msg.role === 'subagent_log') {
-    return msg.subagentId === undefined || typeof msg.subagentId === 'string';
-  }
-  return (
-    msg.role === 'system' || msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool'
-  );
-}
 
 export async function POST(request: NextRequest): Promise<Response> {
   let body: Record<string, unknown>;
@@ -119,7 +106,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  if (!Array.isArray(messages) || messages.length <= 1 || !messages.every(isPersistedChatMessage)) {
+  if (!Array.isArray(messages) || messages.length <= 1 || !messages.every(isChatMessage)) {
     return NextResponse.json(
       { error: 'Nothing to compact yet. Continue the conversation and try again.' },
       { status: 400 }
@@ -143,7 +130,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: requestProblem }, { status: 409 });
   }
 
-  const typedMessages: PersistedChatMessage[] = messages;
+  const typedMessages: ChatMessage[] = messages;
 
   // ── SSE streaming setup ───────────────────────────────────────────
   const encoder = new TextEncoder();
@@ -266,14 +253,12 @@ export async function POST(request: NextRequest): Promise<Response> {
         const effectiveNumCtx = requireWindow(mainWindow.effective);
         const compactionNumCtx = requireWindow(compactionWindow.effective);
 
-        // Strip system and subagent_log messages before compacting — system prompt
-        // is injected on-the-fly; subagent_log is a client-only UI role unknown to Ollama.
-        const subagentLogMessages: SubagentLogMessage[] = typedMessages.filter(
-          (m): m is SubagentLogMessage => m.role === 'subagent_log'
-        );
-
+        // Strip system messages before compacting — the system prompt is
+        // injected on-the-fly. Sub-agent traces need no handling here: they live
+        // on their tool messages, so they are kept with a preserved message and
+        // dropped with a summarised one.
         const conversationMessages: ChatMessage[] = typedMessages.filter(
-          (m): m is ChatMessage => m.role !== 'system' && m.role !== 'subagent_log'
+          (m) => m.role !== 'system'
         );
 
         debugLog.diagnostic({
@@ -356,16 +341,12 @@ export async function POST(request: NextRequest): Promise<Response> {
 
         if (parsedSessionId) {
           // Use a reducer so the queue reads current DB state inside the
-          // critical section.  Compaction replaces the conversation with
-          // the summarised result plus any subagent_log entries.
-          await enqueueSessionWrite(
-            parsedSessionId,
-            (_currentMessages) => [...result.newMessages, ...subagentLogMessages],
-            {
-              promptEvalCount: result.stats.newTokenCount,
-              evalCount: 0,
-            }
-          );
+          // critical section. Compaction replaces the conversation with the
+          // summarised result.
+          await enqueueSessionWrite(parsedSessionId, (_currentMessages) => result.newMessages, {
+            promptEvalCount: result.stats.newTokenCount,
+            evalCount: 0,
+          });
         }
 
         debugLog.diagnostic({
