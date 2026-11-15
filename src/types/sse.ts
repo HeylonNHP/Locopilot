@@ -2,6 +2,7 @@ import type { ChatMessage } from '@/app/lib/chatStore';
 import type { CompactStats } from '@/services/compact';
 import type { ChatPhase, DoneReason, SubagentChunkType } from '@/services/sseNames';
 import type { ToolCallArguments } from '@/tools/tools';
+import type { ReasoningEffort } from '@/types/chatConfig';
 
 /**
  * Token statistics payload emitted on the `done` SSE event.
@@ -52,6 +53,10 @@ export interface SseEventPayloadMap {
     providerId: string | null;
     compactionModel: string | null;
     compactionProviderId: string | null;
+    /** The main model's reasoning level; the server pins it at creation. */
+    reasoningEffort: ReasoningEffort;
+    /** The compaction model's reasoning level; the server pins it at creation. */
+    compactionReasoningEffort: ReasoningEffort;
   };
   thinking: { content: string };
   chunk: { content: string };

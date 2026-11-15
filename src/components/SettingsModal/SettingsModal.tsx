@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 import { useChat } from '@/app/lib/chatStore';
 import { describeContextWindow, interpretNumCtxInput } from '@/app/lib/contextWindow';
-import { saveSessionDefaults, saveSessionSelection } from '@/app/lib/sessionSelectionClient';
+import { saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
 import {
@@ -46,7 +46,16 @@ export default function SettingsModal({ onClose }: Props) {
   }, [numCtxEdited, state.requestedNumCtx]);
   const [yolo, setYolo] = useState(state.yolo);
   const [thinkingEnabled, setThinkingEnabled] = useState(state.thinkingEnabled);
-  const [reasoningEffort, setReasoningEffort] = useState(state.reasoningEffort);
+  // The GLOBAL default a new conversation starts with. The per-conversation
+  // levels are edited from the StatusBar popover; this dropdown deliberately
+  // does not move the conversation that happens to be open.
+  const [reasoningEffort, setReasoningEffort] = useState(state.defaultReasoningEffort);
+  // Only a field the user actually changed is written, so an unrelated save
+  // cannot move the default another tab just set.
+  const [reasoningEffortEdited, setReasoningEffortEdited] = useState(false);
+  useEffect(() => {
+    if (!reasoningEffortEdited) setReasoningEffort(state.defaultReasoningEffort);
+  }, [reasoningEffortEdited, state.defaultReasoningEffort]);
   const [promptTimestamps, setPromptTimestamps] = useState(state.promptTimestamps ?? true);
   const [citeSources, setCiteSources] = useState(state.citeSources ?? true);
   const [redactSecrets, setRedactSecrets] = useState(state.redactSecrets ?? true);
@@ -258,7 +267,6 @@ export default function SettingsModal({ onClose }: Props) {
     const clientConfig: Record<string, unknown> = {
       yolo,
       thinkingEnabled,
-      reasoningEffort,
       promptTimestamps,
       citeSources,
       redactSecrets,
@@ -268,6 +276,16 @@ export default function SettingsModal({ onClose }: Props) {
         resultsPerQuery: parsedWebResultsPerQuery,
         perPageCharLimit: parsedWebPerPageCharLimit,
       },
+      // The global defaults. Only the fields the user edited are sent, so a
+      // save of an unrelated setting does not re-assert a default another
+      // tab has changed.
+      ...(modelEdited && model.trim().length > 0
+        ? { model, ...(mainProviderId ? { activeProviderId: mainProviderId } : {}) }
+        : {}),
+      ...(compactionModelEdited
+        ? { compactionModel: compactionModel ?? state.defaultCompactionModel }
+        : {}),
+      ...(reasoningEffortEdited ? { reasoningEffort } : {}),
     };
     if (numCtxInput.kind === 'set') {
       clientConfig.numCtx = numCtxInput.value;
@@ -275,36 +293,22 @@ export default function SettingsModal({ onClose }: Props) {
 
     try {
       // The model selection belongs to the conversation on screen. Only the
-      // field the user actually changed moves the global default a new
-      // conversation starts with.
-      const selection = {
-        model,
-        providerId: mainProviderId,
-        compactionModel,
-        compactionProviderId,
-      };
-      const defaults = {
-        model: modelEdited ? model : state.defaultModel,
-        providerId: modelEdited ? mainProviderId : state.defaultProviderId,
-        compactionModel: compactionModelEdited
-          ? (compactionModel ?? state.defaultCompactionModel)
-          : state.defaultCompactionModel,
+      // field the user actually changed is written, so this modal cannot
+      // erase a value another control or tab just set.
+      const selectionPatch = {
+        ...(modelEdited && model.trim().length > 0 ? { model, providerId: mainProviderId } : {}),
+        ...(compactionModelEdited ? { compactionModel, compactionProviderId } : {}),
       };
       // A conversation always has a model: the "Select a model..." option
       // cannot leave one without, so the conversation's own row is not
-      // written. The DEFAULTS are still saved, so an edit of the compaction
-      // model is not lost, and the rest of the modal saves.
-      if (model.trim().length > 0) {
-        const selectionSaved = await saveSessionSelection(
-          state.currentSessionId,
-          selection,
-          defaults
-        );
+      // written. The DEFAULTS are still saved (in `clientConfig`), so an
+      // edit of the compaction model is not lost and the rest of the modal
+      // saves.
+      if (model.trim().length > 0 && Object.keys(selectionPatch).length > 0) {
+        const selectionSaved = await saveSessionPatch(state.currentSessionId, selectionPatch);
         if (!selectionSaved) {
           throw new Error('The model could not be saved for this conversation.');
         }
-      } else {
-        await saveSessionDefaults(defaults);
       }
 
       const response = await fetch('/api/config', {
@@ -344,7 +348,9 @@ export default function SettingsModal({ onClose }: Props) {
         config: {
           yolo,
           thinkingEnabled,
-          reasoningEffort,
+          // The GLOBAL default; the conversation on screen keeps its own
+          // level.
+          ...(reasoningEffortEdited ? { defaultReasoningEffort: reasoningEffort } : {}),
           promptTimestamps,
           citeSources,
           redactSecrets,
@@ -361,7 +367,27 @@ export default function SettingsModal({ onClose }: Props) {
       // The conversation on screen now runs on the selection that was just
       // saved; the global default follows the fields the user changed.
       if (model.trim().length > 0) {
-        dispatch({ type: 'SET_SESSION_SELECTION', selection, defaults });
+        dispatch({
+          type: 'SET_SESSION_SELECTION',
+          selection: {
+            model,
+            providerId: mainProviderId,
+            compactionModel,
+            compactionProviderId,
+            // The conversation's reasoning pins are untouched by this modal.
+            reasoningEffort: state.reasoningEffort,
+            compactionReasoningEffort: state.compactionReasoningEffort,
+          },
+          defaults: {
+            model: modelEdited ? model : state.defaultModel,
+            providerId: modelEdited ? mainProviderId : state.defaultProviderId,
+            compactionModel: compactionModelEdited
+              ? (compactionModel ?? state.defaultCompactionModel)
+              : state.defaultCompactionModel,
+            reasoningEffort: reasoningEffortEdited ? reasoningEffort : state.defaultReasoningEffort,
+            compactionReasoningEffort: state.defaultCompactionReasoningEffort,
+          },
+        });
       }
 
       // Carry a model change into a turn that is already streaming, so the
@@ -565,12 +591,15 @@ export default function SettingsModal({ onClose }: Props) {
             {supportsReasoningEffort && (
               <div className="settings-row">
                 <label className="settings-label" htmlFor="reasoning-effort-select">
-                  Reasoning Effort
+                  Reasoning Effort (new chats)
                 </label>
                 <select
                   id="reasoning-effort-select"
                   value={reasoningEffort}
-                  onChange={(e) => setReasoningEffort(e.target.value as ReasoningEffort)}
+                  onChange={(e) => {
+                    setReasoningEffortEdited(true);
+                    setReasoningEffort(e.target.value as ReasoningEffort);
+                  }}
                   className="settings-input"
                 >
                   {REASONING_EFFORTS.map((value) => (

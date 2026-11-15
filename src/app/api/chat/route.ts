@@ -302,6 +302,22 @@ export async function POST(req: NextRequest): Promise<Response> {
   const reasoningEffort: ReasoningEffort | undefined = isReasoningEffort(reasoningEffortRaw)
     ? reasoningEffortRaw
     : undefined;
+  const compactionReasoningEffortRaw: unknown = body.compactionReasoningEffort;
+  const compactionReasoningEffort: ReasoningEffort | undefined = isReasoningEffort(
+    compactionReasoningEffortRaw
+  )
+    ? compactionReasoningEffortRaw
+    : undefined;
+
+  /**
+   * The level a turn runs at: the conversation's own pin from the body, then
+   * the saved default. The client OMITS the field when the conversation
+   * inherits, so the server's resolution is the only copy of this rule.
+   */
+  const resolveReasoningEffort = (cfg: Config | null): ReasoningEffort =>
+    reasoningEffort ?? cfg?.reasoningEffort ?? 'off';
+  const resolveCompactionReasoningEffort = (cfg: Config | null): ReasoningEffort =>
+    compactionReasoningEffort ?? cfg?.compactionReasoningEffort ?? 'off';
   const chatTimeoutMs: number | undefined = body.chatTimeoutMs as number | undefined;
   const completionMode: string | undefined = body.completionMode as string | undefined;
   const maxPromptLoopIterations: number | undefined = body.maxPromptLoopIterations as
@@ -339,6 +355,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       { status: 503, headers: { 'Content-Type': SSE_CONTENT_TYPE } }
     );
   }
+  // The reasoning levels this TURN runs at, resolved once. A later edit to a
+  // default (or a mid-turn model switch) does not move a turn that is already
+  // under way — the same policy as the saved context window at turn start.
+  const turnReasoningEffort = resolveReasoningEffort(savedConfig.config);
+  const turnCompactionReasoningEffort = resolveCompactionReasoningEffort(savedConfig.config);
   const turnProblem =
     configProblemFor(savedConfig.config, providerId, model) ??
     (typeof compactionProviderId === 'string' && compactionProviderId.trim()
@@ -868,6 +889,11 @@ export async function POST(req: NextRequest): Promise<Response> {
             // global default", which is how the server reads it everywhere else.
             compactionModel: compactionModel ?? null,
             compactionProviderId: compactionProviderId ?? null,
+            // The reasoning levels are PINNED at creation: a level the client
+            // did not pin is resolved from the saved defaults and stored, so
+            // a later default change does not move this conversation.
+            reasoningEffort: turnReasoningEffort,
+            compactionReasoningEffort: turnCompactionReasoningEffort,
           };
           activeSessionId = createSession(DEFAULT_SESSION_NAME, selection);
           // From here on every frame names the session the turn belongs to.
@@ -977,14 +1003,12 @@ export async function POST(req: NextRequest): Promise<Response> {
               // session's.
               redactSecrets: config?.redactSecrets ?? true,
               // The COMPACTION model's reasoning effort, not the sub-agent's own
-              // (`reasoningEffort` above, inherited from the parent's main
+              // (`reasoningEffort` below, inherited from the parent's main
               // model). The sub-agent's own compaction must run at the level the
               // user picked for compaction; 'off' is normalised away when it is
               // forwarded to the pipeline.
-              ...(config?.compactionReasoningEffort === undefined
-                ? {}
-                : { compactionReasoningEffort: config.compactionReasoningEffort }),
-              ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+              compactionReasoningEffort: turnCompactionReasoningEffort,
+              reasoningEffort: turnReasoningEffort,
               tools: TOOLS.filter(
                 (tool) =>
                   tool.function.name !== 'run_subagents' &&
@@ -1668,7 +1692,7 @@ export async function POST(req: NextRequest): Promise<Response> {
                   // route's `reasoningEffort`, which is the MAIN model's level
                   // from the request body. 'off' means "no explicit level", so
                   // it is normalised away before it reaches the adapter.
-                  reasoningEffort: forwardableReasoningEffort(config?.compactionReasoningEffort),
+                  reasoningEffort: forwardableReasoningEffort(turnCompactionReasoningEffort),
                   // Live compaction speed for the t/s badge.
                   onTps: (tps: number) => {
                     sendEvent('status', { phase: 'compacting', tps });
@@ -1863,8 +1887,9 @@ export async function POST(req: NextRequest): Promise<Response> {
           // 'off' is the UI default and means "use the Thinking toggle";
           // only forward explicit reasoning levels so the adapter can fall
           // back to mapping thinkingEnabled -> reasoning effort.
-          if (reasoningEffort !== undefined && reasoningEffort !== 'off') {
-            params.reasoningEffort = reasoningEffort;
+          const forwardableEffort = forwardableReasoningEffort(turnReasoningEffort);
+          if (forwardableEffort !== undefined) {
+            params.reasoningEffort = forwardableEffort;
           }
           if (visionSupported !== undefined) {
             params.visionSupported = visionSupported;
@@ -3005,13 +3030,16 @@ export async function POST(req: NextRequest): Promise<Response> {
 
             // Fire-and-forget background task to generate a proper LLM-based title.
             // The fallback title is already set above, so this is purely an upgrade.
+            // The title runs the COMPACTION model, so it uses that model's level —
+            // the same one the `/title` command uses.
             generateSessionTitle(
               compactionLlmRequestContext,
               effectiveCompactionModel,
               currentMessages,
               compactionNumCtx,
               undefined, // no onProgress (SSE stream is closing)
-              undefined // no think override
+              undefined, // no think override
+              turnCompactionReasoningEffort
             )
               .then((title) => enqueueSessionRename(currentSessionId, title))
               .catch(() => {

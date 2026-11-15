@@ -154,6 +154,8 @@ export function useDataLoaders(refs: StableRefs) {
         providerId: refs.activeProviderIdRef.current,
         compactionModel: refs.compactionModelRef.current,
         compactionProviderId: refs.compactionProviderIdRef.current,
+        reasoningEffort: refs.reasoningEffortRef.current,
+        compactionReasoningEffort: refs.compactionReasoningEffortRef.current,
       };
 
       try {
@@ -211,7 +213,9 @@ export function useDataLoaders(refs: StableRefs) {
           refs.modelRef.current === selectionAtStart.model &&
           refs.activeProviderIdRef.current === selectionAtStart.providerId &&
           refs.compactionModelRef.current === selectionAtStart.compactionModel &&
-          refs.compactionProviderIdRef.current === selectionAtStart.compactionProviderId;
+          refs.compactionProviderIdRef.current === selectionAtStart.compactionProviderId &&
+          refs.reasoningEffortRef.current === selectionAtStart.reasoningEffort &&
+          refs.compactionReasoningEffortRef.current === selectionAtStart.compactionReasoningEffort;
         if (
           !background &&
           selectionUnchanged &&
@@ -226,6 +230,10 @@ export function useDataLoaders(refs: StableRefs) {
               providerId: data.session.provider_id ?? null,
               compactionModel: data.session.compaction_model ?? null,
               compactionProviderId: data.session.compaction_provider_id ?? null,
+              // The RAW stored pin: null means the conversation inherits the
+              // global default, and resolving it here would silently pin it.
+              reasoningEffort: data.session.reasoning_effort ?? null,
+              compactionReasoningEffort: data.session.compaction_reasoning_effort ?? null,
             },
           });
         }
@@ -441,9 +449,12 @@ export function useDataLoaders(refs: StableRefs) {
             defaultModel: config.model || config.lastModel || '',
             yolo: config.yolo ?? state.yolo,
             thinkingEnabled: config.thinkingEnabled ?? state.thinkingEnabled,
-            reasoningEffort: config.reasoningEffort ?? state.reasoningEffort,
-            compactionReasoningEffort:
-              config.compactionReasoningEffort ?? state.compactionReasoningEffort,
+            // The global DEFAULTS a new conversation starts with. A
+            // conversation's own level belongs to its row, so it is
+            // deliberately not set here.
+            defaultReasoningEffort: config.reasoningEffort ?? state.defaultReasoningEffort,
+            defaultCompactionReasoningEffort:
+              config.compactionReasoningEffort ?? state.defaultCompactionReasoningEffort,
             promptTimestamps: config.promptTimestamps ?? state.promptTimestamps,
             citeSources: config.citeSources ?? state.citeSources,
             redactSecrets: config.redactSecrets ?? state.redactSecrets,

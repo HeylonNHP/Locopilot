@@ -2,8 +2,9 @@
 // POST /api/sessions - create a new session
 import { type NextRequest, NextResponse } from 'next/server';
 
+import { loadConfig } from '@/services/configManager';
 import { createSession, listSessions, searchSessions } from '@/services/history';
-import { validateSessionSelection } from '@/services/sessionSelection';
+import { resolveCreationSelection, validateSessionSelection } from '@/services/sessionSelection';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -25,6 +26,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       providerId?: string | null;
       compactionModel?: string | null;
       compactionProviderId?: string | null;
+      reasoningEffort?: string | null;
+      compactionReasoningEffort?: string | null;
     };
     const name = body.name ?? 'New Session';
 
@@ -39,15 +42,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // compaction model that was not sent is stored as NULL, which means
     // "inherit the global default" — the same thing the server's own
     // resolution does when the request body omits the field.
-    const selection = validateSessionSelection({
+    const validated = validateSessionSelection({
       model: body.model,
       providerId: body.providerId,
       compactionModel: body.compactionModel,
       compactionProviderId: body.compactionProviderId,
+      reasoningEffort: body.reasoningEffort,
+      compactionReasoningEffort: body.compactionReasoningEffort,
     });
-    if (typeof selection === 'string') {
-      return NextResponse.json({ error: selection }, { status: 400 });
+    if (typeof validated === 'string') {
+      return NextResponse.json({ error: validated }, { status: 400 });
     }
+
+    // Reasoning levels, unlike the compaction model, are PINNED at creation:
+    // a level the caller did not send is resolved from the saved defaults and
+    // stored, so a later default change does not move an existing
+    // conversation. The level itself was validated above; this only supplies
+    // the default it inherits.
+    const config = await loadConfig().catch(() => null);
+    const selection = resolveCreationSelection(validated, {
+      reasoningEffort: config?.reasoningEffort,
+      compactionReasoningEffort: config?.compactionReasoningEffort,
+    });
 
     const id = createSession(name, selection);
     const sessions = listSessions();

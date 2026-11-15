@@ -37,8 +37,8 @@ export interface StableRefs {
   activeProviderIdRef: WritableRef<string | null>;
   yoloRef: WritableRef<boolean>;
   thinkingEnabledRef: WritableRef<boolean>;
-  reasoningEffortRef: WritableRef<ReasoningEffort>;
-  compactionReasoningEffortRef: WritableRef<ReasoningEffort>;
+  reasoningEffortRef: WritableRef<ReasoningEffort | null>;
+  compactionReasoningEffortRef: WritableRef<ReasoningEffort | null>;
   compactionModelRef: WritableRef<string | null>;
   /**
    * The provider the conversation on screen's compaction model belongs to,
@@ -52,6 +52,9 @@ export interface StableRefs {
    * A pick of the main model does not change it.
    */
   defaultCompactionModelRef: WritableRef<string>;
+  /** The global reasoning defaults a new conversation starts with. */
+  defaultReasoningEffortRef: WritableRef<ReasoningEffort>;
+  defaultCompactionReasoningEffortRef: WritableRef<ReasoningEffort>;
   chatTimeoutMsRef: WritableRef<number>;
   webSearchRef: WritableRef<WebSearchConfig>;
   completionModeRef: WritableRef<CompletionMode>;
@@ -78,11 +81,13 @@ interface StableRefsInput {
   activeProviderId: string | null;
   yolo: boolean;
   thinkingEnabled: boolean;
-  reasoningEffort: ReasoningEffort;
-  compactionReasoningEffort: ReasoningEffort;
+  reasoningEffort: ReasoningEffort | null;
+  compactionReasoningEffort: ReasoningEffort | null;
   compactionModel: string | null;
   compactionProviderId: string | null;
   defaultCompactionModel: string;
+  defaultReasoningEffort: ReasoningEffort;
+  defaultCompactionReasoningEffort: ReasoningEffort;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
   completionMode: CompletionMode;
@@ -112,6 +117,8 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const compactionModelRef = useRef(state.compactionModel);
   const compactionProviderIdRef = useRef(state.compactionProviderId);
   const defaultCompactionModelRef = useRef(state.defaultCompactionModel);
+  const defaultReasoningEffortRef = useRef(state.defaultReasoningEffort);
+  const defaultCompactionReasoningEffortRef = useRef(state.defaultCompactionReasoningEffort);
   const chatTimeoutMsRef = useRef(state.chatTimeoutMs);
   const webSearchRef = useRef(state.webSearch);
   const completionModeRef = useRef(state.completionMode);
@@ -127,14 +134,18 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
 
   // The selection refs are updated the same way, for the same reason: the
   // request body is built from them, and switching conversations changes the
-  // model the next turn must run on. An effect would leave a window in which
-  // a turn sent right after the switch carried the previous conversation's
-  // model.
+  // model (and reasoning levels) the next turn must run on. An effect would
+  // leave a window in which a turn sent right after the switch carried the
+  // previous conversation's values.
   modelRef.current = state.model;
   activeProviderIdRef.current = state.activeProviderId;
   compactionModelRef.current = state.compactionModel;
   compactionProviderIdRef.current = state.compactionProviderId;
   defaultCompactionModelRef.current = state.defaultCompactionModel;
+  defaultReasoningEffortRef.current = state.defaultReasoningEffort;
+  defaultCompactionReasoningEffortRef.current = state.defaultCompactionReasoningEffort;
+  reasoningEffortRef.current = state.reasoningEffort;
+  compactionReasoningEffortRef.current = state.compactionReasoningEffort;
 
   useEffect(() => {
     messagesRef.current = state.messages;
@@ -160,12 +171,6 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   useEffect(() => {
     thinkingEnabledRef.current = state.thinkingEnabled;
   }, [state.thinkingEnabled]);
-  useEffect(() => {
-    reasoningEffortRef.current = state.reasoningEffort;
-  }, [state.reasoningEffort]);
-  useEffect(() => {
-    compactionReasoningEffortRef.current = state.compactionReasoningEffort;
-  }, [state.compactionReasoningEffort]);
   useEffect(() => {
     chatTimeoutMsRef.current = state.chatTimeoutMs;
   }, [state.chatTimeoutMs]);
@@ -204,6 +209,8 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       compactionModelRef,
       compactionProviderIdRef,
       defaultCompactionModelRef,
+      defaultReasoningEffortRef,
+      defaultCompactionReasoningEffortRef,
       chatTimeoutMsRef,
       webSearchRef,
       completionModeRef,

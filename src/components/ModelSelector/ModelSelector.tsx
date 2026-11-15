@@ -2,11 +2,16 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import type { SessionDefaults, SessionSelection } from '@/services/sessionSelection';
+import type {
+  SessionDefaults,
+  SessionDefaultsPatch,
+  SessionSelection,
+  SessionSelectionPatch,
+} from '@/services/sessionSelection';
 
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { type LLmModel, useChat } from '@/app/lib/chatStore';
-import { saveSessionSelection } from '@/app/lib/sessionSelectionClient';
+import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { type MidTurnModelSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 
 import { toggleProviderCollapsed, useCollapsedProviders } from './collapsedProviders';
@@ -261,6 +266,10 @@ export default function ModelSelector({
     defaultModel,
     defaultProviderId,
     defaultCompactionModel,
+    reasoningEffort,
+    compactionReasoningEffort,
+    defaultReasoningEffort,
+    defaultCompactionReasoningEffort,
     currentSessionId,
     streamingSessions,
   } = state;
@@ -404,19 +413,67 @@ export default function ModelSelector({
   useClickOutsideEscape(panelRef, { isOpen, onClose });
 
   /**
-   * Apply a selection to the conversation on screen.
+   * Apply a pick to the conversation on screen.
    *
-   * The conversation's own row is written before anything changes on screen:
-   * a selection the server does not know about is a selection that is lost
-   * on the next reload.
+   * Only the fields the picker changed are written (the conversation's row
+   * first, then the global defaults), so this control cannot erase a value
+   * another control or tab just set. The conversation's own row is written
+   * before anything changes on screen: a selection the server does not know
+   * about is a selection that is lost on the next reload.
    */
   const applySelection = useCallback(
-    async (selection: SessionSelection, defaults: SessionDefaults, midTurn: MidTurnModelSwitch) => {
-      const saved = await saveSessionSelection(currentSessionId, selection, defaults);
-      if (!saved) {
+    async (
+      selectionPatch: SessionSelectionPatch,
+      defaultsPatch: SessionDefaultsPatch,
+      midTurn: MidTurnModelSwitch
+    ) => {
+      // The reducer states the complete selection: the conversation's own
+      // with the pick applied, and the current defaults with the pick
+      // applied.
+      const selection: SessionSelection = {
+        model: selectionPatch.model ?? model,
+        providerId:
+          selectionPatch.providerId === undefined ? activeProviderId : selectionPatch.providerId,
+        compactionModel:
+          selectionPatch.compactionModel === undefined
+            ? compactionModel
+            : selectionPatch.compactionModel,
+        compactionProviderId:
+          selectionPatch.compactionProviderId === undefined
+            ? compactionProviderId
+            : selectionPatch.compactionProviderId,
+        reasoningEffort,
+        compactionReasoningEffort,
+      };
+      const defaults: SessionDefaults = {
+        model: defaultsPatch.model ?? defaultModel,
+        providerId:
+          defaultsPatch.providerId === undefined ? defaultProviderId : defaultsPatch.providerId,
+        compactionModel: defaultsPatch.compactionModel ?? defaultCompactionModel,
+        reasoningEffort: defaultsPatch.reasoningEffort ?? defaultReasoningEffort,
+        compactionReasoningEffort:
+          defaultsPatch.compactionReasoningEffort ?? defaultCompactionReasoningEffort,
+      };
+
+      if (!(await saveSessionPatch(currentSessionId, selectionPatch))) {
         dispatch({
           type: 'SET_ERROR',
           error: 'The model could not be saved for this conversation.',
+        });
+        onClose();
+        return;
+      }
+      if (!(await saveDefaultsPatch(defaultsPatch))) {
+        // The conversation's row IS saved, so the screen follows it (the
+        // server's row is the truth) and only the global default is behind.
+        // The default stays as the server has it, which is what the store
+        // keeps.
+        if (currentSessionId !== null) {
+          dispatch({ type: 'APPLY_SESSION_SELECTION', sessionId: currentSessionId, selection });
+        }
+        dispatch({
+          type: 'SET_ERROR',
+          error: 'The model was saved for this conversation, but not for new chats.',
         });
         onClose();
         return;
@@ -426,47 +483,46 @@ export default function ModelSelector({
       await switchMidTurn(midTurn);
       onClose();
     },
-    [currentSessionId, dispatch, onClose, switchMidTurn]
+    [
+      activeProviderId,
+      compactionModel,
+      compactionProviderId,
+      compactionReasoningEffort,
+      currentSessionId,
+      defaultCompactionModel,
+      defaultCompactionReasoningEffort,
+      defaultModel,
+      defaultProviderId,
+      defaultReasoningEffort,
+      dispatch,
+      model,
+      onClose,
+      reasoningEffort,
+      switchMidTurn,
+    ]
   );
 
   const handleSelectModel = useCallback(
     (modelName: string, providerId?: string | null) =>
       applySelection(
-        {
-          model: modelName,
-          providerId: providerId ?? null,
-          compactionModel,
-          compactionProviderId,
-        },
-        // The main model changed; the default compaction model is not touched.
-        {
-          model: modelName,
-          providerId: providerId ?? null,
-          compactionModel: defaultCompactionModel,
-        },
+        { model: modelName, providerId: providerId ?? null },
+        // The main model changed; the default compaction model and both
+        // reasoning defaults are not touched.
+        { model: modelName, providerId: providerId ?? null },
         {
           model: modelName,
           ...(providerId ? { providerId } : {}),
         }
       ),
-    [applySelection, compactionModel, compactionProviderId, defaultCompactionModel]
+    [applySelection]
   );
 
   const handleSelectCompaction = useCallback(
     (nextCompactionModel: string | null, providerId?: string | null) =>
       applySelection(
-        {
-          model,
-          providerId: activeProviderId,
-          compactionModel: nextCompactionModel,
-          compactionProviderId: providerId ?? null,
-        },
-        // The compaction model changed; the default main model is not touched.
-        {
-          model: defaultModel,
-          providerId: defaultProviderId,
-          compactionModel: nextCompactionModel ?? defaultCompactionModel,
-        },
+        { compactionModel: nextCompactionModel, compactionProviderId: providerId ?? null },
+        // "Use the default" (`null`) leaves the default alone.
+        nextCompactionModel === null ? {} : { compactionModel: nextCompactionModel },
         {
           // `null` means "inherit the global default", which the mid-turn
           // switch has no way to express: the running turn keeps the model
@@ -475,14 +531,7 @@ export default function ModelSelector({
           ...(providerId ? { compactionProviderId: providerId } : {}),
         }
       ),
-    [
-      activeProviderId,
-      applySelection,
-      defaultCompactionModel,
-      defaultModel,
-      defaultProviderId,
-      model,
-    ]
+    [applySelection]
   );
 
   const handleSelect: (modelName: string, providerId?: string) => void =

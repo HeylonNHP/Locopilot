@@ -118,6 +118,10 @@ function HomeInner() {
       providerId: state.defaultProviderId,
       compactionModel: null,
       compactionProviderId: null,
+      // The server resolves these from the defaults and pins them when it
+      // creates the conversation.
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
     },
   });
 

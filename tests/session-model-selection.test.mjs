@@ -39,8 +39,12 @@ const previousCwd = process.cwd();
 let createSession;
 let listSessions;
 let updateSessionSelection;
+let getSessionSelection;
 let subscribeSessionEvents;
 let validateSessionSelection;
+let validateSessionSelectionPatch;
+let mergeSessionSelection;
+let resolveCreationSelection;
 let chatReducer;
 let initialState;
 let parseSessionEvent;
@@ -49,11 +53,16 @@ beforeAll(async () => {
   // Must precede the import: `history.ts` builds `DB_PATH` at module load.
   process.chdir(root);
 
-  ({ createSession, listSessions, updateSessionSelection } = await import(
+  ({ createSession, listSessions, updateSessionSelection, getSessionSelection } = await import(
     moduleUrl('../src/services/history.ts')
   ));
   ({ subscribeSessionEvents } = await import(moduleUrl('../src/services/sessionEvents.ts')));
-  ({ validateSessionSelection } = await import(moduleUrl('../src/services/sessionSelection.ts')));
+  ({
+    validateSessionSelection,
+    validateSessionSelectionPatch,
+    mergeSessionSelection,
+    resolveCreationSelection,
+  } = await import(moduleUrl('../src/services/sessionSelection.ts')));
   ({ chatReducer, initialState } = await import(moduleUrl('../src/app/lib/chatStore.ts')));
   ({ parseSessionEvent } = await import(moduleUrl('../src/app/hooks/useSessionEvents.ts')));
 });
@@ -88,6 +97,8 @@ function row(id, overrides) {
     provider_id: 'minimax',
     compaction_model: null,
     compaction_provider_id: null,
+    reasoning_effort: null,
+    compaction_reasoning_effort: null,
     created_at: '2026-11-13 00:00:00',
     updated_at: '2026-11-13 00:00:00',
     ...overrides,
@@ -108,6 +119,8 @@ describe('the selection vocabulary', () => {
       providerId: 'deepseek',
       compactionModel: 'minimax-m3.1-flash',
       compactionProviderId: 'minimax',
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
     });
   });
 
@@ -119,13 +132,44 @@ describe('the selection vocabulary', () => {
       providerId: null,
       compactionModel: null,
       compactionProviderId: null,
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
     });
     expect(validateSessionSelection({ model: 'm', compactionModel: '' })).toStrictEqual({
       model: 'm',
       providerId: null,
       compactionModel: '',
       compactionProviderId: null,
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
     });
+  });
+
+  test('a reasoning level is validated, and null means "inherit the default"', () => {
+    // Absent and null both mean inherit; the two explicit levels travel.
+    expect(
+      validateSessionSelection({
+        model: 'm',
+        reasoningEffort: 'high',
+        compactionReasoningEffort: 'max',
+      })
+    ).toStrictEqual({
+      model: 'm',
+      providerId: null,
+      compactionModel: null,
+      compactionProviderId: null,
+      reasoningEffort: 'high',
+      compactionReasoningEffort: 'max',
+    });
+    expect(validateSessionSelection({ model: 'm', reasoningEffort: null })).toMatchObject({
+      reasoningEffort: null,
+    });
+    expect(validateSessionSelection({ model: 'm', reasoningEffort: 'loud' })).toBe(
+      'reasoningEffort must be one of: off, none, minimal, low, medium, high, xhigh, max'
+    );
+    expect(validateSessionSelection({ model: 'm', compactionReasoningEffort: 'loud' })).toBe(
+      'compactionReasoningEffort must be one of: off, none, minimal, low, medium, high, xhigh, max'
+    );
   });
 
   test('a selection without a model is rejected, and the reason names the field', () => {
@@ -135,6 +179,67 @@ describe('the selection vocabulary', () => {
       'providerId must be a string or null'
     );
     expect(validateSessionSelection('not an object')).toBe('The model selection must be an object');
+  });
+
+  test('a patch keeps only the keys it carries', () => {
+    // Absent means "leave unchanged"; an explicit null means "inherit". This
+    // is the rule that stops one picker from erasing another's field.
+    expect(validateSessionSelectionPatch({ reasoningEffort: 'high' })).toStrictEqual({
+      reasoningEffort: 'high',
+    });
+    expect(validateSessionSelectionPatch({ compactionModel: null })).toStrictEqual({
+      compactionModel: null,
+    });
+    expect(validateSessionSelectionPatch({})).toBe(
+      'The model selection patch must contain at least one field'
+    );
+    expect(validateSessionSelectionPatch({ reasoningEffort: 'loud' })).toBe(
+      'reasoningEffort must be one of: off, none, minimal, low, medium, high, xhigh, max'
+    );
+  });
+
+  test('a patch merges onto the stored selection without touching absent fields', () => {
+    const current = {
+      model: 'm',
+      providerId: 'p',
+      compactionModel: null,
+      compactionProviderId: null,
+      reasoningEffort: 'low',
+      compactionReasoningEffort: 'high',
+    };
+    expect(mergeSessionSelection(current, { reasoningEffort: 'max' })).toStrictEqual({
+      ...current,
+      reasoningEffort: 'max',
+    });
+    expect(mergeSessionSelection(current, { providerId: null })).toStrictEqual({
+      ...current,
+      providerId: null,
+    });
+  });
+
+  test('creation pins a level the caller did not send', () => {
+    const resolved = resolveCreationSelection(
+      {
+        model: 'm',
+        providerId: null,
+        compactionModel: null,
+        compactionProviderId: null,
+        reasoningEffort: null,
+        compactionReasoningEffort: 'low',
+      },
+      { reasoningEffort: 'high', compactionReasoningEffort: 'max' }
+    );
+    // The caller pinned the compaction level; the main level comes from the
+    // default. Neither is left null, so a later default change cannot move
+    // this conversation.
+    expect(resolved.reasoningEffort).toBe('high');
+    expect(resolved.compactionReasoningEffort).toBe('low');
+    expect(
+      resolveCreationSelection(
+        { ...resolved, reasoningEffort: null, compactionReasoningEffort: null },
+        {}
+      )
+    ).toMatchObject({ reasoningEffort: 'off', compactionReasoningEffort: 'off' });
   });
 });
 
@@ -148,6 +253,63 @@ describe('the selection in the database', () => {
     expect(stored.provider_id).toBe('deepseek');
     expect(stored.compaction_model).toBeNull();
     expect(stored.compaction_provider_id).toBeNull();
+    // Creation pins the levels; a level the caller did not send is inherited
+    // from the default (null from this test's point of view).
+    expect(stored.reasoning_effort).toBeNull();
+    expect(stored.compaction_reasoning_effort).toBeNull();
+  });
+
+  test('a conversation keeps its own reasoning levels', () => {
+    const id = createSession('New chat', {
+      ...SELECTION,
+      reasoningEffort: 'high',
+      compactionReasoningEffort: 'low',
+    });
+
+    expect(getSessionSelection(id)).toStrictEqual({
+      ...SELECTION,
+      reasoningEffort: 'high',
+      compactionReasoningEffort: 'low',
+    });
+  });
+
+  test('a field-preserving patch leaves the other fields alone', () => {
+    const id = createSession('New chat', {
+      ...SELECTION,
+      reasoningEffort: 'high',
+      compactionReasoningEffort: 'low',
+    });
+
+    const current = getSessionSelection(id);
+    updateSessionSelection(id, mergeSessionSelection(current, { reasoningEffort: 'max' }));
+    expect(getSessionSelection(id)).toStrictEqual({
+      ...SELECTION,
+      reasoningEffort: 'max',
+      compactionReasoningEffort: 'low',
+    });
+
+    const afterReasoning = getSessionSelection(id);
+    updateSessionSelection(
+      id,
+      mergeSessionSelection(afterReasoning, { model: 'gpt-5', providerId: 'openai' })
+    );
+    expect(getSessionSelection(id)).toStrictEqual({
+      model: 'gpt-5',
+      providerId: 'openai',
+      compactionModel: null,
+      compactionProviderId: null,
+      reasoningEffort: 'max',
+      compactionReasoningEffort: 'low',
+    });
+  });
+
+  test('an explicit null in a patch clears a level back to "inherit"', () => {
+    const id = createSession('New chat', { ...SELECTION, reasoningEffort: 'high' });
+    updateSessionSelection(
+      id,
+      mergeSessionSelection(getSessionSelection(id), { reasoningEffort: null })
+    );
+    expect(getSessionSelection(id).reasoningEffort).toBeNull();
   });
 
   test('a new selection replaces the old one', () => {
@@ -189,6 +351,8 @@ describe('the selection in the database', () => {
         providerId: 'minimax',
         compactionModel: null,
         compactionProviderId: null,
+        reasoningEffort: null,
+        compactionReasoningEffort: null,
       },
     ]);
   });
@@ -220,6 +384,135 @@ describe('the selection in the store', () => {
     state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
     expect(state.compactionModel).toBe('cheap');
     expect(state.compactionProviderId).toBe('openai');
+  });
+
+  test('switching conversations switches the reasoning levels with them', () => {
+    let state = chatReducer(initialState, {
+      type: 'SET_SESSIONS',
+      sessions: [
+        row(1, { reasoning_effort: 'high', compaction_reasoning_effort: 'low' }),
+        row(2, { reasoning_effort: 'minimal', compaction_reasoning_effort: 'max' }),
+      ],
+    });
+
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+    expect(state.reasoningEffort).toBe('high');
+    expect(state.compactionReasoningEffort).toBe('low');
+
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 2 });
+    expect(state.reasoningEffort).toBe('minimal');
+    expect(state.compactionReasoningEffort).toBe('max');
+  });
+
+  test('a legacy row with no level keeps inheriting the default', () => {
+    // NULL is a real state, not a value to resolve into the mirror: the
+    // display falls back to the default, and a later default change must
+    // reach this conversation.
+    let state = chatReducer(initialState, {
+      type: 'SET_CONFIG',
+      config: { defaultReasoningEffort: 'low', defaultCompactionReasoningEffort: 'low' },
+    });
+    state = chatReducer(state, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, {})],
+    });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+
+    expect(state.reasoningEffort).toBeNull();
+    expect(state.defaultReasoningEffort).toBe('low');
+
+    // The default changes; the pin stays NULL, so the display follows the
+    // new default.
+    state = chatReducer(state, {
+      type: 'SET_CONFIG',
+      config: { defaultReasoningEffort: 'high', defaultCompactionReasoningEffort: 'high' },
+    });
+    expect(state.reasoningEffort).toBeNull();
+    expect(state.defaultReasoningEffort).toBe('high');
+
+    // A stale session list must not pin the conversation to the old value.
+    state = chatReducer(state, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, {})],
+    });
+    expect(state.sessions[0].reasoning_effort).toBeNull();
+  });
+
+  test('a session list does not unpin a level the conversation has', () => {
+    // The conversation's row has a model but no level of its own, so the
+    // mirror's pin is null. Another tab picks a level and the next list
+    // carries it. The mirror's null must not be written over it: the
+    // conversation would silently fall back to the default until it was
+    // opened again.
+    let state = chatReducer(initialState, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, {})],
+    });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+    expect(state.model).toBe('minimax-m3.1-flash');
+    expect(state.reasoningEffort).toBeNull();
+
+    state = chatReducer(state, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, { reasoning_effort: 'high' })],
+    });
+    expect(state.sessions[0].reasoning_effort).toBe('high');
+  });
+
+  test('a pinned level survives a change of the default', () => {
+    let state = chatReducer(initialState, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, { reasoning_effort: 'low' })],
+    });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+    state = chatReducer(state, {
+      type: 'SET_CONFIG',
+      config: { defaultReasoningEffort: 'high' },
+    });
+
+    expect(state.reasoningEffort).toBe('low');
+    expect(state.defaultReasoningEffort).toBe('high');
+  });
+
+  test('a reasoning pick updates only its own default', () => {
+    let state = chatReducer(initialState, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, {})],
+      // The global defaults before the pick.
+    });
+    state = chatReducer(state, {
+      type: 'SET_CONFIG',
+      config: {
+        defaultReasoningEffort: 'off',
+        defaultCompactionReasoningEffort: 'medium',
+      },
+    });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+
+    state = chatReducer(state, {
+      type: 'SET_SESSION_SELECTION',
+      selection: {
+        model: 'minimax-m3.1-flash',
+        providerId: 'minimax',
+        compactionModel: null,
+        compactionProviderId: null,
+        reasoningEffort: 'high',
+        compactionReasoningEffort: null,
+      },
+      defaults: {
+        model: state.defaultModel,
+        providerId: state.defaultProviderId,
+        compactionModel: state.defaultCompactionModel,
+        reasoningEffort: 'high',
+        compactionReasoningEffort: state.defaultCompactionReasoningEffort,
+      },
+    });
+
+    expect(state.reasoningEffort).toBe('high');
+    expect(state.defaultReasoningEffort).toBe('high');
+    // The compaction level was not touched.
+    expect(state.compactionReasoningEffort).toBeNull();
+    expect(state.defaultCompactionReasoningEffort).toBe('medium');
   });
 
   test('picking a model pins the conversation and updates the default', () => {
@@ -414,6 +707,8 @@ describe('the selection on the wire', () => {
       providerId: 'openai',
       compactionModel: '',
       compactionProviderId: null,
+      reasoningEffort: 'high',
+      compactionReasoningEffort: null,
     });
 
     expect(parseSessionEvent(frame)).toStrictEqual({
@@ -424,7 +719,27 @@ describe('the selection on the wire', () => {
         providerId: 'openai',
         compactionModel: '',
         compactionProviderId: null,
+        reasoningEffort: 'high',
+        compactionReasoningEffort: null,
       },
+    });
+  });
+
+  test('an absent reasoning level in a frame means "inherit the default"', () => {
+    // Older frames (and a NULL row) carry no level; null is the honest
+    // reading, so the client falls back to the global default.
+    const frame = JSON.stringify({
+      kind: 'model-changed',
+      sessionId: 29,
+      model: 'gpt-5',
+      providerId: null,
+      compactionModel: null,
+      compactionProviderId: null,
+    });
+
+    expect(parseSessionEvent(frame)?.selection).toMatchObject({
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
     });
   });
 

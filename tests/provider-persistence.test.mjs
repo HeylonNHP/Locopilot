@@ -9,8 +9,9 @@ import { describe, expect, jest, test } from '@jest/globals';
 import { readFile } from 'node:fs/promises';
 
 import {
-  saveSessionDefaults,
-  saveSessionSelection,
+  saveDefaultsPatch,
+  saveSelectionChanges,
+  saveSessionPatch,
 } from '../src/app/lib/sessionSelectionClient.ts';
 
 const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), 'utf8');
@@ -27,9 +28,10 @@ const reasoningEffortSelector = await read(
 /**
  * Runs a writer against a stubbed `fetch` and returns what it wrote.
  *
- * The model picker and the `/model` command both save through
- * `saveSessionSelection`, so this is where the provider of the picked model
- * is decided: a model name alone does not say which endpoint serves it.
+ * Every control writes through one of these two functions: a field-preserving
+ * patch to the conversation's row and a field-preserving patch to the global
+ * defaults. The point of the separation is that a pick of one field cannot
+ * carry — or erase — another.
  */
 async function captureWrites(run) {
   const writes = [];
@@ -52,91 +54,67 @@ describe('provider persistence', () => {
   describe('the /model command', () => {
     test('the provider of the picked model travels with the model', async () => {
       const writes = await captureWrites(() =>
-        saveSessionSelection(
+        saveSelectionChanges(
           7,
-          {
-            model: 'qwen3-coder:30b',
-            providerId: 'openrouter',
-            compactionModel: null,
-            compactionProviderId: null,
-          },
-          { model: 'qwen3-coder:30b', providerId: 'openrouter', compactionModel: '' }
+          { model: 'qwen3-coder:30b', providerId: 'openrouter' },
+          { model: 'qwen3-coder:30b', providerId: 'openrouter' }
         )
       );
 
+      // The row carries exactly the fields the picker changed. The reasoning
+      // pins, the compaction model and its provider are untouched, so an
+      // older tab cannot erase them.
       expect(writes.sessionRow).toStrictEqual({
         model: 'qwen3-coder:30b',
         providerId: 'openrouter',
-        compactionModel: null,
-        compactionProviderId: null,
       });
       expect(writes.config).toStrictEqual({
         model: 'qwen3-coder:30b',
         activeProviderId: 'openrouter',
-        compactionModel: '',
       });
     });
 
-    test('the global defaults are written, not the conversation’s selection', async () => {
-      // A pick of the main model must not move the default compaction model,
-      // and a pick of the compaction model must not move the default main
-      // model: the two pickers are separate controls.
+    test('a pick of the main model does not move the compaction defaults', async () => {
       const writes = await captureWrites(() =>
-        saveSessionSelection(
+        saveSelectionChanges(
           7,
-          {
-            model: 'qwen3-coder:30b',
-            providerId: 'openrouter',
-            compactionModel: 'cheap-compactor',
-            compactionProviderId: 'openrouter',
-          },
-          { model: 'qwen3-coder:30b', providerId: 'openrouter', compactionModel: 'cheap-compactor' }
+          { model: 'qwen3-coder:30b', providerId: 'openrouter' },
+          { model: 'qwen3-coder:30b', providerId: 'openrouter' }
         )
       );
 
-      expect(writes.config).toStrictEqual({
-        model: 'qwen3-coder:30b',
-        activeProviderId: 'openrouter',
-        compactionModel: 'cheap-compactor',
-      });
+      expect(writes.config).not.toHaveProperty('compactionModel');
+      expect(writes.config).not.toHaveProperty('reasoningEffort');
+      expect(writes.config).not.toHaveProperty('compactionReasoningEffort');
     });
 
     test('a conversation that inherits the global compaction model keeps inheriting it', async () => {
       const writes = await captureWrites(() =>
-        saveSessionSelection(
-          7,
-          {
-            model: 'qwen3-coder:30b',
-            providerId: 'openrouter',
-            compactionModel: null,
-            compactionProviderId: null,
-          },
-          {
-            model: 'qwen3-coder:30b',
-            providerId: 'openrouter',
-            compactionModel: 'global-compactor',
-          }
-        )
+        saveSelectionChanges(7, { compactionModel: null }, {})
       );
 
-      // The conversation's own row keeps "inherit"; the global it inherits
-      // is written as the global it is, so the two cannot drift apart.
-      expect(writes.sessionRow.compactionModel).toBeNull();
-      expect(writes.config.compactionModel).toBe('global-compactor');
+      // "Use the default" is an explicit null in the row, and the default
+      // itself is not re-written.
+      expect(writes.sessionRow).toStrictEqual({ compactionModel: null });
+      expect(writes.config).toStrictEqual({});
     });
 
-    test('a failed save is reported instead of swallowed', async () => {
+    test('a reasoning pick writes only that level', async () => {
+      const writes = await captureWrites(() =>
+        saveSelectionChanges(7, { reasoningEffort: 'high' }, { reasoningEffort: 'high' })
+      );
+
+      expect(writes.sessionRow).toStrictEqual({ reasoningEffort: 'high' });
+      expect(writes.config).toStrictEqual({ reasoningEffort: 'high' });
+    });
+
+    test('a failed row save is reported instead of swallowed', async () => {
       const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false });
       try {
-        const saved = await saveSessionSelection(
+        const saved = await saveSelectionChanges(
           7,
-          {
-            model: 'qwen3-coder:30b',
-            providerId: 'openrouter',
-            compactionModel: null,
-            compactionProviderId: null,
-          },
-          { model: 'qwen3-coder:30b', providerId: 'openrouter', compactionModel: '' }
+          { model: 'qwen3-coder:30b', providerId: 'openrouter' },
+          { model: 'qwen3-coder:30b', providerId: 'openrouter' }
         );
         expect(saved).toBe(false);
       } finally {
@@ -144,9 +122,37 @@ describe('provider persistence', () => {
       }
     });
 
+    test('a failed defaults save is reported too', async () => {
+      // The row write succeeds; the config write does not. The UI must not
+      // dispatch the new default as saved — that was how a failed settings
+      // write used to look successful until the next reload.
+      const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(async (url) => ({
+        ok: !String(url).startsWith('/api/config'),
+      }));
+      try {
+        const saved = await saveSelectionChanges(
+          7,
+          { reasoningEffort: 'high' },
+          { reasoningEffort: 'high' }
+        );
+        expect(saved).toBe(false);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    test('a new chat has no row to write', async () => {
+      const writes = await captureWrites(() =>
+        saveSelectionChanges(null, { reasoningEffort: 'low' }, { reasoningEffort: 'low' })
+      );
+
+      expect(writes.sessionRow).toBeUndefined();
+      expect(writes.config).toStrictEqual({ reasoningEffort: 'low' });
+    });
+
     test('the defaults alone can be saved, without a conversation to pin', async () => {
       const writes = await captureWrites(() =>
-        saveSessionDefaults({
+        saveDefaultsPatch({
           model: 'qwen3-coder:30b',
           providerId: 'openrouter',
           compactionModel: 'cheap-compactor',
@@ -160,6 +166,16 @@ describe('provider persistence', () => {
         activeProviderId: 'openrouter',
         compactionModel: 'cheap-compactor',
       });
+    });
+
+    test('the selector writers are the only thing a control uses', async () => {
+      // A control must not build a /api/config body of its own: it would
+      // either send a whole settings object (re-asserting values another tab
+      // changed) or carry the conversation's selection into the defaults.
+      for (const source of [completionSelector, reasoningEffortSelector]) {
+        expect(source).not.toMatch(/body: JSON\.stringify\({[^}]*\bmodel,/);
+        expect(source).not.toMatch(/body: JSON\.stringify\({[^}]*\bcompactionModel,/);
+      }
     });
   });
 
@@ -184,32 +200,11 @@ describe('provider persistence', () => {
       expect(completionSelector).not.toContain('body: JSON.stringify({\n              baseUrl,');
     });
 
-    test('the completion and reasoning-effort payloads do not send the model selection', () => {
-      // The model selection belongs to the conversation now, and the config's
-      // `model` is the default a NEW conversation starts with. Sending the
-      // conversation's value here repoints that default - and a conversation
-      // that inherits the default compaction model sends a null, which the
-      // config route rejects with a 400, losing the setting the user chose.
-      for (const source of [completionSelector, reasoningEffortSelector]) {
-        expect(source).not.toMatch(/body: JSON\.stringify\({[^}]*\bmodel,/);
-        expect(source).not.toMatch(/body: JSON\.stringify\({[^}]*\bcompactionModel,/);
-      }
-    });
-
     test('the model selector persists the selected provider ID', async () => {
       const writes = await captureWrites(() =>
-        saveSessionSelection(
-          7,
-          {
-            model: 'qwen3-coder:30b',
-            providerId: 'openrouter',
-            compactionModel: null,
-            compactionProviderId: null,
-          },
-          { model: 'qwen3-coder:30b', providerId: 'openrouter', compactionModel: '' }
-        )
+        saveSessionPatch(7, { model: 'qwen3-coder:30b', providerId: 'openrouter' })
       );
-      expect(writes.config.activeProviderId).toBe('openrouter');
+      expect(writes.sessionRow.providerId).toBe('openrouter');
     });
   });
 });

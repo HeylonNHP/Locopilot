@@ -5,7 +5,7 @@ import { type Dispatch, type SetStateAction, useCallback } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { positiveInteger } from '@/app/lib/contextWindow';
-import { saveSessionSelection } from '@/app/lib/sessionSelectionClient';
+import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
 import { COMPACT_FOCUS_MAX_CHARS, normaliseCompactionFocus } from '@/services/compact/focus';
 import { formatCompactionReceipt } from '@/services/compact/receipt';
@@ -335,30 +335,56 @@ export function useSlashCommands({
                 typeof matched === 'string' ? undefined : matched.providerId;
               // The conversation on screen keeps the model of its own; the
               // global default follows, so the next new conversation starts
-              // on it.
+              // on it. Only the model fields are written — the reasoning
+              // pins, the compaction model and its provider are untouched.
+              const modelProviderId = selectedProviderId ?? refs.activeProviderIdRef.current;
               const selection = {
                 model: modelName,
-                providerId: selectedProviderId ?? refs.activeProviderIdRef.current,
+                providerId: modelProviderId,
                 compactionModel: refs.compactionModelRef.current,
                 compactionProviderId: refs.compactionProviderIdRef.current,
+                reasoningEffort: refs.reasoningEffortRef.current,
+                compactionReasoningEffort: refs.compactionReasoningEffortRef.current,
               };
+              // The main model changed; the default compaction model and
+              // both reasoning defaults are not touched.
               const defaults = {
-                model: selection.model,
-                providerId: selection.providerId,
-                // The main model changed; the default compaction model is not
-                // touched.
+                model: modelName,
+                providerId: modelProviderId,
                 compactionModel: refs.defaultCompactionModelRef.current,
+                reasoningEffort: refs.defaultReasoningEffortRef.current,
+                compactionReasoningEffort: refs.defaultCompactionReasoningEffortRef.current,
               };
-              const saved = await saveSessionSelection(
-                refs.sessionIdRef.current,
-                selection,
-                defaults
-              );
-              if (!saved) {
+              const sessionSaved = await saveSessionPatch(refs.sessionIdRef.current, {
+                model: modelName,
+                providerId: modelProviderId,
+              });
+              if (!sessionSaved) {
                 addSystem('The model could not be saved for this conversation.');
                 return;
               }
-              dispatch({ type: 'SET_SESSION_SELECTION', selection, defaults });
+              const defaultsSaved = await saveDefaultsPatch({
+                model: modelName,
+                providerId: modelProviderId,
+              });
+              if (!defaultsSaved) {
+                // The conversation's row IS saved, so the screen follows it
+                // (the server's row is the truth) and only the global
+                // default is behind.
+                const sessionId = refs.sessionIdRef.current;
+                if (sessionId !== null) {
+                  dispatch({ type: 'APPLY_SESSION_SELECTION', sessionId, selection });
+                }
+                addSystem(
+                  'The model was set for this conversation, but the default for new chats could not be saved.'
+                );
+                return;
+              }
+              dispatch({
+                type: 'SET_SESSION_SELECTION',
+                selection,
+                defaults,
+              });
               addSystem(
                 `Model set to ${typeof matched === 'string' ? matched : (matched.displayName ?? matched.name)}`
               );
@@ -446,7 +472,9 @@ export function useSlashCommands({
                 // it does for a chat turn.
                 compactionModel: refs.compactionModelRef.current ?? undefined,
                 compactionProviderId: refs.compactionProviderIdRef.current ?? undefined,
-                compactionReasoningEffort: refs.compactionReasoningEffortRef.current,
+                // Omitted when the conversation inherits the default, so the
+                // server's own body -> config resolution decides.
+                compactionReasoningEffort: refs.compactionReasoningEffortRef.current ?? undefined,
                 sessionId: compactSessionId,
                 // The text after `/compact`, if any: what the summary should
                 // keep. Omitted entirely when absent so the request body (and
@@ -645,7 +673,10 @@ export function useSlashCommands({
                 compactionProviderId: refs.compactionProviderIdRef.current ?? undefined,
                 sessionId: refs.sessionIdRef.current,
                 think: refs.thinkingEnabledRef.current,
-                reasoningEffort: refs.reasoningEffortRef.current,
+                // Title generation runs the COMPACTION model, so it uses
+                // that model's level. Omitted when the conversation inherits
+                // the default, which the server then resolves.
+                compactionReasoningEffort: refs.compactionReasoningEffortRef.current ?? undefined,
               }),
               signal: abortController.signal,
             });

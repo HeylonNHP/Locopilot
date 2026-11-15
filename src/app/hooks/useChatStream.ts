@@ -258,6 +258,10 @@ export function useChatStream(
             provider_id: data.providerId ?? null,
             compaction_model: data.compactionModel ?? null,
             compaction_provider_id: data.compactionProviderId ?? null,
+            // The levels the server PINNED at creation, not whatever happens
+            // to be on screen when the frame arrives.
+            reasoning_effort: data.reasoningEffort ?? null,
+            compaction_reasoning_effort: data.compactionReasoningEffort ?? null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -643,7 +647,12 @@ export function useChatStream(
         sessionId: originSessionId,
         yolo: refs.yoloRef.current,
         think: refs.thinkingEnabledRef.current,
-        reasoningEffort: refs.reasoningEffortRef.current,
+        // The conversation's OWN level. When it is null (it inherits the
+        // global default) the field is OMITTED, so the server's own
+        // body -> config resolution decides — the client does not repeat
+        // that rule in a second place.
+        reasoningEffort: refs.reasoningEffortRef.current ?? undefined,
+        compactionReasoningEffort: refs.compactionReasoningEffortRef.current ?? undefined,
         // A conversation that has not pinned a compaction model of its own
         // inherits the global one. The field is OMITTED in that case, so the
         // server's own resolution decides — the client does not repeat that

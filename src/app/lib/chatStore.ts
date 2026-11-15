@@ -84,6 +84,10 @@ export interface Session {
   compaction_model: string | null;
   /** The provider that serves `compaction_model`, or `null` when it is not pinned. */
   compaction_provider_id: string | null;
+  /** The main model's reasoning level, or `null` to inherit the global default. */
+  reasoning_effort: ReasoningEffort | null;
+  /** The compaction model's reasoning level, or `null` to inherit the global default. */
+  compaction_reasoning_effort: ReasoningEffort | null;
   created_at: string;
   updated_at: string;
 }
@@ -267,20 +271,32 @@ export interface ChatState {
   yolo: boolean;
   thinkingEnabled: boolean;
   /**
-   * Reasoning effort for OpenAI-compatible providers. Maps to the
-   * wire `reasoning_effort` field (`'off' → 'none'`, otherwise
+   * The reasoning effort of the conversation ON SCREEN's main model.
+   *
+   * This is the conversation's OWN pin: `null` means it inherits
+   * {@link defaultReasoningEffort}. The display and the request body resolve
+   * `pin ?? default` at the point of use — the pin is never resolved into the
+   * mirror, so a conversation created before per-conversation levels existed
+   * keeps following the default until the user picks a level.
+   *
+   * Maps to the wire `reasoning_effort` field (`'off' → 'none'`, otherwise
    * passthrough). Distinct from `thinkingEnabled` (Ollama-only).
-   * Defaults to 'off' so models with reasoning on by default don't
-   * silently reject chat-completions requests that include tools.
    */
-  reasoningEffort: ReasoningEffort;
+  reasoningEffort: ReasoningEffort | null;
   /**
-   * Reasoning effort for the COMPACTION model. Same canonical value space
-   * as `reasoningEffort` — the provider adapters translate it (Ollama maps
-   * `xhigh` → `max`, `off/none` → `false`). Defaults to 'off' (no explicit
-   * level; adapter defaults apply).
+   * The reasoning effort of the conversation ON SCREEN's compaction model.
+   * Same pin/default split as {@link reasoningEffort}. `null` means it
+   * inherits {@link defaultCompactionReasoningEffort}.
    */
-  compactionReasoningEffort: ReasoningEffort;
+  compactionReasoningEffort: ReasoningEffort | null;
+  /**
+   * The reasoning levels a NEW conversation starts with. These are global
+   * settings (they live in `config.json`), and they are what the Settings
+   * dropdown edits. A conversation that has not pinned its own level inherits
+   * them; the StatusBar popover pins the conversation on screen.
+   */
+  defaultReasoningEffort: ReasoningEffort;
+  defaultCompactionReasoningEffort: ReasoningEffort;
   /**
    * When true, the server-side chat route prepends a `[Sent …]` header to
    * each user-role message before sending it to the LLM. The
@@ -475,15 +491,15 @@ export type ChatAction =
   | {
       type: 'SET_SESSION_SELECTION';
       /**
-       * The model selection the user picked for the conversation on screen.
-       * It pins that conversation AND updates the global defaults, because
-       * picking a model is also what a new conversation starts with.
+       * The selection the user picked for the conversation on screen. It pins
+       * that conversation AND updates the global defaults, because picking a
+       * value is also what a new conversation starts with.
        *
-       * The defaults are stated rather than derived: a pick of the MAIN
-       * model changes the main defaults and leaves the compaction default
-       * alone, and a pick of the COMPACTION model changes the compaction
-       * default and leaves the main ones alone. The two pickers are separate
-       * controls, so each says which it is.
+       * The defaults are stated rather than derived: a pick of the MAIN model
+       * (or its reasoning level) changes the main defaults and leaves the
+       * compaction defaults alone, and a pick of the COMPACTION model (or its
+       * level) changes the compaction defaults and leaves the main ones alone.
+       * The pickers are separate controls, so each says which it is.
        */
       selection: SessionSelection;
       defaults: SessionDefaults;
@@ -522,7 +538,12 @@ export type ChatAction =
        */
       config: Omit<
         Partial<ChatState>,
-        'model' | 'activeProviderId' | 'compactionModel' | 'compactionProviderId'
+        | 'model'
+        | 'activeProviderId'
+        | 'compactionModel'
+        | 'compactionProviderId'
+        | 'reasoningEffort'
+        | 'compactionReasoningEffort'
       >;
     }
   | { type: 'SET_ACTIVE_SUBAGENT'; agentId: string | null; targetSessionId?: number }
@@ -780,12 +801,22 @@ function staleModelCapReset(
  */
 function selectionMirror(
   selection: SessionSelection
-): Pick<ChatState, 'model' | 'activeProviderId' | 'compactionModel' | 'compactionProviderId'> {
+): Pick<
+  ChatState,
+  | 'model'
+  | 'activeProviderId'
+  | 'compactionModel'
+  | 'compactionProviderId'
+  | 'reasoningEffort'
+  | 'compactionReasoningEffort'
+> {
   return {
     model: selection.model,
     activeProviderId: selection.providerId,
     compactionModel: selection.compactionModel,
     compactionProviderId: selection.compactionProviderId,
+    reasoningEffort: selection.reasoningEffort ?? null,
+    compactionReasoningEffort: selection.compactionReasoningEffort ?? null,
   };
 }
 
@@ -812,7 +843,9 @@ function patchSessionSelection(
     current.model === columns.model &&
     current.provider_id === columns.provider_id &&
     current.compaction_model === columns.compaction_model &&
-    current.compaction_provider_id === columns.compaction_provider_id
+    current.compaction_provider_id === columns.compaction_provider_id &&
+    current.reasoning_effort === columns.reasoning_effort &&
+    current.compaction_reasoning_effort === columns.compaction_reasoning_effort
   ) {
     return sessions;
   }
@@ -831,6 +864,10 @@ function mirrorSelection(state: ChatState): SessionSelection {
     providerId: state.activeProviderId,
     compactionModel: state.compactionModel,
     compactionProviderId: state.compactionProviderId,
+    // The RAW pins, not the effective values: a legacy row that inherits the
+    // default must stay inherited, and a projection must not pin it.
+    reasoningEffort: state.reasoningEffort ?? null,
+    compactionReasoningEffort: state.compactionReasoningEffort ?? null,
   };
 }
 
@@ -851,6 +888,8 @@ function selectionForSession(state: ChatState, sessionId: number | null): Sessio
         provider_id: row.provider_id,
         compaction_model: row.compaction_model,
         compaction_provider_id: row.compaction_provider_id,
+        reasoning_effort: row.reasoning_effort,
+        compaction_reasoning_effort: row.compaction_reasoning_effort,
       });
     }
   }
@@ -859,6 +898,11 @@ function selectionForSession(state: ChatState, sessionId: number | null): Sessio
     providerId: state.defaultProviderId,
     compactionModel: null,
     compactionProviderId: null,
+    // A new chat INHERITS the defaults until the server pins them at
+    // creation: `null` is the honest mirror of "not pinned yet", and the
+    // display resolves it to the default.
+    reasoningEffort: null,
+    compactionReasoningEffort: null,
   };
 }
 
@@ -1289,9 +1333,26 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       const sessions =
         active === null || activeSelection.model === ''
           ? action.sessions
-          : action.sessions.map((row) =>
-              row.id === active ? { ...row, ...selectionToColumns(activeSelection) } : row
-            );
+          : action.sessions.map((row) => {
+              if (row.id !== active) return row;
+              const columns = selectionToColumns(activeSelection);
+              return {
+                ...row,
+                ...columns,
+                // A NULL pin means "inherit the global default", but it also
+                // means "this conversation's own row has not been loaded
+                // yet". The list's own value wins in that case: writing the
+                // mirror's null over it would silently unpin a conversation
+                // that has a level of its own, and the level would only come
+                // back on the next load of that conversation.
+                ...(columns.reasoning_effort === null
+                  ? { reasoning_effort: row.reasoning_effort }
+                  : {}),
+                ...(columns.compaction_reasoning_effort === null
+                  ? { compaction_reasoning_effort: row.compaction_reasoning_effort }
+                  : {}),
+              };
+            });
       return { ...state, sessions };
     }
     case 'ADD_SESSION': {
@@ -1431,17 +1492,20 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
     case 'SET_SESSION_SELECTION': {
       const { selection, defaults } = action;
       const sessions = patchSessionSelection(state.sessions, state.currentSessionId, selection);
-      // Picking a model is also what a new conversation starts with: the
-      // user expects the next "New chat" to start on the model they just
-      // chose. The defaults say WHICH part of the selection the pick
-      // changed, so picking the compaction model does not move the default
-      // main model.
+      // Picking a value is also what a new conversation starts with: the
+      // user expects the next "New chat" to start on the model (or level)
+      // they just chose. The defaults say WHICH part of the selection the
+      // pick changed, so picking the compaction model does not move the
+      // default main model, and a pick of one reasoning level leaves the
+      // other default alone.
       const nextState: ChatState = {
         ...state,
         sessions,
         defaultModel: defaults.model,
         defaultProviderId: defaults.providerId,
         defaultCompactionModel: defaults.compactionModel,
+        defaultReasoningEffort: defaults.reasoningEffort,
+        defaultCompactionReasoningEffort: defaults.compactionReasoningEffort,
       };
       return applySelection(nextState, selection);
     }
@@ -1482,13 +1546,24 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       // The clamp is the server's responsibility. SET_CONFIG only
       // stores the user's requested value; the effective value is
       // updated by SET_TOKEN_STATS when the server reports back.
-      const { defaultModel, defaultProviderId, defaultCompactionModel, ...rest } = action.config;
+      const {
+        defaultModel,
+        defaultProviderId,
+        defaultCompactionModel,
+        defaultReasoningEffort,
+        defaultCompactionReasoningEffort,
+        ...rest
+      } = action.config;
       const nextState: ChatState = {
         ...state,
         ...rest,
         ...(defaultModel === undefined ? {} : { defaultModel }),
         ...(defaultProviderId === undefined ? {} : { defaultProviderId }),
         ...(defaultCompactionModel === undefined ? {} : { defaultCompactionModel }),
+        ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
+        ...(defaultCompactionReasoningEffort === undefined
+          ? {}
+          : { defaultCompactionReasoningEffort }),
       };
       // A conversation on screen keeps the selection of its own. Only the
       // new-chat view follows the default: a conversation whose row has not
@@ -1920,8 +1995,10 @@ export const initialState: ChatState = {
   pendingApprovalId: null,
   yolo: false,
   thinkingEnabled: true,
-  reasoningEffort: 'off',
-  compactionReasoningEffort: 'off',
+  reasoningEffort: null,
+  compactionReasoningEffort: null,
+  defaultReasoningEffort: 'off',
+  defaultCompactionReasoningEffort: 'off',
   promptTimestamps: true,
   citeSources: true,
   redactSecrets: true,

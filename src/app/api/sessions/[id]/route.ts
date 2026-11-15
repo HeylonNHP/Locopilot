@@ -6,12 +6,17 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { enqueueSessionOperation } from '@/app/lib/sessionWriteQueue';
 import {
   deleteSession,
+  getSessionSelection,
   listSessions,
   loadSessionMessages,
   sessionExists,
   updateSessionSelection,
 } from '@/services/history';
-import { validateSessionSelection } from '@/services/sessionSelection';
+import {
+  mergeSessionSelection,
+  type SessionSelection,
+  validateSessionSelectionPatch,
+} from '@/services/sessionSelection';
 import { removeOutputsForSession } from '@/tools/runCommandOutputStore';
 
 export const dynamic = 'force-dynamic';
@@ -73,19 +78,34 @@ export async function PATCH(
       );
     }
 
-    const selection = validateSessionSelection(await request.json());
-    if (typeof selection === 'string') {
-      return NextResponse.json({ error: selection }, { status: 400 });
+    const patch = validateSessionSelectionPatch(await request.json());
+    if (typeof patch === 'string') {
+      return NextResponse.json({ error: patch }, { status: 400 });
     }
 
     // Queued alongside the session's message writes so the selection cannot
     // land in the middle of one. The existence check is repeated inside the
     // queue: the conversation can be deleted while this request waits its
     // turn.
-    await enqueueSessionOperation(sessionId, () => {
-      if (!sessionExists(sessionId)) return;
-      updateSessionSelection(sessionId, selection);
+    //
+    // The patch is merged onto the row as it is at WRITE time, not onto the
+    // copy the request happened to carry: a control writes only the fields it
+    // edited, so an older tab cannot erase a field another tab just changed.
+    const selection = await enqueueSessionOperation<SessionSelection | null>(sessionId, () => {
+      if (!sessionExists(sessionId)) return null;
+      const current = getSessionSelection(sessionId);
+      if (!current) return null;
+      const merged = mergeSessionSelection(current, patch);
+      updateSessionSelection(sessionId, merged);
+      return merged;
     });
+
+    if (selection === null) {
+      return NextResponse.json(
+        { error: `Session with id ${sessionId} not found.` },
+        { status: 404 }
+      );
+    }
 
     return NextResponse.json({ success: true, selection });
   } catch (err) {

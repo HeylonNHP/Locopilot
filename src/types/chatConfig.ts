@@ -167,9 +167,14 @@ export interface Config {
   yolo?: boolean;
   thinkingEnabled?: boolean;
   /**
-   * Reasoning effort. For OpenAI-compatible providers this maps to the
-   * `reasoning_effort` wire field; for Ollama it maps to Ollama's `think`
-   * level (low/medium/high/max).
+   * The reasoning effort a NEW conversation starts with, and the level a
+   * conversation that has not pinned its own inherits. The conversation on
+   * screen keeps its own level in its `sessions` row (`reasoning_effort`);
+   * the StatusBar popover edits that, and the Settings modal's "(new chats)"
+   * dropdown edits this default.
+   *
+   * For OpenAI-compatible providers this maps to the `reasoning_effort` wire
+   * field; for Ollama it maps to Ollama's `think` level (low/medium/high/max).
    *   - 'off'    → 'none'   (explicit off; required for models with
    *                        reasoning forced on by the provider)
    *   - 'none'   → 'none'
@@ -188,8 +193,10 @@ export interface Config {
    */
   reasoningEffort?: ReasoningEffort;
   /**
-   * Reasoning effort for the compaction model. Same canonical value space
-   * as `reasoningEffort`; threaded through the compaction pipeline to the
+   * The reasoning effort for the COMPACTION model that a new conversation
+   * starts with (the per-conversation counterpart is
+   * `sessions.compaction_reasoning_effort`). Same canonical value space as
+   * `reasoningEffort`; threaded through the compaction pipeline to the
    * provider adapters. Defaults to 'off' (no explicit level forwarded).
    */
   compactionReasoningEffort?: ReasoningEffort;

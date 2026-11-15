@@ -92,6 +92,10 @@ export function useSessionActions({
           providerId: selection.providerId,
           compactionModel: selection.compactionModel,
           compactionProviderId: selection.compactionProviderId,
+          // Null means "inherit the global default", and the server resolves
+          // and PINS it when it creates the row.
+          reasoningEffort: selection.reasoningEffort,
+          compactionReasoningEffort: selection.compactionReasoningEffort,
         }),
       });
       if (res.ok) {

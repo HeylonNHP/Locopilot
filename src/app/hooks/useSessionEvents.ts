@@ -6,6 +6,7 @@ import type { SessionSelection } from '@/services/sessionSelection';
 
 import { useChat } from '@/app/lib/chatStore';
 import { SESSIONS_SSE_EVENT_NAME } from '@/services/sseNames';
+import { isReasoningEffort } from '@/types/chatConfig';
 
 /**
  * Keeps the session list live by subscribing to
@@ -53,6 +54,8 @@ export function parseSessionEvent(
       providerId?: unknown;
       compactionModel?: unknown;
       compactionProviderId?: unknown;
+      reasoningEffort?: unknown;
+      compactionReasoningEffort?: unknown;
     };
     if (typeof payload.sessionId !== 'number') return null;
     if (payload.kind === 'renamed') {
@@ -71,6 +74,14 @@ export function parseSessionEvent(
             typeof payload.compactionModel === 'string' ? payload.compactionModel : null,
           compactionProviderId:
             typeof payload.compactionProviderId === 'string' ? payload.compactionProviderId : null,
+          // An absent or unrecognised level means "inherit the global
+          // default", which is what a NULL row means everywhere else.
+          reasoningEffort: isReasoningEffort(payload.reasoningEffort)
+            ? payload.reasoningEffort
+            : null,
+          compactionReasoningEffort: isReasoningEffort(payload.compactionReasoningEffort)
+            ? payload.compactionReasoningEffort
+            : null,
         },
       };
     }

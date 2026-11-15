@@ -315,8 +315,12 @@ export async function POST(request: NextRequest): Promise<Response> {
           signal: request.signal,
           // 'off' is the UI default and means "no explicit level"; only
           // forward an explicit reasoning level so the adapter applies its
-          // own default mapping. Mirrors the chat route's convention.
-          reasoningEffort: forwardableReasoningEffort(compactionReasoningEffort),
+          // own default mapping. Mirrors the chat route's convention. The
+          // body's pin wins; a conversation that inherits falls back to the
+          // saved default.
+          reasoningEffort: forwardableReasoningEffort(
+            compactionReasoningEffort ?? config?.compactionReasoningEffort
+          ),
           // Live compaction speed for the t/s badge.
           onTps: (tps: number) => {
             sendEvent('status', { phase: 'compacting', tps });

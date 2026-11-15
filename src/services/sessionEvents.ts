@@ -34,6 +34,8 @@
  * SQLite handle.
  */
 
+import type { ReasoningEffort } from '@/types/chatConfig';
+
 export type SessionEvent =
   | {
       kind: 'renamed';
@@ -52,6 +54,10 @@ export type SessionEvent =
       compactionModel: string | null;
       /** The provider that serves `compactionModel`, or `null` when it is not pinned. */
       compactionProviderId: string | null;
+      /** The main model's reasoning level, or `null` when it inherits the global default. */
+      reasoningEffort: ReasoningEffort | null;
+      /** The compaction model's reasoning level, or `null` when it inherits the global default. */
+      compactionReasoningEffort: ReasoningEffort | null;
     };
 
 type Listener = (event: SessionEvent) => void;

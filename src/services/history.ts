@@ -19,6 +19,7 @@ import Database from 'better-sqlite3';
 import { debugLog } from '@/app/lib/debugLogger';
 import { DB_PATH } from '@/services/paths';
 import {
+  selectionFromColumns,
   selectionToColumns,
   type SessionSelection,
   type SessionSelectionColumns,
@@ -176,6 +177,12 @@ addColumnIfMissing('ALTER TABLE sessions ADD COLUMN last_total_tokens INTEGER');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN compaction_model TEXT');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN compaction_provider_id TEXT');
+// The reasoning levels of the two models. Nullable on purpose: NULL means
+// "inherit the global default", so a conversation created before this feature
+// keeps following the default until the user picks a level. Creation pins the
+// resolved values (`resolveCreationSelection`), so new rows are never NULL.
+addColumnIfMissing('ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT');
+addColumnIfMissing('ALTER TABLE sessions ADD COLUMN compaction_reasoning_effort TEXT');
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT ''");
@@ -188,8 +195,10 @@ addColumnIfMissing('ALTER TABLE messages_staging ADD COLUMN created_at DATETIME'
 // Prepared statements (created once, reused on every call)
 // ---------------------------------------------------------------------------
 
-const stmtInsertSession = db.prepare<[string, string, string | null, string | null, string | null]>(
-  'INSERT INTO sessions (name, model, provider_id, compaction_model, compaction_provider_id) VALUES (?, ?, ?, ?, ?)'
+const stmtInsertSession = db.prepare<
+  [string, string, string | null, string | null, string | null, string | null, string | null]
+>(
+  'INSERT INTO sessions (name, model, provider_id, compaction_model, compaction_provider_id, reasoning_effort, compaction_reasoning_effort) VALUES (?, ?, ?, ?, ?, ?, ?)'
 );
 
 /**
@@ -201,9 +210,13 @@ const stmtInsertSession = db.prepare<[string, string, string | null, string | nu
  * sidebar for something the user did not do in the conversation.
  */
 const stmtUpdateSessionSelection = db.prepare<
-  [string, string | null, string | null, string | null, number]
+  [string, string | null, string | null, string | null, string | null, string | null, number]
 >(
-  'UPDATE sessions SET model = ?, provider_id = ?, compaction_model = ?, compaction_provider_id = ? WHERE id = ?'
+  'UPDATE sessions SET model = ?, provider_id = ?, compaction_model = ?, compaction_provider_id = ?, reasoning_effort = ?, compaction_reasoning_effort = ? WHERE id = ?'
+);
+
+const stmtGetSessionSelection = db.prepare<[number]>(
+  'SELECT model, provider_id, compaction_model, compaction_provider_id, reasoning_effort, compaction_reasoning_effort FROM sessions WHERE id = ?'
 );
 
 const stmtUpdateSessionName = db.prepare<[string, number]>(
@@ -339,7 +352,9 @@ export function createSession(name: string, selection: SessionSelection): number
     columns.model,
     columns.provider_id,
     columns.compaction_model,
-    columns.compaction_provider_id
+    columns.compaction_provider_id,
+    columns.reasoning_effort,
+    columns.compaction_reasoning_effort
   );
   return result.lastInsertRowid as number;
 }
@@ -358,6 +373,8 @@ export function updateSessionSelection(sessionId: number, selection: SessionSele
     columns.provider_id,
     columns.compaction_model,
     columns.compaction_provider_id,
+    columns.reasoning_effort,
+    columns.compaction_reasoning_effort,
     sessionId
   );
   emitSessionEvent({
@@ -367,7 +384,21 @@ export function updateSessionSelection(sessionId: number, selection: SessionSele
     providerId: selection.providerId,
     compactionModel: selection.compactionModel,
     compactionProviderId: selection.compactionProviderId,
+    reasoningEffort: columns.reasoning_effort,
+    compactionReasoningEffort: columns.compaction_reasoning_effort,
   });
+}
+
+/**
+ * A conversation's stored selection, or `undefined` when it does not exist.
+ *
+ * The `PATCH` route reads this inside the per-session queue to merge a
+ * field-preserving patch onto the row that is current at write time, not onto
+ * the copy the request happened to carry.
+ */
+export function getSessionSelection(sessionId: number): SessionSelection | undefined {
+  const row = stmtGetSessionSelection.get(sessionId) as SessionSelectionColumns | undefined;
+  return row === undefined ? undefined : selectionFromColumns(row);
 }
 
 /**

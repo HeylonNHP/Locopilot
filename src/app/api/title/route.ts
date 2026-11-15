@@ -15,6 +15,7 @@ import {
 import { resolveCompactionModel } from '@/services/modelManager';
 import { resolveProviderRequestContext } from '@/services/providerResolver';
 import { generateSessionTitle } from '@/services/titleGeneration';
+import { isReasoningEffort, type ReasoningEffort } from '@/types/chatConfig';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,11 +35,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const sessionId = body.sessionId;
   const think: boolean | undefined = body.think as boolean | undefined;
   const reasoningEffortRaw: unknown = body.reasoningEffort;
-  const reasoningEffort: 'off' | 'low' | 'medium' | 'high' | undefined =
-    reasoningEffortRaw === 'off' ||
-    reasoningEffortRaw === 'low' ||
-    reasoningEffortRaw === 'medium' ||
-    reasoningEffortRaw === 'high'
+  const compactionReasoningEffortRaw: unknown = body.compactionReasoningEffort;
+  // Title generation runs the COMPACTION model, so the compaction level is
+  // the one that applies. The main field is kept as a legacy fallback for a
+  // client that has not been updated yet.
+  const reasoningEffort: ReasoningEffort | undefined = isReasoningEffort(
+    compactionReasoningEffortRaw
+  )
+    ? compactionReasoningEffortRaw
+    : isReasoningEffort(reasoningEffortRaw)
       ? reasoningEffortRaw
       : undefined;
 
@@ -170,7 +175,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       compactionNumCtx,
       undefined,
       typeof think === 'boolean' ? think : undefined,
-      reasoningEffort
+      reasoningEffort ?? savedConfig.config.compactionReasoningEffort
     );
 
     await enqueueSessionRename(parsedSessionId, title);

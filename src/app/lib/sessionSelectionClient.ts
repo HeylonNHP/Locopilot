@@ -1,78 +1,98 @@
 'use client';
 
-import type { SessionDefaults, SessionSelection } from '@/services/sessionSelection';
+import type { SessionDefaultsPatch, SessionSelectionPatch } from '@/services/sessionSelection';
 
 /**
  * The body that writes the global defaults - what a NEW conversation starts
  * with - to `config.json`.
  *
- * The defaults are written, not a conversation's selection: a pick of the
- * main model must not move the default compaction model, and a pick of the
- * compaction model must not move the default main model.
+ * Only the keys the caller actually changed are sent: `PUT /api/config`
+ * merges, so a reasoning pick must not re-write the default model another
+ * tab may have just changed. A null provider id means "not pinned" and is
+ * omitted, as before.
  */
-function defaultsBody(defaults: SessionDefaults): Record<string, unknown> {
+function defaultsBody(patch: SessionDefaultsPatch): Record<string, unknown> {
   return {
-    model: defaults.model,
-    // A null provider id means "not pinned": the config keeps the id it
-    // has, and the reconciler re-derives one from the model.
-    ...(defaults.providerId === null ? {} : { activeProviderId: defaults.providerId }),
-    compactionModel: defaults.compactionModel,
+    ...(patch.model === undefined ? {} : { model: patch.model }),
+    ...(patch.providerId === null || patch.providerId === undefined
+      ? {}
+      : { activeProviderId: patch.providerId }),
+    ...(patch.compactionModel === undefined ? {} : { compactionModel: patch.compactionModel }),
+    ...(patch.reasoningEffort === undefined ? {} : { reasoningEffort: patch.reasoningEffort }),
+    ...(patch.compactionReasoningEffort === undefined
+      ? {}
+      : { compactionReasoningEffort: patch.compactionReasoningEffort }),
   };
 }
 
 /**
- * Save the global defaults alone.
+ * Save a field-preserving change to the global defaults.
  *
- * Used when there is no conversation to pin: a new-chat view, or a
- * conversation whose model is not set.
+ * Returns false when the server refused it. The defaults are what a new
+ * conversation starts with; the conversation on screen is unaffected.
  */
-export async function saveSessionDefaults(defaults: SessionDefaults): Promise<void> {
+export async function saveDefaultsPatch(patch: SessionDefaultsPatch): Promise<boolean> {
   try {
-    await fetch('/api/config', {
+    const res = await fetch('/api/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(defaultsBody(defaults)),
+      body: JSON.stringify(defaultsBody(patch)),
     });
+    return res.ok;
   } catch {
-    // The defaults are what a new conversation starts with; the conversation
-    // on screen is unaffected.
+    return false;
   }
 }
 
 /**
- * Save the model selection of the conversation on screen.
+ * Save a field-preserving change to a conversation's selection.
  *
- * Two writes, because the selection lives in two places: the conversation's
- * own row, so the conversation keeps this model when it is opened again, and
- * the global defaults, so the next new conversation starts on it.
+ * A new chat has no row yet: there is nothing to write, and the values become
+ * part of the `POST /api/sessions` body that creates it.
  *
- * The conversation's row is written first, because it is the one that
- * matters: a global default that failed to save costs the user the model of
- * their next new conversation, while a row that failed to save would lose
- * the model of the conversation they are in.
- *
- * Returns false when the conversation's row could not be written. The caller
- * puts the old selection back: a selection the server does not know about is
- * a selection that is lost on the next reload.
+ * Returns false when the row could not be written. The caller puts the old
+ * selection back / reports the failure: a selection the server does not know
+ * about is a selection that is lost on the next reload.
  */
-export async function saveSessionSelection(
+export async function saveSessionPatch(
   sessionId: number | null,
-  selection: SessionSelection,
-  defaults: SessionDefaults
+  patch: SessionSelectionPatch
 ): Promise<boolean> {
+  if (sessionId === null) return true;
   try {
-    if (sessionId !== null) {
-      const res = await fetch(`/api/sessions/${sessionId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(selection),
-      });
-      if (!res.ok) return false;
-    }
+    const res = await fetch(`/api/sessions/${sessionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    return res.ok;
   } catch {
     return false;
   }
+}
 
-  await saveSessionDefaults(defaults);
-  return true;
+/**
+ * Save a selection change and the defaults that follow it.
+ *
+ * Two writes, because the change lives in two places: the conversation's own
+ * row (so it keeps the value when opened again) and the global defaults (so
+ * the next new conversation starts with it). Each write carries only the
+ * fields the control edited.
+ *
+ * The conversation's row is written first, because it is the one that
+ * matters: a global default that failed to save costs the user the value of
+ * their next new conversation, while a row that failed to save would lose the
+ * value of the conversation they are in.
+ *
+ * Returns false when EITHER write failed. The caller must not dispatch the
+ * new values as saved in that case — in particular, a defaults write that
+ * failed must not be shown as the new default.
+ */
+export async function saveSelectionChanges(
+  sessionId: number | null,
+  selectionPatch: SessionSelectionPatch,
+  defaultsPatch: SessionDefaultsPatch
+): Promise<boolean> {
+  if (!(await saveSessionPatch(sessionId, selectionPatch))) return false;
+  return saveDefaultsPatch(defaultsPatch);
 }

@@ -28,6 +28,7 @@ export default function StatusBar() {
     models,
     modelsLoading,
     reasoningEffort,
+    defaultReasoningEffort,
     providers,
     activeProviderId,
     modelSwitchPendingSessions,
@@ -192,7 +193,12 @@ export default function StatusBar() {
   const modeLabel =
     normalizedCompletionMode === 'prompt-loop' ? `Prompt loop (${maxLabel})` : 'Normal';
 
-  const reasoningLabel = reasoningEffort.charAt(0).toUpperCase() + reasoningEffort.slice(1);
+  // The conversation's own level, or the global default it inherits. The
+  // store keeps the PIN (null = inherit) so a legacy row keeps following the
+  // default; the display resolves it here.
+  const effectiveReasoningEffort = reasoningEffort ?? defaultReasoningEffort;
+  const reasoningLabel =
+    effectiveReasoningEffort.charAt(0).toUpperCase() + effectiveReasoningEffort.slice(1);
 
   return (
     <div className="statusbar">

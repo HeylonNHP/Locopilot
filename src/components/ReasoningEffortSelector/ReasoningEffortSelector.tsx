@@ -2,8 +2,11 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import type { SessionDefaults, SessionSelection } from '@/services/sessionSelection';
+
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { useChat } from '@/app/lib/chatStore';
+import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import {
   type ProviderConfig,
   REASONING_EFFORT_LABELS,
@@ -69,18 +72,26 @@ export default function ReasoningEffortSelector({
   // streaming, defeating useCallback).
   const {
     model,
-    yolo,
-    thinkingEnabled,
+    currentSessionId,
     compactionModel,
     compactionProviderId,
-    chatTimeoutMs,
-    webSearch,
     reasoningEffort,
     compactionReasoningEffort,
+    defaultModel,
+    defaultProviderId,
+    defaultCompactionModel,
+    defaultReasoningEffort,
+    defaultCompactionReasoningEffort,
     providers,
     activeProviderId,
     models,
   } = state;
+
+  // The level the conversation actually runs at: its own pin, or the global
+  // default it inherits.
+  const effectiveReasoningEffort = reasoningEffort ?? defaultReasoningEffort;
+  const effectiveCompactionReasoningEffort =
+    compactionReasoningEffort ?? defaultCompactionReasoningEffort;
 
   // Resolve the active provider for the main model from `providers[]` +
   // `activeProviderId` (the legacy top-level `state.provider` field is stale
@@ -148,47 +159,98 @@ export default function ReasoningEffortSelector({
   // Close on outside click and Escape
   useClickOutsideEscape(panelRef, { isOpen, onClose });
 
-  const persist = useCallback(
-    async (config: Record<string, unknown>) => {
-      dispatch({ type: 'SET_CONFIG', config });
+  /**
+   * Save one level.
+   *
+   * Only the level the user changed is written (the session row and the
+   * global default for that field), so this control cannot move the other
+   * default or any of the model fields. The conversation on screen follows
+   * the pick only once the server has accepted it: a level the server does
+   * not know about is a level that is lost on the next reload.
+   */
+  const persistLevel = useCallback(
+    async (field: 'reasoningEffort' | 'compactionReasoningEffort', level: ReasoningEffort) => {
+      const selectionPatch =
+        field === 'reasoningEffort'
+          ? { reasoningEffort: level }
+          : { compactionReasoningEffort: level };
+      // A pick is also what the next new conversation starts with.
+      const defaultsPatch =
+        field === 'reasoningEffort'
+          ? { reasoningEffort: level }
+          : { compactionReasoningEffort: level };
 
-      try {
-        await fetch('/api/config', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            // The model selection is NOT sent: it belongs to the conversation,
-            // and the config's `model` is the default a new conversation
-            // starts with. Sending the conversation's value here would
-            // repoint that default, and a conversation that inherits the
-            // default compaction model sends a null the config route
-            // rejects - which would lose this setting.
-            yolo,
-            thinkingEnabled,
-            chatTimeoutMs,
-            webSearch,
-            ...config,
-          }),
+      const selection: SessionSelection = {
+        model,
+        providerId: activeProviderId,
+        compactionModel,
+        compactionProviderId,
+        reasoningEffort: field === 'reasoningEffort' ? level : reasoningEffort,
+        compactionReasoningEffort:
+          field === 'compactionReasoningEffort' ? level : compactionReasoningEffort,
+      };
+      const defaults: SessionDefaults = {
+        model: defaultModel,
+        providerId: defaultProviderId,
+        compactionModel: defaultCompactionModel,
+        reasoningEffort: field === 'reasoningEffort' ? level : defaultReasoningEffort,
+        compactionReasoningEffort:
+          field === 'compactionReasoningEffort' ? level : defaultCompactionReasoningEffort,
+      };
+
+      const sessionSaved = await saveSessionPatch(currentSessionId, selectionPatch);
+      if (!sessionSaved) {
+        dispatch({
+          type: 'SET_ERROR',
+          error: 'The reasoning level could not be saved for this conversation.',
         });
-      } catch {
-        /* ignore */
+        return;
       }
+      const defaultsSaved = await saveDefaultsPatch(defaultsPatch);
+      if (!defaultsSaved) {
+        // The conversation's row IS saved, so the screen follows it (the
+        // server's row is the truth) and only the global default is behind.
+        if (currentSessionId !== null) {
+          dispatch({ type: 'APPLY_SESSION_SELECTION', sessionId: currentSessionId, selection });
+        }
+        dispatch({
+          type: 'SET_ERROR',
+          error: 'The reasoning level was saved for this conversation, but not for new chats.',
+        });
+        return;
+      }
+
+      dispatch({ type: 'SET_SESSION_SELECTION', selection, defaults });
     },
-    [dispatch, yolo, thinkingEnabled, chatTimeoutMs, webSearch]
+    [
+      activeProviderId,
+      compactionModel,
+      compactionProviderId,
+      compactionReasoningEffort,
+      defaultCompactionModel,
+      defaultCompactionReasoningEffort,
+      defaultModel,
+      defaultProviderId,
+      defaultReasoningEffort,
+      currentSessionId,
+      dispatch,
+      model,
+      reasoningEffort,
+    ]
   );
 
   const handleChangeMain = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
-      void persist({ reasoningEffort: e.target.value as ReasoningEffort });
+      void persistLevel('reasoningEffort', e.target.value as ReasoningEffort);
     },
-    [persist]
+    [persistLevel]
   );
 
   const handleChangeCompaction = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
-      void persist({ compactionReasoningEffort: e.target.value as ReasoningEffort });
+      void persistLevel('compactionReasoningEffort', e.target.value as ReasoningEffort);
     },
-    [persist]
+    [persistLevel]
   );
 
   if (!isOpen) return null;
@@ -211,7 +273,7 @@ export default function ReasoningEffortSelector({
             Main model
             <select
               className="reasoning-effort-selector-select"
-              value={reasoningEffort}
+              value={effectiveReasoningEffort}
               onChange={handleChangeMain}
               disabled={!mainSupported}
             >
@@ -231,7 +293,7 @@ export default function ReasoningEffortSelector({
             Compaction model
             <select
               className="reasoning-effort-selector-select"
-              value={compactionReasoningEffort}
+              value={effectiveCompactionReasoningEffort}
               onChange={handleChangeCompaction}
               disabled={!compactionSupported}
             >
