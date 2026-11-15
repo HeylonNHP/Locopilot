@@ -8,9 +8,9 @@ import {
   DEFAULT_ADAPTER_RETRY,
   DEFAULT_RETRYABLE_STATUSES,
   DEFAULT_WEB_SEARCH_SETTINGS,
-  defaultWebSearchSettings,
   MAX_RETRY_BASE_DELAY_MS,
   MAX_RETRY_MAX_DELAY_MS,
+  resolveWebSearchRequestTimeoutMs,
   RETRY_MAX_ATTEMPTS_LIMIT,
   RETRY_MAX_ATTEMPTS_MIN,
   type WebSearchSettingsShape,
@@ -76,9 +76,17 @@ const KNOWN_RETRY_KEYS: Set<string> = new Set([
 
 const DEFAULT_RETRY_CONFIG: NonNullable<Config['retry']> = DEFAULT_ADAPTER_RETRY;
 
+/**
+ * A validated PUT body: only the keys the request sent. A `webSearch` block may
+ * omit keys; the save merges them from the stored config.
+ */
+type ValidatedConfig = Omit<Partial<Config>, 'webSearch'> & {
+  webSearch?: Partial<WebSearchSettingsShape>;
+};
+
 function validateConfig(
   input: unknown
-): { ok: true; config: Partial<Config> } | { ok: false; error: string } {
+): { ok: true; config: ValidatedConfig } | { ok: false; error: string } {
   if (!isPlainObject(input)) {
     return { ok: false, error: 'Invalid config: body must be a JSON object' };
   }
@@ -88,7 +96,7 @@ function validateConfig(
     return { ok: false, error: `Unknown config keys: ${unknownKeys.join(', ')}` };
   }
 
-  const out: Partial<Config> = {};
+  const out: ValidatedConfig = {};
 
   if ('providers' in input) {
     if (!Array.isArray(input.providers)) {
@@ -260,7 +268,10 @@ function validateConfig(
         error: `Unknown config keys (webSearch): ${wsUnknown.join(', ')}`,
       };
     }
-    const webSearch: Required<WebSearchSettingsShape> = defaultWebSearchSettings();
+    // Only the keys the request actually sends. Starting from the defaults here
+    // would reset every omitted key on a partial PUT; the merge at save time
+    // fills omitted keys from the stored config instead.
+    const webSearch: Partial<WebSearchSettingsShape> = {};
     if ('maxQueries' in input.webSearch) {
       const v = input.webSearch.maxQueries;
       if (!isFiniteInteger(v) || v < 0 || v > 100) {
@@ -495,12 +506,17 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
       ...currentConfig,
     };
 
-    // Merge webSearch if provided
+    // Merge webSearch if provided: defaults, then the stored block, then the
+    // keys this request sent. The timeout is re-checked because a hand-edited
+    // config.json value is never validated when it is read.
     const updatedWebSearch = {
       ...DEFAULT_WEB_SEARCH_SETTINGS,
       ...base.webSearch,
       ...body.webSearch,
     };
+    updatedWebSearch.requestTimeoutMs = resolveWebSearchRequestTimeoutMs(
+      updatedWebSearch.requestTimeoutMs
+    );
 
     // Merge retry if provided (shallow `...body` would replace the whole
     // object and drop defaulted fields, mirroring the webSearch pattern).

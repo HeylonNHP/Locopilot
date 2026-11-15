@@ -6,7 +6,10 @@ import { hasLiveTranscript, useChat } from '@/app/lib/chatStore';
 import { isStaleNumCtxAnswer, positiveInteger } from '@/app/lib/contextWindow';
 import { createLatestGate } from '@/app/lib/latestGate';
 import { fetchModelList } from '@/app/lib/modelsClient';
-import { DEFAULT_WEB_SEARCH_SETTINGS } from '@/services/configDefaults';
+import {
+  DEFAULT_WEB_SEARCH_SETTINGS,
+  resolveWebSearchRequestTimeoutMs,
+} from '@/services/configDefaults';
 
 import type { StableRefs } from './useStableRefs';
 
@@ -462,10 +465,16 @@ export function useDataLoaders(refs: StableRefs) {
             defaultCompactionModel: config.compactionModel ?? '',
             chatTimeoutMs: config.chatTimeoutMs ?? state.chatTimeoutMs,
             // GET returns the raw config.json, which may predate
-            // `requestTimeoutMs`; fill it from the defaults so the field is
-            // never undefined in client state.
+            // `requestTimeoutMs` or hold an unusable value; fill and check it
+            // so the field is always a usable number in client state.
             webSearch: config.webSearch
-              ? { ...DEFAULT_WEB_SEARCH_SETTINGS, ...config.webSearch }
+              ? {
+                  ...DEFAULT_WEB_SEARCH_SETTINGS,
+                  ...config.webSearch,
+                  requestTimeoutMs: resolveWebSearchRequestTimeoutMs(
+                    config.webSearch.requestTimeoutMs
+                  ),
+                }
               : state.webSearch,
             completionMode: config.completionMode ?? state.completionMode,
             maxPromptLoopIterations:

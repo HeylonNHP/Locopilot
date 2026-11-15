@@ -7,6 +7,7 @@ import { useChat } from '@/app/lib/chatStore';
 import { describeContextWindow, interpretNumCtxInput } from '@/app/lib/contextWindow';
 import { saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
+import { timeoutPartsToMs } from '@/app/lib/timeoutParts';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS } from '@/constants';
 import {
   REASONING_EFFORT_LABELS,
@@ -266,16 +267,11 @@ export default function SettingsModal({ onClose }: Props) {
     const parsedWebMaxQueries = Number.parseInt(webMaxQueries) || 3;
     const parsedWebResultsPerQuery = Number.parseInt(webResultsPerQuery) || 3;
     const parsedWebPerPageCharLimit = Number.parseInt(webPerPageCharLimit) || 5000;
-    const parsedWebTimeoutSeconds =
-      (Number.parseInt(webTimeoutHours) || 0) * 3600 +
-      (Number.parseInt(webTimeoutMinutes) || 0) * 60 +
-      (Number.parseInt(webTimeoutSeconds) || 0);
     // An empty or zero duration falls back to the default, matching the other
     // web-search fields. Upper bound is enforced server-side.
     const parsedWebRequestTimeoutMs =
-      parsedWebTimeoutSeconds > 0
-        ? parsedWebTimeoutSeconds * 1000
-        : DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS;
+      timeoutPartsToMs(webTimeoutHours, webTimeoutMinutes, webTimeoutSeconds) ||
+      DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS;
 
     // The cap is now the server's responsibility. We only include
     // numCtx in the PUT body when the user actually changed it in

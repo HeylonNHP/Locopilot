@@ -50,7 +50,6 @@ import {
   DEFAULT_SESSION_NAME,
   DEFAULT_WEB_SEARCH_MAX_QUERIES,
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
-  DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
   HTTP_BAD_REQUEST,
   MAX_COMPACTION_FAILURES_PER_TURN,
@@ -76,6 +75,7 @@ import { RECENT_FILES_LOAD_LIMIT } from '@/services/compact/constants';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_OLLAMA_BASE_URL,
+  resolveWebSearchRequestTimeoutMs,
 } from '@/services/configDefaults';
 import { loadConfig, readConfig } from '@/services/configManager';
 import { configProblemFor } from '@/services/contextWindow/configProblem';
@@ -925,8 +925,9 @@ export async function POST(req: NextRequest): Promise<Response> {
               maxQueries: config?.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
               resultsPerQuery:
                 config?.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
-              requestTimeoutMs:
-                config?.webSearch?.requestTimeoutMs ?? DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS,
+              requestTimeoutMs: resolveWebSearchRequestTimeoutMs(
+                config?.webSearch?.requestTimeoutMs
+              ),
               perPageCharLimit:
                 config?.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
               baseUrl: configuredBaseUrl,

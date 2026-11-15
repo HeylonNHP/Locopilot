@@ -3,17 +3,23 @@
  * (`webSearch.requestTimeoutMs`): the per-call timeout for the LLM pass that
  * compacts each fetched web page down to `perPageCharLimit`.
  *
- * Behavioural checks cover the defaults and the shared-object guarantee.
- * The remaining checks are source-level wiring checks: the Next.js route
- * handlers cannot be imported into a unit test, so the validation, the chat
- * route, and the Settings save payloads are checked as text.
+ * Behavioural checks cover the defaults, the value guard that every read site
+ * goes through, and the duration-input parser. The remaining checks are
+ * source-level wiring checks: the Next.js route handlers cannot be imported
+ * into a unit test, so the validation, the chat route, and the client
+ * hydration are checked as text.
  */
 
 import { describe, expect, it } from '@jest/globals';
 import { readFile } from 'node:fs/promises';
 
+import { timeoutPartsToMs } from '@/app/lib/timeoutParts';
 import { MAX_CONFIG_TIMEOUT_MS } from '@/constants';
-import { DEFAULT_WEB_SEARCH_SETTINGS, defaultWebSearchSettings } from '@/services/configDefaults';
+import {
+  DEFAULT_WEB_SEARCH_SETTINGS,
+  defaultWebSearchSettings,
+  resolveWebSearchRequestTimeoutMs,
+} from '@/services/configDefaults';
 
 const COMPACTION_TIMEOUT_DEFAULT_MS = 60_000; // WEB_COMPACTION_REQUEST_TIMEOUT_MS
 
@@ -36,6 +42,46 @@ describe('web-search compaction timeout defaults', () => {
   });
 });
 
+describe('resolveWebSearchRequestTimeoutMs', () => {
+  it('keeps usable values: positive integers up to the 24-hour bound', () => {
+    expect(resolveWebSearchRequestTimeoutMs(1)).toBe(1);
+    expect(resolveWebSearchRequestTimeoutMs(900_000)).toBe(900_000);
+    expect(resolveWebSearchRequestTimeoutMs(MAX_CONFIG_TIMEOUT_MS)).toBe(MAX_CONFIG_TIMEOUT_MS);
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -5_000],
+    ['fractional', 1.5],
+    ['over the 24-hour bound', MAX_CONFIG_TIMEOUT_MS + 1],
+    ['a numeric string', '900000'],
+    ['null', null],
+    ['undefined', undefined],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ])('falls back to the default for %s', (_label, value) => {
+    expect(resolveWebSearchRequestTimeoutMs(value)).toBe(COMPACTION_TIMEOUT_DEFAULT_MS);
+  });
+});
+
+describe('timeoutPartsToMs (Settings duration inputs)', () => {
+  it('converts hours, minutes and seconds to milliseconds', () => {
+    expect(timeoutPartsToMs('1', '2', '3')).toBe(3_723_000);
+    expect(timeoutPartsToMs('0', '1', '0')).toBe(60_000);
+  });
+
+  it('treats empty and unparseable parts as zero', () => {
+    expect(timeoutPartsToMs('', '', '')).toBe(0);
+    expect(timeoutPartsToMs('abc', '5', '')).toBe(300_000);
+  });
+
+  it('clamps negative parts so they cannot cancel other parts', () => {
+    // Without clamping, hours -1 with minutes 90 would sum to 30 minutes.
+    expect(timeoutPartsToMs('-1', '90', '0')).toBe(5_400_000);
+    expect(timeoutPartsToMs('0', '-10', '-30')).toBe(0);
+  });
+});
+
 describe('config route wiring', () => {
   it('accepts requestTimeoutMs as a known webSearch key and validates it', async () => {
     const src = await read('src/app/api/config/route.ts');
@@ -44,17 +90,27 @@ describe('config route wiring', () => {
     expect(src).toContain('v <= 0 || v > MAX_CONFIG_TIMEOUT_MS');
   });
 
-  it('builds the webSearch block from defaults so omitted keys are filled in', async () => {
+  it('starts the PUT block empty so omitted keys are not reset to defaults', async () => {
     const src = await read('src/app/api/config/route.ts');
-    expect(src).toContain('defaultWebSearchSettings()');
+    expect(src).toContain('const webSearch: Partial<WebSearchSettingsShape> = {};');
+    expect(src).not.toContain(
+      'const webSearch: Required<WebSearchSettingsShape> = defaultWebSearchSettings();'
+    );
+  });
+
+  it('re-checks the merged timeout, so a hand-edited stored value is not kept', async () => {
+    const src = await read('src/app/api/config/route.ts');
+    expect(src).toMatch(
+      /updatedWebSearch\.requestTimeoutMs = resolveWebSearchRequestTimeoutMs\(\s*updatedWebSearch\.requestTimeoutMs\s*\)/
+    );
   });
 });
 
 describe('chat route wiring', () => {
-  it('reads requestTimeoutMs from config with the default fallback', async () => {
+  it('reads requestTimeoutMs from config through the value guard', async () => {
     const src = await read('src/app/api/chat/route.ts');
-    expect(src).toContain(
-      'config?.webSearch?.requestTimeoutMs ?? DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS'
+    expect(src).toMatch(
+      /requestTimeoutMs:\s*resolveWebSearchRequestTimeoutMs\(\s*config\?\.webSearch\?\.requestTimeoutMs\s*\)/
     );
     expect(src).not.toMatch(/requestTimeoutMs:\s*DEFAULT_OLLAMA_CHAT_TIMEOUT_MS/);
   });
@@ -68,12 +124,22 @@ describe('Settings modal', () => {
     expect(occurrences).toBe(2);
     expect(src).toContain('DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS');
   });
+
+  it('parses the duration inputs with the clamping helper', async () => {
+    const src = await read('src/components/SettingsModal/SettingsModal.tsx');
+    expect(src).toContain(
+      'timeoutPartsToMs(webTimeoutHours, webTimeoutMinutes, webTimeoutSeconds)'
+    );
+  });
 });
 
 describe('client config hydration', () => {
-  it('merges loaded webSearch over defaults so requestTimeoutMs is never undefined', async () => {
+  it('fills missing values from defaults and checks the timeout', async () => {
     const src = await read('src/app/hooks/useDataLoaders.ts');
-    expect(src).toContain('{ ...DEFAULT_WEB_SEARCH_SETTINGS, ...config.webSearch }');
+    expect(src).toContain('...DEFAULT_WEB_SEARCH_SETTINGS,');
+    expect(src).toMatch(
+      /requestTimeoutMs:\s*resolveWebSearchRequestTimeoutMs\(\s*config\.webSearch\.requestTimeoutMs\s*\)/
+    );
   });
 });
 

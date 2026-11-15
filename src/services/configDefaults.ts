@@ -14,6 +14,7 @@ import {
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
   DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
+  MAX_CONFIG_TIMEOUT_MS,
 } from '@/constants';
 
 export { DEFAULT_MAX_PROMPT_LOOP_ITERATIONS } from '@/constants';
@@ -109,6 +110,23 @@ export const DEFAULT_WEB_SEARCH_SETTINGS: Required<WebSearchSettingsShape> = {
  */
 export function defaultWebSearchSettings(): Required<WebSearchSettingsShape> {
   return { ...DEFAULT_WEB_SEARCH_SETTINGS };
+}
+
+/**
+ * Returns `value` when it is a usable web-search request timeout (a positive
+ * integer no larger than MAX_CONFIG_TIMEOUT_MS); otherwise the default.
+ *
+ * config.json is hand-editable and is not validated when read, so every read
+ * site goes through this instead of trusting the raw number. A zero or
+ * negative value would otherwise abort every compaction call immediately.
+ */
+export function resolveWebSearchRequestTimeoutMs(value: unknown): number {
+  const usable =
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= MAX_CONFIG_TIMEOUT_MS;
+  return usable ? value : DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS;
 }
 
 // ── Config fallback shape ──────────────────────────────────────────────────
