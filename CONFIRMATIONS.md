@@ -279,6 +279,15 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **Needs:** a few real sub-agent runs on a configured provider.
 - **If it holds:** keep the wording and consider a parent-set detail level. **If returns stay short or the parent's context grows too much:** that is the evidence for the scratchpad (a notes tool whose contents are returned with a size cap).
 
+### C-023 — The per-conversation reasoning levels were not exercised in a browser
+
+- **Status:** Unconfirmed (2026-11-14).
+- **Claim:** the per-conversation reasoning levels (see `docs/PER_CONVERSATION_REASONING_PLAN.md` and the 2026-11-14 changelog entry) are verified by the type checker, the linter and the full test suite, but the browser loop itself was not exercised: opening two conversations with different levels, switching between them, and checking that the status bar and the next turn follow the conversation on screen; picking a level in the StatusBar popover and confirming it reaches both the conversation's row and the global default; and opening Settings and confirming its "(new chats)" dropdown moves only the default, not the open conversation.
+- **Why it matters:** the store keeps the raw PIN separate from the effective value, and the tests cover that rule, but only a real switch exercises the React refs (`useStableRefs` now updates them synchronously during render) and the two-tab push (`session-updated` carries the levels). A send immediately after a conversation switch is the case the synchronous refs exist for.
+- **How to confirm:** run the dev server with two saved conversations. Set conversation A to `high` / `low` and B to `minimal` / `max` through the popover; switch A → B and send a message without waiting; the request body must carry B's levels (check the network panel) and the status bar must show B's main level. Change the Settings dropdown to another level; the open conversation's status bar must not move, and a NEW chat must start on the new default. In a second tab, change conversation B's level and confirm the first tab's B view follows (and its A view does not).
+- **Needs:** a browser and a configured provider (a turn does not have to complete; inspect the request body).
+- **Source:** the 2026-11-14 changelog entry.
+
 ## Confirmed
 
 - **OpenAI output-cap field.** `max_output_tokens` is the cap on the Responses API (`/v1/responses`) and covers visible and reasoning tokens. Chat Completions uses `max_completion_tokens`. Source: OpenAI API reference, read through a mirror on 2026-11-11 (`platform.openai.com` returned 403). The installed `openai` SDK (6.48.0) types agree.
