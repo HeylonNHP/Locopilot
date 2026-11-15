@@ -42,7 +42,16 @@ function conversation() {
       { id: 2, role: 'assistant', content: 'first answer' },
       { id: 3, role: 'user', content: 'second question' },
       { id: 4, role: 'tool', name: 'run_command', content: 'started' },
-      { id: 5, role: 'subagent_log', subagentId: 'research', content: 'looking' },
+      // The live card of a run_subagents call: the sub-agent actions replace this
+      // one message (and copy its traces), whatever the other messages are.
+      {
+        id: 5,
+        role: 'tool',
+        name: 'run_subagents',
+        toolCallId: 'call-1',
+        content: 'running',
+        subagentTraces: [{ agentId: 'research', content: 'looking' }],
+      },
       { id: 6, role: 'assistant', content: 'partial' },
     ],
   });
@@ -74,17 +83,27 @@ const ACTIONS = [
   },
   {
     label: 'SUBAGENT_CHUNK',
-    action: { type: 'SUBAGENT_CHUNK', agentId: 'research', text: ' on' },
+    action: { type: 'SUBAGENT_CHUNK', toolCallId: 'call-1', agentId: 'research', text: ' on' },
     changed: [4],
   },
   {
     label: 'SUBAGENT_OUTPUT',
-    action: { type: 'SUBAGENT_OUTPUT', agentId: 'research', message: 'found it' },
+    action: {
+      type: 'SUBAGENT_OUTPUT',
+      toolCallId: 'call-1',
+      agentId: 'research',
+      message: 'found it',
+    },
     changed: [4],
   },
   {
     label: 'CLEAR_SUBAGENT_CONTENT',
-    action: { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: '' },
+    action: {
+      type: 'CLEAR_SUBAGENT_CONTENT',
+      toolCallId: 'call-1',
+      agentId: 'research',
+      content: '',
+    },
     changed: [4],
   },
   { label: 'REMOVE_LAST_ASSISTANT', action: { type: 'REMOVE_LAST_ASSISTANT' }, changed: [5] },

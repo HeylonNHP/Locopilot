@@ -20,7 +20,6 @@ import {
 import { removeOutputsForSession } from '@/tools/runCommandOutputStore';
 
 export const dynamic = 'force-dynamic';
-import { type ChatMessage } from '@/services/llm';
 import { countMessagesTokens } from '@/services/tokenizer';
 
 export async function GET(
@@ -45,9 +44,7 @@ export async function GET(
     }
 
     const messages = loadSessionMessages(sessionId);
-    const messagesForCounting = messages.filter((m): m is ChatMessage => m.role !== 'subagent_log');
-    const estimatedTokens =
-      messagesForCounting.length > 0 ? countMessagesTokens(messagesForCounting, session.model) : 0;
+    const estimatedTokens = messages.length > 0 ? countMessagesTokens(messages, session.model) : 0;
     const lastTokenStats = {
       promptEvalCount: session.last_prompt_eval_count,
       evalCount: session.last_eval_count,

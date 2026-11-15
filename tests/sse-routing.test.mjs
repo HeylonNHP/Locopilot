@@ -13,9 +13,10 @@
  *
  * `clear_subagent` is the newest of them: the server dropped a sub-agent’s
  * streamed output (its turn failed with a transient provider error and is
- * re-issued), so the client has to REPLACE the agent’s bubble with the text
+ * re-issued), so the client has to REPLACE the agent’s trace with the text
  * the server kept AND drop the text that is still coalescing for that
- * agent.
+ * agent. The sub-agent events carry the id of the call they belong to: it is
+ * how the page finds the tool message that holds the trace.
  */
 
 import { describe, expect, test } from '@jest/globals';
@@ -77,6 +78,18 @@ describe('tool events', () => {
     ]);
   });
 
+  test('tool_call keeps the call id on the card, but NOT as tool_call_id', () => {
+    // `tool_call_id` would make the display-only card look like a saved result:
+    // it would be sent to the server and saved as a second answer to the call.
+    const [action] = actionsFor('tool_call', {
+      name: 'run_subagents',
+      arguments: {},
+      toolCallId: 'call-1',
+    });
+    expect(action.message.toolCallId).toBe('call-1');
+    expect(action.message).not.toHaveProperty('tool_call_id');
+  });
+
   test('tool_result renders the result bubble', () => {
     expect(
       actionsFor('tool_result', { name: 'read_file', result: 'ok', duration: 12 })
@@ -116,8 +129,16 @@ describe('tool events', () => {
 
 describe('sub-agent events', () => {
   test('subagent_output emits the output and marks the agent active', () => {
-    expect(actionsFor('subagent_output', { agentId: 'research', message: 'done' })).toStrictEqual([
-      { type: 'SUBAGENT_OUTPUT', agentId: 'research', message: 'done', targetSessionId: 7 },
+    expect(
+      actionsFor('subagent_output', { toolCallId: 'call-1', agentId: 'research', message: 'done' })
+    ).toStrictEqual([
+      {
+        type: 'SUBAGENT_OUTPUT',
+        toolCallId: 'call-1',
+        agentId: 'research',
+        message: 'done',
+        targetSessionId: 7,
+      },
       { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research', targetSessionId: 7 },
     ]);
   });
@@ -125,7 +146,7 @@ describe('sub-agent events', () => {
   test('subagent_chunk is handed back for coalescing, not dispatched', () => {
     const outcome = routeSseEvent(
       'subagent_chunk',
-      { agentId: 'research', text: 'part' },
+      { toolCallId: 'call-1', agentId: 'research', text: 'part' },
       {
         targetSessionId: 7,
         subagentOwner: 9,
@@ -134,46 +155,80 @@ describe('sub-agent events', () => {
     expect(outcome.actions).toStrictEqual([
       { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research', targetSessionId: 9 },
     ]);
-    expect(outcome.subagentChunk).toStrictEqual({ agentId: 'research', text: 'part', owner: 9 });
+    expect(outcome.subagentChunk).toStrictEqual({
+      toolCallId: 'call-1',
+      agentId: 'research',
+      text: 'part',
+      owner: 9,
+    });
   });
 
   test('subagent_chunk without an owner omits the owner', () => {
     const outcome = routeSseEvent(
       'subagent_chunk',
-      { agentId: 'research', text: 'part' },
+      { toolCallId: 'call-1', agentId: 'research', text: 'part' },
       {
         targetSessionId: 7,
       }
     );
-    expect(outcome.subagentChunk).toStrictEqual({ agentId: 'research', text: 'part' });
+    expect(outcome.subagentChunk).toStrictEqual({
+      toolCallId: 'call-1',
+      agentId: 'research',
+      text: 'part',
+    });
   });
 
-  test('clear_subagent replaces the agent’s bubble with the text that remains', () => {
+  test('clear_subagent replaces the agent’s trace with the text that remains', () => {
     // A sub-agent’s turn that failed with a transient provider error is
     // re-issued, so the text the failed attempt streamed has to go — but the
     // text of the agent’s EARLIER turns stays, and the server is the one
     // that knows what remains. It sends that text with the event, so the
-    // client REPLACES the bubble with it.
-    expect(actionsFor('clear_subagent', { agentId: 'research', content: 'KEPT' })).toStrictEqual([
-      { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: 'KEPT', targetSessionId: 7 },
+    // client REPLACES the trace with it.
+    expect(
+      actionsFor('clear_subagent', { toolCallId: 'call-1', agentId: 'research', content: 'KEPT' })
+    ).toStrictEqual([
+      {
+        type: 'CLEAR_SUBAGENT_CONTENT',
+        toolCallId: 'call-1',
+        agentId: 'research',
+        content: 'KEPT',
+        targetSessionId: 7,
+      },
       { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research', targetSessionId: 7 },
     ]);
   });
 
   test('clear_subagent without an owner omits targetSessionId entirely', () => {
     expect(
-      actionsFor('clear_subagent', { agentId: 'research', content: 'KEPT' }, UNOWNED)
+      actionsFor(
+        'clear_subagent',
+        { toolCallId: 'call-1', agentId: 'research', content: 'KEPT' },
+        UNOWNED
+      )
     ).toStrictEqual([
-      { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: 'KEPT' },
+      {
+        type: 'CLEAR_SUBAGENT_CONTENT',
+        toolCallId: 'call-1',
+        agentId: 'research',
+        content: 'KEPT',
+      },
       { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research' },
     ]);
   });
 
-  test('clear_subagent without content clears the bubble to nothing', () => {
-    // A frame from an older server carries no content: the bubble is emptied
+  test('clear_subagent without content clears the trace to nothing', () => {
+    // A frame from an older server carries no content: the trace is emptied
     // rather than left as it was.
-    expect(actionsFor('clear_subagent', { agentId: 'research' })).toStrictEqual([
-      { type: 'CLEAR_SUBAGENT_CONTENT', agentId: 'research', content: '', targetSessionId: 7 },
+    expect(
+      actionsFor('clear_subagent', { toolCallId: 'call-1', agentId: 'research' })
+    ).toStrictEqual([
+      {
+        type: 'CLEAR_SUBAGENT_CONTENT',
+        toolCallId: 'call-1',
+        agentId: 'research',
+        content: '',
+        targetSessionId: 7,
+      },
       { type: 'SET_ACTIVE_SUBAGENT', agentId: 'research', targetSessionId: 7 },
     ]);
   });
@@ -181,12 +236,13 @@ describe('sub-agent events', () => {
   test('clear_subagent reports the cleared agent so the caller can drop its buffer', () => {
     // The caller owns the coalescing buffer: the store action alone would
     // leave the failed attempt’s pending text to be flushed AFTER the clear.
+    // The buffer is keyed by the call too, so the call id comes back with it.
     const outcome = routeSseEvent(
       'clear_subagent',
-      { agentId: 'research', content: 'KEPT' },
+      { toolCallId: 'call-1', agentId: 'research', content: 'KEPT' },
       OWNED
     );
-    expect(outcome.clearedSubagentId).toBe('research');
+    expect(outcome.clearedSubagent).toStrictEqual({ toolCallId: 'call-1', agentId: 'research' });
   });
 });
 

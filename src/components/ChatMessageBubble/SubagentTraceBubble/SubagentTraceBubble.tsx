@@ -1,24 +1,26 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 
-import { type ChatMessage } from '@/app/lib/chatStore';
-
-import './SubagentLogBubble.scss';
+import './SubagentTraceBubble.scss';
 
 interface Props {
-  message: ChatMessage;
+  /** The agent's canonical id, shown on the toggle. */
+  agentId: string;
+  /** Everything the agent printed, as one text. */
+  content: string;
 }
 
-export function SubagentLogBubble({ message }: Props) {
+/** One sub-agent's transcript: a collapsible block that follows its output as it streams. */
+export function SubagentTraceBubble({ agentId, content }: Props) {
   const [subagentCollapsed, setSubagentCollapsed] = useState(false);
-  const subagentLogRef = useRef<HTMLPreElement>(null);
+  const traceRef = useRef<HTMLPreElement>(null);
 
   // Auto-scroll the subagent log to the bottom as new lines arrive.
   useEffect(() => {
-    if (!subagentCollapsed && subagentLogRef.current) {
-      subagentLogRef.current.scrollTop = subagentLogRef.current.scrollHeight;
+    if (!subagentCollapsed && traceRef.current) {
+      traceRef.current.scrollTop = traceRef.current.scrollHeight;
     }
-  }, [message.content, subagentCollapsed]);
+  }, [content, subagentCollapsed]);
 
   return (
     <div className="bubble-subagent-wrap">
@@ -32,11 +34,11 @@ export function SubagentLogBubble({ message }: Props) {
           }
         >
           <span>{subagentCollapsed ? '▶' : '▼'}</span>
-          <span>🤖 {message.subagentId ?? 'unknown'}</span>
+          <span>🤖 {agentId || 'unknown'}</span>
         </button>
         {!subagentCollapsed && (
-          <pre ref={subagentLogRef} className="bubble-subagent-log">
-            {message.content || 'Waiting...'}
+          <pre ref={traceRef} className="bubble-subagent-log">
+            {content || 'Waiting...'}
           </pre>
         )}
       </div>

@@ -1,4 +1,4 @@
-import type { PersistedChatMessage } from '@/services/llm';
+import type { ChatMessage } from '@/services/llm';
 
 import {
   loadSessionMessages,
@@ -51,9 +51,7 @@ export function enqueueSessionOperation<T>(
  */
 export async function enqueueSessionWrite(
   sessionId: number,
-  buildMessages: (
-    currentMessages: PersistedChatMessage[]
-  ) => PersistedChatMessage[] | Promise<PersistedChatMessage[]>,
+  buildMessages: (currentMessages: ChatMessage[]) => ChatMessage[] | Promise<ChatMessage[]>,
   tokenStats?: SessionTokenStats | null
 ): Promise<void> {
   return enqueueSessionTask(sessionId, async () => {

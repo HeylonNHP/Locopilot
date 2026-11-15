@@ -25,8 +25,9 @@ import {
   type SessionSelectionColumns,
 } from '@/services/sessionSelection';
 
-import { type ChatMessage, type PersistedChatMessage, type SubagentLogMessage } from './llm';
+import { type ChatMessage, type SubagentTrace } from './llm';
 import { emitSessionEvent } from './sessionEvents';
+import { type LegacyRow, planSubagentLogMigration } from './subagentLogMigration';
 import { sanitizeChatMessage } from './textUtils';
 
 // ---------------------------------------------------------------------------
@@ -190,6 +191,76 @@ addColumnIfMissing("ALTER TABLE messages ADD COLUMN tool_call_id TEXT NOT NULL D
 addColumnIfMissing('ALTER TABLE messages ADD COLUMN created_at DATETIME');
 addColumnIfMissing("ALTER TABLE messages_staging ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing('ALTER TABLE messages_staging ADD COLUMN created_at DATETIME');
+// What the sub-agents of a `run_subagents` call printed, as JSON
+// (`SubagentTrace[]`), on the `tool` row that answers that call. It must exist
+// on BOTH tables: every save goes through `messages_staging`, so a column
+// missing there would silently drop every trace on the next write.
+addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_traces TEXT NOT NULL DEFAULT '[]'");
+addColumnIfMissing(
+  "ALTER TABLE messages_staging ADD COLUMN subagent_traces TEXT NOT NULL DEFAULT '[]'"
+);
+
+// Legacy `subagent_log` rows become traces on the tool row of their call. Runs
+// once per database (it deletes the rows it moves, so a second run finds none),
+// in ONE transaction, and as its own bootstrap step: a database that cannot be
+// written still serves its history, and an old session is only missing its
+// traces' new home, never its messages.
+bootstrapStep('subagent-traces-migration', () => {
+  const sessionIds = (
+    db.prepare("SELECT DISTINCT session_id FROM messages WHERE role = 'subagent_log'").all() as {
+      session_id: number;
+    }[]
+  ).map((row) => row.session_id);
+  if (sessionIds.length === 0) return;
+
+  const selectRows = db.prepare<[number]>(
+    'SELECT id, role, content, subagent_id, tool_calls, tool_call_id FROM messages WHERE session_id = ? ORDER BY id ASC'
+  );
+  const setTraces = db.prepare<[string, number]>(
+    'UPDATE messages SET subagent_traces = ? WHERE id = ?'
+  );
+  const deleteRow = db.prepare<[number]>('DELETE FROM messages WHERE id = ?');
+
+  let attached = 0;
+  let dropped = 0;
+  db.transaction(() => {
+    for (const sessionId of sessionIds) {
+      const rows = (
+        selectRows.all(sessionId) as {
+          id: number;
+          role: string;
+          content: string;
+          subagent_id: string;
+          tool_calls: string;
+          tool_call_id: string;
+        }[]
+      ).map(
+        (row): LegacyRow => ({
+          id: row.id,
+          role: row.role,
+          content: row.content,
+          subagentId: row.subagent_id,
+          toolCalls: row.tool_calls,
+          toolCallId: row.tool_call_id,
+        })
+      );
+      const plan = planSubagentLogMigration(rows);
+      for (const [rowId, traces] of plan.traces) {
+        setTraces.run(JSON.stringify(traces), rowId);
+      }
+      for (const rowId of plan.deleteIds) {
+        deleteRow.run(rowId);
+      }
+      attached += plan.attached;
+      dropped += plan.dropped;
+    }
+  })();
+  debugLog.debug('subagent-traces-migration', {
+    sessions: sessionIds.length,
+    attached,
+    dropped,
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Prepared statements (created once, reused on every call)
@@ -246,7 +317,7 @@ const stmtDeleteMessageRange = db.prepare<[number, number, number | null, number
 );
 
 const stmtLoadMessages = db.prepare<[number]>(
-  'SELECT id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at FROM messages WHERE session_id = ? ORDER BY id ASC'
+  'SELECT id, role, content, thinking, tool_calls, images, subagent_id, subagent_traces, tool_call_id, created_at FROM messages WHERE session_id = ? ORDER BY id ASC'
 );
 
 // Session search only considers user prompts and assistant replies. Tool
@@ -464,7 +535,7 @@ export function deleteSession(sessionId: number): void {
  */
 export function updateSessionMessages(
   sessionId: number,
-  messages: PersistedChatMessage[],
+  messages: ChatMessage[],
   tokenStats?: SessionTokenStats | null
 ): void {
   // Strip system messages before persisting — the system prompt is always
@@ -491,6 +562,7 @@ export function updateSessionMessages(
         "role TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', " +
         "thinking TEXT NOT NULL DEFAULT '', tool_calls TEXT NOT NULL DEFAULT '[]', " +
         "images TEXT NOT NULL DEFAULT '[]', subagent_id TEXT NOT NULL DEFAULT '', " +
+        "subagent_traces TEXT NOT NULL DEFAULT '[]', " +
         "tool_call_id TEXT NOT NULL DEFAULT '', created_at DATETIME)"
     );
     const stmtDeleteStaging = db.prepare<[number]>(
@@ -499,39 +571,29 @@ export function updateSessionMessages(
     stmtDeleteStaging.run(sessionId);
 
     const stmtInsertStaging = db.prepare<
-      [number, string, string, string, string, string, string, string, string | null]
+      [number, string, string, string, string, string, string, string, string, string | null]
     >(
-      'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO messages_staging (session_id, role, content, thinking, tool_calls, images, subagent_id, subagent_traces, tool_call_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     let persistIndex = 0;
     let persistToolCount = 0;
     let persistToolWithCallIdCount = 0;
     for (const msg of persistableMessages) {
       const sanitizedMessage = sanitizeChatMessage(msg);
-      const subagentId =
-        sanitizedMessage.role === 'subagent_log' && sanitizedMessage.subagentId
-          ? sanitizedMessage.subagentId
-          : '';
       const role = sanitizedMessage.role;
       const content = sanitizedMessage.content ?? '';
-      const thinking =
-        sanitizedMessage.role === 'subagent_log'
-          ? ''
-          : ((sanitizedMessage as ChatMessage).thinking ?? '');
-      const toolCalls =
-        sanitizedMessage.role === 'subagent_log'
-          ? '[]'
-          : JSON.stringify((sanitizedMessage as ChatMessage).tool_calls ?? []);
-      const images =
-        sanitizedMessage.role === 'subagent_log'
-          ? '[]'
-          : JSON.stringify((sanitizedMessage as ChatMessage).images ?? []);
+      const thinking = sanitizedMessage.thinking ?? '';
+      const toolCalls = JSON.stringify(sanitizedMessage.tool_calls ?? []);
+      const images = JSON.stringify(sanitizedMessage.images ?? []);
       const toolCallId =
+        sanitizedMessage.role === 'tool' ? (sanitizedMessage.tool_call_id ?? '') : '';
+      // Only a `tool` row carries traces: they belong to the call it answers.
+      const subagentTraces =
         sanitizedMessage.role === 'tool'
-          ? ((sanitizedMessage as ChatMessage).tool_call_id ?? '')
-          : '';
-      // Only user-role messages carry a createdAt; assistant/tool/system/subagent_log
-      // rows store NULL so they don't display a misleading timestamp in the UI.
+          ? JSON.stringify(sanitizedMessage.subagentTraces ?? [])
+          : '[]';
+      // Only user-role messages carry a createdAt; assistant/tool/system rows
+      // store NULL so they don't display a misleading timestamp in the UI.
       const createdAt =
         sanitizedMessage.role === 'user' && typeof sanitizedMessage.createdAt === 'string'
           ? sanitizedMessage.createdAt
@@ -570,7 +632,8 @@ export function updateSessionMessages(
         thinking,
         toolCalls,
         images,
-        subagentId,
+        '',
+        subagentTraces,
         toolCallId,
         createdAt
       );
@@ -589,8 +652,8 @@ export function updateSessionMessages(
     // then move staged rows into the real table.
     stmtDeleteMessages.run(sessionId);
     const stmtCopyStaging = db.prepare<[number]>(
-      'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at) ' +
-        'SELECT session_id, role, content, thinking, tool_calls, images, subagent_id, tool_call_id, created_at ' +
+      'INSERT INTO messages (session_id, role, content, thinking, tool_calls, images, subagent_id, subagent_traces, tool_call_id, created_at) ' +
+        'SELECT session_id, role, content, thinking, tool_calls, images, subagent_id, subagent_traces, tool_call_id, created_at ' +
         'FROM messages_staging WHERE session_id = ?'
     );
     stmtCopyStaging.run(sessionId);
@@ -611,10 +674,28 @@ export function updateSessionMessages(
   run();
 }
 
+/** Parses a `subagent_traces` cell; anything malformed reads as "no traces". */
+function parseSubagentTraces(raw: string | null | undefined): SubagentTrace[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is SubagentTrace =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof (item as SubagentTrace).agentId === 'string' &&
+        typeof (item as SubagentTrace).content === 'string'
+    );
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Loads and returns the full message history for a session.
  */
-export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
+export function loadSessionMessages(sessionId: number): ChatMessage[] {
   const rows = stmtLoadMessages.all(sessionId) as {
     id: number;
     role: string;
@@ -623,6 +704,7 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     tool_calls: string;
     images: string;
     subagent_id: string;
+    subagent_traces: string;
     tool_call_id: string;
     created_at: string | null;
   }[];
@@ -663,18 +745,6 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
       if (dbToolCallId === '') loadToolEmptyCallIdCount++;
     }
 
-    if (row.role === 'subagent_log') {
-      const msg: SubagentLogMessage = {
-        role: 'subagent_log',
-        content: row.content,
-        id: rowId,
-      };
-      if (row.subagent_id) {
-        msg.subagentId = row.subagent_id;
-      }
-      return sanitizeChatMessage(msg);
-    }
-
     let toolCalls: ChatMessage['tool_calls'] | undefined;
     try {
       const parsed = JSON.parse(row.tool_calls);
@@ -703,6 +773,12 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
     }
     if (images && images.length > 0) {
       msg.images = images;
+    }
+    if (row.role === 'tool') {
+      const traces = parseSubagentTraces(row.subagent_traces);
+      if (traces.length > 0) {
+        msg.subagentTraces = traces;
+      }
     }
     if (row.created_at && row.role === 'user') {
       msg.createdAt = row.created_at;
@@ -742,7 +818,8 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
 /**
  * Deletes a user prompt and every message derived from it up to (but not
  * including) the next user prompt. If there is no next user prompt, all
- * trailing assistant, tool, subagent_log, and system messages are removed too.
+ * trailing assistant, tool, and system messages are removed too (a tool message
+ * takes its sub-agent traces with it).
  *
  * The deletion preserves the row IDs of all retained messages so clients can
  * continue to reference them for subsequent operations.
@@ -751,7 +828,7 @@ export function loadSessionMessages(sessionId: number): PersistedChatMessage[] {
  * @throws If the target message is not found, is not a user message, or the
  *         session does not exist.
  */
-export function deleteMessagesFrom(sessionId: number, messageId: number): PersistedChatMessage[] {
+export function deleteMessagesFrom(sessionId: number, messageId: number): ChatMessage[] {
   if (!sessionExists(sessionId)) {
     throw new Error(`Session ${sessionId} not found.`);
   }

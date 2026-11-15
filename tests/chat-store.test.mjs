@@ -15,11 +15,13 @@
  *     selected, and is never written into `newSessionState` (which would leak
  *     the copy into whatever chat is started next).
  *
- * The sub-agent bubbles are covered too: `CLEAR_SUBAGENT_CONTENT` REPLACES
- * the LAST `subagent_log` bubble of one agent with the text the server kept
- * (it is replaced, not removed — the re-issued turn keeps streaming into it)
- * and leaves every other agent's bubble alone. An agent with no bubble yet
- * but with text to keep gets one.
+ * The sub-agent traces are covered too. A trace lives on the tool message of
+ * the CALL that started the agent (`subagentTraces`), found by the call id, so
+ * an agent id that comes back in a later call starts a trace of its own.
+ * `CLEAR_SUBAGENT_CONTENT` REPLACES one agent's trace with the text the server
+ * kept (replaced, not removed — the re-issued turn keeps streaming into it) and
+ * leaves every other agent's trace alone. An agent with no trace yet but with
+ * text to keep gets one.
  */
 
 import { describe, expect, test } from '@jest/globals';
@@ -28,13 +30,23 @@ import fs from 'node:fs';
 import { chatReducer, hasLiveTranscript, initialState } from '../src/app/lib/chatStore.ts';
 import { routeSseEvent } from '../src/app/lib/sseRouting.ts';
 import { createBatchedDispatcher } from '../src/app/lib/updateBatcher.ts';
+import { SubagentTraceBook } from '../src/services/subagentTraces.ts';
 import { appendSubagentLineText } from '../src/tools/toolOutput.ts';
 import { createFakeClock } from './helpers/fakeClock.mjs';
 
 const message = (content, id = 'm1') => ({ role: 'assistant', content, id });
 
-/** A sub-agent bubble: the role the streamed agent text lives in. */
-const subagentLog = (content, subagentId) => ({ role: 'subagent_log', content, subagentId });
+/** The live 🔧 card of a `run_subagents` call: what the sub-agent events attach to. */
+const callCard = (toolCallId, subagentTraces) => ({
+  role: 'tool',
+  content: '🔧 **run_subagents**',
+  name: 'run_subagents',
+  toolCallId,
+  ...(subagentTraces === undefined ? {} : { subagentTraces }),
+});
+
+/** One agent's trace. */
+const trace = (agentId, content) => ({ agentId, content });
 
 /** A state with a session selected and one other session's slot present. */
 function stateWithSessions() {
@@ -50,19 +62,20 @@ function stateWithSessions() {
   return state;
 }
 
-/** A state with two sub-agent bubbles (two different agents) on screen. */
-function stateWithSubagentBubbles() {
-  let state = chatReducer(initialState, { type: 'SET_CURRENT_SESSION', id: 5 });
-  state = chatReducer(state, {
+/** A state with one call card on screen, holding the traces of two different agents. */
+function stateWithTraces() {
+  const state = chatReducer(initialState, { type: 'SET_CURRENT_SESSION', id: 5 });
+  return chatReducer(state, {
     type: 'ADD_MESSAGE',
-    message: subagentLog('PARTIAL-ANSWER', 'research'),
+    message: callCard('call-1', [
+      trace('research', 'PARTIAL-ANSWER'),
+      trace('writer', 'other agent'),
+    ]),
   });
-  state = chatReducer(state, {
-    type: 'ADD_MESSAGE',
-    message: subagentLog('other agent', 'writer'),
-  });
-  return state;
 }
+
+/** The traces of the (only) call card of a state. */
+const tracesOf = (state) => state.messages.at(-1).subagentTraces;
 
 describe('SET_MESSAGES', () => {
   test('a copy for the session on screen replaces its transcript', () => {
@@ -183,117 +196,158 @@ describe('CLEAR_SUBAGENT_CONTENT', () => {
   // A sub-agent's turn that failed with a transient provider error is
   // re-issued, so the text the failed attempt streamed has to go — while the
   // text of the agent's EARLIER turns stays. The server knows what remains and
-  // sends it with the event, so the bubble is REPLACED with that text (not
-  // emptied): the re-issued turn keeps streaming into the same bubble, and
-  // removing it would take the bubble the user is watching away.
-  test('clearing a sub-agent replaces its bubble with the text that remains', () => {
-    const state = chatReducer(stateWithSubagentBubbles(), {
+  // sends it with the event, so the trace is REPLACED with that text (not
+  // emptied): the re-issued turn keeps streaming into the same trace.
+  const clear = (state, overrides) =>
+    chatReducer(state, {
       type: 'CLEAR_SUBAGENT_CONTENT',
+      toolCallId: 'call-1',
       agentId: 'research',
       content: 'EARLIER-TURN-TEXT',
+      ...overrides,
     });
-    expect(state.messages[0].content).toBe('EARLIER-TURN-TEXT');
+
+  test('clearing a sub-agent replaces its trace with the text that remains', () => {
+    expect(tracesOf(clear(stateWithTraces()))[0]).toStrictEqual(
+      trace('research', 'EARLIER-TURN-TEXT')
+    );
   });
 
-  test('the replaced bubble is still there (replaced, not removed)', () => {
-    const state = chatReducer(stateWithSubagentBubbles(), {
-      type: 'CLEAR_SUBAGENT_CONTENT',
-      agentId: 'research',
-      content: 'EARLIER-TURN-TEXT',
-    });
-    expect(state.messages).toHaveLength(2);
-    expect(state.messages[0].role).toBe('subagent_log');
-    expect(state.messages[0].subagentId).toBe('research');
+  test('the replaced trace is still there (replaced, not removed)', () => {
+    const state = clear(stateWithTraces());
+    expect(state.messages).toHaveLength(1);
+    expect(tracesOf(state).map((t) => t.agentId)).toStrictEqual(['research', 'writer']);
   });
 
-  test('another agent’s bubble is untouched', () => {
-    const state = chatReducer(stateWithSubagentBubbles(), {
-      type: 'CLEAR_SUBAGENT_CONTENT',
-      agentId: 'research',
-      content: 'EARLIER-TURN-TEXT',
-    });
-    expect(state.messages[1].content).toBe('other agent');
+  test('another agent’s trace is untouched', () => {
+    expect(tracesOf(clear(stateWithTraces()))[1]).toStrictEqual(trace('writer', 'other agent'));
   });
 
   test('clearing an unknown agent with no text changes nothing', () => {
-    const before = stateWithSubagentBubbles();
-    const state = chatReducer(before, {
-      type: 'CLEAR_SUBAGENT_CONTENT',
-      agentId: 'nobody',
-      content: '',
-    });
-    expect(state.messages.length).toBe(before.messages.length);
-    expect(state.messages[0].content).toBe('PARTIAL-ANSWER');
-    expect(state.messages[1].content).toBe('other agent');
+    const before = stateWithTraces();
+    expect(clear(before, { agentId: 'nobody', content: '' })).toBe(before);
   });
 
-  test('clearing an unknown agent with text creates its bubble', () => {
+  test('clearing an unknown agent with text creates its trace', () => {
     // The server says there IS text that has to remain for that agent, so it
     // is created rather than dropped — otherwise the remaining text would be
     // lost from the transcript.
-    const state = chatReducer(stateWithSubagentBubbles(), {
-      type: 'CLEAR_SUBAGENT_CONTENT',
-      agentId: 'nobody',
-      content: 'EARLIER-TURN-TEXT',
-    });
-    expect(state.messages).toHaveLength(3);
-    expect(state.messages[2].role).toBe('subagent_log');
-    expect(state.messages[2].subagentId).toBe('nobody');
-    expect(state.messages[2].content).toBe('EARLIER-TURN-TEXT');
+    const state = clear(stateWithTraces(), { agentId: 'nobody' });
+    expect(tracesOf(state)).toHaveLength(3);
+    expect(tracesOf(state)[2]).toStrictEqual(trace('nobody', 'EARLIER-TURN-TEXT'));
   });
 
-  test('the LAST bubble of that agent is the one that is replaced', () => {
-    let state = stateWithSubagentBubbles();
+  test('only the card of THAT call is touched, even when another call used the same agent id', () => {
+    let state = stateWithTraces();
     state = chatReducer(state, {
       type: 'ADD_MESSAGE',
-      message: subagentLog('SECOND BUBBLE', 'research'),
+      message: callCard('call-2', [trace('research', 'SECOND-CALL')]),
     });
-    const cleared = chatReducer(state, {
-      type: 'CLEAR_SUBAGENT_CONTENT',
-      agentId: 'research',
-      content: 'EARLIER-TURN-TEXT',
-    });
-    expect(cleared.messages).toHaveLength(3);
-    expect(cleared.messages[2].content).toBe('EARLIER-TURN-TEXT');
-    expect(cleared.messages[0].content).toBe('PARTIAL-ANSWER');
+    const cleared = clear(state);
+    expect(cleared.messages[0].subagentTraces[0].content).toBe('EARLIER-TURN-TEXT');
+    expect(cleared.messages[1].subagentTraces[0].content).toBe('SECOND-CALL');
   });
 
-  test('a clear for another session replaces that session’s bubble only', () => {
+  test('a clear for another session replaces that session’s trace only', () => {
     let state = stateWithSessions();
     state = chatReducer(state, {
       type: 'ADD_MESSAGE',
-      message: subagentLog('PARTIAL-ANSWER', 'research'),
+      message: callCard('call-1', [trace('research', 'PARTIAL-ANSWER')]),
       targetSessionId: 9,
     });
-    const cleared = chatReducer(state, {
-      type: 'CLEAR_SUBAGENT_CONTENT',
-      agentId: 'research',
-      content: 'EARLIER-TURN-TEXT',
-      targetSessionId: 9,
-    });
-    const slot = cleared.sessionStates.get(9);
-    expect(slot?.messages.at(-1)?.content).toBe('EARLIER-TURN-TEXT');
+    const cleared = clear(state, { targetSessionId: 9 });
+    expect(cleared.sessionStates.get(9)?.messages.at(-1)?.subagentTraces).toStrictEqual([
+      trace('research', 'EARLIER-TURN-TEXT'),
+    ]);
     // The visible transcript is not touched by a clear aimed at another session.
     expect(cleared.messages.length).toBe(state.messages.length);
     expect(cleared.messages[0].content).toBe('visible');
   });
 
-  test('a clear for another session creates the bubble in that session', () => {
-    const state = stateWithSessions();
-    const cleared = chatReducer(state, {
-      type: 'CLEAR_SUBAGENT_CONTENT',
-      agentId: 'research',
-      content: 'EARLIER-TURN-TEXT',
+  test('a clear for another session creates the trace on that session’s card', () => {
+    let state = stateWithSessions();
+    state = chatReducer(state, {
+      type: 'ADD_MESSAGE',
+      message: callCard('call-1'),
       targetSessionId: 9,
     });
-    const slot = cleared.sessionStates.get(9);
-    // The slot already held the message `stateWithSessions` filed under it.
-    expect(slot?.messages).toHaveLength(2);
-    expect(slot?.messages.at(-1)?.subagentId).toBe('research');
-    expect(slot?.messages.at(-1)?.content).toBe('EARLIER-TURN-TEXT');
-    // The visible transcript is untouched.
+    const cleared = clear(state, { targetSessionId: 9 });
+    expect(cleared.sessionStates.get(9)?.messages.at(-1)?.subagentTraces).toStrictEqual([
+      trace('research', 'EARLIER-TURN-TEXT'),
+    ]);
     expect(cleared.messages.length).toBe(state.messages.length);
-    expect(cleared.messages[0].content).toBe('visible');
+  });
+});
+
+describe('which card a trace attaches to', () => {
+  const chunk = (state, overrides) =>
+    chatReducer(state, {
+      type: 'SUBAGENT_CHUNK',
+      toolCallId: 'call-2',
+      agentId: 'research',
+      text: 'NEW',
+      ...overrides,
+    });
+
+  test('an agent id that comes back in a later call starts a trace of its own', () => {
+    // The bug this exists for: the reducer used to continue the LAST bubble of
+    // the agent anywhere in the history, so a reused id ("researcher" in turn
+    // 3 and again in turn 9) wrote into the old call's bubble.
+    let state = stateWithTraces();
+    state = chatReducer(state, { type: 'ADD_MESSAGE', message: callCard('call-2') });
+    const next = chunk(state);
+    expect(next.messages[0].subagentTraces[0].content).toBe('PARTIAL-ANSWER');
+    expect(next.messages[1].subagentTraces).toStrictEqual([trace('research', 'NEW')]);
+  });
+
+  test('a trace attaches to a saved result by its tool_call_id too', () => {
+    let state = chatReducer(initialState, { type: 'SET_CURRENT_SESSION', id: 5 });
+    state = chatReducer(state, {
+      type: 'ADD_MESSAGE',
+      message: { role: 'tool', content: 'RESULT', tool_call_id: 'call-2' },
+    });
+    expect(chunk(state).messages[0].subagentTraces).toStrictEqual([trace('research', 'NEW')]);
+  });
+
+  test('a chunk that lands AFTER the result card exists still goes to the live card', () => {
+    // The page holds streamed text for up to 50 ms, but `tool_result` is applied
+    // at once and adds a ✅ card carrying the same id as `tool_call_id`. A
+    // flush that fires after that must still land on the live 🔧 card, not
+    // start a stray trace on the result card.
+    let state = chatReducer(initialState, { type: 'SET_CURRENT_SESSION', id: 5 });
+    state = chatReducer(state, {
+      type: 'ADD_MESSAGE',
+      message: callCard('call-2', [trace('research', 'EARLY')]),
+    });
+    state = chatReducer(state, {
+      type: 'ADD_MESSAGE',
+      message: {
+        role: 'tool',
+        content: '✅ **run_subagents**',
+        name: 'run_subagents',
+        tool_call_id: 'call-2',
+      },
+    });
+    const next = chunk(state, { text: '-TAIL' });
+    expect(next.messages[0].subagentTraces).toStrictEqual([trace('research', 'EARLY-TAIL')]);
+    expect(next.messages[1]).toBe(state.messages[1]);
+  });
+
+  test('an event for a call with no card is dropped, not attached elsewhere', () => {
+    // The text is not lost: the server saves its own copy on the tool message,
+    // and the end-of-turn reload brings it back.
+    const before = stateWithTraces();
+    expect(chunk(before, { toolCallId: 'call-unknown' })).toBe(before);
+  });
+
+  test('only the card that changed is replaced; every other message keeps its identity', () => {
+    let state = stateWithTraces();
+    state = chatReducer(state, { type: 'ADD_MESSAGE', message: callCard('call-2') });
+    const next = chunk(state);
+    expect(next.messages[0]).toBe(state.messages[0]);
+    expect(next.messages[1]).not.toBe(state.messages[1]);
+    // The traces array is copied, never mutated in place.
+    expect(state.messages[1].subagentTraces).toBeUndefined();
   });
 });
 
@@ -302,37 +356,38 @@ describe("SUBAGENT_OUTPUT / the server's copy of the same text", () => {
   // BETWEEN two entries and NONE before the first one, and a streamed chunk
   // is appended raw.
   //
-  // The server keeps its own copy of the same text (the bucket the persisted
-  // `subagent_log` row is built from), and the clear that drops a failed
-  // turn's output REPLACES the client's bubble with the server's copy — so the
-  // two copies have to be byte-identical at every point. The server used to
-  // append a trailing newline instead, which put the newline in a different
-  // place than the client did: the same characters in a different order, so
-  // the replacement visibly reordered the surviving text.
-  test('the first line is the bubble’s whole content (no leading newline)', () => {
-    const state = chatReducer(initialState, {
-      type: 'SUBAGENT_OUTPUT',
-      agentId: 'research',
-      message: 'FIRST-LINE',
+  // The server keeps its own copy of the same text (the bucket the saved trace
+  // is built from), and the clear that drops a failed turn's output REPLACES
+  // the client's trace with the server's copy — so the two copies have to be
+  // byte-identical at every point. The server used to append a trailing newline
+  // instead, which put the newline in a different place than the client did:
+  // the same characters in a different order, so the replacement visibly
+  // reordered the surviving text.
+  const onCard = () =>
+    chatReducer(chatReducer(initialState, { type: 'SET_CURRENT_SESSION', id: 5 }), {
+      type: 'ADD_MESSAGE',
+      message: callCard('call-1'),
     });
-    expect(state.messages.at(-1).content).toBe('FIRST-LINE');
+  const output = (state, message) =>
+    chatReducer(state, {
+      type: 'SUBAGENT_OUTPUT',
+      toolCallId: 'call-1',
+      agentId: 'research',
+      message,
+    });
+  const text = (state) => tracesOf(state)[0].content;
+
+  test('the first line is the trace’s whole content (no leading newline)', () => {
+    expect(text(output(onCard(), 'FIRST-LINE'))).toBe('FIRST-LINE');
   });
 
   test('a second line is separated by exactly one newline', () => {
-    let state = chatReducer(initialState, {
-      type: 'SUBAGENT_OUTPUT',
-      agentId: 'research',
-      message: 'FIRST-LINE',
-    });
-    state = chatReducer(state, {
-      type: 'SUBAGENT_OUTPUT',
-      agentId: 'research',
-      message: 'SECOND-LINE',
-    });
-    expect(state.messages.at(-1).content).toBe('FIRST-LINE\nSECOND-LINE');
+    expect(text(output(output(onCard(), 'FIRST-LINE'), 'SECOND-LINE'))).toBe(
+      'FIRST-LINE\nSECOND-LINE'
+    );
   });
 
-  test('the server’s transcript and the client’s bubble are byte-identical', () => {
+  test('the server’s transcript and the client’s trace are byte-identical', () => {
     // The same writes, in the same order, through both sides.
     const writes = [
       { kind: 'chunk', text: 'TURN-ONE-TEXT' },
@@ -341,46 +396,45 @@ describe("SUBAGENT_OUTPUT / the server's copy of the same text", () => {
       { kind: 'line', message: '⚠ Sub-agent stopped: the provider gave up.' },
     ];
 
-    let state = initialState;
+    let state = onCard();
     let server = '';
     for (const write of writes) {
       if (write.kind === 'chunk') {
         state = chatReducer(state, {
           type: 'SUBAGENT_CHUNK',
+          toolCallId: 'call-1',
           agentId: 'research',
           text: write.text,
         });
         server += write.text;
       } else {
-        state = chatReducer(state, {
-          type: 'SUBAGENT_OUTPUT',
-          agentId: 'research',
-          message: write.message,
-        });
+        state = output(state, write.message);
         server = appendSubagentLineText(server, write.message);
       }
     }
 
-    expect(state.messages.at(-1).content).toBe(server);
+    expect(text(state)).toBe(server);
   });
 
-  test('the clear’s replacement (the server’s copy) is the client’s bubble', () => {
-    // The clear replaces the bubble with the text the server kept, so the
+  test('the clear’s replacement (the server’s copy) is the client’s trace', () => {
+    // The clear replaces the trace with the text the server kept, so the
     // replacement must not change a single character.
-    let state = initialState;
-    state = chatReducer(state, { type: 'SUBAGENT_CHUNK', agentId: 'research', text: 'TURN-ONE' });
+    let state = onCard();
     state = chatReducer(state, {
-      type: 'SUBAGENT_OUTPUT',
+      type: 'SUBAGENT_CHUNK',
+      toolCallId: 'call-1',
       agentId: 'research',
-      message: '↻ Provider error',
+      text: 'TURN-ONE',
     });
+    state = output(state, '↻ Provider error');
     const server = appendSubagentLineText('TURN-ONE', '↻ Provider error');
     const cleared = chatReducer(state, {
       type: 'CLEAR_SUBAGENT_CONTENT',
+      toolCallId: 'call-1',
       agentId: 'research',
       content: server,
     });
-    expect(cleared.messages.at(-1).content).toBe(state.messages.at(-1).content);
+    expect(text(cleared)).toBe(text(state));
   });
 });
 
@@ -395,11 +449,15 @@ const TURN = [
   ['chunk', { content: 'First try' }],
   ['clear_assistant', {}],
   ['chunk', { content: 'Found a.txt.' }],
-  ['tool_call', { name: 'run_subagents', arguments: { agents: [] } }],
-  ['subagent_output', { agentId: 'researcher', message: 'starting' }],
-  ['subagent_chunk', { agentId: 'researcher', text: 'half' }],
-  ['clear_subagent', { agentId: 'researcher', content: 'starting' }],
-  ['subagent_chunk', { agentId: 'researcher', text: '\nredone' }],
+  ['tool_call', { name: 'run_subagents', arguments: { agents: [] }, toolCallId: 'sub-1' }],
+  ['subagent_output', { toolCallId: 'sub-1', agentId: 'researcher', message: 'starting' }],
+  ['subagent_chunk', { toolCallId: 'sub-1', agentId: 'researcher', text: 'half' }],
+  ['clear_subagent', { toolCallId: 'sub-1', agentId: 'researcher', content: 'starting' }],
+  ['subagent_chunk', { toolCallId: 'sub-1', agentId: 'researcher', text: '\nredone' }],
+  // The result is applied at once, but streamed text is held for a moment: a
+  // chunk that arrives AFTER the result card exists must still reach the live card.
+  ['tool_result', { name: 'run_subagents', result: 'done', duration: 9, toolCallId: 'sub-1' }],
+  ['subagent_chunk', { toolCallId: 'sub-1', agentId: 'researcher', text: ' (late tail)' }],
   ['compact_progress', { message: 'Compacting conversation...' }],
   ['error', { message: 'provider fell over' }],
 ];
@@ -1010,21 +1068,52 @@ describe('background updates go through the batched dispatcher', () => {
   });
 });
 
-describe('the ROUTE uses the shared helper', () => {
-  // The chat route is a Next.js route handler, so a plain node script cannot
-  // import it. The source is read instead — the same trick the sub-agent
-  // compaction regression check uses — so the route cannot quietly go back to
-  // appending the newline in a different place than the client does.
-  const routeSource = fs.readFileSync(
-    new URL('../src/app/api/chat/route.ts', import.meta.url),
-    'utf8'
-  );
+describe('the server’s book of traces writes what the client’s reducer writes', () => {
+  // The chat route files every write in a `SubagentTraceBook`, and the clear that
+  // drops a failed turn's output REPLACES the client's trace with the book's
+  // text. So the two must agree on every character, at every step, with the
+  // same writes in the same order.
+  test('lines and chunks, then a clear, leave identical text on both sides', () => {
+    const book = new SubagentTraceBook();
+    let state = chatReducer(chatReducer(initialState, { type: 'SET_CURRENT_SESSION', id: 5 }), {
+      type: 'ADD_MESSAGE',
+      message: callCard('call-1'),
+    });
 
-  test('the route appends an agent line with the shared helper', () => {
-    expect(routeSource).toContain('appendSubagentLineText(');
-  });
-
-  test('the route does not append a trailing newline any more', () => {
-    expect(routeSource).not.toContain('}${text}\\n');
+    const writes = [
+      ['chunk', 'TURN-ONE'],
+      ['line', '↻ Provider error (500)'],
+      ['chunk', 'TURN-TWO'],
+      ['line', '⚠ gave up'],
+    ];
+    for (const [kind, text] of writes) {
+      if (kind === 'chunk') {
+        book.appendChunk('call-1', 'research', text);
+        state = chatReducer(state, {
+          type: 'SUBAGENT_CHUNK',
+          toolCallId: 'call-1',
+          agentId: 'research',
+          text,
+        });
+      } else {
+        book.appendLine('call-1', 'research', text);
+        state = chatReducer(state, {
+          type: 'SUBAGENT_OUTPUT',
+          toolCallId: 'call-1',
+          agentId: 'research',
+          message: text,
+        });
+      }
+    }
+    // Drop the last turn (TURN-TWO + the line after it), as the route does.
+    const dropped = '⚠ gave up'.length + 1 + 'TURN-TWO'.length;
+    const remaining = book.dropTail('call-1', 'research', dropped);
+    state = chatReducer(state, {
+      type: 'CLEAR_SUBAGENT_CONTENT',
+      toolCallId: 'call-1',
+      agentId: 'research',
+      content: remaining,
+    });
+    expect(tracesOf(state)).toStrictEqual(book.take('call-1'));
   });
 });

@@ -6,7 +6,6 @@ import { type ChatMessage } from '@/app/lib/chatStore';
 
 import { CopyMarkdownButton } from './CopyMarkdownButton';
 import { MarkdownErrorBoundary } from './MarkdownErrorBoundary';
-import { SubagentLogBubble } from './SubagentLogBubble';
 import { SystemMessageBubble } from './SystemMessageBubble';
 import { ToolMessageBubble } from './ToolMessageBubble';
 import { UserMessageBubble } from './UserMessageBubble';
@@ -97,9 +96,6 @@ function ChatMessageBubble({ message, onDeletePrompt, canDelete, isDeletingPromp
     }
     case 'system': {
       return <SystemMessageBubble message={message} />;
-    }
-    case 'subagent_log': {
-      return <SubagentLogBubble message={message} />;
     }
     case 'assistant': {
       return (

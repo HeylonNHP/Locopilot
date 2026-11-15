@@ -8,7 +8,6 @@ import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import { listSessions, loadSessionMessages } from '@/services/history';
 import {
   buildLlmRequestContext,
-  type ChatMessage,
   getLlmApiErrorMessage,
   type LlmRequestContext,
 } from '@/services/llm';
@@ -86,9 +85,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // Load messages from the database — non-system messages only
-  const conversationMessages = loadSessionMessages(parsedSessionId).filter(
-    (m): m is ChatMessage => m.role !== 'subagent_log'
-  );
+  const conversationMessages = loadSessionMessages(parsedSessionId);
 
   if (conversationMessages.length <= 1) {
     return NextResponse.json(

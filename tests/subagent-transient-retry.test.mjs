@@ -29,7 +29,7 @@
  *
  * THE FAILED ATTEMPT'S STREAMED OUTPUT IS DROPPED. A turn that fails after
  * it has already streamed leaves text behind: the chunks are in the agent's
- * bubble and in the persisted `subagent_log` row. The re-issued turn streams
+ * trace and in the one saved on the tool message. The re-issued turn streams
  * that text again, so the transcript showed it TWICE
  * ("PARTIAL-ANSWER PARTIAL-ANSWER FULL-ANSWER"). The tool therefore asks
  * the sink to drop that agent's output (`clearAgentContent`) BEFORE it
@@ -61,8 +61,8 @@
  * delivered before the stream opens, so the failed attempt streamed nothing.
  *
  * THE AGENT IDS ARE CANONICALISED. The chat route files every write for one
- * sub-agent under ONE key (one bucket, one client bubble, one persisted
- * `subagent_log` row), and it derives that key with `canonicalSubagentId`.
+ * sub-agent of a call under ONE key (one bucket, one client trace, one trace
+ * saved on the tool message), and it derives that key with `canonicalSubagentId`.
  * Two ids that canonicalise alike ("research" and " research ") would merge
  * into one bucket — and one agent's clear would truncate the other's text —
  * so the id is canonicalised ONCE, at the source, and a batch that contains
@@ -361,8 +361,8 @@ function respondWithContextLimitRejection({ firstTurnText, finalTexts }) {
  * and the streamed model text goes through `writeAgentChunk`.
  *
  * `clearAgentContent` is the sink's own "drop what you already showed for
- * this agent": the chat route implements it by truncating the agent's bubble
- * and the persisted `subagent_log` text. Here it drops the LAST `dropChars`
+ * this agent": the chat route implements it by truncating the agent's trace
+ * in the `SubagentTraceBook` (the text saved on the tool message). Here it drops the LAST `dropChars`
  * characters of the agent's text — exactly the characters the turn that is
  * being re-issued wrote — so the text of the agent's EARLIER turns (a
  * sub-agent is a multi-turn loop) survives. `liveText()` is what the agent's

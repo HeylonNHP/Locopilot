@@ -55,11 +55,11 @@ export interface ToolOutputSink {
 /**
  * The ONE key a sub-agent's output is filed under.
  *
- * WHY IT EXISTS. The chat route keeps every write for one sub-agent in one
- * bucket, and that bucket becomes the agent's client bubble AND the
- * persisted `subagent_log` row. Two agents whose ids differ only in
- * surrounding whitespace would collapse into ONE bucket — one bubble, one
- * row — and one agent's clear would truncate the OTHER agent's text.
+ * WHY IT EXISTS. The chat route keeps every write for one sub-agent of a call
+ * in one bucket (`SubagentTraceBook`), and that bucket becomes the agent's
+ * client trace AND the trace saved on the call's tool message. Two agents whose
+ * ids differ only in surrounding whitespace would collapse into ONE bucket —
+ * one trace — and one agent's clear would truncate the OTHER agent's text.
  *
  * So the id is canonicalised ONCE, at the source (the sub-agent tool), and
  * the route derives its bucket key from THIS function: the two spellings can
@@ -76,12 +76,12 @@ export function canonicalSubagentId(agentId: string): string {
 /**
  * Append one LOGICAL LINE to a sub-agent's transcript.
  *
- * WHY THE RULE IS SHAPED THIS WAY. The client builds the agent's bubble
+ * WHY THE RULE IS SHAPED THIS WAY. The client builds the agent's trace
  * with exactly this rule (src/app/lib/chatStore.ts, the `SUBAGENT_OUTPUT`
  * case): a newline BETWEEN two entries and none before the first one. The
- * server keeps its own copy of the same text (the bucket the persisted
- * `subagent_log` row is built from), and the clear that drops a failed
- * turn's output REPLACES the client's bubble with the server's copy — so
+ * server keeps its own copy of the same text (`SubagentTraceBook`, which the
+ * trace saved on the tool message is built from), and the clear that drops a
+ * failed turn's output REPLACES the client's trace with the server's copy — so
  * the two copies have to hold the same characters in the same order at
  * every point. When they did not, the replacement rewrote (and visibly
  * reordered) the text that was supposed to survive.
