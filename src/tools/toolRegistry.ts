@@ -19,8 +19,8 @@ import type { ReasoningEffort } from '@/types/chatConfig';
 
 import { normalizeSkillName, validateSkillName } from '@/app/lib/skillName';
 import {
-  DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+  DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS,
 } from '@/constants';
 
 import type { WorkingDirectoryScope } from './workingDirectory';
@@ -369,7 +369,7 @@ function defaultWebSearchSettings(): WebSearchSettings {
   return {
     maxQueries: 3,
     resultsPerQuery: 3,
-    requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+    requestTimeoutMs: DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS,
     perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
     baseUrl: '',
     compactionModel: '',

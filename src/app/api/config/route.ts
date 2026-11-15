@@ -2,15 +2,18 @@
 // PUT /api/config - update config
 import { type NextRequest, NextResponse } from 'next/server';
 
+import { MAX_CONFIG_TIMEOUT_MS } from '@/constants';
 import { invalidateCapCache } from '@/services/capResolver';
 import {
   DEFAULT_ADAPTER_RETRY,
   DEFAULT_RETRYABLE_STATUSES,
   DEFAULT_WEB_SEARCH_SETTINGS,
+  defaultWebSearchSettings,
   MAX_RETRY_BASE_DELAY_MS,
   MAX_RETRY_MAX_DELAY_MS,
   RETRY_MAX_ATTEMPTS_LIMIT,
   RETRY_MAX_ATTEMPTS_MIN,
+  type WebSearchSettingsShape,
 } from '@/services/configDefaults';
 import { buildFreshConfig, readConfig, saveConfig } from '@/services/configManager';
 import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
@@ -56,6 +59,7 @@ const KNOWN_WEB_SEARCH_KEYS: Set<string> = new Set([
   'maxQueries',
   'resultsPerQuery',
   'perPageCharLimit',
+  'requestTimeoutMs',
 ]);
 
 const KNOWN_SKILLS_KEYS: Set<string> = new Set(['enabled', 'disabled']);
@@ -146,11 +150,11 @@ function validateConfig(
     if (
       !isFiniteInteger(input.chatTimeoutMs) ||
       input.chatTimeoutMs <= 0 ||
-      input.chatTimeoutMs > MAX_RETRY_BASE_DELAY_MS * 60 * 24
+      input.chatTimeoutMs > MAX_CONFIG_TIMEOUT_MS
     ) {
       return {
         ok: false,
-        error: `Invalid config: 'chatTimeoutMs' must be a positive integer up to ${MAX_RETRY_BASE_DELAY_MS * 60 * 24}`,
+        error: `Invalid config: 'chatTimeoutMs' must be a positive integer up to ${MAX_CONFIG_TIMEOUT_MS}`,
       };
     }
     out.chatTimeoutMs = input.chatTimeoutMs;
@@ -256,11 +260,7 @@ function validateConfig(
         error: `Unknown config keys (webSearch): ${wsUnknown.join(', ')}`,
       };
     }
-    const webSearch: { maxQueries: number; resultsPerQuery: number; perPageCharLimit: number } = {
-      maxQueries: DEFAULT_WEB_SEARCH_SETTINGS.maxQueries,
-      resultsPerQuery: DEFAULT_WEB_SEARCH_SETTINGS.resultsPerQuery,
-      perPageCharLimit: DEFAULT_WEB_SEARCH_SETTINGS.perPageCharLimit,
-    };
+    const webSearch: Required<WebSearchSettingsShape> = defaultWebSearchSettings();
     if ('maxQueries' in input.webSearch) {
       const v = input.webSearch.maxQueries;
       if (!isFiniteInteger(v) || v < 0 || v > 100) {
@@ -294,6 +294,16 @@ function validateConfig(
         };
       }
       webSearch.perPageCharLimit = v;
+    }
+    if ('requestTimeoutMs' in input.webSearch) {
+      const v = input.webSearch.requestTimeoutMs;
+      if (!isFiniteInteger(v) || v <= 0 || v > MAX_CONFIG_TIMEOUT_MS) {
+        return {
+          ok: false,
+          error: `Invalid config: 'webSearch.requestTimeoutMs' must be a positive integer up to ${MAX_CONFIG_TIMEOUT_MS}`,
+        };
+      }
+      webSearch.requestTimeoutMs = v;
     }
     out.webSearch = webSearch;
   }

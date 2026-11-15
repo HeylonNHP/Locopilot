@@ -10,9 +10,9 @@
 import type { AdapterRetryConfig, CompletionMode, Config, LlmProvider } from '@/types/chatConfig';
 
 import {
-  DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_MAX_QUERIES,
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+  DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
 } from '@/constants';
 
@@ -91,27 +91,24 @@ export interface WebSearchSettingsShape {
   maxQueries: number;
   resultsPerQuery: number;
   perPageCharLimit: number;
+  /** Timeout (ms) for each web-page compaction LLM call. */
+  requestTimeoutMs: number;
 }
 
 export const DEFAULT_WEB_SEARCH_SETTINGS: Required<WebSearchSettingsShape> = {
   maxQueries: DEFAULT_WEB_SEARCH_MAX_QUERIES,
   resultsPerQuery: DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
   perPageCharLimit: DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+  requestTimeoutMs: DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS,
 };
 
 /**
- * Construct the `webSearch` settings with the LLM call timeout populated.
- * Kept separate from `DEFAULT_WEB_SEARCH_SETTINGS` because the request
- * timeout depends on `DEFAULT_OLLAMA_CHAT_TIMEOUT_MS` and is consumed by
- * both `toolRegistry.ts` and the chat route's pre-flight builder.
+ * Construct a fresh copy of the default `webSearch` settings. Kept as a
+ * function so callers that need a mutable object never share the module-level
+ * default.
  */
-export function defaultWebSearchSettings(): Required<WebSearchSettingsShape> & {
-  requestTimeoutMs: number;
-} {
-  return {
-    ...DEFAULT_WEB_SEARCH_SETTINGS,
-    requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
-  };
+export function defaultWebSearchSettings(): Required<WebSearchSettingsShape> {
+  return { ...DEFAULT_WEB_SEARCH_SETTINGS };
 }
 
 // ── Config fallback shape ──────────────────────────────────────────────────

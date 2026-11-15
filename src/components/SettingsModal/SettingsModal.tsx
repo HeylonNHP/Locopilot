@@ -7,7 +7,7 @@ import { useChat } from '@/app/lib/chatStore';
 import { describeContextWindow, interpretNumCtxInput } from '@/app/lib/contextWindow';
 import { saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
-import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS } from '@/constants';
+import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS } from '@/constants';
 import {
   REASONING_EFFORT_LABELS,
   REASONING_EFFORTS,
@@ -88,6 +88,16 @@ export default function SettingsModal({ onClose }: Props) {
   const [webPerPageCharLimit, setWebPerPageCharLimit] = useState(
     String(state.webSearch?.perPageCharLimit ?? 5000)
   );
+  const webRequestTimeoutSeconds = Math.floor(
+    (state.webSearch?.requestTimeoutMs ?? DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS) / 1000
+  );
+  const [webTimeoutHours, setWebTimeoutHours] = useState(
+    String(Math.floor(webRequestTimeoutSeconds / 3600))
+  );
+  const [webTimeoutMinutes, setWebTimeoutMinutes] = useState(
+    String(Math.floor((webRequestTimeoutSeconds % 3600) / 60))
+  );
+  const [webTimeoutSeconds, setWebTimeoutSeconds] = useState(String(webRequestTimeoutSeconds % 60));
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -256,6 +266,16 @@ export default function SettingsModal({ onClose }: Props) {
     const parsedWebMaxQueries = Number.parseInt(webMaxQueries) || 3;
     const parsedWebResultsPerQuery = Number.parseInt(webResultsPerQuery) || 3;
     const parsedWebPerPageCharLimit = Number.parseInt(webPerPageCharLimit) || 5000;
+    const parsedWebTimeoutSeconds =
+      (Number.parseInt(webTimeoutHours) || 0) * 3600 +
+      (Number.parseInt(webTimeoutMinutes) || 0) * 60 +
+      (Number.parseInt(webTimeoutSeconds) || 0);
+    // An empty or zero duration falls back to the default, matching the other
+    // web-search fields. Upper bound is enforced server-side.
+    const parsedWebRequestTimeoutMs =
+      parsedWebTimeoutSeconds > 0
+        ? parsedWebTimeoutSeconds * 1000
+        : DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS;
 
     // The cap is now the server's responsibility. We only include
     // numCtx in the PUT body when the user actually changed it in
@@ -275,6 +295,7 @@ export default function SettingsModal({ onClose }: Props) {
         maxQueries: parsedWebMaxQueries,
         resultsPerQuery: parsedWebResultsPerQuery,
         perPageCharLimit: parsedWebPerPageCharLimit,
+        requestTimeoutMs: parsedWebRequestTimeoutMs,
       },
       // The global defaults. Only the fields the user edited are sent, so a
       // save of an unrelated setting does not re-assert a default another
@@ -359,6 +380,7 @@ export default function SettingsModal({ onClose }: Props) {
             maxQueries: parsedWebMaxQueries,
             resultsPerQuery: parsedWebResultsPerQuery,
             perPageCharLimit: parsedWebPerPageCharLimit,
+            requestTimeoutMs: parsedWebRequestTimeoutMs,
           },
           ...(numCtxInput.kind === 'set' ? { requestedNumCtx: numCtxInput.value } : {}),
         },
@@ -760,6 +782,47 @@ export default function SettingsModal({ onClose }: Props) {
             />
           </div>
 
+          <div className="settings-row">
+            <label className="settings-label">Web Search: Compaction Timeout</label>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-12">
+                <input
+                  type="number"
+                  min="0"
+                  value={webTimeoutHours}
+                  onChange={(e) => setWebTimeoutHours(e.target.value)}
+                  className="settings-input"
+                  style={{ width: '80px' }}
+                />
+                <span className="font-14 text-primary">hours</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  value={webTimeoutMinutes}
+                  onChange={(e) => setWebTimeoutMinutes(e.target.value)}
+                  className="settings-input"
+                  style={{ width: '80px' }}
+                />
+                <span className="font-14 text-primary">minutes</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  value={webTimeoutSeconds}
+                  onChange={(e) => setWebTimeoutSeconds(e.target.value)}
+                  className="settings-input"
+                  style={{ width: '80px' }}
+                />
+                <span className="font-14 text-primary">seconds</span>
+              </div>
+              <span className="font-12 text-secondary">
+                Maximum time allowed for each LLM call that compacts a fetched web page to the page
+                char limit. Defaults to the chat timeout. Increase it if slow compaction models time
+                out on large pages.
+              </span>
+            </div>
+          </div>
           {saveError && (
             <div className="settings-error" role="alert">
               {saveError}

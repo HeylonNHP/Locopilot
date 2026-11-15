@@ -123,6 +123,7 @@ export interface WebSearchConfig {
   maxQueries: number;
   resultsPerQuery: number;
   perPageCharLimit: number;
+  requestTimeoutMs: number;
 }
 
 export type DoneReason = 'stop' | 'length' | 'load' | 'unload' | 'unknown';

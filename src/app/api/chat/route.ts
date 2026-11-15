@@ -50,6 +50,7 @@ import {
   DEFAULT_SESSION_NAME,
   DEFAULT_WEB_SEARCH_MAX_QUERIES,
   DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
+  DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
   HTTP_BAD_REQUEST,
   MAX_COMPACTION_FAILURES_PER_TURN,
@@ -924,7 +925,8 @@ export async function POST(req: NextRequest): Promise<Response> {
               maxQueries: config?.webSearch?.maxQueries ?? DEFAULT_WEB_SEARCH_MAX_QUERIES,
               resultsPerQuery:
                 config?.webSearch?.resultsPerQuery ?? DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY,
-              requestTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
+              requestTimeoutMs:
+                config?.webSearch?.requestTimeoutMs ?? DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS,
               perPageCharLimit:
                 config?.webSearch?.perPageCharLimit ?? DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT,
               baseUrl: configuredBaseUrl,

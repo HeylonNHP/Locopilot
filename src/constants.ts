@@ -3,6 +3,14 @@ export const DEFAULT_OLLAMA_CHAT_TIMEOUT_MS = 720_000; // 12 minutes// connectio
 export const DEFAULT_WEB_SEARCH_MAX_QUERIES = 3;
 export const DEFAULT_WEB_SEARCH_RESULTS_PER_QUERY = 3;
 export const DEFAULT_WEB_SEARCH_PER_PAGE_CHAR_LIMIT = 5000;
+/**
+ * Per-call timeout for the LLM pass that compacts each fetched web page down
+ * to the `perPageCharLimit` band. Defaults to the chat timeout because a
+ * compaction call is a full generation on the compaction model.
+ */
+export const DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS = DEFAULT_OLLAMA_CHAT_TIMEOUT_MS;
+/** Upper bound for user-configured request timeouts (24 hours). */
+export const MAX_CONFIG_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_WEB_REQUEST_TIMEOUT_MS = 15_000;
 /**
  * Timeout for model listing / info probes (`/v1/models`, `/api/tags`,
