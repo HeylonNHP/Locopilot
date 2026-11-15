@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 
+import { readHookInput, resolveCheckoutRoot } from './lib/hookContext.mjs';
+
 function runEslintFull(projectDir) {
   const result = spawnSync('npx', ['eslint', '.', '-f', 'json'], {
     cwd: projectDir,
@@ -83,7 +85,8 @@ function runTypeCheck(projectDir) {
   return `TypeScript (${errorCount} error${errorCount === 1 ? '' : 's'}):\n${truncated}`;
 }
 
-const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+// Lint the checkout the session runs in (worktree or main), never a parent.
+const projectDir = resolveCheckoutRoot(readHookInput());
 const sections = [];
 
 const eslintOutput = runEslintFull(projectDir);

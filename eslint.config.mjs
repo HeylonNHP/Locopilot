@@ -11,7 +11,18 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   // Ignore build/runtime directories
   {
-    ignores: ['.next/', 'dist/', 'node_modules/', 'coverage/', '*.db*', '*.wasm', 'next-env.d.ts'],
+    ignores: [
+      '.next/',
+      'dist/',
+      'node_modules/',
+      'coverage/',
+      // Git worktrees live inside the main checkout; each one is linted from
+      // its own root, never as part of the checkout that contains it.
+      '.claude/worktrees/',
+      '*.db*',
+      '*.wasm',
+      'next-env.d.ts',
+    ],
   },
 
   // Base JavaScript recommended rules

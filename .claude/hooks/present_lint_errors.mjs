@@ -1,21 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
-function readInput() {
-  return process.stdin.isTTY ? '' : readFileSync(0, 'utf8');
-}
-
-function findEditedFile(inputData) {
-  if (!inputData.trim()) return null;
-
-  try {
-    const context = JSON.parse(inputData);
-    return context?.tool_input?.file_path || context?.tool_input?.path || null;
-  } catch {
-    return null;
-  }
-}
+import {
+  editedFilePath,
+  isInsideRoot,
+  readHookInput,
+  resolveCheckoutRoot,
+} from './lib/hookContext.mjs';
 
 function runEslintOnFile(projectDir, filePath) {
   const result = spawnSync('npx', ['eslint', '--no-ignore', '-f', 'json', filePath], {
@@ -66,10 +57,12 @@ function runEslintOnFile(projectDir, filePath) {
   return `${summary}\n${lines.join('\n')}`;
 }
 
-const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-const filePath = findEditedFile(readInput());
+const input = readHookInput();
+const filePath = editedFilePath(input);
+// Lint in the checkout that owns the edited file; ignore files outside it.
+const projectDir = resolveCheckoutRoot(input);
 
-if (filePath && (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js') || filePath.endsWith('.jsx') || filePath.endsWith('.mjs') || filePath.endsWith('.cjs'))) {
+if (filePath && isInsideRoot(projectDir, filePath) && (filePath.endsWith('.ts') || filePath.endsWith('.tsx') || filePath.endsWith('.js') || filePath.endsWith('.jsx') || filePath.endsWith('.mjs') || filePath.endsWith('.cjs'))) {
   const outputText = runEslintOnFile(projectDir, filePath);
   if (outputText) {
     process.stdout.write(JSON.stringify({
