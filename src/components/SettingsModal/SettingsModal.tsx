@@ -69,9 +69,11 @@ export default function SettingsModal({ onClose }: Props) {
   const [compactionModelEdited, setCompactionModelEdited] = useState(false);
   // The provider that owns the selected main model / compaction model. These
   // are tracked separately so the user can run the main chat on one provider
-  // and compaction on a different one. `compactionProviderId` is transient
-  // (in-memory + request body, not persisted to config.json), mirroring the
-  // ModelSelector contract.
+  // and compaction on a different one. The compaction provider is part of the
+  // compaction PAIR: it pins the conversation's own row and, when the user
+  // picked a concrete compaction model, the global default pair in
+  // config.json as well — a compaction model named without its provider is
+  // what sent a cloud model to the wrong endpoint and came back 404.
   const [mainProviderId, setMainProviderId] = useState<string | null>(state.activeProviderId);
   const [compactionProviderId, setCompactionProviderId] = useState<string | null>(
     state.compactionProviderId
@@ -299,8 +301,21 @@ export default function SettingsModal({ onClose }: Props) {
       ...(modelEdited && model.trim().length > 0
         ? { model, ...(mainProviderId ? { activeProviderId: mainProviderId } : {}) }
         : {}),
-      ...(compactionModelEdited
-        ? { compactionModel: compactionModel ?? state.defaultCompactionModel }
+      // The GLOBAL compaction pair travels together: a compaction model
+      // named without its provider would run on whatever provider the main
+      // chat uses — the wrong endpoint that produced the 404s.
+      //
+      // "Use the default" (`null`) leaves the global pair ALONE: the
+      // conversation inherits what the global default already is, so there
+      // is nothing to write (and writing our stale copy would clobber a
+      // default another tab has just changed). "Same as the main model"
+      // (`''`) clears the provider, because the pair then means "the main
+      // model on the main provider".
+      ...(compactionModelEdited && compactionModel !== null
+        ? {
+            compactionModel,
+            compactionProviderId: compactionProviderId ?? null,
+          }
         : {}),
       ...(reasoningEffortEdited ? { reasoningEffort } : {}),
     };
@@ -368,6 +383,15 @@ export default function SettingsModal({ onClose }: Props) {
           // The GLOBAL default; the conversation on screen keeps its own
           // level.
           ...(reasoningEffortEdited ? { defaultReasoningEffort: reasoningEffort } : {}),
+          // The global half of the compaction pair, mirrored from what was
+          // just saved. "Use the default" leaves it alone (nothing was
+          // written), so neither field is carried.
+          ...(compactionModelEdited && compactionModel !== null
+            ? {
+                defaultCompactionModel: compactionModel,
+                defaultCompactionProviderId: compactionProviderId ?? null,
+              }
+            : {}),
           promptTimestamps,
           citeSources,
           redactSecrets,
@@ -402,6 +426,14 @@ export default function SettingsModal({ onClose }: Props) {
             compactionModel: compactionModelEdited
               ? (compactionModel ?? state.defaultCompactionModel)
               : state.defaultCompactionModel,
+            // The global provider follows the global model. "Use the default"
+            // leaves the global pair alone; a concrete pick (or "same as the
+            // main model") writes its provider along with its model.
+            compactionProviderId: compactionModelEdited
+              ? compactionModel === null
+                ? state.defaultCompactionProviderId
+                : (compactionProviderId ?? null)
+              : state.defaultCompactionProviderId,
             reasoningEffort: reasoningEffortEdited ? reasoningEffort : state.defaultReasoningEffort,
             compactionReasoningEffort: state.defaultCompactionReasoningEffort,
           },
@@ -423,7 +455,22 @@ export default function SettingsModal({ onClose }: Props) {
       // silently continuing to send requests to the stale provider.
       const providerChanged = mainProviderId !== state.activeProviderId;
       const compactionChanged = compactionModel !== state.compactionModel;
-      if (streamingSessionId !== null && (modelChanged || providerChanged || compactionChanged)) {
+      // The compaction PROVIDER can change on its own: the same model name on
+      // a different provider is a DIFFERENT endpoint, and that is exactly the
+      // mistake that produced the 404s (a compaction model served by one
+      // provider, sent to another). So the provider change is carried into a
+      // running turn on its own.
+      const compactionProviderChanged = compactionProviderId !== state.compactionProviderId;
+      // The mid-turn switch cannot express "inherit the global default" for
+      // the compaction MODEL, so a pick of "Use the default" leaves the
+      // running turn's compaction pair alone entirely — changing only the
+      // provider would leave it with half a pair, and half a pair is how a
+      // model ends up on the wrong endpoint.
+      const compactionSwitchable = !compactionChanged || compactionModel !== null;
+      if (
+        streamingSessionId !== null &&
+        (modelChanged || providerChanged || compactionChanged || compactionProviderChanged)
+      ) {
         dispatch({
           type: 'SET_MODEL_SWITCH_PENDING',
           sessionId: streamingSessionId,
@@ -442,7 +489,12 @@ export default function SettingsModal({ onClose }: Props) {
             ...(modelChanged ? { model } : {}),
             ...(sendProviderId ? { providerId: sendProviderId } : {}),
             ...(compactionChanged && compactionModel !== null ? { compactionModel } : {}),
-            ...(compactionChanged && compactionProviderId ? { compactionProviderId } : {}),
+            // `null` CLEARS the pin (the compaction then runs on the main
+            // provider), so the field is sent whenever it changed — a cleared
+            // provider must not be silently dropped.
+            ...(compactionProviderChanged && compactionSwitchable
+              ? { compactionProviderId }
+              : {}),
           },
           // Attach to the running turn's signal — looked up per session
           // from the shared abort map, so it is the SAME controller the

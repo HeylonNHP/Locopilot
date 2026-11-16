@@ -57,7 +57,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!savedConfig.ok) {
     return NextResponse.json({ error: savedConfig.message }, { status: 503 });
   }
-  const requestProblem = requestProblemFor(savedConfig.config, { model });
+  // The dump never compacts, so a broken compaction provider is not its
+  // problem: the dump is the tool you reach for when something is broken.
+  const requestProblem = requestProblemFor(savedConfig.config, { model }, { checkCompaction: false });
   if (requestProblem !== null) {
     return NextResponse.json({ error: requestProblem }, { status: 409 });
   }

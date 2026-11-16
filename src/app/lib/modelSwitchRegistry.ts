@@ -28,8 +28,15 @@ export interface ModelSwitchRequest {
    * uses for the request body's `compactionModel` field.
    */
   compactionModel?: string;
-  /** Provider ID for the new compaction model, when the client knows it. */
-  compactionProviderId?: string;
+  /**
+   * Provider ID for the new compaction model, when the client knows it.
+   *
+   * `null` is meaningful and CLEARS the pin: the compaction then runs on the
+   * main chat provider. An absent field leaves the pin alone — the two are
+   * different states, so the request must be able to say "no provider of its
+   * own" rather than "nothing to say".
+   */
+  compactionProviderId?: string | null;
 }
 
 /** Pending switches, keyed by session ID. At most one per session. */

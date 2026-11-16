@@ -352,6 +352,7 @@ export function useSlashCommands({
                 model: modelName,
                 providerId: modelProviderId,
                 compactionModel: refs.defaultCompactionModelRef.current,
+                compactionProviderId: refs.defaultCompactionProviderIdRef.current,
                 reasoningEffort: refs.defaultReasoningEffortRef.current,
                 compactionReasoningEffort: refs.defaultCompactionReasoningEffortRef.current,
               };

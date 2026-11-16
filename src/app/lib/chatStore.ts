@@ -228,6 +228,26 @@ export interface ChatState {
    * `''` means "the conversation's own main model".
    */
   defaultCompactionModel: string;
+  /**
+   * The provider that serves {@link defaultCompactionModel} — the GLOBAL half
+   * of the compaction pair, and the setting Phase 1 exists to add.
+   *
+   * A compaction MODEL name alone does not say which endpoint serves it: the
+   * same model name can live on two providers with two different API keys,
+   * and a request sent to the wrong one comes back as a 404 (which is not
+   * retryable, so the whole compaction degrades to truncated content). The
+   * global compaction model therefore travels WITH the id of the provider
+   * that serves it.
+   *
+   * `null` means "no global compaction provider" — compaction then runs on
+   * the conversation's main provider. This is CLEARABLE, unlike the main
+   * provider, because "compact on the main provider" is a legitimate choice.
+   *
+   * The pair travels together: the conversation inherits BOTH halves or
+   * neither. A conversation that pins its own compaction model pins its own
+   * provider too.
+   */
+  defaultCompactionProviderId: string | null;
   baseUrl: string;
   /**
    * The GLOBAL context-window setting as saved in config.json: what the
@@ -554,6 +574,11 @@ export type ChatAction =
       providerId: string | null;
       /** The compaction model a new conversation starts with. */
       compactionModel?: string | undefined;
+      /**
+       * The provider that serves the global compaction model. `null` clears
+       * it (compaction runs on the main provider); absent leaves it alone.
+       */
+      compactionProviderId?: string | null | undefined;
     }
   | { type: 'SET_ERROR'; error: string | null; targetSessionId?: number }
   | {
@@ -1484,6 +1509,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         defaultModel: defaults.model,
         defaultProviderId: defaults.providerId,
         defaultCompactionModel: defaults.compactionModel,
+        defaultCompactionProviderId: defaults.compactionProviderId,
         defaultReasoningEffort: defaults.reasoningEffort,
         defaultCompactionReasoningEffort: defaults.compactionReasoningEffort,
       };
@@ -1505,6 +1531,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...(action.compactionModel === undefined
           ? {}
           : { defaultCompactionModel: action.compactionModel }),
+        ...(action.compactionProviderId === undefined
+          ? {}
+          : { defaultCompactionProviderId: action.compactionProviderId }),
       };
       // A conversation on screen keeps the selection of its own. Only the
       // new-chat view follows the default: a conversation whose row has not
@@ -1530,6 +1559,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         defaultModel,
         defaultProviderId,
         defaultCompactionModel,
+        defaultCompactionProviderId,
         defaultReasoningEffort,
         defaultCompactionReasoningEffort,
         ...rest
@@ -1540,6 +1570,9 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...(defaultModel === undefined ? {} : { defaultModel }),
         ...(defaultProviderId === undefined ? {} : { defaultProviderId }),
         ...(defaultCompactionModel === undefined ? {} : { defaultCompactionModel }),
+        ...(defaultCompactionProviderId === undefined
+          ? {}
+          : { defaultCompactionProviderId }),
         ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
         ...(defaultCompactionReasoningEffort === undefined
           ? {}
@@ -1960,6 +1993,7 @@ export const initialState: ChatState = {
   defaultModel: '',
   defaultProviderId: null,
   defaultCompactionModel: '',
+  defaultCompactionProviderId: null,
   models: [],
   modelsLoading: true,
   providers: [],

@@ -100,6 +100,16 @@ export interface SessionDefaults {
   providerId: string | null;
   /** The compaction model a new conversation starts with. `''` for the main model. */
   compactionModel: string;
+  /**
+   * The provider that serves the default compaction model, or `null` when it
+   * is not pinned.
+   *
+   * This is the global half of the pair: it applies to a conversation only
+   * while that conversation INHERITS the default compaction model. A
+   * conversation that pins its own compaction model needs its own provider
+   * pin too, or it runs on the main chat provider.
+   */
+  compactionProviderId: string | null;
   /** The main model's reasoning level a new conversation starts with. */
   reasoningEffort: ReasoningEffort;
   /** The compaction model's reasoning level a new conversation starts with. */
@@ -111,6 +121,11 @@ export interface SessionDefaultsPatch {
   model?: string;
   providerId?: string | null;
   compactionModel?: string;
+  /**
+   * `undefined` leaves the stored value alone; `null` clears it (the
+   * compaction then runs on the main chat provider); a value pins it.
+   */
+  compactionProviderId?: string | null;
   reasoningEffort?: ReasoningEffort;
   compactionReasoningEffort?: ReasoningEffort;
 }

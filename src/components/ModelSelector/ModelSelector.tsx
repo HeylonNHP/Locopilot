@@ -13,6 +13,7 @@ import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { type LLmModel, useChat } from '@/app/lib/chatStore';
 import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { type MidTurnModelSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
+import { resolveCompactionRule } from '@/services/compactionRule';
 
 import { toggleProviderCollapsed, useCollapsedProviders } from './collapsedProviders';
 
@@ -266,6 +267,7 @@ export default function ModelSelector({
     defaultModel,
     defaultProviderId,
     defaultCompactionModel,
+    defaultCompactionProviderId,
     reasoningEffort,
     compactionReasoningEffort,
     defaultReasoningEffort,
@@ -280,6 +282,22 @@ export default function ModelSelector({
   const activeModel = mode === 'compaction' ? compactionModel : model;
 
   const inheritedCompactionName = defaultCompactionModel || model || 'the main model';
+
+  // What this conversation will ACTUALLY compact with: its own pinned
+  // pair, else the global pair, else its own main model on the main
+  // provider. This is the SERVER's rule (`src/services/compactionRule.ts`),
+  // read here so the highlight cannot disagree with what the server does —
+  // the module has no imports precisely so both sides can share it.
+  const effectiveCompaction = resolveCompactionRule({
+    mainModel: model,
+    sessionCompactionModel: compactionModel,
+    sessionCompactionProviderId: compactionProviderId,
+    globalCompactionModel: defaultCompactionModel,
+    globalCompactionProviderId: defaultCompactionProviderId,
+  });
+  // A `null` provider in the rule means "the main chat provider", which is
+  // the conversation's own provider here.
+  const effectiveCompactionProviderId = effectiveCompaction.providerId ?? activeProviderId;
 
   // The session whose turn can still take a model switch on board, or null
   // when nothing is streaming and the config update alone is enough.
@@ -341,11 +359,22 @@ export default function ModelSelector({
   // For compaction mode, match on the compaction-specific provider id
   // (transient) instead of the active chat provider id.
   const isModelActive = useCallback(
-    (m: LLmModel) =>
-      mode === 'compaction'
-        ? m.name === activeModel && m.providerId === compactionProviderId
-        : m.name === activeModel && m.providerId === activeProviderId,
-    [mode, activeModel, compactionProviderId, activeProviderId]
+    (m: LLmModel) => {
+      if (mode !== 'compaction') {
+        return m.name === activeModel && m.providerId === activeProviderId;
+      }
+      // "Same as main model" and "Use the default" are represented by their
+      // own rows at the top of the list; highlighting a model row as well
+      // would say two different things at once.
+      if (typeof activeModel !== 'string' || activeModel === '') return false;
+      // The EFFECTIVE pair, not the raw pin: a conversation that pinned a
+      // model without a provider of its own still runs on a provider, and
+      // highlighting by the raw pin would match nothing at all.
+      return (
+        m.name === effectiveCompaction.model && m.providerId === effectiveCompactionProviderId
+      );
+    },
+    [mode, activeModel, activeProviderId, effectiveCompaction.model, effectiveCompactionProviderId]
   );
 
   // Position the dropdown above the anchor when opened, centred horizontally.
@@ -450,6 +479,13 @@ export default function ModelSelector({
         providerId:
           defaultsPatch.providerId === undefined ? defaultProviderId : defaultsPatch.providerId,
         compactionModel: defaultsPatch.compactionModel ?? defaultCompactionModel,
+        // `undefined` means "the global provider is unchanged"; `null` means
+        // "clear it" (the compaction then runs on the main chat provider).
+        // `??` would collapse the two, so the check is explicit.
+        compactionProviderId:
+          defaultsPatch.compactionProviderId === undefined
+            ? defaultCompactionProviderId
+            : defaultsPatch.compactionProviderId,
         reasoningEffort: defaultsPatch.reasoningEffort ?? defaultReasoningEffort,
         compactionReasoningEffort:
           defaultsPatch.compactionReasoningEffort ?? defaultCompactionReasoningEffort,
@@ -490,6 +526,7 @@ export default function ModelSelector({
       compactionReasoningEffort,
       currentSessionId,
       defaultCompactionModel,
+      defaultCompactionProviderId,
       defaultCompactionReasoningEffort,
       defaultModel,
       defaultProviderId,
@@ -522,7 +559,18 @@ export default function ModelSelector({
       applySelection(
         { compactionModel: nextCompactionModel, compactionProviderId: providerId ?? null },
         // "Use the default" (`null`) leaves the default alone.
-        nextCompactionModel === null ? {} : { compactionModel: nextCompactionModel },
+        nextCompactionModel === null
+          ? {}
+          : {
+              compactionModel: nextCompactionModel,
+              // The global pair travels together: a global compaction model
+              // with no provider of its own would be sent to whichever
+              // provider the main chat uses, which is how a cloud-only
+              // compaction model ended up at the wrong endpoint (a 404).
+              // "Same as main model" clears the provider, because the global
+              // pair then means "the main model on the main provider".
+              compactionProviderId: providerId ?? null,
+            },
         {
           // `null` means "inherit the global default", which the mid-turn
           // switch has no way to express: the running turn keeps the model

@@ -10,6 +10,7 @@
 
 import type { Config } from '@/types/chatConfig';
 
+import { resolveCompactionSelection } from '@/services/compactionSelection';
 import { resolveProvider } from '@/services/providerResolver';
 
 import { pickRequestedNumCtx } from './resolveNumCtx';
@@ -41,9 +42,54 @@ export function configProblemFor(
 }
 
 /**
+ * The problem with running the COMPACTION on this config, or `null`.
+ *
+ * The compaction model and provider travel together: the conversation's own
+ * pin, then the global pair (`config.compactionModel` with
+ * `config.compactionProviderId`), then the conversation's main model on the
+ * main provider. The rule itself lives in `src/services/compactionSelection.ts`
+ * — this is only the refusal half of it.
+ *
+ * A compaction provider id that names no configured provider is a PROBLEM,
+ * not a reason to fall back: the compaction would quietly run on the main
+ * provider instead, which is the silent wrong endpoint that produced the
+ * 404s.
+ *
+ * A compaction provider of its own also needs a window of its own: the
+ * summarising calls are planned against that window, not the main one. The
+ * main provider's window is the main check's business.
+ */
+export function compactionProblemFor(
+  config: Config,
+  input: {
+    mainModel: string;
+    compactionModel?: unknown;
+    compactionProviderId?: unknown;
+  }
+): string | null {
+  const selection = resolveCompactionSelection({
+    config,
+    mainModel: input.mainModel,
+    sessionCompactionModel:
+      typeof input.compactionModel === 'string' ? input.compactionModel : null,
+    sessionCompactionProviderId:
+      typeof input.compactionProviderId === 'string' ? input.compactionProviderId : null,
+  });
+  if (selection.problem !== null) {
+    return selection.problem;
+  }
+  if (selection.providerId === null) {
+    // The MAIN provider — the main check already covered its window.
+    return null;
+  }
+  return configProblemFor(config, selection.providerId, selection.model);
+}
+
+/**
  * The same check for a route whose body fields are not typed yet (compact,
- * title and dump). A compaction provider named in the body is checked too,
- * since its window is the one the summarising calls are planned against.
+ * title and dump). The compaction half is checked too, since the compaction
+ * provider's window is the one the summarising calls are planned against —
+ * but a route that never compacts (the dump) can opt out of it.
  */
 export function requestProblemFor(
   config: Config,
@@ -52,7 +98,8 @@ export function requestProblemFor(
     model: string;
     compactionProviderId?: unknown;
     compactionModel?: unknown;
-  }
+  },
+  options?: { checkCompaction?: boolean }
 ): string | null {
   const providerId =
     typeof body.providerId === 'string' && body.providerId.trim()
@@ -62,16 +109,14 @@ export function requestProblemFor(
   if (mainProblem !== null) {
     return mainProblem;
   }
-  const compactionProviderId =
-    typeof body.compactionProviderId === 'string' ? body.compactionProviderId.trim() : '';
-  if (!compactionProviderId) {
+  if (options?.checkCompaction === false) {
     return null;
   }
-  const compactionModel =
-    typeof body.compactionModel === 'string' && body.compactionModel.trim()
-      ? body.compactionModel.trim()
-      : body.model;
-  return configProblemFor(config, compactionProviderId, compactionModel);
+  return compactionProblemFor(config, {
+    mainModel: body.model,
+    compactionModel: body.compactionModel,
+    compactionProviderId: body.compactionProviderId,
+  });
 }
 
 /**

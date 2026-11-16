@@ -14,6 +14,7 @@ import {
   COMPACT_FOCUS_RAW_MAX_CHARS,
   normaliseCompactionFocus,
 } from '@/services/compact/focus';
+import { resolveCompactionSelection } from '@/services/compactionSelection';
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { readConfig } from '@/services/configManager';
 import { requestProblemFor, requireWindow } from '@/services/contextWindow/configProblem';
@@ -25,7 +26,6 @@ import {
   getLlmApiErrorMessage,
   type LlmRequestContext,
 } from '@/services/llm';
-import { resolveCompactionModel } from '@/services/modelManager';
 import { resolveProviderRequestContext } from '@/services/providerResolver';
 import { getAgentWorkingDirectory } from '@/tools/workingDirectory';
 import {
@@ -201,33 +201,39 @@ export async function POST(request: NextRequest): Promise<Response> {
                   ? baseUrl.trim()
                   : DEFAULT_OLLAMA_BASE_URL,
             });
-        const effectiveCompactionModelResolved = resolveCompactionModel(
-          typeof compactionModel === 'string' ? compactionModel : config?.compactionModel,
-          model.trim()
-        );
-        effectiveCompactionModel = effectiveCompactionModelResolved;
+        // The compaction MODEL and PROVIDER are chosen together, by the ONE
+        // shared resolver (`src/services/compactionSelection.ts`): the
+        // conversation's own pin, then the global pair
+        // (`config.compactionModel` with `config.compactionProviderId`), then
+        // the conversation's main model on the main provider. The chat route
+        // and the title route call the same resolver, so the three cannot
+        // disagree about which endpoint serves the compaction model.
+        //
+        // The body carries the conversation's own pin only; the global pair
+        // comes from the saved config.
+        const compactionSelection = resolveCompactionSelection({
+          config,
+          mainModel: model.trim(),
+          sessionCompactionModel:
+            typeof compactionModel === 'string' ? compactionModel : null,
+          sessionCompactionProviderId:
+            typeof compactionProviderId === 'string' ? compactionProviderId : null,
+        });
+        effectiveCompactionModel = compactionSelection.model;
 
-        // Resolve a separate provider for the compaction LLM call ONLY when
-        // the client explicitly supplied a compactionProviderId. This lets
-        // the user pick a compaction model from a different provider than
-        // the main chat model. When no compactionProviderId is supplied
-        // (e.g. "Same as main model", or a legacy client) we MUST use the
-        // main resolved context directly. Falling back to model-name
-        // resolution here is unsafe: if the active model is not stored as
-        // any provider's default `model`, resolveProvider falls back to
-        // providers[0], sending the compaction request to the wrong
-        // endpoint (often Ollama localhost) and producing a 404.
-        const explicitCompactionProviderId =
-          typeof compactionProviderId === 'string' && compactionProviderId.trim().length > 0
-            ? compactionProviderId.trim()
-            : undefined;
-        const compactionResolved = explicitCompactionProviderId
-          ? resolveProviderRequestContext(
-              config,
-              explicitCompactionProviderId,
-              effectiveCompactionModel
-            )
-          : null;
+        // The provider is resolved BY ID ONLY. Passing no model name is
+        // intentional: model-name matching would let a provider id that no
+        // longer exists silently become "whatever provider owns that model
+        // name" — with that provider's API key — and the compaction call
+        // would go to an endpoint that does not carry the model.
+        const compactionResolved =
+          compactionSelection.providerId === null
+            ? null
+            : resolveProviderRequestContext(
+                config,
+                compactionSelection.providerId,
+                undefined
+              );
         const compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
 
         // The windows come from the server's saved setting and each model's own

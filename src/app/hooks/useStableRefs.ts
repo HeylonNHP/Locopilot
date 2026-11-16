@@ -52,6 +52,15 @@ export interface StableRefs {
    * A pick of the main model does not change it.
    */
   defaultCompactionModelRef: WritableRef<string>;
+  /**
+   * The provider that serves {@link defaultCompactionModel} — the global
+   * half of the compaction pair. `null` means "the main chat provider".
+   *
+   * It travels with the model because a model and the endpoint that serves
+   * it are one choice: a compaction model named without its provider is what
+   * sent a cloud model to the wrong endpoint and came back 404.
+   */
+  defaultCompactionProviderIdRef: WritableRef<string | null>;
   /** The global reasoning defaults a new conversation starts with. */
   defaultReasoningEffortRef: WritableRef<ReasoningEffort>;
   defaultCompactionReasoningEffortRef: WritableRef<ReasoningEffort>;
@@ -86,6 +95,7 @@ interface StableRefsInput {
   compactionModel: string | null;
   compactionProviderId: string | null;
   defaultCompactionModel: string;
+  defaultCompactionProviderId: string | null;
   defaultReasoningEffort: ReasoningEffort;
   defaultCompactionReasoningEffort: ReasoningEffort;
   chatTimeoutMs: number;
@@ -117,6 +127,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const compactionModelRef = useRef(state.compactionModel);
   const compactionProviderIdRef = useRef(state.compactionProviderId);
   const defaultCompactionModelRef = useRef(state.defaultCompactionModel);
+  const defaultCompactionProviderIdRef = useRef(state.defaultCompactionProviderId);
   const defaultReasoningEffortRef = useRef(state.defaultReasoningEffort);
   const defaultCompactionReasoningEffortRef = useRef(state.defaultCompactionReasoningEffort);
   const chatTimeoutMsRef = useRef(state.chatTimeoutMs);
@@ -142,6 +153,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   compactionModelRef.current = state.compactionModel;
   compactionProviderIdRef.current = state.compactionProviderId;
   defaultCompactionModelRef.current = state.defaultCompactionModel;
+  defaultCompactionProviderIdRef.current = state.defaultCompactionProviderId;
   defaultReasoningEffortRef.current = state.defaultReasoningEffort;
   defaultCompactionReasoningEffortRef.current = state.defaultCompactionReasoningEffort;
   reasoningEffortRef.current = state.reasoningEffort;
@@ -209,6 +221,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       compactionModelRef,
       compactionProviderIdRef,
       defaultCompactionModelRef,
+      defaultCompactionProviderIdRef,
       defaultReasoningEffortRef,
       defaultCompactionReasoningEffortRef,
       chatTimeoutMsRef,

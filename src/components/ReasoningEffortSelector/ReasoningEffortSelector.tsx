@@ -7,6 +7,7 @@ import type { SessionDefaults, SessionSelection } from '@/services/sessionSelect
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { useChat } from '@/app/lib/chatStore';
 import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
+import { resolveCompactionRule } from '@/services/compactionRule';
 import {
   type ProviderConfig,
   REASONING_EFFORT_LABELS,
@@ -80,6 +81,7 @@ export default function ReasoningEffortSelector({
     defaultModel,
     defaultProviderId,
     defaultCompactionModel,
+    defaultCompactionProviderId,
     defaultReasoningEffort,
     defaultCompactionReasoningEffort,
     providers,
@@ -95,18 +97,31 @@ export default function ReasoningEffortSelector({
 
   // Resolve the active provider for the main model from `providers[]` +
   // `activeProviderId` (the legacy top-level `state.provider` field is stale
-  // in multi-provider configs — see SettingsModal). The compaction model may
-  // live on a different provider via `compactionProviderId`; fall back to the
-  // main provider when unset ("Same as main model").
+  // in multi-provider configs — see SettingsModal).
+  //
+  // The compaction model may live on a different provider. WHICH provider
+  // that is follows the shared rule (`src/services/compactionRule.ts`), not
+  // the raw pin: a conversation that pinned a compaction model without a
+  // provider of its own still runs on one, and asking the main provider
+  // about it would report the wrong set of supported reasoning levels.
+  const effectiveCompaction = resolveCompactionRule({
+    mainModel: model,
+    sessionCompactionModel: compactionModel,
+    sessionCompactionProviderId: compactionProviderId,
+    globalCompactionModel: defaultCompactionModel,
+    globalCompactionProviderId: defaultCompactionProviderId,
+  });
   const mainProvider = providers?.find((p) => p.id === activeProviderId) ?? providers?.[0];
+  // A `null` provider in the rule means "the main chat provider".
+  const effectiveCompactionProviderId = effectiveCompaction.providerId ?? activeProviderId;
   const compactionProvider =
-    (compactionProviderId && providers?.find((p) => p.id === compactionProviderId)) || mainProvider;
+    providers?.find((p) => p.id === effectiveCompactionProviderId) || mainProvider;
 
   const mainLevels = levelsForProvider(mainProvider?.provider);
   const compactionLevels = levelsForProvider(compactionProvider?.provider);
 
   const mainSupported = isReasoningSupported(mainProvider, model, models);
-  const effectiveCompactionModel = compactionModel || model;
+  const effectiveCompactionModel = effectiveCompaction.model;
   const compactionSupported = isReasoningSupported(
     compactionProvider,
     effectiveCompactionModel,
@@ -193,6 +208,7 @@ export default function ReasoningEffortSelector({
         model: defaultModel,
         providerId: defaultProviderId,
         compactionModel: defaultCompactionModel,
+        compactionProviderId: defaultCompactionProviderId,
         reasoningEffort: field === 'reasoningEffort' ? level : defaultReasoningEffort,
         compactionReasoningEffort:
           field === 'compactionReasoningEffort' ? level : defaultCompactionReasoningEffort,
@@ -228,6 +244,7 @@ export default function ReasoningEffortSelector({
       compactionProviderId,
       compactionReasoningEffort,
       defaultCompactionModel,
+      defaultCompactionProviderId,
       defaultCompactionReasoningEffort,
       defaultModel,
       defaultProviderId,

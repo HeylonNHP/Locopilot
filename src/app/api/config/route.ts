@@ -35,6 +35,7 @@ const KNOWN_TOP_KEYS: Set<string> = new Set([
   // New writes go out as `model`; `lastModel` is still accepted on input.
   'lastModel',
   'compactionModel',
+  'compactionProviderId',
   'numCtx',
   'chatTimeoutMs',
   'yolo',
@@ -138,6 +139,22 @@ function validateConfig(
       return { ok: false, error: "Invalid config: 'compactionModel' must be a string" };
     }
     out.compactionModel = input.compactionModel;
+  }
+
+  if ('compactionProviderId' in input) {
+    // `null` and `''` both mean "no global compaction provider" — the
+    // compaction then runs on the main chat provider. Unlike
+    // `activeProviderId` (which cannot be cleared), this field must be
+    // clearable: a stale id would otherwise keep pointing at a provider
+    // the user deleted.
+    const v = input.compactionProviderId;
+    if (v !== null && typeof v !== 'string') {
+      return {
+        ok: false,
+        error: "Invalid config: 'compactionProviderId' must be a string or null",
+      };
+    }
+    out.compactionProviderId = typeof v === 'string' ? v.trim() || null : null;
   }
 
   if ('numCtx' in input) {

@@ -15,7 +15,12 @@ export interface MidTurnModelSwitch {
   providerId?: string;
   /** Empty string is meaningful: "same as the main model". */
   compactionModel?: string;
-  compactionProviderId?: string;
+  /**
+   * `null` is meaningful: it CLEARS the compaction provider pin, so the
+   * compaction runs on the main chat provider. An absent field leaves the
+   * pin alone.
+   */
+  compactionProviderId?: string | null;
 }
 
 export async function requestMidTurnModelSwitch(

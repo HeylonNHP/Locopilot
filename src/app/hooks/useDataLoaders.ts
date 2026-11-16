@@ -463,6 +463,11 @@ export function useDataLoaders(refs: StableRefs) {
             citeSources: config.citeSources ?? state.citeSources,
             redactSecrets: config.redactSecrets ?? state.redactSecrets,
             defaultCompactionModel: config.compactionModel ?? '',
+            // The provider that serves the global compaction model. `null`
+            // means "no global compaction provider" — compaction then runs on
+            // the conversation's main provider. The pair travels together:
+            // a conversation inherits both halves or neither.
+            defaultCompactionProviderId: config.compactionProviderId ?? null,
             chatTimeoutMs: config.chatTimeoutMs ?? state.chatTimeoutMs,
             // GET returns the raw config.json, which may predate
             // `requestTimeoutMs` or hold an unusable value; fill and check it

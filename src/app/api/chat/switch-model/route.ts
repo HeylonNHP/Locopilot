@@ -51,8 +51,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (typeof body.compactionModel === 'string') {
     request.compactionModel = body.compactionModel.trim();
   }
-  const compactionProviderId = nonEmptyString(body.compactionProviderId);
-  if (compactionProviderId) request.compactionProviderId = compactionProviderId;
+  // The compaction PROVIDER follows the same "present vs absent" rule as
+  // the model: `null` (and an empty string) CLEARS the pin, so the
+  // compaction runs on the main chat provider, while an absent field leaves
+  // the pin alone. The two are different states, so a cleared provider must
+  // not be dropped as "nothing to say" — that is how a compaction model
+  // stayed pinned to a provider the user had just moved it off.
+  if (body.compactionProviderId === null) {
+    request.compactionProviderId = null;
+  } else {
+    const compactionProviderId = nonEmptyString(body.compactionProviderId);
+    if (compactionProviderId) {
+      request.compactionProviderId = compactionProviderId;
+    } else if (typeof body.compactionProviderId === 'string') {
+      // An empty string is a cleared pin too.
+      request.compactionProviderId = null;
+    }
+  }
 
   // A provider-only switch (no model change, no compaction change) is
   // valid: moving the same model name to a different provider must

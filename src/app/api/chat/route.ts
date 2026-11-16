@@ -72,13 +72,14 @@ import {
   SYNTHETIC_NUDGE_MARKER,
 } from '@/services/compact';
 import { RECENT_FILES_LOAD_LIMIT } from '@/services/compact/constants';
+import { resolveCompactionSelection } from '@/services/compactionSelection';
 import {
   DEFAULT_MAX_PROMPT_LOOP_ITERATIONS,
   DEFAULT_OLLAMA_BASE_URL,
   resolveWebSearchRequestTimeoutMs,
 } from '@/services/configDefaults';
 import { loadConfig, readConfig } from '@/services/configManager';
-import { configProblemFor } from '@/services/contextWindow/configProblem';
+import { compactionProblemFor, configProblemFor } from '@/services/contextWindow/configProblem';
 import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import {
   buildEmptyResponseRecoveryNudge,
@@ -338,15 +339,17 @@ export async function POST(req: NextRequest): Promise<Response> {
   // under way — the same policy as the saved context window at turn start.
   const turnReasoningEffort = resolveReasoningEffort(savedConfig.config);
   const turnCompactionReasoningEffort = resolveCompactionReasoningEffort(savedConfig.config);
+  // The compaction half is checked with the SHARED resolver, so the chat, the
+  // compact route and the title route cannot disagree about which provider
+  // serves the compaction model. The body carries the conversation's own pin
+  // only; the global pair comes from the saved config.
   const turnProblem =
     configProblemFor(savedConfig.config, providerId, model) ??
-    (typeof compactionProviderId === 'string' && compactionProviderId.trim()
-      ? configProblemFor(
-          savedConfig.config,
-          compactionProviderId.trim(),
-          (typeof compactionModel === 'string' && compactionModel.trim()) || model
-        )
-      : null);
+    compactionProblemFor(savedConfig.config, {
+      mainModel: model,
+      compactionModel,
+      compactionProviderId,
+    });
   if (turnProblem !== null) {
     return new Response(`event: error\ndata: ${JSON.stringify({ message: turnProblem })}\n\n`, {
       status: 409,
@@ -1170,32 +1173,56 @@ export async function POST(req: NextRequest): Promise<Response> {
          * web-content compaction, and title generation all stay on the
          * same selected model/provider semantics.
          *
-         * Resolves the compaction provider by ID only. Passing no model
-         * name is intentional: a stale explicit ID must not be recovered
-         * by model matching or by resolveProvider's unrelated default
-         * provider.
+         * The MODEL and the PROVIDER are chosen together, by the ONE
+         * shared resolver (`src/services/compactionSelection.ts`): the
+         * conversation's own pin, then the global pair, then the
+         * conversation's main model on the main provider. The chat route,
+         * the compact route and the title route all call that resolver,
+         * so they cannot disagree about which endpoint serves the
+         * compaction model.
+         *
+         * The provider is resolved BY ID ONLY. Passing no model name is
+         * intentional: a stale explicit ID must not be recovered by model
+         * matching or by resolveProvider's unrelated default provider.
          */
         const resolveCompactionRuntime = async (
-          requestedCompactionModel: string | undefined,
-          requestedCompactionProviderId: string | undefined,
+          sessionCompactionModel: string | null | undefined,
+          sessionCompactionProviderId: string | null | undefined,
           fromSavedSetting = false
         ): Promise<void> => {
-          effectiveCompactionModel = resolveCompactionModel(requestedCompactionModel, model);
-          const explicitId =
-            typeof requestedCompactionProviderId === 'string' &&
-            requestedCompactionProviderId.trim().length > 0
-              ? requestedCompactionProviderId.trim()
-              : undefined;
-          const resolved = explicitId
-            ? resolveProviderRequestContext(config, explicitId, undefined, requestId)
-            : null;
+          const setting = await settingSource(fromSavedSetting);
+          const selection = resolveCompactionSelection({
+            config: setting,
+            mainModel: model,
+            sessionCompactionModel,
+            sessionCompactionProviderId,
+          });
+          effectiveCompactionModel = selection.model;
+          if (selection.problem !== null) {
+            // The preflight refuses a turn whose compaction provider does
+            // not exist, so this only happens when the config changed
+            // mid-turn. Fall back to the main context, but SAY SO: a
+            // silent fallback is the wrong endpoint that produced the
+            // 404s.
+            debugLog.diagnostic({
+              layer: 'route',
+              phase: 'compaction_provider_unresolved',
+              requestId,
+              sessionId: parsedSessionId,
+              model: model as string,
+              reason: selection.problem,
+            });
+          }
+          const resolved =
+            selection.providerId === null
+              ? null
+              : resolveProviderRequestContext(setting, selection.providerId, undefined, requestId);
           compactionLlmRequestContext = resolved?.ctx ?? llmRequestContext;
 
           // The compaction model has its own maximum, which can be lower than
           // the main model's. When it is the SAME endpoint and model as the main
           // request the probe is the one the main window just made (the cache
           // and the in-flight probe are shared), so this costs no second call.
-          const setting = await settingSource(fromSavedSetting);
           const resolution = await resolveNumCtx({
             ctx: compactionLlmRequestContext,
             model: effectiveCompactionModel,
@@ -1247,12 +1274,13 @@ export async function POST(req: NextRequest): Promise<Response> {
 
           // The main window and the compaction window are independent probes:
           // run them together so a slow provider costs one timeout, not two.
+          //
+          // The GLOBAL compaction pair comes from the saved config, not from
+          // the body: the body carries the conversation's own pin only, and
+          // the resolver merges the two.
           await Promise.all([
             resolveNumCtxForModel(),
-            resolveCompactionRuntime(
-              compactionModel ?? config?.compactionModel,
-              compactionProviderId
-            ),
+            resolveCompactionRuntime(compactionModel, compactionProviderId),
           ]);
 
           // Compute allowedTools from always-apply skills (best-effort)
@@ -1285,7 +1313,11 @@ export async function POST(req: NextRequest): Promise<Response> {
             baseUrl: effectiveBaseUrl,
             requestId,
           });
-          await resolveCompactionRuntime(compactionModel, undefined);
+          // The config could not be read, so there is no global compaction
+          // pair: only the conversation's own pin applies. The resolver
+          // falls back to the conversation's main model on the main
+          // provider.
+          await resolveCompactionRuntime(compactionModel, compactionProviderId);
           requestContext = buildRequestContext(null, null);
         }
         // Build the merged tool list (static native TOOLS + dynamic MCP
@@ -1453,15 +1485,23 @@ export async function POST(req: NextRequest): Promise<Response> {
           // Always re-resolve the compaction runtime: an explicit switch
           // changes it directly, and a main-model switch changes it too for
           // anyone on "same as main".
-          const nextCompactionModel =
-            pending.compactionModel ?? compactionModel ?? config?.compactionModel;
+          //
+          // The GLOBAL half of the compaction pair is not spelled out
+          // here: `resolveCompactionRuntime(…, true)` re-reads the saved
+          // config, so the global compaction model and provider apply as
+          // they are saved NOW.
+          const nextCompactionModel = pending.compactionModel ?? compactionModel;
+          // The compaction PROVIDER follows a presence check, not `??`: an
+          // explicit `null` CLEARS the pin (the compaction then runs on the
+          // main chat provider) and must not be collapsed into "keep what we
+          // had". An absent field keeps the current pin.
+          const nextCompactionProviderId =
+            pending.compactionProviderId === undefined
+              ? compactionProviderId
+              : pending.compactionProviderId;
           await Promise.all([
             mainWindow,
-            resolveCompactionRuntime(
-              nextCompactionModel,
-              pending.compactionProviderId ?? compactionProviderId,
-              true
-            ),
+            resolveCompactionRuntime(nextCompactionModel, nextCompactionProviderId, true),
           ]);
 
           // Mutating in place (rather than rebuilding the context) is what

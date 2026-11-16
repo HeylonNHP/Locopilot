@@ -162,6 +162,22 @@ export interface Config {
   /** @deprecated Use `model` instead. Read-only for backward compat. */
   lastModel?: string;
   compactionModel?: string;
+  /**
+   * The id of the provider that serves `compactionModel`.
+   *
+   * `null` (or absent) means "no global compaction provider" — the
+   * compaction then runs on the main chat provider. The value names an
+   * entry in `providers`; it is resolved BY ID ONLY (never by model
+   * name), because a model name says nothing about which endpoint
+   * carries it and guessing is what made compaction calls 404.
+   *
+   * The pair travels together: the global provider applies to the global
+   * compaction MODEL. A conversation that pinned a compaction model of its
+   * own uses its own provider pin; if it pinned no provider of its own, the
+   * global provider serves it only when it serves that very same model.
+   * The resolution itself lives in `src/services/compactionSelection.ts`.
+   */
+  compactionProviderId?: string | null;
   numCtx?: number;
   chatTimeoutMs?: number;
   yolo?: boolean;

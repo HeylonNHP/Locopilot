@@ -10,6 +10,12 @@ import type { SessionDefaultsPatch, SessionSelectionPatch } from '@/services/ses
  * merges, so a reasoning pick must not re-write the default model another
  * tab may have just changed. A null provider id means "not pinned" and is
  * omitted, as before.
+ *
+ * The compaction PROVIDER is the exception: a null there means "clear the
+ * global compaction provider" - the compaction then runs on the main chat
+ * provider - so it is sent rather than omitted. Omitting it would leave a
+ * stale provider behind, and the global compaction model would keep going to
+ * the endpoint it was cleared for.
  */
 function defaultsBody(patch: SessionDefaultsPatch): Record<string, unknown> {
   return {
@@ -18,6 +24,9 @@ function defaultsBody(patch: SessionDefaultsPatch): Record<string, unknown> {
       ? {}
       : { activeProviderId: patch.providerId }),
     ...(patch.compactionModel === undefined ? {} : { compactionModel: patch.compactionModel }),
+    ...(patch.compactionProviderId === undefined
+      ? {}
+      : { compactionProviderId: patch.compactionProviderId }),
     ...(patch.reasoningEffort === undefined ? {} : { reasoningEffort: patch.reasoningEffort }),
     ...(patch.compactionReasoningEffort === undefined
       ? {}
