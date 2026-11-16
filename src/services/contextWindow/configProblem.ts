@@ -8,10 +8,15 @@
  * the message below, which is what the owner sees.
  */
 
-import type { Config } from '@/types/chatConfig';
+import type { Config, ProviderConfig } from '@/types/chatConfig';
 
 import { resolveCompactionSelection } from '@/services/compactionSelection';
-import { resolveProvider } from '@/services/providerResolver';
+import {
+  providerIdsServingModel,
+  providerServesModel,
+  refreshModelIndexInBackground,
+} from '@/services/modelIndex';
+import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
 
 import { pickRequestedNumCtx } from './resolveNumCtx';
 
@@ -36,6 +41,34 @@ export function providerNotConfiguredMessage(providerId: string): string {
 }
 
 /**
+ * The problem with a pair whose provider does not serve the model.
+ *
+ * A pair is only coherent if the provider actually CARRIES the model.
+ * `config.json` cannot answer that (it holds a provider's default model and
+ * nothing else), so the answer comes from the cached model → provider index
+ * (`src/services/modelIndex.ts`), which is built from the providers' LIVE
+ * model lists. A pair that names a real provider which does not serve the
+ * model is refused here instead of 404ing at the provider.
+ *
+ * The message names the provider that DOES serve the model, so the fix is
+ * one pick in Settings rather than a hunt.
+ */
+export function providerDoesNotServeMessage(
+  config: Config,
+  provider: ProviderConfig,
+  model: string
+): string {
+  const serving = providerIdsServingModel(config, model)
+    .map((id) => getNormalizedProviders(config).find((p) => p.id === id)?.name)
+    .filter((name): name is string => typeof name === 'string' && name !== provider.name);
+  const hint =
+    serving.length > 0
+      ? ` The model "${model}" is served by ${serving.join(', ')} instead.`
+      : ` No configured provider is known to serve it.`;
+  return `The provider "${provider.name}" does not serve the model "${model}".${hint} Pick a model and a provider that belong together in Settings.`;
+}
+
+/**
  * The problem with running `model` through `providerId` on this config, or
  * `null`. The provider's own `numCtx` counts toward the window, so a provider
  * with its own window is fine even when the global setting is missing.
@@ -52,6 +85,17 @@ export function configProblemFor(
     // fixed, so the message names it. Without an id there is nothing to
     // name, and the only thing left to say is that nothing is set up.
     return providerId ? providerNotConfiguredMessage(providerId) : MODEL_NOT_CHOSEN_MESSAGE;
+  }
+  // The pair itself: does this provider serve this model? The index answers
+  // "unknown" when it cannot say, and unknown NEVER refuses.
+  const service = providerServesModel(provider.id, provider.baseUrl, model);
+  if (service === 'not-served') {
+    return providerDoesNotServeMessage(config, provider, model);
+  }
+  if (service === 'unknown') {
+    // The index cannot answer yet. Refresh it in the background, so the
+    // NEXT turn can ask the question instead of guessing.
+    refreshModelIndexInBackground(config);
   }
   if (pickRequestedNumCtx(provider.numCtx, config.numCtx) === null) {
     return CONTEXT_SIZE_NOT_SET_MESSAGE;

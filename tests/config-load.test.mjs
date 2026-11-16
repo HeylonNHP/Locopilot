@@ -29,6 +29,7 @@ import {
   requestProblemFor,
   requireWindow,
 } from '../src/services/contextWindow/configProblem.ts';
+import { setModelIndexDeps } from '../src/services/modelIndex.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
@@ -40,6 +41,16 @@ const codeOnly = (source) =>
 
 let dir;
 const fileIn = (name) => path.join(dir, name);
+
+// The background model-index refresh must never reach for a provider during
+// a test: it is fire-and-forget, so a real request would outlive the test.
+beforeAll(() => {
+  setModelIndexDeps({ fetchModels: async () => [] });
+});
+
+afterAll(() => {
+  setModelIndexDeps(null);
+});
 
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'locopilot-config-'));

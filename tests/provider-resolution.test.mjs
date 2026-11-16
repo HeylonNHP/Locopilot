@@ -12,7 +12,7 @@
  * means one thing everywhere: this conversation cannot run as it is.
  */
 
-import { describe, expect, test } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -21,6 +21,7 @@ import {
   providerNotConfiguredMessage,
   requestProblemFor,
 } from '../src/services/contextWindow/configProblem.ts';
+import { setModelIndexDeps } from '../src/services/modelIndex.ts';
 import { resolveProvider } from '../src/services/providerResolver.ts';
 
 const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), 'utf8');
@@ -28,6 +29,16 @@ const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), 
 const chatRoute = await read('../src/app/api/chat/route.ts');
 const compactRoute = await read('../src/app/api/compact/route.ts');
 const titleRoute = await read('../src/app/api/title/route.ts');
+
+// The background model-index refresh must never reach for a provider during
+// a test: it is fire-and-forget, so a real request would outlive the test.
+beforeAll(() => {
+  setModelIndexDeps({ fetchModels: async () => [] });
+});
+
+afterAll(() => {
+  setModelIndexDeps(null);
+});
 
 const provider = (extra = {}) => ({
   id: 'p1',

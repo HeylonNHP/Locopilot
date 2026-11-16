@@ -14,6 +14,7 @@ import {
   type LlmModel,
   type LlmRequestContext,
 } from '@/services/llm';
+import { recordProviderListFailure, recordProviderModels } from '@/services/modelIndex';
 import { CONFIG_PATH } from '@/services/paths';
 import { getNormalizedProviders } from '@/services/providerResolver';
 
@@ -56,6 +57,15 @@ export async function GET(): Promise<NextResponse> {
 
       try {
         const models = await fetchLlmModels(llmRequestContext);
+        // The server has the answer to "does this provider serve this
+        // model?" right here, and it is the same answer the client gets.
+        // Keep it: the index lets a request be refused BEFORE it 404s at
+        // the provider, instead of after.
+        recordProviderModels(
+          provider.id,
+          provider.baseUrl,
+          models.map((model) => model.name)
+        );
         const modelsWithCapabilities = await Promise.all(
           models.map(async (model) => {
             // Start with the adapter's own capabilities (Ollama's /api/show
@@ -124,6 +134,10 @@ export async function GET(): Promise<NextResponse> {
         );
         allModels.push(...modelsWithCapabilities);
       } catch (err) {
+        // The provider did not answer. Remember that, so the index says
+        // "unknown" for it for a minute instead of being retried on every
+        // turn.
+        recordProviderListFailure(provider.id, provider.baseUrl);
         const message = err instanceof Error ? err.message : 'Unknown error';
         errors.push(`${provider.name}: ${message}`);
       }

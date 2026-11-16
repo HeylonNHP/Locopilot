@@ -16,6 +16,7 @@ import {
   type WebSearchSettingsShape,
 } from '@/services/configDefaults';
 import { buildFreshConfig, readConfig, saveConfig } from '@/services/configManager';
+import { invalidateModelIndex } from '@/services/modelIndex';
 import { getNormalizedProviders, resolveProvider } from '@/services/providerResolver';
 import { isFiniteInteger, isPlainObject, validateProvider } from '@/services/providerValidation';
 import { invalidateSamplingParamCache } from '@/services/samplingParamsCache';
@@ -608,6 +609,9 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
         invalidateVisionCache(current.baseUrl, current.model, current.provider);
         invalidateSamplingParamCache(current.baseUrl, current.model, current.provider);
       }
+      // The provider's live model list may have changed with its address or
+      // its kind, so what the index knows about it is no longer trustworthy.
+      invalidateModelIndex(id);
     }
 
     // Switching the active provider (without editing provider entries)

@@ -110,9 +110,12 @@ no longer in config.json". A separate message names the missing id.
 
 ### Phase 2.2 — a cached server-side model → provider index, and the pair is validated
 
-C-026 (open): the server resolves a compaction provider BY ID and **trusts the
-pair**. It never asks the provider whether it serves the model, so
-`provider_id='nvidia-openai'` + `model='beam'` is a legal row and produces the
+**Status: DONE (2026-11-16).** Implemented as described below; see
+`CONFIRMATIONS.md` C-026.
+
+C-026 (was open): the server resolved a compaction provider BY ID and **trusted
+the pair**. It never asked the provider whether it serves the model, so
+`provider_id='nvidia-openai'` + `model='beam'` was a legal row and produced the
 identical 404 — on the **main** path this time.
 
 **The index.** `GET /api/models` already fetches every provider's live model
@@ -123,12 +126,12 @@ models route, and read SYNCHRONOUSLY (a cache peek, no network on the chat
 path). A background refresh is kicked off when the cache is cold, so the
 first turn never waits.
 
-**The check.** `providerServesModel(index, providerId, model)`:
+**The check.** `providerServesModel(providerId, baseUrl, model)`:
 
-- the provider has a list and the list contains the model → **true**;
-- the provider has a list and the model is absent → **false** (refuse);
-- the provider has NO list (never fetched, or the fetch failed) → **unknown**,
-  and an unknown never refuses.
+- the provider has a list and the list contains the model → **served**;
+- the provider has a list and the model is absent → **not-served** (refuse);
+- the provider has NO list (never fetched, or the fetch failed, or the list is
+  empty) → **unknown**, and an unknown never refuses.
 
 Fail-open on unknown is deliberate: a dead or slow provider must not block a
 turn, and a provider that serves a model it does not list must not be locked
