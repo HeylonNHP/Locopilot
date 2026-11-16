@@ -79,7 +79,11 @@ import {
   resolveWebSearchRequestTimeoutMs,
 } from '@/services/configDefaults';
 import { loadConfig, readConfig } from '@/services/configManager';
-import { compactionProblemFor, configProblemFor } from '@/services/contextWindow/configProblem';
+import {
+  compactionProblemFor,
+  configProblemFor,
+  providerNotConfiguredMessage,
+} from '@/services/contextWindow/configProblem';
 import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import {
   buildEmptyResponseRecoveryNudge,
@@ -270,8 +274,14 @@ export async function POST(req: NextRequest): Promise<Response> {
   let model: string = body.model as string;
   const sessionId: number | undefined = body.sessionId as number | undefined;
   const baseUrl: string | undefined = body.baseUrl as string | undefined;
+  // The provider id is normalised the way `requestProblemFor` normalises
+  // it: trimmed, and a blank id means "no id". The preflight and the
+  // runtime must read the SAME id, or the gate and the call disagree
+  // about which provider the turn runs on.
   const providerId: string | undefined =
-    typeof body.providerId === 'string' ? body.providerId : undefined;
+    typeof body.providerId === 'string' && body.providerId.trim()
+      ? body.providerId.trim()
+      : undefined;
   const compactionProviderId: string | undefined =
     typeof body.compactionProviderId === 'string' ? body.compactionProviderId : undefined;
   const compactionModel: string | undefined =
@@ -1255,6 +1265,22 @@ export async function POST(req: NextRequest): Promise<Response> {
             activeProvider = resolved.provider;
             llmRequestContext = resolved.ctx;
           } else {
+            // No provider resolved. The preflight already refuses a turn
+            // whose provider id names no configured provider (409), so
+            // this is a config that changed between the preflight and
+            // here. Say so: the fallback below is the body's own baseUrl
+            // WITHOUT the provider's credentials — a degraded call to the
+            // right host, not a cross-wire to another provider.
+            if (providerId) {
+              debugLog.diagnostic({
+                layer: 'route',
+                phase: 'provider_unresolved',
+                requestId,
+                sessionId: parsedSessionId,
+                model: model as string,
+                reason: providerNotConfiguredMessage(providerId),
+              });
+            }
             llmRequestContext = buildLlmRequestContext({
               baseUrl: effectiveBaseUrl,
               requestId,
@@ -1445,41 +1471,46 @@ export async function POST(req: NextRequest): Promise<Response> {
           const modelChanged = pending.model !== undefined && pending.model !== model;
           const providerChanged =
             pending.providerId !== undefined && pending.providerId !== providerId;
-          if (modelChanged) {
-            // pending.model is narrowed to string by the modelChanged
-            // check above; the cast here is just to placate TS, which
-            // doesn't narrow through the local const.
-            model = pending.model as string;
-          }
+          // The model is only applied once the switch is known to be
+          // honourable: a refused switch leaves the turn on the model and
+          // the provider it already runs on.
+          const targetModel = modelChanged ? (pending.model as string) : model;
           if (modelChanged || providerChanged) {
-            // When the model changed, prefer the explicit provider the
-            // request named (pending.providerId), otherwise keep the
-            // provider we're already using. When only the provider
-            // changed, the explicit pending.providerId is the whole
-            // point of this branch.
+            // The switch's PROVIDER is resolved BY ID ONLY whenever the
+            // request carries an id: a model name must never cross-wire
+            // another provider's endpoint and apiKey into this turn. The
+            // model name is the last resort, used only when the request
+            // names no provider at all.
             const resolvedProviderId =
               pending.providerId ?? (modelChanged ? providerId : undefined);
-            const resolved = resolveProviderRequestContext(
-              config,
-              resolvedProviderId,
-              model,
-              requestId
-            );
+            const resolved = resolvedProviderId
+              ? resolveProviderRequestContext(config, resolvedProviderId, undefined, requestId)
+              : resolveProviderRequestContext(config, undefined, targetModel, requestId);
             if (resolved) {
+              model = targetModel;
               activeProvider = resolved.provider;
               llmRequestContext = resolved.ctx;
+              // The window probe runs alongside the vision and sampling probes.
+              mainWindow = resolveNumCtxForModel(true);
+              visionSupported = await resolveVisionForModel();
+              samplingParamSupport = await resolveSamplingSupportForModel();
+              refreshSystemPrompt();
             } else {
-              activeProvider = null;
-              llmRequestContext = buildLlmRequestContext({
-                baseUrl: effectiveBaseUrl,
+              // The provider this switch names is not configured. A running
+              // turn must not die, so the switch is REFUSED: the turn keeps
+              // the model and the provider it already runs on. Continuing on
+              // the body's baseUrl instead would be the wrong endpoint
+              // without its credentials — a silent wrong endpoint, which is
+              // the failure this whole rule exists to end.
+              debugLog.diagnostic({
+                layer: 'route',
+                phase: 'switch_provider_unresolved',
                 requestId,
+                sessionId: parsedSessionId,
+                model: model as string,
+                reason: resolvedProviderId ?? 'no_provider_id',
               });
             }
-            // The window probe runs alongside the vision and sampling probes.
-            mainWindow = resolveNumCtxForModel(true);
-            visionSupported = await resolveVisionForModel();
-            samplingParamSupport = await resolveSamplingSupportForModel();
-            refreshSystemPrompt();
           }
 
           // Always re-resolve the compaction runtime: an explicit switch

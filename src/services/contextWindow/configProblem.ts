@@ -22,6 +22,20 @@ export const CONTEXT_SIZE_NOT_SET_MESSAGE =
   'No context size is set. Open Settings and set Context Size, then try again.';
 
 /**
+ * The problem with a provider id that names no configured provider.
+ *
+ * This is NOT the "no model is set up yet" case: the model may be
+ * perfectly fine, and the provider may simply have been renamed or removed
+ * from `config.json` since the conversation was saved. The message names
+ * the id, because the id is what the owner has to fix — and because a
+ * request that cannot name its provider must not be sent somewhere else
+ * quietly.
+ */
+export function providerNotConfiguredMessage(providerId: string): string {
+  return `The provider "${providerId}" is not configured, so this request cannot run on it. Open Settings and pick a model and provider again.`;
+}
+
+/**
  * The problem with running `model` through `providerId` on this config, or
  * `null`. The provider's own `numCtx` counts toward the window, so a provider
  * with its own window is fine even when the global setting is missing.
@@ -33,7 +47,11 @@ export function configProblemFor(
 ): string | null {
   const provider = resolveProvider(config, providerId, model);
   if (!provider) {
-    return MODEL_NOT_CHOSEN_MESSAGE;
+    // An explicit id that names no configured provider is a DIFFERENT
+    // problem from "no model is set up yet": the id is what has to be
+    // fixed, so the message names it. Without an id there is nothing to
+    // name, and the only thing left to say is that nothing is set up.
+    return providerId ? providerNotConfiguredMessage(providerId) : MODEL_NOT_CHOSEN_MESSAGE;
   }
   if (pickRequestedNumCtx(provider.numCtx, config.numCtx) === null) {
     return CONTEXT_SIZE_NOT_SET_MESSAGE;

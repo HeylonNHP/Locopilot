@@ -28,7 +28,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const model = body.model;
   const baseUrl = body.baseUrl;
-  const providerId = body.providerId;
+  // The provider id is normalised the way the preflight normalises it
+  // (`requestProblemFor`): trimmed, and a blank id means "no id". The gate
+  // and the call must read the SAME id, or they disagree about which
+  // provider the title call runs on.
+  const providerId: string | undefined =
+    typeof body.providerId === 'string' && body.providerId.trim()
+      ? body.providerId.trim()
+      : undefined;
   const compactionModel = body.compactionModel;
   const compactionProviderId = body.compactionProviderId;
   const sessionId = body.sessionId;
@@ -105,15 +112,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   });
   try {
     const config = savedConfig.config;
-    const resolved = resolveProviderRequestContext(
-      config,
-      typeof providerId === 'string' ? providerId : undefined,
-      model as string
-    );
-    // No provider resolved (e.g. a stale providerId with no model
-    // match). Fall back to the body baseUrl or the default Ollama URL.
-    // The fallback is UNauthenticated — never pair a provider's apiKey
-    // with the body baseUrl. A stale providerId on a multi-provider
+    const resolved = resolveProviderRequestContext(config, providerId, model as string);
+    // No provider resolved. The preflight refuses a request whose provider
+    // id names no configured provider (409), so this is a config that
+    // changed in between. Fall back to the body baseUrl or the default
+    // Ollama URL. The fallback is UNauthenticated — never pair a provider's
+    // apiKey with the body baseUrl. A stale providerId on a multi-provider
     // config could otherwise leak the user's API key to a caller-
     // supplied host.
     llmRequestContext = resolved

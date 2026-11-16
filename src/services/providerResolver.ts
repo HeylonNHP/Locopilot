@@ -27,18 +27,20 @@ export function getNormalizedProviders(config: Config | null): ProviderConfig[] 
  * Resolution order:
  *  1. An explicit `providerId` that actually exists — this is the user's
  *     selection and always wins.
- *  2. A provider whose default `model` matches `modelName` — the safe
- *     recovery both for a stale `providerId` and for requests that only
- *     carry a model name.
- *  3. If a `providerId` was supplied but neither rule matched, return
- *     `null` rather than an unrelated provider. Falling back to
- *     `providers[0]` here would cross-wire another endpoint's apiKey /
- *     baseUrl to this request.
- *  4. No `providerId` and no model match — return the first provider as
- *     the default.
+ *  2. An explicit `providerId` that names NO configured provider → `null`.
+ *     The request is REFUSED, not repaired: a model name says nothing about
+ *     which endpoint serves it, and guessing would send this request to
+ *     another provider's baseUrl WITH that provider's apiKey. This is the
+ *     rule the compaction path has always followed (it resolves a provider
+ *     BY ID ONLY); the main path follows it too now, so a stale id means
+ *     the same thing everywhere — this conversation cannot run as it is.
+ *  3. No `providerId` at all — a provider whose default `model` matches
+ *     `modelName`, else the first provider as the default. The model name
+ *     is the only way to find a provider when the request carries no id,
+ *     so it stays available for exactly that case.
  *
  * Returns `null` only when there are no providers at all, or when an
- * explicit `providerId` could not be resolved safely.
+ * explicit `providerId` could not be resolved.
  */
 export function resolveProvider(
   config: Config | null,
@@ -51,15 +53,17 @@ export function resolveProvider(
   if (providerId) {
     const byId = providers.find((p) => p.id === providerId);
     if (byId) return byId;
+    // A stale explicit id must not cross-wire to an unrelated provider —
+    // and it must not be recovered by model name either: that would send
+    // this request to another provider's endpoint with that provider's
+    // apiKey. `null` means "refuse, and name the id that is missing".
+    return null;
   }
 
   if (modelName) {
     const byModel = providers.find((p) => p.model === modelName);
     if (byModel) return byModel;
   }
-
-  // A stale explicit id must not cross-wire to an unrelated provider.
-  if (providerId) return null;
 
   return providers[0] ?? null;
 }

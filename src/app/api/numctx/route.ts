@@ -47,8 +47,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const providerId = textParam(url, 'providerId') ?? config.activeProviderId;
     const resolved = resolveProviderRequestContext(config, providerId, model);
     if (!resolved) {
+      // An explicit id that names no configured provider is refused and
+      // NAMED: the provider may simply have been renamed or removed, and
+      // the id is what the owner has to fix. Without an id there is
+      // nothing to name.
       return NextResponse.json(
-        { error: 'No configured provider matches this request.' },
+        {
+          error: providerId
+            ? `The provider "${providerId}" is not configured.`
+            : 'No configured provider matches this request.',
+        },
         { status: 400 }
       );
     }
