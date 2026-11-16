@@ -2,12 +2,15 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import type { SessionDefaults, SessionSelection } from '@/services/sessionSelection';
-
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { useChat } from '@/app/lib/chatStore';
 import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { resolveCompactionRule } from '@/services/compactionRule';
+import {
+  compactionSelectionFromLoosePair,
+  type SessionDefaults,
+  type SessionSelection,
+} from '@/services/sessionSelection';
 import {
   type ProviderConfig,
   REASONING_EFFORT_LABELS,
@@ -106,8 +109,7 @@ export default function ReasoningEffortSelector({
   // about it would report the wrong set of supported reasoning levels.
   const effectiveCompaction = resolveCompactionRule({
     mainModel: model,
-    sessionCompactionModel: compactionModel,
-    sessionCompactionProviderId: compactionProviderId,
+    sessionCompaction: compactionSelectionFromLoosePair(compactionModel, compactionProviderId),
     globalCompactionModel: defaultCompactionModel,
     globalCompactionProviderId: defaultCompactionProviderId,
   });

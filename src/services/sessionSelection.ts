@@ -35,6 +35,170 @@
 import { isReasoningEffort, REASONING_EFFORTS, type ReasoningEffort } from '@/types/chatConfig';
 
 /**
+ * The conversation's compaction selection: ONE value with THREE states.
+ *
+ * WHY a union and not two nullable columns: the compaction MODEL and the
+ * PROVIDER that serves it are one fact, and they used to be two independent
+ * nullable fields. That encoding admitted a fourth state — "a model, but no
+ * provider" — which is the production failure this whole effort exists to
+ * end: a model name says nothing about which endpoint serves it, so the
+ * compaction call went to an endpoint that did not have the model and came
+ * back 404.
+ *
+ * The three states below are the three legal combinations, and the fourth
+ * combination has no spelling at all:
+ *
+ * - `inherit-default` — use the global default compaction pair.
+ * - `same-as-main` — use the conversation's OWN main model, on the main
+ *   provider (the same model AND the same provider as the chat).
+ * - `explicit` — a named model on a named provider. The provider is part of
+ *   the value, so "a model with no provider" cannot be written.
+ *
+ * The database columns still hold two values (the schema is not changed — see
+ * `docs/PROVIDER_PAIR_PLAN.md`), but the pair is only ever produced by
+ * {@link compactionSelectionToColumns} and only ever read by
+ * {@link compactionSelectionFromColumns}, so the illegal combination cannot
+ * reach the row.
+ */
+export type CompactionSelection =
+  /** Use the global default compaction model and provider. */
+  | { kind: 'inherit-default' }
+  /** Use the conversation's own main model, on the main provider. */
+  | { kind: 'same-as-main' }
+  /** A named compaction model, on the named provider that serves it. */
+  | { kind: 'explicit'; model: string; providerId: string };
+
+/** The selection that inherits the global default. */
+export function inheritDefaultCompactionSelection(): CompactionSelection {
+  return { kind: 'inherit-default' };
+}
+
+/** The selection that compacts with the conversation's own main model. */
+export function sameAsMainCompactionSelection(): CompactionSelection {
+  return { kind: 'same-as-main' };
+}
+
+/** The selection that compacts with `model` on the provider `providerId`. */
+export function explicitCompactionSelection(
+  model: string,
+  providerId: string
+): CompactionSelection {
+  return { kind: 'explicit', model, providerId };
+}
+
+/**
+ * The selection a pair of loose fields describes — or the reason the pair is
+ * incoherent.
+ *
+ * The pair used to be two independent nullable fields, so it admitted states
+ * that mean nothing: a model with no provider (the 404), and a provider with
+ * no model. Both are REFUSED here, with a message that says what to send
+ * instead — never silently repaired, because a silent repair is a compaction
+ * that quietly runs on an endpoint the user did not choose.
+ *
+ * `null` / `undefined` mean "not sent". An empty model means "the
+ * conversation's own main model", the same convention `resolveCompactionModel`
+ * already uses on the server.
+ */
+export function compactionSelectionFromPair(
+  model: string | null | undefined,
+  providerId: string | null | undefined
+): { ok: true; selection: CompactionSelection } | { ok: false; error: string } {
+  const trimmedModel = typeof model === 'string' ? model.trim() : '';
+  const trimmedProvider = typeof providerId === 'string' ? providerId.trim() : '';
+  const modelGiven = typeof model === 'string';
+  const providerGiven = trimmedProvider !== '';
+
+  if (!modelGiven) {
+    if (providerGiven) {
+      return {
+        ok: false,
+        error:
+          'A compaction provider was sent without a compaction model. Pick a compaction model (and the provider that serves it) together.',
+      };
+    }
+    return { ok: true, selection: inheritDefaultCompactionSelection() };
+  }
+  if (trimmedModel === '') {
+    // "Same as the conversation's own main model". The provider it would run
+    // on is the MAIN provider, so a provider sent alongside it is dropped
+    // rather than refused — the rule has always ignored it, and refusing it
+    // would break a control that sends the whole pair.
+    return { ok: true, selection: sameAsMainCompactionSelection() };
+  }
+  if (!providerGiven) {
+    return {
+      ok: false,
+      error: `The compaction model "${trimmedModel}" was sent without the provider that serves it. Pick a compaction model and provider together.`,
+    };
+  }
+  return { ok: true, selection: explicitCompactionSelection(trimmedModel, trimmedProvider) };
+}
+
+/**
+ * The selection a loose pair describes, without the ability to complain.
+ *
+ * For the places that must not fail — reading a stored row, showing what a
+ * conversation compacts with. A pair that is not coherent resolves to
+ * "inherit the global default", which is the safe direction: the global pair
+ * always names a model AND a provider that belong together.
+ */
+export function compactionSelectionFromLoosePair(
+  model: string | null | undefined,
+  providerId: string | null | undefined
+): CompactionSelection {
+  const parsed = compactionSelectionFromPair(model, providerId);
+  if (parsed.ok) return parsed.selection;
+  // An incoherent pair is repaired as faithfully as the halves allow: a model
+  // of `''` ("same as the main model") keeps that meaning and drops the
+  // provider it cannot have; a NAMED model without its provider falls back to
+  // the global default, because no provider can be invented for it.
+  if (typeof model === 'string' && model.trim() === '') {
+    return sameAsMainCompactionSelection();
+  }
+  return inheritDefaultCompactionSelection();
+}
+
+/**
+ * The two loose fields a selection is stored as.
+ *
+ * The pair travels together: an `explicit` selection always carries both
+ * halves, so the columns can never hold a model without a provider.
+ */
+export function compactionSelectionToPair(selection: CompactionSelection): {
+  model: string | null;
+  providerId: string | null;
+} {
+  switch (selection.kind) {
+    case 'inherit-default': {
+      return { model: null, providerId: null };
+    }
+    case 'same-as-main': {
+      return { model: '', providerId: null };
+    }
+    case 'explicit': {
+      return { model: selection.model, providerId: selection.providerId };
+    }
+  }
+}
+
+/**
+ * A coherent compaction pair, from whatever the two loose fields held.
+ *
+ * The half-pair (a model without the provider that serves it) is repaired
+ * HERE, on the way in and on the way out, so no caller — the browser store, a
+ * request body, a database row — ever holds it. The repair is the safe
+ * direction: the pair falls back to "inherit the global default", which
+ * always names a model AND a provider that belong together.
+ */
+export function coherentCompactionPair(
+  model: string | null | undefined,
+  providerId: string | null | undefined
+): { model: string | null; providerId: string | null } {
+  return compactionSelectionToPair(compactionSelectionFromLoosePair(model, providerId));
+}
+
+/**
  * The selection as the database stores it. The column names are the ones the
  * `sessions` table actually has, so a row can be read as this shape without
  * a translation step.
@@ -153,25 +317,94 @@ export function emptySessionSelection(): SessionSelection {
 }
 
 export function selectionFromColumns(columns: SessionSelectionColumns): SessionSelection {
+  // A row written before the pair was one value can still hold a model with
+  // no provider. It is normalised to "inherit the global default" HERE, on
+  // the read path, so no caller ever sees the illegal combination. The
+  // bootstrap migration in `src/services/history.ts` fixes the rows
+  // themselves; this is the second line of defence.
+  const pair = coherentCompactionPair(
+    columns.compaction_model,
+    columns.compaction_provider_id
+  );
   return {
     model: columns.model,
     providerId: columns.provider_id,
-    compactionModel: columns.compaction_model,
-    compactionProviderId: columns.compaction_provider_id,
+    compactionModel: pair.model,
+    compactionProviderId: pair.providerId,
     reasoningEffort: columns.reasoning_effort,
     compactionReasoningEffort: columns.compaction_reasoning_effort,
   };
 }
 
 export function selectionToColumns(selection: SessionSelection): SessionSelectionColumns {
+  // The pair is normalised on the way out too, so the illegal combination
+  // cannot reach the row even if a caller built one by hand. The write
+  // paths REFUSE an incoherent pair before they get here; this is the
+  // belt to that pair of braces.
+  const pair = coherentCompactionPair(
+    selection.compactionModel,
+    selection.compactionProviderId
+  );
   return {
     model: selection.model,
     provider_id: selection.providerId,
-    compaction_model: selection.compactionModel,
-    compaction_provider_id: selection.compactionProviderId,
+    compaction_model: pair.model,
+    compaction_provider_id: pair.providerId,
     reasoning_effort: selection.reasoningEffort ?? null,
     compaction_reasoning_effort: selection.compactionReasoningEffort ?? null,
   };
+}
+
+/**
+ * The reason a stored selection's compaction pair is incoherent, or `null`
+ * when it is fine.
+ *
+ * The pair is incoherent when a compaction MODEL is pinned without the
+ * provider that serves it (or the other way round) — the state that used to
+ * send a compaction model to an endpoint that does not have it. A patch can
+ * create it by editing ONE half of the pair, so the check runs on the
+ * MERGED result, not on the patch.
+ */
+export function compactionPairProblem(selection: SessionSelection): string | null {
+  const parsed = compactionSelectionFromPair(
+    selection.compactionModel,
+    selection.compactionProviderId
+  );
+  return parsed.ok ? null : parsed.error;
+}
+
+/**
+ * The reason a patch may not edit the compaction pair, or `null` when it may.
+ *
+ * The pair is ONE value, so a patch states BOTH halves or NEITHER. Editing
+ * one half alone leaves the other half describing a DIFFERENT choice: a new
+ * model on the provider that was pinned for the old one is the wrong-endpoint
+ * 404 this whole rule exists to prevent, and a new provider on the old model
+ * is the same mistake from the other side.
+ *
+ * Every control in the app already sends the pair together, so this refuses
+ * a shape nobody produces on purpose — it makes the invariant a property of
+ * the API rather than of the callers.
+ */
+export function compactionPairPatchProblem(patch: SessionSelectionPatch): string | null {
+  const hasModel = patch.compactionModel !== undefined;
+  const hasProvider = patch.compactionProviderId !== undefined;
+  if (hasModel === hasProvider) {
+    // Both halves, or neither: nothing to object to.
+    return null;
+  }
+  if (!hasModel) {
+    return 'The compaction provider was changed without the compaction model it serves. Send "compactionModel" and "compactionProviderId" together.';
+  }
+  const model = patch.compactionModel;
+  if (model === null || model === '') {
+    // "Inherit the default" and "the conversation's own main model" name no
+    // provider because they have none — but the row may still hold one, and
+    // a provider left behind would describe a model that is no longer
+    // chosen. The caller has to say what happens to it.
+    return 'The compaction model was changed without the compaction provider it travels with. Send "compactionModel" and "compactionProviderId" together.';
+  }
+  return `The compaction model "${model}" was changed without the provider that serves it. Send "compactionModel" and "compactionProviderId" together.`;
 }
 
 /**

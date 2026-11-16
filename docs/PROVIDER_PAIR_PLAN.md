@@ -158,6 +158,48 @@ goes through one function, so the half-pair cannot be created. The
 `resolveCompactionRule` branch "a conversation pinned a model but no provider"
 dies with it.
 
+#### What Phase 2.3 actually shipped (2026-11-16)
+
+The union is the RULE's input and the server-boundary vocabulary. The store
+and the wire keep their two-field shape — that reshape is the next slice
+(Phase 2.4), not this one. The reason is recorded here so the gap is not
+mistaken for an oversight:
+
+- **The rule takes the union.** `resolveCompactionRule` reads
+  `sessionCompaction: CompactionSelection`. The old
+  `sessionCompactionModel` / `sessionCompactionProviderId` pair is gone from
+  it, and with it the branch "a conversation pinned a model but no provider" —
+  which is DEAD now, because the state it described cannot be represented.
+- **The server composer takes the union** (`CompactionSelectionInput.sessionCompaction`),
+  and still READS the legacy pair for a tab that was open before the change.
+  A legacy pair that names a model WITHOUT its provider is REFUSED loudly
+  (`compactionSelectionFromPair`); a legacy pair that names a provider
+  WITHOUT a model has its model resolved here (the global default's model,
+  or the main model) and becomes explicit.
+- **The write path normalises.** `selectionToColumns` runs the pair through
+  `coherentCompactionPair` on the way to the row, so the illegal combination
+  cannot be stored even if a caller builds one by hand.
+- **The read path normalises.** `selectionFromColumns` does the same on the
+  way out of the row, and `listSessions` / `searchSessions` normalise the
+  rows they hand to the browser — a browser that received a half-pair would
+  send it back in its next chat request.
+- **The boundaries refuse.** `PATCH /api/sessions/[id]` refuses a patch that
+  edits ONE half of the pair (`compactionPairPatchProblem`) and refuses a
+  merged result that is incoherent (`compactionPairProblem`);
+  `POST /api/sessions` refuses an incoherent pair at creation.
+- **The rows themselves are migrated.** A bootstrap step in `history.ts`
+  rewrites the two illegal shapes in place (`''` with a provider → the
+  provider is dropped; a named model with no provider → the pair becomes
+  "inherit the global default"). It is a no-op in practice: the production
+  database has 478 sessions and 0 half-pairs, the development one 117 and 0.
+
+**Phase 2.4 (not done):** reshape `SessionSelection`, the browser store and
+the wire to carry the union instead of the two fields. The compiler will
+then catch every caller that can build a half-pair, instead of the boundary
+checks catching it at runtime. The store's two fields are what the client
+reads and writes today, so the reshape touches roughly 136 call sites across
+15 files — it wants its own slice.
+
 ## What is deliberately NOT changed
 
 - **The schema.** The two columns already encode the three states; the
@@ -190,8 +232,11 @@ dies with it.
 
 - `npx eslint src tests --max-warnings 0` — clean.
 - `npm test -- tests/compaction-rule tests/session-model-selection
-  tests/provider-persistence tests/config-load tests/numctx-resolver` — green.
+  tests/session-compaction-pair tests/provider-persistence tests/config-load
+  tests/numctx-resolver` — green.
 - `npm run type-check` — only the pre-existing errors (the mermaid renderer's
   `minNodeWidth` and the seven MCP OAuth `issuer` errors).
 - The full `npm test` — the same 22 pre-existing failing suites as before
-  this branch.
+  this branch. They fail on a clean tree too (Node v22 has no `require(esm)`,
+  and Windows holds the SQLite file open), and none of them touches the
+  compaction selection.

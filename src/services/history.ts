@@ -19,6 +19,7 @@ import Database from 'better-sqlite3';
 import { debugLog } from '@/app/lib/debugLogger';
 import { DB_PATH } from '@/services/paths';
 import {
+  coherentCompactionPair,
   selectionFromColumns,
   selectionToColumns,
   type SessionSelection,
@@ -184,6 +185,40 @@ addColumnIfMissing('ALTER TABLE sessions ADD COLUMN compaction_provider_id TEXT'
 // resolved values (`resolveCreationSelection`), so new rows are never NULL.
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT');
 addColumnIfMissing('ALTER TABLE sessions ADD COLUMN compaction_reasoning_effort TEXT');
+
+// A bootstrap migration for the compaction PAIR.
+//
+// The pair used to be two independent nullable columns, which admitted a
+// compaction MODEL with no provider — the state that sent a compaction model
+// to an endpoint that did not have it. The selection is one value with three
+// states now (`CompactionSelection` in `src/services/sessionSelection.ts`),
+// and the only combination the columns cannot express is that half-pair.
+//
+// The repair is deliberately the SAFE direction: the row falls back to
+// "inherit the global default", which always names a model AND a provider
+// that belong together. A row whose model is `''` ("same as the main model")
+// keeps that meaning and only loses the provider it cannot have.
+//
+// It is a no-op on the owner's databases (478 sessions, no half-pairs; 117 in
+// the dev database, no half-pairs), but it makes the guarantee hold on ANY
+// database.
+try {
+  db.exec(
+    `UPDATE sessions SET compaction_provider_id = NULL
+       WHERE compaction_model = ''
+         AND compaction_provider_id IS NOT NULL
+         AND TRIM(compaction_provider_id) <> ''`
+  );
+  db.exec(
+    `UPDATE sessions SET compaction_model = NULL, compaction_provider_id = NULL
+       WHERE compaction_model IS NOT NULL
+         AND TRIM(compaction_model) <> ''
+         AND (compaction_provider_id IS NULL OR TRIM(compaction_provider_id) = '')`
+  );
+} catch {
+  // A database that cannot be migrated still works: the read path
+  // (`selectionFromColumns`) normalises the same rows on the way out.
+}
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing("ALTER TABLE messages ADD COLUMN subagent_id TEXT NOT NULL DEFAULT ''");
@@ -453,8 +488,11 @@ export function updateSessionSelection(sessionId: number, selection: SessionSele
     sessionId,
     model: selection.model,
     providerId: selection.providerId,
-    compactionModel: selection.compactionModel,
-    compactionProviderId: selection.compactionProviderId,
+    // The NORMALISED pair, the one that was actually written: the row can
+    // never hold a compaction model without the provider that serves it, so
+    // neither may the frame that announces the change.
+    compactionModel: columns.compaction_model,
+    compactionProviderId: columns.compaction_provider_id,
     reasoningEffort: columns.reasoning_effort,
     compactionReasoningEffort: columns.compaction_reasoning_effort,
   });
@@ -496,10 +534,36 @@ export function getSessionName(sessionId: number): string | undefined {
 }
 
 /**
+ * A session row with its compaction pair NORMALISED.
+ *
+ * The row can only hold a coherent pair (the write path normalises it and
+ * the bootstrap migration repairs what an older build left behind), but the
+ * pair is normalised on the way OUT as well: this row is what the browser
+ * reads, and a browser that received a compaction model without the
+ * provider that serves it would send that half-pair back in its next chat
+ * request, where the server refuses it — a conversation that cannot be
+ * resumed because of a row the server itself wrote.
+ */
+function normaliseSessionRow(row: Session): Session {
+  const pair = coherentCompactionPair(row.compaction_model, row.compaction_provider_id);
+  if (
+    pair.model === row.compaction_model &&
+    pair.providerId === row.compaction_provider_id
+  ) {
+    return row;
+  }
+  return {
+    ...row,
+    compaction_model: pair.model,
+    compaction_provider_id: pair.providerId,
+  };
+}
+
+/**
  * Returns all sessions ordered by most-recently-updated first.
  */
 export function listSessions(): Session[] {
-  return stmtListSessions.all() as Session[];
+  return (stmtListSessions.all() as Session[]).map(normaliseSessionRow);
 }
 
 /**
@@ -519,7 +583,7 @@ export function searchSessions(query: string): Session[] {
     .replaceAll('%', String.raw`\%`)
     .replaceAll('_', String.raw`\_`);
   const q = `%${escaped}%`;
-  return stmtSearchSessions.all(q, q) as Session[];
+  return (stmtSearchSessions.all(q, q) as Session[]).map(normaliseSessionRow);
 }
 
 /**

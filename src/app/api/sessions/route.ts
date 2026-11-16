@@ -4,7 +4,11 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 import { loadConfig } from '@/services/configManager';
 import { createSession, listSessions, searchSessions } from '@/services/history';
-import { resolveCreationSelection, validateSessionSelection } from '@/services/sessionSelection';
+import {
+  compactionPairProblem,
+  resolveCreationSelection,
+  validateSessionSelection,
+} from '@/services/sessionSelection';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -52,6 +56,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
     if (typeof validated === 'string') {
       return NextResponse.json({ error: validated }, { status: 400 });
+    }
+
+    // The compaction pair is ONE value: a conversation born with a
+    // compaction model and no provider that serves it would be born into
+    // the state that sends a compaction model to an endpoint that does not
+    // have it. The row writer would repair it silently; this refuses it
+    // instead, the same way the PATCH route does.
+    const pairProblem = compactionPairProblem(validated);
+    if (pairProblem !== null) {
+      return NextResponse.json({ error: pairProblem }, { status: 400 });
     }
 
     // Reasoning levels, unlike the compaction model, are PINNED at creation:

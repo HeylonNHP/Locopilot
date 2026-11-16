@@ -355,6 +355,28 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
   - **NOT verified live.** No browser and no provider were exercised against the new refusal. The client's own repair means the refusal is reachable only when the live model list has not loaded yet, or when no provider serves the selected model.
 - **Still open:** C-026 (a pair that names a REAL provider that does not serve the model is still trusted). The index that would answer it does not exist yet.
 
+### C-028 — The compaction model and its provider were two independent fields, so a model could be pinned without the provider that serves it
+
+- **Status:** FIXED (2026-11-16, branch `feature/provider-pair-integrity`). The gap below was real and was closed; the evidence is kept because it explains the design.
+- **Claim (the gap, as it was):** the session's compaction selection was TWO nullable columns (`sessions.compaction_model`, `sessions.compaction_provider_id`), which admitted FOUR states: `(NULL,NULL)` inherit-default, `('',NULL)` same-as-main, `('x','p')` explicit, and `('x',NULL)` — **a compaction model with no provider**. The fourth is the bug class: the model was handed to whichever provider the rule fell back to, which is not necessarily the one that serves it, and the call 404ed with nothing to explain why. The rule even had a branch for it ("a conversation that pinned a model of its own but no provider"), which papered over the incoherence instead of removing it.
+- **Why it mattered:** the pair is what makes a compaction call go to the RIGHT endpoint. The two fields could drift apart, and once apart nothing could tell that they had: the row, the wire and the SSE frame all carried two independent values.
+- **How it was confirmed (2026-11-16, in code):** `sessions.compaction_model` and `sessions.compaction_provider_id` were independent nullable columns (`src/services/history.ts`); the store held `compactionModel` and `compactionProviderId` as two fields (`src/app/lib/chatStore.ts`); the chat body carried them as two optional fields (`src/app/hooks/useChatStream.ts:677-678`); and the rule resolved them independently (`resolveCompactionRule`, before this change).
+- **What was implemented (2026-11-16, `feature/provider-pair-integrity`):**
+  - The pair is now ONE value with THREE states — `CompactionSelection` in `src/services/sessionSelection.ts`:
+    ```ts
+    | { kind: 'inherit-default' }
+    | { kind: 'same-as-main' }
+    | { kind: 'explicit'; model: string; providerId: string }
+    ```
+    The fourth state cannot be represented, so it cannot be resolved, stored or sent.
+  - `resolveCompactionRule` reads the union, and its "a conversation pinned a model but no provider" branch is DEAD. The rule's three states map onto the existing columns without a schema change: `NULL/NULL` → inherit-default, `''/NULL` → same-as-main, `'x'/'p'` → explicit.
+  - `compactionSelectionFromPair` is the STRICT converter: a named model without its provider is REFUSED with a message that says what to send instead, and a provider without a model is refused too. `compactionSelectionFromLoosePair` is the lenient one, for the places that must not fail (reading a row, showing what a conversation compacts with); it repairs towards "inherit the global default", which always names a model AND a provider that belong together.
+  - Defence in depth: the write path normalises (`selectionToColumns` → `coherentCompactionPair`), the read path normalises (`selectionFromColumns`, and `listSessions` / `searchSessions` for the rows the browser reads), the `model-changed` SSE frame announces the NORMALISED pair, `PATCH /api/sessions/[id]` refuses a patch that edits one half of the pair AND refuses an incoherent merged result, `POST /api/sessions` refuses an incoherent pair at creation, and a bootstrap step rewrites the illegal rows in place.
+  - The database schema is unchanged (the columns already encode the three states) and the GLOBAL config keeps its two-field shape (`config.json` is hand-edited).
+  - Covered by `tests/compaction-rule.test.mjs` (32 tests), `tests/session-model-selection.test.mjs` (36 tests) and `tests/session-compaction-pair.test.mjs` (7 tests, the route driven in-process).
+  - **NOT verified live.** No browser and no provider were exercised against the new refusals.
+- **Still open (Phase 2.4):** the browser STORE and the WIRE still carry the two fields, so the compiler cannot yet catch a caller that builds a half-pair — the boundary checks catch it at runtime instead. The store/wire reshape is recorded in `docs/PROVIDER_PAIR_PLAN.md` (Phase 2.3, "What Phase 2.3 actually shipped").
+
 ## Confirmed
 
 - **OpenAI output-cap field.** `max_output_tokens` is the cap on the Responses API (`/v1/responses`) and covers visible and reasoning tokens. Chat Completions uses `max_completion_tokens`. Source: OpenAI API reference, read through a mirror on 2026-11-11 (`platform.openai.com` returned 403). The installed `openai` SDK (6.48.0) types agree.

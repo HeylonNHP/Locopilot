@@ -45,6 +45,7 @@ let validateSessionSelection;
 let validateSessionSelectionPatch;
 let mergeSessionSelection;
 let resolveCreationSelection;
+let compactionPairProblem;
 let chatReducer;
 let initialState;
 let parseSessionEvent;
@@ -62,6 +63,7 @@ beforeAll(async () => {
     validateSessionSelectionPatch,
     mergeSessionSelection,
     resolveCreationSelection,
+    compactionPairProblem,
   } = await import(moduleUrl('../src/services/sessionSelection.ts')));
   ({ chatReducer, initialState } = await import(moduleUrl('../src/app/lib/chatStore.ts')));
   ({ parseSessionEvent } = await import(moduleUrl('../src/app/hooks/useSessionEvents.ts')));
@@ -757,5 +759,79 @@ describe('the selection on the wire', () => {
     expect(parseSessionEvent(JSON.stringify({ kind: 'model-changed', sessionId: 29 }))).toBeNull();
     expect(parseSessionEvent(JSON.stringify({ kind: 'model-changed' }))).toBeNull();
     expect(parseSessionEvent('not json')).toBeNull();
+  });
+});
+
+describe('the compaction pair is ONE value — the half-pair cannot exist', () => {
+  test('a model with no provider is refused, not repaired', () => {
+    // The state that sent a compaction model to an endpoint that did not
+    // have it. It is refused at the boundary, with a message that says what
+    // to send instead.
+    const problem = compactionPairProblem({
+      ...SELECTION,
+      compactionModel: 'cheap-compactor',
+      compactionProviderId: null,
+    });
+    expect(problem).not.toBeNull();
+    expect(problem).toContain('cheap-compactor');
+  });
+
+  test('a provider with no model is refused too', () => {
+    const problem = compactionPairProblem({
+      ...SELECTION,
+      compactionModel: null,
+      compactionProviderId: 'openai',
+    });
+    expect(problem).not.toBeNull();
+  });
+
+  test('the three legal states pass', () => {
+    expect(
+      compactionPairProblem({ ...SELECTION, compactionModel: null, compactionProviderId: null })
+    ).toBeNull();
+    expect(
+      compactionPairProblem({ ...SELECTION, compactionModel: '', compactionProviderId: null })
+    ).toBeNull();
+    expect(
+      compactionPairProblem({
+        ...SELECTION,
+        compactionModel: 'cheap-compactor',
+        compactionProviderId: 'openai',
+      })
+    ).toBeNull();
+  });
+
+  test('a row can never hold a compaction model without its provider', () => {
+    const id = createSession('New chat', {
+      ...SELECTION,
+      // The illegal pair, handed to the writer on purpose.
+      compactionModel: 'cheap-compactor',
+      compactionProviderId: null,
+    });
+
+    const stored = listSessions().find((s) => s.id === id);
+    expect(stored.compaction_model).toBeNull();
+    expect(stored.compaction_provider_id).toBeNull();
+  });
+
+  test('a row that already holds a half-pair is normalised on the way out', async () => {
+    // A row written before the pair was one value can still hold a model
+    // with no provider. It is repaired on READ, so no caller — the browser
+    // included — ever sees the illegal combination.
+    const id = createSession('New chat', SELECTION);
+    const { default: Database } = await import('better-sqlite3');
+    const db = new Database(path.join(root, 'locopilot.db'));
+    try {
+      db.prepare(
+        `UPDATE sessions SET compaction_model = ?, compaction_provider_id = ? WHERE id = ?`
+      ).run('legacy-model', null, id);
+    } finally {
+      db.close();
+    }
+
+    const stored = listSessions().find((s) => s.id === id);
+    expect(stored.compaction_model).toBeNull();
+    expect(stored.compaction_provider_id).toBeNull();
+    expect(getSessionSelection(id).compactionModel).toBeNull();
   });
 });

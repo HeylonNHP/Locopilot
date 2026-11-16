@@ -2,18 +2,18 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import type {
-  SessionDefaults,
-  SessionDefaultsPatch,
-  SessionSelection,
-  SessionSelectionPatch,
-} from '@/services/sessionSelection';
-
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { type LLmModel, useChat } from '@/app/lib/chatStore';
 import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { type MidTurnModelSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { resolveCompactionRule } from '@/services/compactionRule';
+import {
+  compactionSelectionFromLoosePair,
+  type SessionDefaults,
+  type SessionDefaultsPatch,
+  type SessionSelection,
+  type SessionSelectionPatch,
+} from '@/services/sessionSelection';
 
 import { toggleProviderCollapsed, useCollapsedProviders } from './collapsedProviders';
 
@@ -290,8 +290,7 @@ export default function ModelSelector({
   // the module has no imports precisely so both sides can share it.
   const effectiveCompaction = resolveCompactionRule({
     mainModel: model,
-    sessionCompactionModel: compactionModel,
-    sessionCompactionProviderId: compactionProviderId,
+    sessionCompaction: compactionSelectionFromLoosePair(compactionModel, compactionProviderId),
     globalCompactionModel: defaultCompactionModel,
     globalCompactionProviderId: defaultCompactionProviderId,
   });

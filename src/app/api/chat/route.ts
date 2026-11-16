@@ -1526,10 +1526,17 @@ export async function POST(req: NextRequest): Promise<Response> {
           // explicit `null` CLEARS the pin (the compaction then runs on the
           // main chat provider) and must not be collapsed into "keep what we
           // had". An absent field keeps the current pin.
+          //
+          // "Same as the main model" is ONE state — the main model on the
+          // MAIN provider — so a provider carried over from the previous
+          // selection is dropped with it rather than handed a model it does
+          // not serve.
           const nextCompactionProviderId =
-            pending.compactionProviderId === undefined
-              ? compactionProviderId
-              : pending.compactionProviderId;
+            nextCompactionModel === ''
+              ? null
+              : pending.compactionProviderId === undefined
+                ? compactionProviderId
+                : pending.compactionProviderId;
           await Promise.all([
             mainWindow,
             resolveCompactionRuntime(nextCompactionModel, nextCompactionProviderId, true),
