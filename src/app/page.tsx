@@ -10,6 +10,7 @@ import { PageLayout } from '@/components/PageLayout';
 import SettingsModal from '@/components/SettingsModal';
 import { SessionSidebar, SkillsPanel } from '@/components/sidebar';
 import StatusBar from '@/components/StatusBar';
+import { inheritDefaultCompactionSelection } from '@/services/sessionSelection';
 
 import { useActionHandlers } from './hooks/useActionHandlers';
 import { useApproval } from './hooks/useApproval';
@@ -116,8 +117,10 @@ function HomeInner() {
     selection: {
       model: state.defaultModel,
       providerId: state.defaultProviderId,
-      compactionModel: null,
-      compactionProviderId: null,
+      // A new conversation inherits the GLOBAL compaction pair — one value,
+      // so the server resolves the model and the provider that serves it
+      // together.
+      compaction: inheritDefaultCompactionSelection(),
       // The server resolves these from the defaults and pins them when it
       // creates the conversation.
       reasoningEffort: null,

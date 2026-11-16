@@ -7,7 +7,6 @@ import { useChat } from '@/app/lib/chatStore';
 import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { resolveCompactionRule } from '@/services/compactionRule';
 import {
-  compactionSelectionFromLoosePair,
   type SessionDefaults,
   type SessionSelection,
 } from '@/services/sessionSelection';
@@ -77,8 +76,7 @@ export default function ReasoningEffortSelector({
   const {
     model,
     currentSessionId,
-    compactionModel,
-    compactionProviderId,
+    compaction,
     reasoningEffort,
     compactionReasoningEffort,
     defaultModel,
@@ -109,7 +107,7 @@ export default function ReasoningEffortSelector({
   // about it would report the wrong set of supported reasoning levels.
   const effectiveCompaction = resolveCompactionRule({
     mainModel: model,
-    sessionCompaction: compactionSelectionFromLoosePair(compactionModel, compactionProviderId),
+    sessionCompaction: compaction,
     globalCompactionModel: defaultCompactionModel,
     globalCompactionProviderId: defaultCompactionProviderId,
   });
@@ -200,8 +198,7 @@ export default function ReasoningEffortSelector({
       const selection: SessionSelection = {
         model,
         providerId: activeProviderId,
-        compactionModel,
-        compactionProviderId,
+        compaction,
         reasoningEffort: field === 'reasoningEffort' ? level : reasoningEffort,
         compactionReasoningEffort:
           field === 'compactionReasoningEffort' ? level : compactionReasoningEffort,
@@ -242,8 +239,7 @@ export default function ReasoningEffortSelector({
     },
     [
       activeProviderId,
-      compactionModel,
-      compactionProviderId,
+      compaction,
       compactionReasoningEffort,
       defaultCompactionModel,
       defaultCompactionProviderId,

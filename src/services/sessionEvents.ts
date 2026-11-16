@@ -34,6 +34,7 @@
  * SQLite handle.
  */
 
+import type { CompactionSelection } from '@/services/sessionSelection';
 import type { ReasoningEffort } from '@/types/chatConfig';
 
 export type SessionEvent =
@@ -50,10 +51,11 @@ export type SessionEvent =
       model: string;
       /** The provider that serves `model`, or `null` when it is not pinned. */
       providerId: string | null;
-      /** The conversation's compaction model, `null` to inherit the global default, `''` for the main model. */
-      compactionModel: string | null;
-      /** The provider that serves `compactionModel`, or `null` when it is not pinned. */
-      compactionProviderId: string | null;
+      /**
+       * The conversation's compaction selection — ONE value, so it cannot be
+       * a compaction model without the provider that serves it.
+       */
+      compaction: CompactionSelection;
       /** The main model's reasoning level, or `null` when it inherits the global default. */
       reasoningEffort: ReasoningEffort | null;
       /** The compaction model's reasoning level, or `null` when it inherits the global default. */

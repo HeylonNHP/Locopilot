@@ -31,11 +31,7 @@ import {
   resolveCompactionRule,
 } from './compactionRule';
 import { resolveProvider } from './providerResolver';
-import {
-  compactionSelectionFromPair,
-  type CompactionSelection as CompactionSelectionState,
-  inheritDefaultCompactionSelection,
-} from './sessionSelection';
+import { type CompactionSelection as CompactionSelectionState } from './sessionSelection';
 
 export interface CompactionSelectionInput {
   /** The saved config. `null` when it could not be read. */
@@ -47,23 +43,12 @@ export interface CompactionSelectionInput {
    * states (`CompactionSelection`).
    *
    * The pair it stands for used to be two independent nullable fields, which
-   * admitted a model without a provider. That state is refused here, with a
-   * message that says what to send instead.
+   * admitted a model without a provider. That state is unrepresentable now,
+   * so the caller cannot hand one over: a request body that carries the old
+   * flat pair is converted by `compactionSelectionFromPayload`
+   * (`src/services/sessionSelection.ts`), which refuses a half-pair.
    */
   sessionCompaction?: CompactionSelectionState | null | undefined;
-  /**
-   * The conversation's own compaction model, as the WIRE still carries it:
-   * two independent optional fields.
-   *
-   * @deprecated pass {@link CompactionSelectionInput.sessionCompaction} — a
-   * selection, not a pair of fields. This is the legacy shape and it is
-   * read only when no selection is given.
-   */
-  sessionCompactionModel?: string | null | undefined;
-  /**
-   * @deprecated see {@link CompactionSelectionInput.sessionCompactionModel}.
-   */
-  sessionCompactionProviderId?: string | null | undefined;
 }
 
 export interface CompactionSelection {
@@ -102,51 +87,12 @@ export function resolveCompactionSelection(
   input: CompactionSelectionInput
 ): CompactionSelection {
   const { config, mainModel } = input;
-  const {
-    sessionCompaction: sessionCompactionInput,
-    sessionCompactionModel,
-    sessionCompactionProviderId,
-  } = input;
-
-  // The conversation's own selection is ONE value with three states. The
-  // legacy two-field pair is still read (a tab that was open before the
-  // change keeps working), but a pair that names a model WITHOUT the
-  // provider that serves it is REFUSED: it is the state that sent a
-  // compaction model to an endpoint that did not have it.
-  let sessionCompaction: CompactionSelectionState;
-  let pairProblem: string | null = null;
-  if (sessionCompactionInput !== undefined && sessionCompactionInput !== null) {
-    sessionCompaction = sessionCompactionInput;
-  } else {
-    const modelGiven = typeof sessionCompactionModel === 'string';
-    const providerGiven =
-      typeof sessionCompactionProviderId === 'string' &&
-      sessionCompactionProviderId.trim() !== '';
-    if (!modelGiven && providerGiven) {
-      // "A provider, and the model it serves is inherited." The pair travels
-      // together, so the model is resolved HERE and the result is explicit:
-      // the global default's model, or the main model when the global default
-      // names none.
-      const globalModel = config?.compactionModel?.trim() ?? '';
-      const resolvedModel = globalModel === '' ? mainModel : globalModel;
-      sessionCompaction = {
-        kind: 'explicit',
-        model: resolvedModel,
-        providerId: sessionCompactionProviderId.trim(),
-      };
-    } else {
-      const parsed = compactionSelectionFromPair(
-        sessionCompactionModel,
-        sessionCompactionProviderId
-      );
-      if (parsed.ok) {
-        sessionCompaction = parsed.selection;
-      } else {
-        sessionCompaction = inheritDefaultCompactionSelection();
-        pairProblem = parsed.error;
-      }
-    }
-  }
+  // The conversation's own selection is ONE value with three states. A
+  // request body that carries the OLD flat pair is converted by
+  // `compactionSelectionFromPayload` before it gets here, and a half-pair in
+  // that legacy shape is refused there — the state that sent a compaction
+  // model to an endpoint that did not have it.
+  const sessionCompaction = input.sessionCompaction ?? { kind: 'inherit-default' };
 
   const rule = resolveCompactionRule({
     mainModel,
@@ -156,8 +102,8 @@ export function resolveCompactionSelection(
   });
 
   // -- the one refusal -----------------------------------------------
-  let problem: string | null = pairProblem;
-  if (problem === null && rule.providerId !== null && resolveProvider(config, rule.providerId) === null) {
+  let problem: string | null = null;
+  if (rule.providerId !== null && resolveProvider(config, rule.providerId) === null) {
     problem =
       rule.providerSource === 'session'
         ? `The compaction provider "${rule.providerId}" is not configured, so this conversation cannot compact. Open Settings and pick a compaction provider that exists.`

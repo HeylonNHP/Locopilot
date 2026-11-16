@@ -13,6 +13,7 @@ import {
   type LlmRequestContext,
 } from '@/services/llm';
 import { resolveProviderRequestContext } from '@/services/providerResolver';
+import { compactionSelectionFromPayload } from '@/services/sessionSelection';
 import { generateSessionTitle } from '@/services/titleGeneration';
 import { isReasoningEffort, type ReasoningEffort } from '@/types/chatConfig';
 
@@ -36,8 +37,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     typeof body.providerId === 'string' && body.providerId.trim()
       ? body.providerId.trim()
       : undefined;
-  const compactionModel = body.compactionModel;
-  const compactionProviderId = body.compactionProviderId;
+  // The conversation's own compaction selection — ONE value. The LEGACY flat
+  // pair is still read, for a tab that was open before the change.
+  const compactionPayload = {
+    compaction: body.compaction,
+    compactionModel: body.compactionModel,
+    compactionProviderId: body.compactionProviderId,
+  };
   const sessionId = body.sessionId;
   const think: boolean | undefined = body.think as boolean | undefined;
   const reasoningEffortRaw: unknown = body.reasoningEffort;
@@ -64,11 +70,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!savedConfig.ok) {
     return NextResponse.json({ error: savedConfig.message }, { status: 503 });
   }
+  const globalCompactionModel = savedConfig.config.compactionModel?.trim() ?? '';
+  const parsedCompaction = compactionSelectionFromPayload(
+    compactionPayload,
+    globalCompactionModel === '' ? model.trim() : globalCompactionModel
+  );
+  if (!parsedCompaction.ok) {
+    return NextResponse.json({ error: parsedCompaction.error }, { status: 400 });
+  }
+  const sessionCompaction = parsedCompaction.selection;
   const requestProblem = requestProblemFor(savedConfig.config, {
     providerId,
     model,
-    compactionProviderId,
-    compactionModel,
+    compaction: sessionCompaction,
   });
   if (requestProblem !== null) {
     return NextResponse.json({ error: requestProblem }, { status: 409 });
@@ -142,10 +156,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const compactionSelection = resolveCompactionSelection({
       config,
       mainModel: model.trim(),
-      sessionCompactionModel:
-        typeof compactionModel === 'string' ? compactionModel : null,
-      sessionCompactionProviderId:
-        typeof compactionProviderId === 'string' ? compactionProviderId : null,
+      sessionCompaction,
     });
     const effectiveCompactionModel = compactionSelection.model;
 

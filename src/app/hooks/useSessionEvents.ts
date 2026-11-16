@@ -2,9 +2,12 @@
 
 import { useEffect } from 'react';
 
-import type { SessionSelection } from '@/services/sessionSelection';
-
 import { useChat } from '@/app/lib/chatStore';
+import {
+  inheritDefaultCompactionSelection,
+  parseCompactionSelection,
+  type SessionSelection,
+} from '@/services/sessionSelection';
 import { SESSIONS_SSE_EVENT_NAME } from '@/services/sseNames';
 import { isReasoningEffort } from '@/types/chatConfig';
 
@@ -54,6 +57,7 @@ export function parseSessionEvent(
       providerId?: unknown;
       compactionModel?: unknown;
       compactionProviderId?: unknown;
+      compaction?: unknown;
       reasoningEffort?: unknown;
       compactionReasoningEffort?: unknown;
     };
@@ -64,16 +68,19 @@ export function parseSessionEvent(
     }
     if (payload.kind === 'model-changed') {
       if (typeof payload.model !== 'string') return null;
+      // The compaction selection is ONE value. A frame that carries none —
+      // or one that does not parse — is read as "inherit the global
+      // default", the only state that names no model of its own.
+      const compaction = parseCompactionSelection(payload.compaction);
       return {
         kind: 'model-changed',
         sessionId: payload.sessionId,
         selection: {
           model: payload.model,
           providerId: typeof payload.providerId === 'string' ? payload.providerId : null,
-          compactionModel:
-            typeof payload.compactionModel === 'string' ? payload.compactionModel : null,
-          compactionProviderId:
-            typeof payload.compactionProviderId === 'string' ? payload.compactionProviderId : null,
+          compaction: compaction.ok
+            ? compaction.selection
+            : inheritDefaultCompactionSelection(),
           // An absent or unrecognised level means "inherit the global
           // default", which is what a NULL row means everywhere else.
           reasoningEffort: isReasoningEffort(payload.reasoningEffort)

@@ -488,11 +488,11 @@ export function updateSessionSelection(sessionId: number, selection: SessionSele
     sessionId,
     model: selection.model,
     providerId: selection.providerId,
-    // The NORMALISED pair, the one that was actually written: the row can
-    // never hold a compaction model without the provider that serves it, so
-    // neither may the frame that announces the change.
-    compactionModel: columns.compaction_model,
-    compactionProviderId: columns.compaction_provider_id,
+    // The compaction selection is ONE value — the NORMALISED one, the pair
+    // that was actually written: the row can never hold a compaction model
+    // without the provider that serves it, so neither may the frame that
+    // announces the change.
+    compaction: selection.compaction,
     reasoningEffort: columns.reasoning_effort,
     compactionReasoningEffort: columns.compaction_reasoning_effort,
   });

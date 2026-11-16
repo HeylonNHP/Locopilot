@@ -124,9 +124,12 @@ import {
   MermaidRecoveryTracker,
   validateMermaidFences,
 } from '@/services/mermaidRecovery';
-import { resolveCompactionModel } from '@/services/modelManager';
 import { checkCompleteness } from '@/services/promptLoop';
 import { getNormalizedProviders, resolveProviderRequestContext } from '@/services/providerResolver';
+import {
+  type CompactionSelection,
+  compactionSelectionFromPayload,
+} from '@/services/sessionSelection';
 import {
   discoverSkills,
   getAllowedToolsFromSkills,
@@ -282,10 +285,15 @@ export async function POST(req: NextRequest): Promise<Response> {
     typeof body.providerId === 'string' && body.providerId.trim()
       ? body.providerId.trim()
       : undefined;
-  const compactionProviderId: string | undefined =
-    typeof body.compactionProviderId === 'string' ? body.compactionProviderId : undefined;
-  const compactionModel: string | undefined =
-    typeof body.compactionModel === 'string' ? body.compactionModel : undefined;
+  const compactionPayload = {
+    compaction: body.compaction,
+    // The LEGACY flat pair, still read for a tab that was open before the
+    // pair became one value. Read in ONE place —
+    // `compactionSelectionFromPayload` — so there is a single answer to
+    // "what does a stale tab send".
+    compactionModel: body.compactionModel,
+    compactionProviderId: body.compactionProviderId,
+  };
   const think: boolean | undefined = body.think as boolean | undefined;
   const reasoningEffortRaw: unknown = body.reasoningEffort;
   const reasoningEffort: ReasoningEffort | undefined = isReasoningEffort(reasoningEffortRaw)
@@ -349,16 +357,34 @@ export async function POST(req: NextRequest): Promise<Response> {
   // under way — the same policy as the saved context window at turn start.
   const turnReasoningEffort = resolveReasoningEffort(savedConfig.config);
   const turnCompactionReasoningEffort = resolveCompactionReasoningEffort(savedConfig.config);
+  // The conversation's own compaction selection — ONE value. The body carries
+  // it; the global pair comes from the saved config. A body that names a
+  // compaction model WITHOUT the provider that serves it is REFUSED (400):
+  // that is the state that sent a compaction model to an endpoint that did
+  // not have it, and a silent repair would be the wrong endpoint again.
+  //
+  // The legacy flat pair is read here too (a tab open before the change),
+  // and its model-without-provider is refused the same way.
+  const globalCompactionModel = savedConfig.config.compactionModel?.trim() ?? '';
+  const parsedCompaction = compactionSelectionFromPayload(
+    compactionPayload,
+    globalCompactionModel === '' ? model : globalCompactionModel
+  );
+  if (!parsedCompaction.ok) {
+    return new Response(`event: error\ndata: ${JSON.stringify({ message: parsedCompaction.error })}\n\n`, {
+      status: HTTP_BAD_REQUEST,
+      headers: { 'Content-Type': SSE_CONTENT_TYPE },
+    });
+  }
+  const sessionCompaction = parsedCompaction.selection;
   // The compaction half is checked with the SHARED resolver, so the chat, the
   // compact route and the title route cannot disagree about which provider
-  // serves the compaction model. The body carries the conversation's own pin
-  // only; the global pair comes from the saved config.
+  // serves the compaction model.
   const turnProblem =
     configProblemFor(savedConfig.config, providerId, model) ??
     compactionProblemFor(savedConfig.config, {
       mainModel: model,
-      compactionModel,
-      compactionProviderId,
+      compaction: sessionCompaction,
     });
   if (turnProblem !== null) {
     return new Response(`event: error\ndata: ${JSON.stringify({ message: turnProblem })}\n\n`, {
@@ -454,13 +480,12 @@ export async function POST(req: NextRequest): Promise<Response> {
 
       let finalContent = '';
       let finalThinking = '';
-      // Body compactionModel is authoritative when present, including an empty
-      // string which explicitly means "same as the main model". Persisted config
-      // is consulted only when the body omits the field.
-      let effectiveCompactionModel: string = resolveCompactionModel(
-        compactionModel,
-        model as string
-      );
+      // The compaction model this turn starts with. The conversation's own
+      // selection is authoritative when it names a model; the persisted config
+      // is consulted only when it does not (and only after
+      // `resolveCompactionRuntime` runs).
+      let effectiveCompactionModel: string =
+        sessionCompaction.kind === 'explicit' ? sessionCompaction.model : (model as string);
       // Last authoritative token count from Ollama; used by the auto-compact
       // check so it stays anchored to the latest exact provider count.
       let lastAuthoritativeTokens = 0;
@@ -844,10 +869,10 @@ export async function POST(req: NextRequest): Promise<Response> {
           const selection = {
             model: model as string,
             providerId: providerId ?? null,
-            // A compaction model the request did not carry means "inherit the
-            // global default", which is how the server reads it everywhere else.
-            compactionModel: compactionModel ?? null,
-            compactionProviderId: compactionProviderId ?? null,
+            // The compaction selection is ONE value. A conversation the
+            // request did not pin compacts with the global default, which is
+            // how the server reads it everywhere else.
+            compaction: sessionCompaction,
             // The reasoning levels are PINNED at creation: a level the client
             // did not pin is resolved from the saved defaults and stored, so
             // a later default change does not move this conversation.
@@ -1196,16 +1221,14 @@ export async function POST(req: NextRequest): Promise<Response> {
          * matching or by resolveProvider's unrelated default provider.
          */
         const resolveCompactionRuntime = async (
-          sessionCompactionModel: string | null | undefined,
-          sessionCompactionProviderId: string | null | undefined,
+          sessionCompaction: CompactionSelection,
           fromSavedSetting = false
         ): Promise<void> => {
           const setting = await settingSource(fromSavedSetting);
           const selection = resolveCompactionSelection({
             config: setting,
             mainModel: model,
-            sessionCompactionModel,
-            sessionCompactionProviderId,
+            sessionCompaction,
           });
           effectiveCompactionModel = selection.model;
           if (selection.problem !== null) {
@@ -1306,7 +1329,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // the resolver merges the two.
           await Promise.all([
             resolveNumCtxForModel(),
-            resolveCompactionRuntime(compactionModel, compactionProviderId),
+            resolveCompactionRuntime(sessionCompaction),
           ]);
 
           // Compute allowedTools from always-apply skills (best-effort)
@@ -1343,7 +1366,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // pair: only the conversation's own pin applies. The resolver
           // falls back to the conversation's main model on the main
           // provider.
-          await resolveCompactionRuntime(compactionModel, compactionProviderId);
+          await resolveCompactionRuntime(sessionCompaction);
           requestContext = buildRequestContext(null, null);
         }
         // Build the merged tool list (static native TOOLS + dynamic MCP
@@ -1521,26 +1544,14 @@ export async function POST(req: NextRequest): Promise<Response> {
           // here: `resolveCompactionRuntime(…, true)` re-reads the saved
           // config, so the global compaction model and provider apply as
           // they are saved NOW.
-          const nextCompactionModel = pending.compactionModel ?? compactionModel;
-          // The compaction PROVIDER follows a presence check, not `??`: an
-          // explicit `null` CLEARS the pin (the compaction then runs on the
-          // main chat provider) and must not be collapsed into "keep what we
-          // had". An absent field keeps the current pin.
           //
-          // "Same as the main model" is ONE state — the main model on the
-          // MAIN provider — so a provider carried over from the previous
-          // selection is dropped with it rather than handed a model it does
-          // not serve.
-          const nextCompactionProviderId =
-            nextCompactionModel === ''
-              ? null
-              : pending.compactionProviderId === undefined
-                ? compactionProviderId
-                : pending.compactionProviderId;
-          await Promise.all([
-            mainWindow,
-            resolveCompactionRuntime(nextCompactionModel, nextCompactionProviderId, true),
-          ]);
+          // The conversation's own compaction selection is ONE value, so a
+          // switch replaces it WHOLE. "Same as the main model" is the main
+          // model on the MAIN provider — a provider carried over from the
+          // previous selection cannot survive it, because there is no
+          // provider to carry in that state.
+          const nextCompaction = pending.compaction ?? sessionCompaction;
+          await Promise.all([mainWindow, resolveCompactionRuntime(nextCompaction, true)]);
 
           // Mutating in place (rather than rebuilding the context) is what
           // lets an already-running run_subagents batch see the new model.

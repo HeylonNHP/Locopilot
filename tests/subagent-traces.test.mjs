@@ -272,8 +272,7 @@ describe('persistence', () => {
   const SELECTION = {
     model: MODEL,
     providerId: null,
-    compactionModel: null,
-    compactionProviderId: null,
+    compaction: { kind: 'inherit-default' },
     reasoningEffort: null,
     compactionReasoningEffort: null,
   };

@@ -12,6 +12,8 @@
  * works in a single-process deployment, which is what Locopilot is.
  */
 
+import type { CompactionSelection } from '@/services/sessionSelection';
+
 /**
  * A requested change to the models an in-flight turn is using. Every field
  * is optional so the main model and the compaction model can be switched
@@ -23,20 +25,15 @@ export interface ModelSwitchRequest {
   /** Provider ID for the new main model, when the client knows it. */
   providerId?: string;
   /**
-   * New compaction model. An empty string is meaningful and means "same as
-   * the main model" — the same convention `resolveCompactionModel` already
-   * uses for the request body's `compactionModel` field.
-   */
-  compactionModel?: string;
-  /**
-   * Provider ID for the new compaction model, when the client knows it.
+   * The new compaction selection — ONE value, so a compaction model can
+   * never be switched to without the provider that serves it.
    *
-   * `null` is meaningful and CLEARS the pin: the compaction then runs on the
-   * main chat provider. An absent field leaves the pin alone — the two are
-   * different states, so the request must be able to say "no provider of its
-   * own" rather than "nothing to say".
+   * Absent leaves the current selection alone. A value replaces it whole:
+   * `{kind:'same-as-main'}` is "the main model, on the main provider" and
+   * `{kind:'explicit', model, providerId}` is a named model on a named
+   * provider.
    */
-  compactionProviderId?: string | null;
+  compaction?: CompactionSelection;
 }
 
 /** Pending switches, keyed by session ID. At most one per session. */

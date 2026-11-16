@@ -41,6 +41,7 @@ import { resolveCompactionSelection } from '../src/services/compactionSelection.
 import {
   compactionSelectionFromLoosePair,
   compactionSelectionFromPair,
+  compactionSelectionFromPayload,
 } from '../src/services/sessionSelection.ts';
 
 const MAIN_MODEL = 'main-model';
@@ -377,12 +378,22 @@ describe('resolveCompactionSelection — the server composer', () => {
     expect(selection.providerSource).toBe('main');
   });
 
-  test('the legacy two-field pair is still read (an older tab keeps working)', () => {
+  test('the legacy two-field pair is read at the WIRE boundary, not here', () => {
+    // The composer takes the union and only the union. The old flat pair is
+    // read by `compactionSelectionFromPayload`, which every route that
+    // accepts a body calls — so a tab open before the change keeps working
+    // and the composer has one input shape.
+    const parsed = compactionSelectionFromPayload(
+      { compactionModel: 'llama-local', compactionProviderId: 'ollama' },
+      'gpt-main'
+    );
+    expect(parsed.ok).toBe(true);
+    expect(parsed.selection).toEqual(explicit('llama-local', 'ollama'));
+
     const selection = resolveCompactionSelection({
       config: buildConfig(),
       mainModel: 'gpt-main',
-      sessionCompactionModel: 'llama-local',
-      sessionCompactionProviderId: 'ollama',
+      sessionCompaction: parsed.selection,
     });
     expect(selection.problem).toBeNull();
     expect(selection.model).toBe('llama-local');
@@ -392,25 +403,31 @@ describe('resolveCompactionSelection — the server composer', () => {
 
   test('the legacy half-pair is REFUSED loudly, not repaired silently', () => {
     // A model without the provider that serves it is the state that sent a
-    // compaction model to an endpoint that did not have it. The composer
+    // compaction model to an endpoint that did not have it. The boundary
     // refuses it rather than guessing which provider was meant.
-    const selection = resolveCompactionSelection({
-      config: buildConfig(),
-      mainModel: 'gpt-main',
-      sessionCompactionModel: 'llama-local',
-      sessionCompactionProviderId: null,
-    });
-    expect(selection.problem).toContain('llama-local');
+    const parsed = compactionSelectionFromPayload(
+      { compactionModel: 'llama-local', compactionProviderId: null },
+      'gpt-main'
+    );
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain('llama-local');
   });
 
   test('a legacy provider without a model resolves the model HERE', () => {
     // The pair travels together, so the model behind the provider is the
     // global default's model (or the main model) — resolved now, and the
     // result is EXPLICIT, so the rule cannot borrow another provider.
+    const parsed = compactionSelectionFromPayload(
+      { compactionProviderId: 'ollama' },
+      'llama-local'
+    );
+    expect(parsed.ok).toBe(true);
+    expect(parsed.selection).toEqual(explicit('llama-local', 'ollama'));
+
     const selection = resolveCompactionSelection({
       config: buildConfig({ compactionModel: 'llama-local' }),
       mainModel: 'gpt-main',
-      sessionCompactionProviderId: 'ollama',
+      sessionCompaction: parsed.selection,
     });
     expect(selection.problem).toBeNull();
     expect(selection.model).toBe('llama-local');

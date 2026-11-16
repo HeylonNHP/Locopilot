@@ -183,14 +183,17 @@ describe('a config that cannot run a turn says what to do', () => {
       requestProblemFor(config, {
         providerId: 'p1',
         model: 'm',
-        compactionProviderId: 'p2',
-        compactionModel: 'n',
+        compaction: { kind: 'explicit', model: 'n', providerId: 'p2' },
       })
     ).toBeNull();
 
     const noGlobal = { ...config, numCtx: undefined };
     expect(
-      requestProblemFor(noGlobal, { providerId: 'p1', model: 'm', compactionProviderId: 'p2' })
+      requestProblemFor(noGlobal, {
+        providerId: 'p1',
+        model: 'm',
+        compaction: { kind: 'explicit', model: 'n', providerId: 'p2' },
+      })
     ).toBe(CONTEXT_SIZE_NOT_SET_MESSAGE);
   });
 

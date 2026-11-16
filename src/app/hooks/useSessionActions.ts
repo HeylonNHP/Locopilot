@@ -90,8 +90,7 @@ export function useSessionActions({
           name: DEFAULT_SESSION_NAME,
           model: selection.model,
           providerId: selection.providerId,
-          compactionModel: selection.compactionModel,
-          compactionProviderId: selection.compactionProviderId,
+          compaction: selection.compaction,
           // Null means "inherit the global default", and the server resolves
           // and PINS it when it creates the row.
           reasoningEffort: selection.reasoningEffort,

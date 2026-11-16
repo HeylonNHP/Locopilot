@@ -3,21 +3,15 @@
  *
  * WHY this file exists: a conversation owns six values that always travel
  * together — the main model, the provider that serves it, the compaction
- * model, the provider that serves that, and the reasoning effort of each
- * model. They cross three boundaries (the SQLite row, the HTTP payloads, the
- * browser's store), and each boundary used to spell them on its own. One
- * vocabulary here is what keeps a conversation's selection from drifting apart
- * between them.
+ * selection, and the reasoning effort of each model. They cross three
+ * boundaries (the SQLite row, the HTTP payloads, the browser's store), and
+ * each boundary used to spell them on its own. One vocabulary here is what
+ * keeps a conversation's selection from drifting apart between them.
  *
  * Values whose meaning is easy to get wrong are spelled out once here rather
  * than at every call site:
  * - `providerId: null` means "not pinned" — the provider is resolved from the
  *   model name. It does NOT mean "no provider".
- * - `compactionModel: null` means "inherit the global default", while
- *   `compactionModel: ''` means "compact with the conversation's own main
- *   model". The empty string is the same convention `resolveCompactionModel`
- *   already uses on the server, and the two empties are kept apart all the
- *   way down to the database column.
  * - `reasoningEffort: null` (and `compactionReasoningEffort: null`) means
  *   "inherit the global default". `'off'` is a real pinned level, not the same
  *   thing: a row written before per-conversation levels existed is NULL and
@@ -30,6 +24,12 @@
  * - {@link SessionSelectionPatch} — every field optional. A `PATCH` carries
  *   only what the control edited, so a pick of one field can never erase
  *   another and two tabs editing different fields do not clobber each other.
+ *
+ * THE COMPACTION SELECTION IS ONE VALUE, NOT TWO FIELDS. It used to be two
+ * independent nullable fields (`compactionModel` + `compactionProviderId`),
+ * which admitted a fourth state — "a model, but no provider" — that sent a
+ * compaction model to an endpoint that did not have it. That state is now
+ * unrepresentable: see {@link CompactionSelection}.
  */
 
 import { isReasoningEffort, REASONING_EFFORTS, type ReasoningEffort } from '@/types/chatConfig';
@@ -56,7 +56,7 @@ import { isReasoningEffort, REASONING_EFFORTS, type ReasoningEffort } from '@/ty
  *
  * The database columns still hold two values (the schema is not changed — see
  * `docs/PROVIDER_PAIR_PLAN.md`), but the pair is only ever produced by
- * {@link compactionSelectionToColumns} and only ever read by
+ * {@link compactionSelectionToPair} and only ever read by
  * {@link compactionSelectionFromColumns}, so the illegal combination cannot
  * reach the row.
  */
@@ -97,8 +97,7 @@ export function explicitCompactionSelection(
  * that quietly runs on an endpoint the user did not choose.
  *
  * `null` / `undefined` mean "not sent". An empty model means "the
- * conversation's own main model", the same convention `resolveCompactionModel`
- * already uses on the server.
+ * conversation's own main model" — the convention the rule already uses.
  */
 export function compactionSelectionFromPair(
   model: string | null | undefined,
@@ -199,6 +198,144 @@ export function coherentCompactionPair(
 }
 
 /**
+ * The selection a request body carries — the NEW union, or the LEGACY pair.
+ *
+ * The legacy shape (`compactionModel` + `compactionProviderId`, two
+ * independent fields) is still read, for a tab that was open before the
+ * change. It is read HERE and nowhere else, so there is exactly one place
+ * that knows what a stale tab sends.
+ *
+ * A legacy pair that names a model WITHOUT its provider is REFUSED: it is the
+ * state that sent a compaction model to an endpoint that did not have it. A
+ * legacy pair that names a provider WITHOUT a model has its model resolved to
+ * `fallbackModel` — the caller says which model that is (the global default's
+ * model, or the conversation's own) — and becomes an `explicit` selection.
+ */
+export function compactionSelectionFromPayload(
+  payload: {
+    compaction?: unknown;
+    compactionModel?: unknown;
+    compactionProviderId?: unknown;
+  },
+  fallbackModel: string
+): { ok: true; selection: CompactionSelection } | { ok: false; error: string } {
+  if (payload.compaction !== undefined && payload.compaction !== null) {
+    return parseCompactionSelection(payload.compaction);
+  }
+  const providerGiven =
+    typeof payload.compactionProviderId === 'string' &&
+    payload.compactionProviderId.trim() !== '';
+  if (typeof payload.compactionModel !== 'string' && providerGiven) {
+    const providerId = (payload.compactionProviderId as string).trim();
+    const model = fallbackModel.trim();
+    if (model === '') {
+      return {
+        ok: false,
+        error:
+          'A compaction provider was sent without a compaction model, and no model is known to pair it with.',
+      };
+    }
+    return { ok: true, selection: explicitCompactionSelection(model, providerId) };
+  }
+  return compactionSelectionFromPair(
+    typeof payload.compactionModel === 'string' ? payload.compactionModel : undefined,
+    typeof payload.compactionProviderId === 'string' ? payload.compactionProviderId : undefined
+  );
+}
+
+/**
+ * The selection a wire payload describes, or the reason it does not.
+ *
+ * The union is checked at runtime because the wire is untrusted: an
+ * `explicit` selection without a model, or with an empty provider id, is the
+ * half-pair in disguise and is REFUSED rather than repaired.
+ */
+export function parseCompactionSelection(
+  value: unknown
+): { ok: true; selection: CompactionSelection } | { ok: false; error: string } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { ok: false, error: 'compaction must be an object' };
+  }
+  const payload = value as { kind?: unknown; model?: unknown; providerId?: unknown };
+  if (payload.kind === 'inherit-default') {
+    return { ok: true, selection: inheritDefaultCompactionSelection() };
+  }
+  if (payload.kind === 'same-as-main') {
+    return { ok: true, selection: sameAsMainCompactionSelection() };
+  }
+  if (payload.kind === 'explicit') {
+    const model = typeof payload.model === 'string' ? payload.model.trim() : '';
+    const providerId = typeof payload.providerId === 'string' ? payload.providerId.trim() : '';
+    if (model === '') {
+      return {
+        ok: false,
+        error:
+          'The compaction selection names no model. Send the compaction model and the provider that serves it together.',
+      };
+    }
+    if (providerId === '') {
+      return {
+        ok: false,
+        error: `The compaction model "${model}" was sent without the provider that serves it. Send the compaction model and the provider that serves it together.`,
+      };
+    }
+    return { ok: true, selection: explicitCompactionSelection(model, providerId) };
+  }
+  return {
+    ok: false,
+    error:
+      'compaction must be one of: "inherit-default", "same-as-main", or "explicit" (with a model and a provider).',
+  };
+}
+
+/**
+ * The selection a picker's choice describes.
+ *
+ * The model picker offers three things for the compaction model: "use the
+ * default", "same as the conversation's own main model", and a named model.
+ * This maps the three onto the union:
+ * - `null` — inherit the global default;
+ * - `''` — the conversation's own main model, on the main provider;
+ * - a name — that model, on the provider that serves it.
+ *
+ * A named model with NO provider is the state the union exists to prevent,
+ * so it is refused here rather than repaired: `null` comes back and the
+ * caller reports the refusal. The provider cannot be invented — a model
+ * name says nothing about which endpoint serves it.
+ */
+export function compactionSelectionForModel(
+  model: string | null | undefined,
+  providerId: string | null | undefined
+): CompactionSelection | null {
+  if (model === null || model === undefined) return inheritDefaultCompactionSelection();
+  const trimmedModel = model.trim();
+  if (trimmedModel === '') return sameAsMainCompactionSelection();
+  const trimmedProvider = typeof providerId === 'string' ? providerId.trim() : '';
+  if (trimmedProvider === '') return null;
+  return explicitCompactionSelection(trimmedModel, trimmedProvider);
+}
+
+/**
+ * Whether two selections describe the SAME choice.
+ *
+ * The selection is an object, so `===` compares identity rather than meaning:
+ * two selections built from the same row are different objects. This is the
+ * comparison the browser uses to decide whether a selection changed — "the
+ * user picked something" and "the row says the same thing again" must not
+ * look alike.
+ */
+export function compactionSelectionEquals(
+  a: CompactionSelection,
+  b: CompactionSelection
+): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'explicit' && b.kind === 'explicit') {
+    return a.model === b.model && a.providerId === b.providerId;
+  }
+  return true;
+}
+
+/**
  * The selection as the database stores it. The column names are the ones the
  * `sessions` table actually has, so a row can be read as this shape without
  * a translation step.
@@ -224,10 +361,11 @@ export interface SessionSelection {
   model: string;
   /** The provider that serves `model`, or `null` when it is not pinned. */
   providerId: string | null;
-  /** The conversation's compaction model, `null` to inherit the global default, `''` for the main model. */
-  compactionModel: string | null;
-  /** The provider that serves `compactionModel`, or `null` when it is not pinned. */
-  compactionProviderId: string | null;
+  /**
+   * The conversation's compaction selection — ONE value, so a compaction
+   * model can never be pinned without the provider that serves it.
+   */
+  compaction: CompactionSelection;
   /** The main model's reasoning level, or `null` to inherit the global default. */
   reasoningEffort: ReasoningEffort | null;
   /** The compaction model's reasoning level, or `null` to inherit the global default. */
@@ -239,12 +377,17 @@ export interface SessionSelection {
  *
  * `undefined` (the key is absent) means "leave the stored value alone";
  * `null` means "inherit the global default"; a value means "pin this".
+ *
+ * The compaction selection is ONE field: a patch states the whole selection
+ * or none of it. There is no way to edit one half of the pair, because
+ * editing one half alone leaves the other half describing a DIFFERENT choice
+ * — a new model on the provider that was pinned for the old one is the
+ * wrong-endpoint 404 this whole rule exists to prevent.
  */
 export interface SessionSelectionPatch {
   model?: string;
   providerId?: string | null;
-  compactionModel?: string | null;
-  compactionProviderId?: string | null;
+  compaction?: CompactionSelection;
   reasoningEffort?: ReasoningEffort | null;
   compactionReasoningEffort?: ReasoningEffort | null;
 }
@@ -262,7 +405,15 @@ export interface SessionDefaults {
   model: string;
   /** The provider that serves `model`, or `null` when it is not pinned. */
   providerId: string | null;
-  /** The compaction model a new conversation starts with. `''` for the main model. */
+  /**
+   * The global compaction model. `''` means "the conversation's own main
+   * model".
+   *
+   * The GLOBAL pair keeps its two-field shape — it is `config.json`'s shape,
+   * and the file is hand-edited. "A global model with no provider of its own"
+   * has a meaning (the model, on the provider the chat runs on), so it is not
+   * the incoherent state the conversation's own pair was.
+   */
   compactionModel: string;
   /**
    * The provider that serves the default compaction model, or `null` when it
@@ -294,11 +445,20 @@ export interface SessionDefaultsPatch {
   compactionReasoningEffort?: ReasoningEffort;
 }
 
-/** The selection as it arrives on the wire, where every key is optional. */
+/**
+ * The selection as it arrives on the wire, where every key is optional.
+ *
+ * The two legacy flat fields are still read: a tab that was open before the
+ * pair became one value keeps sending them.
+ */
 export interface SessionSelectionPayload {
   model?: unknown;
   providerId?: unknown;
+  /** The compaction selection, as ONE value. */
+  compaction?: unknown;
+  /** @deprecated the legacy flat compaction model. */
   compactionModel?: unknown;
+  /** @deprecated the legacy flat compaction provider. */
   compactionProviderId?: unknown;
   reasoningEffort?: unknown;
   compactionReasoningEffort?: unknown;
@@ -309,8 +469,7 @@ export function emptySessionSelection(): SessionSelection {
   return {
     model: '',
     providerId: null,
-    compactionModel: null,
-    compactionProviderId: null,
+    compaction: inheritDefaultCompactionSelection(),
     reasoningEffort: null,
     compactionReasoningEffort: null,
   };
@@ -322,15 +481,13 @@ export function selectionFromColumns(columns: SessionSelectionColumns): SessionS
   // the read path, so no caller ever sees the illegal combination. The
   // bootstrap migration in `src/services/history.ts` fixes the rows
   // themselves; this is the second line of defence.
-  const pair = coherentCompactionPair(
-    columns.compaction_model,
-    columns.compaction_provider_id
-  );
   return {
     model: columns.model,
     providerId: columns.provider_id,
-    compactionModel: pair.model,
-    compactionProviderId: pair.providerId,
+    compaction: compactionSelectionFromLoosePair(
+      columns.compaction_model,
+      columns.compaction_provider_id
+    ),
     reasoningEffort: columns.reasoning_effort,
     compactionReasoningEffort: columns.compaction_reasoning_effort,
   };
@@ -341,10 +498,7 @@ export function selectionToColumns(selection: SessionSelection): SessionSelectio
   // cannot reach the row even if a caller built one by hand. The write
   // paths REFUSE an incoherent pair before they get here; this is the
   // belt to that pair of braces.
-  const pair = coherentCompactionPair(
-    selection.compactionModel,
-    selection.compactionProviderId
-  );
+  const pair = compactionSelectionToPair(selection.compaction);
   return {
     model: selection.model,
     provider_id: selection.providerId,
@@ -356,37 +510,21 @@ export function selectionToColumns(selection: SessionSelection): SessionSelectio
 }
 
 /**
- * The reason a stored selection's compaction pair is incoherent, or `null`
- * when it is fine.
+ * The reason a LEGACY compaction-pair patch may not be applied, or `null`
+ * when it may.
  *
- * The pair is incoherent when a compaction MODEL is pinned without the
- * provider that serves it (or the other way round) — the state that used to
- * send a compaction model to an endpoint that does not have it. A patch can
- * create it by editing ONE half of the pair, so the check runs on the
- * MERGED result, not on the patch.
+ * This is the guard for the OLD wire shape — two independent flat fields —
+ * which a tab open before the change still sends. The pair is ONE value
+ * there too, so such a patch states BOTH halves or NEITHER: editing one half
+ * alone leaves the other half describing a DIFFERENT choice.
+ *
+ * The NEW wire shape needs no such guard: the patch carries the whole
+ * selection as one value, so a half-pair has no spelling.
  */
-export function compactionPairProblem(selection: SessionSelection): string | null {
-  const parsed = compactionSelectionFromPair(
-    selection.compactionModel,
-    selection.compactionProviderId
-  );
-  return parsed.ok ? null : parsed.error;
-}
-
-/**
- * The reason a patch may not edit the compaction pair, or `null` when it may.
- *
- * The pair is ONE value, so a patch states BOTH halves or NEITHER. Editing
- * one half alone leaves the other half describing a DIFFERENT choice: a new
- * model on the provider that was pinned for the old one is the wrong-endpoint
- * 404 this whole rule exists to prevent, and a new provider on the old model
- * is the same mistake from the other side.
- *
- * Every control in the app already sends the pair together, so this refuses
- * a shape nobody produces on purpose — it makes the invariant a property of
- * the API rather than of the callers.
- */
-export function compactionPairPatchProblem(patch: SessionSelectionPatch): string | null {
+export function legacyCompactionPairPatchProblem(patch: {
+  compactionModel?: string | null | undefined;
+  compactionProviderId?: string | null | undefined;
+}): string | null {
   const hasModel = patch.compactionModel !== undefined;
   const hasProvider = patch.compactionProviderId !== undefined;
   if (hasModel === hasProvider) {
@@ -419,16 +557,6 @@ function normaliseProviderId(value: unknown): string | null {
 }
 
 /**
- * A compaction model: trimmed, `''` for "the conversation's own main model",
- * and `null` for "inherit the global default". The two empties mean different
- * things, so they are kept apart here.
- */
-function normaliseCompactionModel(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  return value.trim();
-}
-
-/**
  * A reasoning level: `null` for "inherit the global default", a valid level
  * otherwise. Returns the reason it is invalid rather than coercing, because a
  * silently dropped level is a setting the user cannot see going missing.
@@ -457,6 +585,10 @@ function parseReasoningLevel(
  * "value or message" contract `validateProvider` uses, so the caller can
  * branch on `typeof validated === 'string'`.
  *
+ * The compaction selection is read through {@link compactionSelectionFromPayload},
+ * so the NEW union and the LEGACY flat pair are both accepted, and an
+ * incoherent one is refused with a message that says what to send instead.
+ *
  * An absent reasoning level is stored as `null` (inherit). Creation pins the
  * resolved values through {@link resolveCreationSelection}, so null only
  * reaches the database when the caller explicitly asked to inherit.
@@ -476,20 +608,8 @@ export function validateSessionSelection(value: unknown): SessionSelection | str
   ) {
     return 'providerId must be a string or null';
   }
-  if (
-    payload.compactionModel !== undefined &&
-    payload.compactionModel !== null &&
-    typeof payload.compactionModel !== 'string'
-  ) {
-    return 'compactionModel must be a string or null';
-  }
-  if (
-    payload.compactionProviderId !== undefined &&
-    payload.compactionProviderId !== null &&
-    typeof payload.compactionProviderId !== 'string'
-  ) {
-    return 'compactionProviderId must be a string or null';
-  }
+  const compaction = compactionSelectionFromPayload(payload, payload.model);
+  if (!compaction.ok) return compaction.error;
   const reasoningEffort = parseReasoningLevel('reasoningEffort', payload.reasoningEffort);
   if (!reasoningEffort.ok) return reasoningEffort.error;
   const compactionReasoningEffort = parseReasoningLevel(
@@ -500,8 +620,7 @@ export function validateSessionSelection(value: unknown): SessionSelection | str
   return {
     model: payload.model.trim(),
     providerId: normaliseProviderId(payload.providerId),
-    compactionModel: normaliseCompactionModel(payload.compactionModel),
-    compactionProviderId: normaliseProviderId(payload.compactionProviderId),
+    compaction: compaction.selection,
     reasoningEffort: reasoningEffort.value,
     compactionReasoningEffort: compactionReasoningEffort.value,
   };
@@ -537,20 +656,45 @@ export function validateSessionSelectionPatch(value: unknown): SessionSelectionP
     patch.providerId = normaliseProviderId(payload.providerId);
     fieldCount++;
   }
-  if ('compactionModel' in payload) {
-    if (payload.compactionModel !== null && typeof payload.compactionModel !== 'string') {
+
+  // The compaction selection: the NEW union, or the LEGACY flat pair. The
+  // legacy pair has its own guard — it can name ONE half of the pair, which
+  // the new shape cannot express at all.
+  const legacyModelGiven = 'compactionModel' in payload;
+  const legacyProviderGiven = 'compactionProviderId' in payload;
+  if (legacyModelGiven || legacyProviderGiven) {
+    const legacyModel = legacyModelGiven ? payload.compactionModel : undefined;
+    const legacyProvider = legacyProviderGiven ? payload.compactionProviderId : undefined;
+    if (legacyModel !== undefined && legacyModel !== null && typeof legacyModel !== 'string') {
       return 'compactionModel must be a string or null';
     }
-    patch.compactionModel = normaliseCompactionModel(payload.compactionModel);
-    fieldCount++;
-  }
-  if ('compactionProviderId' in payload) {
-    if (payload.compactionProviderId !== null && typeof payload.compactionProviderId !== 'string') {
+    if (
+      legacyProvider !== undefined &&
+      legacyProvider !== null &&
+      typeof legacyProvider !== 'string'
+    ) {
       return 'compactionProviderId must be a string or null';
     }
-    patch.compactionProviderId = normaliseProviderId(payload.compactionProviderId);
+    const pairProblem = legacyCompactionPairPatchProblem({
+      compactionModel: legacyModel,
+      compactionProviderId: legacyProvider,
+    });
+    if (pairProblem !== null) return pairProblem;
+    const parsed = compactionSelectionFromPair(
+      typeof legacyModel === 'string' ? legacyModel : undefined,
+      typeof legacyProvider === 'string' ? legacyProvider : undefined
+    );
+    if (!parsed.ok) return parsed.error;
+    patch.compaction = parsed.selection;
     fieldCount++;
   }
+  if ('compaction' in payload) {
+    const parsed = parseCompactionSelection(payload.compaction);
+    if (!parsed.ok) return parsed.error;
+    patch.compaction = parsed.selection;
+    fieldCount++;
+  }
+
   if ('reasoningEffort' in payload) {
     const level = parseReasoningLevel('reasoningEffort', payload.reasoningEffort);
     if (!level.ok) return level.error;
@@ -587,12 +731,7 @@ export function mergeSessionSelection(
   return {
     model: patch.model ?? current.model,
     providerId: patch.providerId === undefined ? current.providerId : patch.providerId,
-    compactionModel:
-      patch.compactionModel === undefined ? current.compactionModel : patch.compactionModel,
-    compactionProviderId:
-      patch.compactionProviderId === undefined
-        ? current.compactionProviderId
-        : patch.compactionProviderId,
+    compaction: patch.compaction ?? current.compaction,
     reasoningEffort:
       patch.reasoningEffort === undefined ? current.reasoningEffort : patch.reasoningEffort,
     compactionReasoningEffort:

@@ -1,3 +1,5 @@
+import type { CompactionSelection } from '@/services/sessionSelection';
+
 /**
  * Client helper for hot-swapping the model of a turn that is already
  * streaming. Picking a model always updates config for future turns; this
@@ -13,14 +15,12 @@
 export interface MidTurnModelSwitch {
   model?: string;
   providerId?: string;
-  /** Empty string is meaningful: "same as the main model". */
-  compactionModel?: string;
   /**
-   * `null` is meaningful: it CLEARS the compaction provider pin, so the
-   * compaction runs on the main chat provider. An absent field leaves the
-   * pin alone.
+   * The new compaction selection — ONE value, so a compaction model can
+   * never be switched to without the provider that serves it. Absent leaves
+   * the current selection alone.
    */
-  compactionProviderId?: string | null;
+  compaction?: CompactionSelection;
 }
 
 export async function requestMidTurnModelSwitch(

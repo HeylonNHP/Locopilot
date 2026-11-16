@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@/app/lib/chatStore';
 import type { CompactStats } from '@/services/compact';
+import type { CompactionSelection } from '@/services/sessionSelection';
 import type { ChatPhase, DoneReason, SubagentChunkType } from '@/services/sseNames';
 import type { ToolCallArguments } from '@/tools/tools';
 import type { ReasoningEffort } from '@/types/chatConfig';
@@ -51,8 +52,11 @@ export interface SseEventPayloadMap {
      */
     model: string;
     providerId: string | null;
-    compactionModel: string | null;
-    compactionProviderId: string | null;
+    /**
+     * The conversation's compaction selection — ONE value, so it cannot be a
+     * compaction model without the provider that serves it.
+     */
+    compaction: CompactionSelection;
     /** The main model's reasoning level; the server pins it at creation. */
     reasoningEffort: ReasoningEffort;
     /** The compaction model's reasoning level; the server pins it at creation. */

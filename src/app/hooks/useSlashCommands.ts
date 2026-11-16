@@ -341,8 +341,7 @@ export function useSlashCommands({
               const selection = {
                 model: modelName,
                 providerId: modelProviderId,
-                compactionModel: refs.compactionModelRef.current,
-                compactionProviderId: refs.compactionProviderIdRef.current,
+                compaction: refs.compactionRef.current,
                 reasoningEffort: refs.reasoningEffortRef.current,
                 compactionReasoningEffort: refs.compactionReasoningEffortRef.current,
               };
@@ -468,11 +467,9 @@ export function useSlashCommands({
                 model: refs.modelRef.current,
                 providerId: refs.activeProviderIdRef.current,
                 baseUrl: refs.baseUrlRef.current,
-                // Omitted when the conversation inherits the global
-                // compaction model, so the server resolves it the same way
-                // it does for a chat turn.
-                compactionModel: refs.compactionModelRef.current ?? undefined,
-                compactionProviderId: refs.compactionProviderIdRef.current ?? undefined,
+                // The conversation's compaction selection — ONE value, so the
+                // server resolves it the same way it does for a chat turn.
+                compaction: refs.compactionRef.current,
                 // Omitted when the conversation inherits the default, so the
                 // server's own body -> config resolution decides.
                 compactionReasoningEffort: refs.compactionReasoningEffortRef.current ?? undefined,
@@ -670,8 +667,10 @@ export function useSlashCommands({
                 model: refs.modelRef.current,
                 providerId: refs.activeProviderIdRef.current,
                 baseUrl: refs.baseUrlRef.current,
-                compactionModel: refs.compactionModelRef.current ?? undefined,
-                compactionProviderId: refs.compactionProviderIdRef.current ?? undefined,
+                // The conversation's compaction selection — ONE value. The
+                // title route runs the compaction model, so it resolves the
+                // same selection a chat turn would.
+                compaction: refs.compactionRef.current,
                 sessionId: refs.sessionIdRef.current,
                 think: refs.thinkingEnabledRef.current,
                 // Title generation runs the COMPACTION model, so it uses

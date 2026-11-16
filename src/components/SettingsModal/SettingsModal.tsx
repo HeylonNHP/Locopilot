@@ -10,6 +10,12 @@ import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { timeoutPartsToMs } from '@/app/lib/timeoutParts';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS } from '@/constants';
 import {
+  compactionSelectionEquals,
+  compactionSelectionForModel,
+  compactionSelectionToPair,
+  type SessionSelectionPatch,
+} from '@/services/sessionSelection';
+import {
   REASONING_EFFORT_LABELS,
   REASONING_EFFORTS,
   type ReasoningEffort,
@@ -60,7 +66,13 @@ export default function SettingsModal({ onClose }: Props) {
   const [promptTimestamps, setPromptTimestamps] = useState(state.promptTimestamps ?? true);
   const [citeSources, setCiteSources] = useState(state.citeSources ?? true);
   const [redactSecrets, setRedactSecrets] = useState(state.redactSecrets ?? true);
-  const [compactionModel, setCompactionModel] = useState<string | null>(state.compactionModel);
+  // The conversation's own compaction selection — ONE value. The two local
+  // fields below are its loose projection (a model name and a provider id),
+  // because the dropdown needs both; what is WRITTEN is the union, so the
+  // pair can never be split.
+  const [compactionModel, setCompactionModel] = useState<string | null>(
+    compactionSelectionToPair(state.compaction).model
+  );
   // Which of the two selection fields the user actually touched. Only a
   // field the user changed moves the global default a new conversation
   // starts with; saving the modal must not quietly repoint the default at
@@ -76,7 +88,7 @@ export default function SettingsModal({ onClose }: Props) {
   // what sent a cloud model to the wrong endpoint and came back 404.
   const [mainProviderId, setMainProviderId] = useState<string | null>(state.activeProviderId);
   const [compactionProviderId, setCompactionProviderId] = useState<string | null>(
-    state.compactionProviderId
+    compactionSelectionToPair(state.compaction).providerId
   );
   const totalSeconds = Math.floor((state.chatTimeoutMs ?? DEFAULT_OLLAMA_CHAT_TIMEOUT_MS) / 1000);
   const [chatTimeoutHours, setChatTimeoutHours] = useState(String(Math.floor(totalSeconds / 3600)));
@@ -261,6 +273,20 @@ export default function SettingsModal({ onClose }: Props) {
     }
 
     setIsSaving(true);
+    // The conversation's own compaction selection, as ONE value. A named
+    // model with no provider of its own cannot be pinned — the model says
+    // nothing about which endpoint serves it — so the save is refused rather
+    // than storing half a pair.
+    const pickedCompaction = compactionModelEdited
+      ? compactionSelectionForModel(compactionModel, compactionProviderId)
+      : state.compaction;
+    if (pickedCompaction === null) {
+      setSaveError(
+        'That compaction model does not name a provider. Pick a model of a configured provider.'
+      );
+      setIsSaving(false);
+      return;
+    }
     const parsedHours = Number.parseInt(chatTimeoutHours) || 0;
     const parsedMinutes = Number.parseInt(chatTimeoutMinutes) || 0;
     const parsedSeconds = Number.parseInt(chatTimeoutSeconds) || 0;
@@ -327,9 +353,9 @@ export default function SettingsModal({ onClose }: Props) {
       // The model selection belongs to the conversation on screen. Only the
       // field the user actually changed is written, so this modal cannot
       // erase a value another control or tab just set.
-      const selectionPatch = {
+      const selectionPatch: SessionSelectionPatch = {
         ...(modelEdited && model.trim().length > 0 ? { model, providerId: mainProviderId } : {}),
-        ...(compactionModelEdited ? { compactionModel, compactionProviderId } : {}),
+        ...(compactionModelEdited ? { compaction: pickedCompaction } : {}),
       };
       // A conversation always has a model: the "Select a model..." option
       // cannot leave one without, so the conversation's own row is not
@@ -414,8 +440,8 @@ export default function SettingsModal({ onClose }: Props) {
           selection: {
             model,
             providerId: mainProviderId,
-            compactionModel,
-            compactionProviderId,
+            // The conversation's own compaction selection — ONE value.
+            compaction: pickedCompaction,
             // The conversation's reasoning pins are untouched by this modal.
             reasoningEffort: state.reasoningEffort,
             compactionReasoningEffort: state.compactionReasoningEffort,
@@ -454,22 +480,18 @@ export default function SettingsModal({ onClose }: Props) {
       // numCtx / vision / sampling at its next tool step instead of
       // silently continuing to send requests to the stale provider.
       const providerChanged = mainProviderId !== state.activeProviderId;
-      const compactionChanged = compactionModel !== state.compactionModel;
-      // The compaction PROVIDER can change on its own: the same model name on
-      // a different provider is a DIFFERENT endpoint, and that is exactly the
-      // mistake that produced the 404s (a compaction model served by one
-      // provider, sent to another). So the provider change is carried into a
-      // running turn on its own.
-      const compactionProviderChanged = compactionProviderId !== state.compactionProviderId;
-      // The mid-turn switch cannot express "inherit the global default" for
-      // the compaction MODEL, so a pick of "Use the default" leaves the
-      // running turn's compaction pair alone entirely — changing only the
-      // provider would leave it with half a pair, and half a pair is how a
-      // model ends up on the wrong endpoint.
-      const compactionSwitchable = !compactionChanged || compactionModel !== null;
+      const compactionChanged = !compactionSelectionEquals(pickedCompaction, state.compaction);
+      // The compaction selection travels as ONE value, so a switch can no
+      // longer leave half a pair behind — the model and the provider that
+      // serves it are always switched together.
+      //
+      // "Use the default" is still NOT carried: the running turn keeps the
+      // compaction it has resolved until the next turn sends the resolved one.
+      const compactionSwitch =
+        pickedCompaction.kind === 'inherit-default' ? undefined : pickedCompaction;
       if (
         streamingSessionId !== null &&
-        (modelChanged || providerChanged || compactionChanged || compactionProviderChanged)
+        (modelChanged || providerChanged || compactionChanged)
       ) {
         dispatch({
           type: 'SET_MODEL_SWITCH_PENDING',
@@ -488,13 +510,7 @@ export default function SettingsModal({ onClose }: Props) {
           {
             ...(modelChanged ? { model } : {}),
             ...(sendProviderId ? { providerId: sendProviderId } : {}),
-            ...(compactionChanged && compactionModel !== null ? { compactionModel } : {}),
-            // `null` CLEARS the pin (the compaction then runs on the main
-            // provider), so the field is sent whenever it changed — a cleared
-            // provider must not be silently dropped.
-            ...(compactionProviderChanged && compactionSwitchable
-              ? { compactionProviderId }
-              : {}),
+            ...(compactionChanged && compactionSwitch ? { compaction: compactionSwitch } : {}),
           },
           // Attach to the running turn's signal — looked up per session
           // from the shared abort map, so it is the SAME controller the

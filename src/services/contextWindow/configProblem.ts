@@ -8,6 +8,7 @@
  * the message below, which is what the owner sees.
  */
 
+import type { CompactionSelection } from '@/services/sessionSelection';
 import type { Config, ProviderConfig } from '@/types/chatConfig';
 
 import { resolveCompactionSelection } from '@/services/compactionSelection';
@@ -125,17 +126,17 @@ export function compactionProblemFor(
   config: Config,
   input: {
     mainModel: string;
-    compactionModel?: unknown;
-    compactionProviderId?: unknown;
+    /**
+     * The conversation's own compaction selection — ONE value, so it cannot
+     * be a model without the provider that serves it.
+     */
+    compaction?: CompactionSelection | null | undefined;
   }
 ): string | null {
   const selection = resolveCompactionSelection({
     config,
     mainModel: input.mainModel,
-    sessionCompactionModel:
-      typeof input.compactionModel === 'string' ? input.compactionModel : null,
-    sessionCompactionProviderId:
-      typeof input.compactionProviderId === 'string' ? input.compactionProviderId : null,
+    sessionCompaction: input.compaction,
   });
   if (selection.problem !== null) {
     return selection.problem;
@@ -158,8 +159,12 @@ export function requestProblemFor(
   body: {
     providerId?: unknown;
     model: string;
-    compactionProviderId?: unknown;
-    compactionModel?: unknown;
+    /**
+     * The conversation's own compaction selection, already parsed by the
+     * route. The route refuses an incoherent one itself (400) — this is the
+     * "can it actually run" half.
+     */
+    compaction?: CompactionSelection | null | undefined;
   },
   options?: { checkCompaction?: boolean }
 ): string | null {
@@ -176,8 +181,7 @@ export function requestProblemFor(
   }
   return compactionProblemFor(config, {
     mainModel: body.model,
-    compactionModel: body.compactionModel,
-    compactionProviderId: body.compactionProviderId,
+    compaction: body.compaction,
   });
 }
 

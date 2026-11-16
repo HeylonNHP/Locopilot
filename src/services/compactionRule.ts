@@ -89,6 +89,11 @@ export interface CompactionRuleInput {
   /**
    * The global default compaction model. `''` means "the conversation's own
    * main model", which is the same thing as no global default at all.
+   *
+   * The GLOBAL pair keeps its two-field shape: `config.json` is hand-edited,
+   * and "a global model with no provider of its own" has a meaning — the
+   * model, on the provider the chat runs on. Only the CONVERSATION's own
+   * selection became one value, because that is the one the client writes.
    */
   globalCompactionModel?: string | null | undefined;
   /**

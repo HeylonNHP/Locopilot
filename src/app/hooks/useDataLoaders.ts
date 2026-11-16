@@ -10,6 +10,10 @@ import {
   DEFAULT_WEB_SEARCH_SETTINGS,
   resolveWebSearchRequestTimeoutMs,
 } from '@/services/configDefaults';
+import {
+  compactionSelectionEquals,
+  compactionSelectionFromLoosePair,
+} from '@/services/sessionSelection';
 
 import type { StableRefs } from './useStableRefs';
 
@@ -156,8 +160,7 @@ export function useDataLoaders(refs: StableRefs) {
       const selectionAtStart = {
         model: refs.modelRef.current,
         providerId: refs.activeProviderIdRef.current,
-        compactionModel: refs.compactionModelRef.current,
-        compactionProviderId: refs.compactionProviderIdRef.current,
+        compaction: refs.compactionRef.current,
         reasoningEffort: refs.reasoningEffortRef.current,
         compactionReasoningEffort: refs.compactionReasoningEffortRef.current,
       };
@@ -216,8 +219,7 @@ export function useDataLoaders(refs: StableRefs) {
         const selectionUnchanged =
           refs.modelRef.current === selectionAtStart.model &&
           refs.activeProviderIdRef.current === selectionAtStart.providerId &&
-          refs.compactionModelRef.current === selectionAtStart.compactionModel &&
-          refs.compactionProviderIdRef.current === selectionAtStart.compactionProviderId &&
+          compactionSelectionEquals(refs.compactionRef.current, selectionAtStart.compaction) &&
           refs.reasoningEffortRef.current === selectionAtStart.reasoningEffort &&
           refs.compactionReasoningEffortRef.current === selectionAtStart.compactionReasoningEffort;
         if (
@@ -232,8 +234,10 @@ export function useDataLoaders(refs: StableRefs) {
             selection: {
               model: data.session.model,
               providerId: data.session.provider_id ?? null,
-              compactionModel: data.session.compaction_model ?? null,
-              compactionProviderId: data.session.compaction_provider_id ?? null,
+              compaction: compactionSelectionFromLoosePair(
+                data.session.compaction_model ?? null,
+                data.session.compaction_provider_id ?? null
+              ),
               // The RAW stored pin: null means the conversation inherits the
               // global default, and resolving it here would silently pin it.
               reasoningEffort: data.session.reasoning_effort ?? null,

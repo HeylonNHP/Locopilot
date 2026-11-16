@@ -8,7 +8,8 @@ import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionC
 import { type MidTurnModelSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { resolveCompactionRule } from '@/services/compactionRule';
 import {
-  compactionSelectionFromLoosePair,
+  compactionSelectionForModel,
+  compactionSelectionToPair,
   type SessionDefaults,
   type SessionDefaultsPatch,
   type SessionSelection,
@@ -262,8 +263,7 @@ export default function ModelSelector({
     models,
     model,
     activeProviderId,
-    compactionModel,
-    compactionProviderId,
+    compaction,
     defaultModel,
     defaultProviderId,
     defaultCompactionModel,
@@ -277,9 +277,11 @@ export default function ModelSelector({
   } = state;
 
   // The conversation's OWN compaction model, which is `null` when it
-  // inherits the global default. The pickers show what the conversation
-  // chose; the status bar shows what is actually used.
-  const activeModel = mode === 'compaction' ? compactionModel : model;
+  // inherits the global default and `''` when it compacts with its own main
+  // model. The pickers show what the conversation chose; the status bar
+  // shows what is actually used.
+  const activeModel =
+    mode === 'compaction' ? compactionSelectionToPair(compaction).model : model;
 
   const inheritedCompactionName = defaultCompactionModel || model || 'the main model';
 
@@ -290,7 +292,7 @@ export default function ModelSelector({
   // the module has no imports precisely so both sides can share it.
   const effectiveCompaction = resolveCompactionRule({
     mainModel: model,
-    sessionCompaction: compactionSelectionFromLoosePair(compactionModel, compactionProviderId),
+    sessionCompaction: compaction,
     globalCompactionModel: defaultCompactionModel,
     globalCompactionProviderId: defaultCompactionProviderId,
   });
@@ -462,14 +464,9 @@ export default function ModelSelector({
         model: selectionPatch.model ?? model,
         providerId:
           selectionPatch.providerId === undefined ? activeProviderId : selectionPatch.providerId,
-        compactionModel:
-          selectionPatch.compactionModel === undefined
-            ? compactionModel
-            : selectionPatch.compactionModel,
-        compactionProviderId:
-          selectionPatch.compactionProviderId === undefined
-            ? compactionProviderId
-            : selectionPatch.compactionProviderId,
+        // The compaction selection is ONE value: a patch states the whole
+        // selection or none of it.
+        compaction: selectionPatch.compaction ?? compaction,
         reasoningEffort,
         compactionReasoningEffort,
       };
@@ -520,8 +517,7 @@ export default function ModelSelector({
     },
     [
       activeProviderId,
-      compactionModel,
-      compactionProviderId,
+      compaction,
       compactionReasoningEffort,
       currentSessionId,
       defaultCompactionModel,
@@ -554,9 +550,28 @@ export default function ModelSelector({
   );
 
   const handleSelectCompaction = useCallback(
-    (nextCompactionModel: string | null, providerId?: string | null) =>
-      applySelection(
-        { compactionModel: nextCompactionModel, compactionProviderId: providerId ?? null },
+    (nextCompactionModel: string | null, providerId?: string | null) => {
+      // A named model that names no provider cannot be pinned: the model
+      // says nothing about which endpoint serves it. The pick is refused
+      // here rather than stored — a half-pair is exactly the state the
+      // union exists to make unrepresentable.
+      const picked = compactionSelectionForModel(nextCompactionModel, providerId ?? null);
+      if (picked === null) {
+        dispatch({
+          type: 'SET_ERROR',
+          error:
+            'That model does not name a provider, so it cannot be used for compaction. Pick a model of a configured provider.',
+        });
+        onClose();
+        return;
+      }
+      void applySelection(
+        {
+          // ONE value: the conversation's own compaction selection. A model
+          // and the provider that serves it travel together, so a pick can
+          // never be a half-pair.
+          compaction: picked,
+        },
         // "Use the default" (`null`) leaves the default alone.
         nextCompactionModel === null
           ? {}
@@ -571,14 +586,14 @@ export default function ModelSelector({
               compactionProviderId: providerId ?? null,
             },
         {
-          // `null` means "inherit the global default", which the mid-turn
-          // switch has no way to express: the running turn keeps the model
-          // it has until the next turn sends the resolved one.
-          ...(nextCompactionModel === null ? {} : { compactionModel: nextCompactionModel }),
-          ...(providerId ? { compactionProviderId: providerId } : {}),
+          // "Use the default" is NOT carried by the mid-turn switch: the
+          // running turn keeps the compaction it has resolved until the next
+          // turn sends the resolved one.
+          ...(nextCompactionModel === null ? {} : { compaction: picked }),
         }
-      ),
-    [applySelection]
+      );
+    },
+    [applySelection, dispatch, onClose]
   );
 
   const handleSelect: (modelName: string, providerId?: string) => void =

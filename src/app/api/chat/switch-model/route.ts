@@ -1,7 +1,7 @@
 /**
  * POST /api/chat/switch-model – Hot-swap the model of an in-flight turn.
  *
- * Body: { sessionId: number, model?, providerId?, compactionModel?, compactionProviderId? }
+ * Body: { sessionId: number, model?, providerId?, compaction? }
  *
  * The chat SSE stream for that session picks the switch up at the top of its
  * next tool-call loop iteration and confirms it with a `status` event whose
@@ -13,6 +13,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { type ModelSwitchRequest, requestModelSwitch } from '@/app/lib/modelSwitchRegistry';
+import { compactionSelectionFromPayload } from '@/services/sessionSelection';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,11 @@ interface SwitchModelBody {
   sessionId?: unknown;
   model?: unknown;
   providerId?: unknown;
+  /** The compaction selection — ONE value. */
+  compaction?: unknown;
+  /** @deprecated the legacy flat compaction model. */
   compactionModel?: unknown;
+  /** @deprecated the legacy flat compaction provider. */
   compactionProviderId?: unknown;
 }
 
@@ -46,27 +51,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (model) request.model = model;
   const providerId = nonEmptyString(body.providerId);
   if (providerId) request.providerId = providerId;
-  // An empty compactionModel is meaningful ("same as main"), so only a
-  // non-string is treated as "not switching the compaction model".
-  if (typeof body.compactionModel === 'string') {
-    request.compactionModel = body.compactionModel.trim();
-  }
-  // The compaction PROVIDER follows the same "present vs absent" rule as
-  // the model: `null` (and an empty string) CLEARS the pin, so the
-  // compaction runs on the main chat provider, while an absent field leaves
-  // the pin alone. The two are different states, so a cleared provider must
-  // not be dropped as "nothing to say" — that is how a compaction model
-  // stayed pinned to a provider the user had just moved it off.
-  if (body.compactionProviderId === null) {
-    request.compactionProviderId = null;
-  } else {
-    const compactionProviderId = nonEmptyString(body.compactionProviderId);
-    if (compactionProviderId) {
-      request.compactionProviderId = compactionProviderId;
-    } else if (typeof body.compactionProviderId === 'string') {
-      // An empty string is a cleared pin too.
-      request.compactionProviderId = null;
+
+  // The compaction selection is ONE value: a compaction model and the
+  // provider that serves it. A switch that named a model WITHOUT its
+  // provider is REFUSED — that is the state that sent a compaction model to
+  // an endpoint that did not have it, and a switch is exactly where such a
+  // state would be introduced.
+  //
+  // The LEGACY flat pair is still read (a tab open before the change): an
+  // empty model means "the main model, on the main provider", and a model
+  // with a provider is an explicit selection.
+  const hasCompaction =
+    body.compaction !== undefined ||
+    body.compactionModel !== undefined ||
+    body.compactionProviderId !== undefined;
+  if (hasCompaction) {
+    const parsed = compactionSelectionFromPayload(
+      {
+        compaction: body.compaction,
+        compactionModel: body.compactionModel,
+        compactionProviderId: body.compactionProviderId,
+      },
+      model ?? ''
+    );
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
+    request.compaction = parsed.selection;
   }
 
   // A provider-only switch (no model change, no compaction change) is
@@ -79,14 +90,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // block is gated on that.
   if (
     request.model === undefined &&
-    request.compactionModel === undefined &&
-    request.providerId === undefined &&
-    request.compactionProviderId === undefined
+    request.compaction === undefined &&
+    request.providerId === undefined
   ) {
     return NextResponse.json(
       {
-        error:
-          'At least one of "model", "compactionModel", "providerId", or "compactionProviderId" is required',
+        error: 'At least one of "model", "compaction", or "providerId" is required',
       },
       { status: 400 }
     );

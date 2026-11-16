@@ -7,6 +7,7 @@ import { resolveTpsDisplay } from '@/app/lib/tpsDisplay';
 import CompletionModeSelector from '@/components/CompletionModeSelector';
 import ModelSelector from '@/components/ModelSelector';
 import ReasoningEffortSelector from '@/components/ReasoningEffortSelector';
+import { compactionSelectionToPair } from '@/services/sessionSelection';
 
 import './StatusBar.scss';
 
@@ -15,7 +16,7 @@ export default function StatusBar() {
   const {
     tokenStats,
     model,
-    compactionModel,
+    compaction,
     defaultCompactionModel,
     messages,
     effectiveNumCtx,
@@ -35,7 +36,12 @@ export default function StatusBar() {
   } = state;
   // The compaction model the conversation actually uses: its own, or the
   // global one it inherits. The server resolves the same way.
-  const effectiveCompactionModel = compactionModel ?? defaultCompactionModel;
+  //
+  // The conversation's own selection is ONE value; its loose projection is
+  // the model name (`null` when it inherits the default, `''` when it
+  // compacts with its own main model).
+  const effectiveCompactionModel =
+    compactionSelectionToPair(compaction).model ?? defaultCompactionModel;
 
   // Whether the conversation on screen is the one with a model switch still
   // waiting to be applied — another conversation's pending switch is not

@@ -10,13 +10,20 @@
  * The checks below cover those crossings:
  *
  *  - the selection's vocabulary (`src/services/sessionSelection.ts`), where
- *    "not pinned" and "inherit the default" are two different nulls;
+ *    "not pinned" and "inherit the default" are two different states;
  *  - the database round trip, because the row is where the selection lives
  *    between reloads;
  *  - the store, because switching conversations is what has to restore the
  *    selection of the conversation being switched to;
  *  - the wire contract, because the producer and the consumer of the push
  *    are in different processes.
+ *
+ * THE COMPACTION SELECTION IS ONE VALUE. It used to be two independent
+ * nullable fields, which admitted a compaction MODEL without the provider
+ * that serves it - the exact state that sent a compaction model to an
+ * endpoint that did not have it. It is now a union with THREE states
+ * (`inherit-default`, `same-as-main`, `explicit`), so the half-pair has no
+ * spelling at all in the store, on the wire, or in a row.
  *
  * ISOLATION: `DB_PATH` is `process.cwd()`-relative, so this script chdirs
  * into a fresh `mkdtemp` BEFORE importing the store. Importing first would
@@ -45,7 +52,8 @@ let validateSessionSelection;
 let validateSessionSelectionPatch;
 let mergeSessionSelection;
 let resolveCreationSelection;
-let compactionPairProblem;
+let parseCompactionSelection;
+let compactionSelectionToPair;
 let chatReducer;
 let initialState;
 let parseSessionEvent;
@@ -63,7 +71,8 @@ beforeAll(async () => {
     validateSessionSelectionPatch,
     mergeSessionSelection,
     resolveCreationSelection,
-    compactionPairProblem,
+    parseCompactionSelection,
+    compactionSelectionToPair,
   } = await import(moduleUrl('../src/services/sessionSelection.ts')));
   ({ chatReducer, initialState } = await import(moduleUrl('../src/app/lib/chatStore.ts')));
   ({ parseSessionEvent } = await import(moduleUrl('../src/app/hooks/useSessionEvents.ts')));
@@ -82,12 +91,16 @@ afterAll(() => {
   }
 });
 
+/** The three legal states of the conversation's own compaction selection. */
+const INHERIT_DEFAULT = { kind: 'inherit-default' };
+const SAME_AS_MAIN = { kind: 'same-as-main' };
+const explicit = (model, providerId) => ({ kind: 'explicit', model, providerId });
+
 /** The selection of a conversation that runs on one model and nothing else. */
 const SELECTION = {
   model: 'deepseek-v4.1-flash',
   providerId: 'deepseek',
-  compactionModel: null,
-  compactionProviderId: null,
+  compaction: INHERIT_DEFAULT,
 };
 
 /** A conversation row as the store holds it. */
@@ -112,39 +125,50 @@ describe('the selection vocabulary', () => {
     const validated = validateSessionSelection({
       model: '  deepseek-v4.1-flash  ',
       providerId: ' deepseek ',
-      compactionModel: 'minimax-m3.1-flash',
-      compactionProviderId: 'minimax',
+      compaction: explicit('minimax-m3.1-flash', 'minimax'),
     });
 
     expect(validated).toStrictEqual({
       model: 'deepseek-v4.1-flash',
       providerId: 'deepseek',
-      compactionModel: 'minimax-m3.1-flash',
-      compactionProviderId: 'minimax',
+      compaction: explicit('minimax-m3.1-flash', 'minimax'),
       reasoningEffort: null,
       compactionReasoningEffort: null,
     });
   });
 
-  test('an absent compaction model and an empty one mean different things', () => {
-    // null: the conversation inherits the global default.
-    // '': the conversation compacts with its own main model.
+  test('the three compaction states are different things', () => {
+    // `inherit-default`: the conversation follows the global default.
+    // `same-as-main`: the conversation compacts with its own main model.
     expect(validateSessionSelection({ model: 'm' })).toStrictEqual({
       model: 'm',
       providerId: null,
-      compactionModel: null,
-      compactionProviderId: null,
+      compaction: INHERIT_DEFAULT,
       reasoningEffort: null,
       compactionReasoningEffort: null,
     });
-    expect(validateSessionSelection({ model: 'm', compactionModel: '' })).toStrictEqual({
+    expect(
+      validateSessionSelection({ model: 'm', compaction: SAME_AS_MAIN })
+    ).toStrictEqual({
       model: 'm',
       providerId: null,
-      compactionModel: '',
-      compactionProviderId: null,
+      compaction: SAME_AS_MAIN,
       reasoningEffort: null,
       compactionReasoningEffort: null,
     });
+    expect(
+      validateSessionSelection({ model: 'm', compaction: explicit('c', 'p') })
+    ).toMatchObject({ compaction: explicit('c', 'p') });
+  });
+
+  test('the LEGACY flat pair is still read, and its meaning is kept', () => {
+    // A tab that was open before the change still sends the two fields.
+    expect(
+      validateSessionSelection({ model: 'm', compactionModel: '', compactionProviderId: null })
+    ).toMatchObject({ compaction: SAME_AS_MAIN });
+    expect(
+      validateSessionSelection({ model: 'm', compactionModel: 'c', compactionProviderId: 'p' })
+    ).toMatchObject({ compaction: explicit('c', 'p') });
   });
 
   test('a reasoning level is validated, and null means "inherit the default"', () => {
@@ -158,8 +182,7 @@ describe('the selection vocabulary', () => {
     ).toStrictEqual({
       model: 'm',
       providerId: null,
-      compactionModel: null,
-      compactionProviderId: null,
+      compaction: INHERIT_DEFAULT,
       reasoningEffort: 'high',
       compactionReasoningEffort: 'max',
     });
@@ -189,8 +212,8 @@ describe('the selection vocabulary', () => {
     expect(validateSessionSelectionPatch({ reasoningEffort: 'high' })).toStrictEqual({
       reasoningEffort: 'high',
     });
-    expect(validateSessionSelectionPatch({ compactionModel: null })).toStrictEqual({
-      compactionModel: null,
+    expect(validateSessionSelectionPatch({ compaction: INHERIT_DEFAULT })).toStrictEqual({
+      compaction: INHERIT_DEFAULT,
     });
     expect(validateSessionSelectionPatch({})).toBe(
       'The model selection patch must contain at least one field'
@@ -204,8 +227,7 @@ describe('the selection vocabulary', () => {
     const current = {
       model: 'm',
       providerId: 'p',
-      compactionModel: null,
-      compactionProviderId: null,
+      compaction: INHERIT_DEFAULT,
       reasoningEffort: 'low',
       compactionReasoningEffort: 'high',
     };
@@ -217,6 +239,10 @@ describe('the selection vocabulary', () => {
       ...current,
       providerId: null,
     });
+    expect(mergeSessionSelection(current, { compaction: SAME_AS_MAIN })).toStrictEqual({
+      ...current,
+      compaction: SAME_AS_MAIN,
+    });
   });
 
   test('creation pins a level the caller did not send', () => {
@@ -224,8 +250,7 @@ describe('the selection vocabulary', () => {
       {
         model: 'm',
         providerId: null,
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
         reasoningEffort: null,
         compactionReasoningEffort: 'low',
       },
@@ -298,8 +323,7 @@ describe('the selection in the database', () => {
     expect(getSessionSelection(id)).toStrictEqual({
       model: 'gpt-5',
       providerId: 'openai',
-      compactionModel: null,
-      compactionProviderId: null,
+      compaction: INHERIT_DEFAULT,
       reasoningEffort: 'max',
       compactionReasoningEffort: 'low',
     });
@@ -319,14 +343,14 @@ describe('the selection in the database', () => {
     updateSessionSelection(id, {
       model: 'minimax-m3.1-flash',
       providerId: 'minimax',
-      compactionModel: '',
-      compactionProviderId: null,
+      compaction: SAME_AS_MAIN,
     });
 
     const stored = listSessions().find((s) => s.id === id);
     expect(stored.model).toBe('minimax-m3.1-flash');
     expect(stored.provider_id).toBe('minimax');
     expect(stored.compaction_model).toBe('');
+    expect(stored.compaction_provider_id).toBeNull();
   });
 
   test('a new selection is announced to the open tabs', () => {
@@ -338,8 +362,7 @@ describe('the selection in the database', () => {
       updateSessionSelection(id, {
         model: 'minimax-m3.1-flash',
         providerId: 'minimax',
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
       });
     } finally {
       unsubscribe();
@@ -351,8 +374,7 @@ describe('the selection in the database', () => {
         sessionId: id,
         model: 'minimax-m3.1-flash',
         providerId: 'minimax',
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
         reasoningEffort: null,
         compactionReasoningEffort: null,
       },
@@ -370,22 +392,21 @@ describe('the selection in the store', () => {
     state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
     expect(state.model).toBe('minimax-m3.1-flash');
     expect(state.activeProviderId).toBe('minimax');
-    expect(state.compactionModel).toBeNull();
+    expect(state.compaction).toStrictEqual(INHERIT_DEFAULT);
 
     state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 2 });
     expect(state.model).toBe('gpt-5');
     expect(state.activeProviderId).toBe('openai');
   });
 
-  test('a conversation keeps its own compaction model', () => {
+  test('a conversation keeps its own compaction selection', () => {
     let state = chatReducer(initialState, {
       type: 'SET_SESSIONS',
       sessions: [row(1, { compaction_model: 'cheap', compaction_provider_id: 'openai' })],
     });
 
     state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
-    expect(state.compactionModel).toBe('cheap');
-    expect(state.compactionProviderId).toBe('openai');
+    expect(state.compaction).toStrictEqual(explicit('cheap', 'openai'));
   });
 
   test('switching conversations switches the reasoning levels with them', () => {
@@ -496,8 +517,7 @@ describe('the selection in the store', () => {
       selection: {
         model: 'minimax-m3.1-flash',
         providerId: 'minimax',
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
         reasoningEffort: 'high',
         compactionReasoningEffort: null,
       },
@@ -529,8 +549,7 @@ describe('the selection in the store', () => {
       selection: {
         model: 'gpt-5',
         providerId: 'openai',
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
       },
       defaults: { model: 'gpt-5', providerId: 'openai', compactionModel: '' },
     });
@@ -544,6 +563,35 @@ describe('the selection in the store', () => {
     // Picking a model is also what the next new conversation starts with.
     expect(state.defaultModel).toBe('gpt-5');
     expect(state.defaultProviderId).toBe('openai');
+  });
+
+  test('a pick of the compaction selection writes the whole selection', () => {
+    // The conversation's own row carries the union, so a pick of the
+    // compaction model cannot leave the provider behind.
+    let state = chatReducer(initialState, {
+      type: 'SET_SESSIONS',
+      sessions: [row(1, {})],
+    });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+
+    state = chatReducer(state, {
+      type: 'SET_SESSION_SELECTION',
+      selection: {
+        model: 'minimax-m3.1-flash',
+        providerId: 'minimax',
+        compaction: explicit('cheap-compactor', 'openai'),
+      },
+      defaults: {
+        model: state.defaultModel,
+        providerId: state.defaultProviderId,
+        compactionModel: 'cheap-compactor',
+        compactionProviderId: 'openai',
+      },
+    });
+
+    expect(state.compaction).toStrictEqual(explicit('cheap-compactor', 'openai'));
+    expect(state.sessions[0].compaction_model).toBe('cheap-compactor');
+    expect(state.sessions[0].compaction_provider_id).toBe('openai');
   });
 
   test('the defaults are the ones the pick states, not the conversation’s selection', () => {
@@ -561,8 +609,7 @@ describe('the selection in the store', () => {
       selection: {
         model: 'gpt-5',
         providerId: 'openai',
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
       },
       defaults: { model: 'gpt-5', providerId: 'openai', compactionModel: 'cheap-compactor' },
     });
@@ -588,8 +635,7 @@ describe('the selection in the store', () => {
       selection: {
         model: 'conversation-model',
         providerId: 'p1',
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
       },
     });
     expect(state.model).toBe('conversation-model');
@@ -630,8 +676,7 @@ describe('the selection in the store', () => {
       selection: {
         model: 'picked',
         providerId: 'picked-provider',
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
       },
       defaults: { model: 'picked', providerId: 'picked-provider', compactionModel: '' },
     });
@@ -665,8 +710,7 @@ describe('the selection in the store', () => {
       selection: {
         model: 'claude',
         providerId: 'anthropic',
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
       },
     });
 
@@ -690,8 +734,7 @@ describe('the selection in the store', () => {
       selection: {
         model: 'claude',
         providerId: 'anthropic',
-        compactionModel: null,
-        compactionProviderId: null,
+        compaction: INHERIT_DEFAULT,
       },
     });
 
@@ -707,8 +750,7 @@ describe('the selection on the wire', () => {
       sessionId: 29,
       model: 'gpt-5',
       providerId: 'openai',
-      compactionModel: '',
-      compactionProviderId: null,
+      compaction: SAME_AS_MAIN,
       reasoningEffort: 'high',
       compactionReasoningEffort: null,
     });
@@ -719,27 +761,25 @@ describe('the selection on the wire', () => {
       selection: {
         model: 'gpt-5',
         providerId: 'openai',
-        compactionModel: '',
-        compactionProviderId: null,
+        compaction: SAME_AS_MAIN,
         reasoningEffort: 'high',
         compactionReasoningEffort: null,
       },
     });
   });
 
-  test('an absent reasoning level in a frame means "inherit the default"', () => {
-    // Older frames (and a NULL row) carry no level; null is the honest
-    // reading, so the client falls back to the global default.
+  test('a frame with no compaction selection means "inherit the global default"', () => {
+    // Older frames carry none. The honest reading is the state that names
+    // no model of its own.
     const frame = JSON.stringify({
       kind: 'model-changed',
       sessionId: 29,
       model: 'gpt-5',
       providerId: null,
-      compactionModel: null,
-      compactionProviderId: null,
     });
 
     expect(parseSessionEvent(frame)?.selection).toMatchObject({
+      compaction: INHERIT_DEFAULT,
       reasoningEffort: null,
       compactionReasoningEffort: null,
     });
@@ -762,56 +802,65 @@ describe('the selection on the wire', () => {
   });
 });
 
-describe('the compaction pair is ONE value — the half-pair cannot exist', () => {
+describe('the compaction selection is ONE value — the half-pair cannot exist', () => {
   test('a model with no provider is refused, not repaired', () => {
     // The state that sent a compaction model to an endpoint that did not
     // have it. It is refused at the boundary, with a message that says what
     // to send instead.
-    const problem = compactionPairProblem({
-      ...SELECTION,
-      compactionModel: 'cheap-compactor',
-      compactionProviderId: null,
-    });
-    expect(problem).not.toBeNull();
-    expect(problem).toContain('cheap-compactor');
+    const parsed = parseCompactionSelection({ kind: 'explicit', model: 'cheap-compactor' });
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain('cheap-compactor');
   });
 
   test('a provider with no model is refused too', () => {
-    const problem = compactionPairProblem({
-      ...SELECTION,
-      compactionModel: null,
-      compactionProviderId: 'openai',
-    });
-    expect(problem).not.toBeNull();
+    const parsed = parseCompactionSelection({ kind: 'explicit', providerId: 'openai' });
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).not.toBeNull();
+  });
+
+  test('an unknown kind is refused', () => {
+    const parsed = parseCompactionSelection({ kind: 'half-a-pair' });
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain('compaction must be one of');
   });
 
   test('the three legal states pass', () => {
-    expect(
-      compactionPairProblem({ ...SELECTION, compactionModel: null, compactionProviderId: null })
-    ).toBeNull();
-    expect(
-      compactionPairProblem({ ...SELECTION, compactionModel: '', compactionProviderId: null })
-    ).toBeNull();
-    expect(
-      compactionPairProblem({
-        ...SELECTION,
-        compactionModel: 'cheap-compactor',
-        compactionProviderId: 'openai',
-      })
-    ).toBeNull();
+    expect(parseCompactionSelection(INHERIT_DEFAULT)).toStrictEqual({
+      ok: true,
+      selection: INHERIT_DEFAULT,
+    });
+    expect(parseCompactionSelection(SAME_AS_MAIN)).toStrictEqual({
+      ok: true,
+      selection: SAME_AS_MAIN,
+    });
+    expect(parseCompactionSelection(explicit('cheap-compactor', 'openai'))).toStrictEqual({
+      ok: true,
+      selection: explicit('cheap-compactor', 'openai'),
+    });
   });
 
   test('a row can never hold a compaction model without its provider', () => {
+    // The pair is only ever produced by the projection, so the illegal
+    // combination cannot reach the row even if a caller builds one by hand.
     const id = createSession('New chat', {
       ...SELECTION,
-      // The illegal pair, handed to the writer on purpose.
-      compactionModel: 'cheap-compactor',
-      compactionProviderId: null,
+      compaction: { kind: 'explicit', model: 'cheap-compactor' },
     });
 
     const stored = listSessions().find((s) => s.id === id);
     expect(stored.compaction_model).toBeNull();
     expect(stored.compaction_provider_id).toBeNull();
+  });
+
+  test('an explicit selection is stored as a pair', () => {
+    const id = createSession('New chat', {
+      ...SELECTION,
+      compaction: explicit('cheap-compactor', 'openai'),
+    });
+
+    const stored = listSessions().find((s) => s.id === id);
+    expect(stored.compaction_model).toBe('cheap-compactor');
+    expect(stored.compaction_provider_id).toBe('openai');
   });
 
   test('a row that already holds a half-pair is normalised on the way out', async () => {
@@ -832,6 +881,21 @@ describe('the compaction pair is ONE value — the half-pair cannot exist', () =
     const stored = listSessions().find((s) => s.id === id);
     expect(stored.compaction_model).toBeNull();
     expect(stored.compaction_provider_id).toBeNull();
-    expect(getSessionSelection(id).compactionModel).toBeNull();
+    expect(getSessionSelection(id).compaction).toStrictEqual(INHERIT_DEFAULT);
+  });
+
+  test('the projection to the two columns is the only way out', () => {
+    expect(compactionSelectionToPair(INHERIT_DEFAULT)).toStrictEqual({
+      model: null,
+      providerId: null,
+    });
+    expect(compactionSelectionToPair(SAME_AS_MAIN)).toStrictEqual({
+      model: '',
+      providerId: null,
+    });
+    expect(compactionSelectionToPair(explicit('m', 'p'))).toStrictEqual({
+      model: 'm',
+      providerId: 'p',
+    });
   });
 });

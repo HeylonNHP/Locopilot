@@ -193,12 +193,55 @@ mistaken for an oversight:
   "inherit the global default"). It is a no-op in practice: the production
   database has 478 sessions and 0 half-pairs, the development one 117 and 0.
 
-**Phase 2.4 (not done):** reshape `SessionSelection`, the browser store and
-the wire to carry the union instead of the two fields. The compiler will
-then catch every caller that can build a half-pair, instead of the boundary
-checks catching it at runtime. The store's two fields are what the client
-reads and writes today, so the reshape touches roughly 136 call sites across
-15 files — it wants its own slice.
+**Phase 2.4 (shipped 2026-11-16):** the store, the wire and the SSE frames
+carry the union. See "What Phase 2.4 actually shipped" below.
+
+### Phase 2.4 — the store and the wire carry the union
+
+#### What Phase 2.4 actually shipped (2026-11-16)
+
+Phase 2.3 made the union the RULE's input and the server boundary's
+vocabulary. Phase 2.4 finishes the job: the browser's store, the request
+bodies, the SSE frames and the client's own write paths carry the union too,
+so the COMPILER catches every caller that can build a half-pair instead of the
+boundary checks catching it at runtime.
+
+- **The vocabulary.** `SessionSelection.compaction` is the union, and
+  `SessionSelectionPatch.compaction` is the union. The two flat fields are
+  gone from both. `compactionPairProblem` and `compactionPairPatchProblem`
+  are gone with them: a half-pair has no spelling, so a check for one was
+  vacuous. What is left is `legacyCompactionPairPatchProblem`, which guards
+  the OLD wire shape only (a stale tab still sends it).
+- **The store.** `ChatState.compaction` is the union;
+  `ChatState.compactionModel` / `compactionProviderId` are gone. The
+  conversation's own ROW keeps the two columns (`sessions.compaction_model`,
+  `sessions.compaction_provider_id`) — the schema is not changed — but the pair
+  only ever reaches the row through `compactionSelectionToPair`, and only ever
+  leaves it through `compactionSelectionFromLoosePair`.
+- **The wire.** The chat body, the `/compact` body, the `/title` body, the
+  `POST /api/sessions` body, the `PATCH /api/sessions/[id]` body and the
+  `POST /api/chat/switch-model` body all carry `compaction` — the union. The
+  LEGACY flat pair is still READ, in exactly one place
+  (`compactionSelectionFromPayload`), so a tab that was open before the
+  change keeps working.
+- **The SSE frames.** `session_created` carries `compaction`; the
+  `model-changed` push carries `compaction`. The `status` event's
+  `compactionModel` is unchanged: it is the RESOLVED model the turn runs on,
+  not a selection.
+- **The client's write paths.** The model picker, the Settings modal and the
+  reasoning picker all write the union. The picker refuses a named model that
+  names no provider (`compactionSelectionForModel` returns nothing), instead
+  of storing a selection the server would refuse.
+- **One dead module removed.** `src/services/modelManager.ts`
+  (`resolveCompactionModel`) existed only to resolve the loose pair; the rule
+  does that now, and nothing referenced it.
+
+**The GLOBAL pair keeps its two fields** — deliberately. `config.json` is
+hand-edited, its shape is `compactionModel` + `compactionProviderId`, and "a
+global model with no provider of its own" has a legitimate meaning (the
+model, on the provider the chat runs on). The union would buy the compiler
+nothing there, and the client always writes the global pair together. The
+residual is recorded as C-029 in `CONFIRMATIONS.md`.
 
 ## What is deliberately NOT changed
 

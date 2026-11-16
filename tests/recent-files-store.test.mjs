@@ -32,14 +32,13 @@ const moduleUrl = (relative) => pathToFileURL(path.join(here, relative)).href;
 
 /**
  * The model selection a session is created with. A conversation owns its
- * model, its provider, its compaction model and that model's provider; the
- * tests below only care that the row exists.
+ * model, its provider and its compaction selection; the tests below only
+ * care that the row exists.
  */
 const TEST_SELECTION = {
   model: 'test-model',
   providerId: null,
-  compactionModel: null,
-  compactionProviderId: null,
+  compaction: { kind: 'inherit-default' },
 };
 
 const root = mkdtempSync(path.join(tmpdir(), 'locopilot-recent-files-'));

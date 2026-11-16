@@ -26,6 +26,8 @@ import {
   DEFAULT_WEB_SEARCH_SETTINGS,
 } from '@/services/configDefaults';
 import {
+  type CompactionSelection,
+  inheritDefaultCompactionSelection,
   selectionFromColumns,
   selectionToColumns,
   type SessionDefaults,
@@ -349,19 +351,15 @@ export interface ChatState {
   /** `Config.redactSecrets` for the persisted counterpart. */
   redactSecrets: boolean;
   /**
-   * The conversation on screen's own compaction model. `null` means the
-   * conversation inherits the global default ({@link defaultCompactionModel});
-   * `''` means it compacts with its own main model. The request body OMITS
-   * the field when it is `null`, which is how the server is told to fall
-   * back to the global setting.
+   * The conversation on screen's own compaction selection — ONE value, so it
+   * cannot be a compaction model without the provider that serves it.
+   *
+   * `{kind:'inherit-default'}` means the conversation follows the global
+   * default pair; `{kind:'same-as-main'}` means it compacts with its own
+   * main model on the main provider; `{kind:'explicit', model, providerId}`
+   * names both.
    */
-  compactionModel: string | null;
-  /**
-   * Which provider the conversation on screen's compaction model belongs to,
-   * so a compaction model on a different provider than the main one can be
-   * used for compaction. `null` for "the main model's provider".
-   */
-  compactionProviderId: string | null;
+  compaction: CompactionSelection;
   chatTimeoutMs: number;
   webSearch: WebSearchConfig;
   /** Completion mode: 'normal' (default) or 'prompt-loop' (auto-continue). */
@@ -396,7 +394,7 @@ export interface ChatState {
   /**
    * The sessions with a mid-turn model switch that has been requested via
    * `/api/chat/switch-model` and not yet confirmed by the server's
-   * `model_switched` status event. `model` / `compactionModel` already hold
+   * `model_switched` status event. `model` / `compaction` already hold
    * the newly picked values (they govern the next turn regardless), so this
    * exists purely so the UI can say the running turn has not taken the new
    * model on board yet, instead of implying the swap was instant. It is kept
@@ -593,8 +591,7 @@ export type ChatAction =
         Partial<ChatState>,
         | 'model'
         | 'activeProviderId'
-        | 'compactionModel'
-        | 'compactionProviderId'
+        | 'compaction'
         | 'reasoningEffort'
         | 'compactionReasoningEffort'
       >;
@@ -953,16 +950,14 @@ function selectionMirror(
   ChatState,
   | 'model'
   | 'activeProviderId'
-  | 'compactionModel'
-  | 'compactionProviderId'
+  | 'compaction'
   | 'reasoningEffort'
   | 'compactionReasoningEffort'
 > {
   return {
     model: selection.model,
     activeProviderId: selection.providerId,
-    compactionModel: selection.compactionModel,
-    compactionProviderId: selection.compactionProviderId,
+    compaction: selection.compaction,
     reasoningEffort: selection.reasoningEffort ?? null,
     compactionReasoningEffort: selection.compactionReasoningEffort ?? null,
   };
@@ -1010,8 +1005,7 @@ function mirrorSelection(state: ChatState): SessionSelection {
   return {
     model: state.model,
     providerId: state.activeProviderId,
-    compactionModel: state.compactionModel,
-    compactionProviderId: state.compactionProviderId,
+    compaction: state.compaction,
     // The RAW pins, not the effective values: a legacy row that inherits the
     // default must stay inherited, and a projection must not pin it.
     reasoningEffort: state.reasoningEffort ?? null,
@@ -1044,8 +1038,10 @@ function selectionForSession(state: ChatState, sessionId: number | null): Sessio
   return {
     model: state.defaultModel,
     providerId: state.defaultProviderId,
-    compactionModel: null,
-    compactionProviderId: null,
+    // A new chat INHERITS the global compaction default until it pins one:
+    // "not pinned yet" is the honest mirror, and the display resolves it to
+    // the global default.
+    compaction: inheritDefaultCompactionSelection(),
     // A new chat INHERITS the defaults until the server pins them at
     // creation: `null` is the honest mirror of "not pinned yet", and the
     // display resolves it to the default.
@@ -2016,8 +2012,7 @@ export const initialState: ChatState = {
   promptTimestamps: true,
   citeSources: true,
   redactSecrets: true,
-  compactionModel: null,
-  compactionProviderId: null,
+  compaction: inheritDefaultCompactionSelection(),
   chatTimeoutMs: DEFAULT_OLLAMA_CHAT_TIMEOUT_MS,
   webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS },
   completionMode: 'normal',

@@ -9,6 +9,7 @@ import type {
   Session,
   WebSearchConfig,
 } from '@/app/lib/chatStore';
+import type { CompactionSelection } from '@/services/sessionSelection';
 import type { CompletionMode, ProviderConfig, ReasoningEffort } from '@/types/chatConfig';
 
 /** A mutable ref container (the writable counterpart to React 19's read-only RefObject). */
@@ -39,13 +40,11 @@ export interface StableRefs {
   thinkingEnabledRef: WritableRef<boolean>;
   reasoningEffortRef: WritableRef<ReasoningEffort | null>;
   compactionReasoningEffortRef: WritableRef<ReasoningEffort | null>;
-  compactionModelRef: WritableRef<string | null>;
   /**
-   * The provider the conversation on screen's compaction model belongs to,
-   * so a compaction model on a different provider than the main one can be
-   * used for compaction. `null` for "the main model's provider".
+   * The conversation on screen's compaction selection — ONE value, so a
+   * compaction model can never travel without the provider that serves it.
    */
-  compactionProviderIdRef: WritableRef<string | null>;
+  compactionRef: WritableRef<CompactionSelection>;
   /**
    * The compaction model a NEW conversation starts with, and the one a
    * conversation that has not pinned a compaction model of its own inherits.
@@ -92,8 +91,7 @@ interface StableRefsInput {
   thinkingEnabled: boolean;
   reasoningEffort: ReasoningEffort | null;
   compactionReasoningEffort: ReasoningEffort | null;
-  compactionModel: string | null;
-  compactionProviderId: string | null;
+  compaction: CompactionSelection;
   defaultCompactionModel: string;
   defaultCompactionProviderId: string | null;
   defaultReasoningEffort: ReasoningEffort;
@@ -124,8 +122,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   const thinkingEnabledRef = useRef(state.thinkingEnabled);
   const reasoningEffortRef = useRef(state.reasoningEffort);
   const compactionReasoningEffortRef = useRef(state.compactionReasoningEffort);
-  const compactionModelRef = useRef(state.compactionModel);
-  const compactionProviderIdRef = useRef(state.compactionProviderId);
+  const compactionRef = useRef(state.compaction);
   const defaultCompactionModelRef = useRef(state.defaultCompactionModel);
   const defaultCompactionProviderIdRef = useRef(state.defaultCompactionProviderId);
   const defaultReasoningEffortRef = useRef(state.defaultReasoningEffort);
@@ -150,8 +147,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
   // previous conversation's values.
   modelRef.current = state.model;
   activeProviderIdRef.current = state.activeProviderId;
-  compactionModelRef.current = state.compactionModel;
-  compactionProviderIdRef.current = state.compactionProviderId;
+  compactionRef.current = state.compaction;
   defaultCompactionModelRef.current = state.defaultCompactionModel;
   defaultCompactionProviderIdRef.current = state.defaultCompactionProviderId;
   defaultReasoningEffortRef.current = state.defaultReasoningEffort;
@@ -218,8 +214,7 @@ export function useStableRefs(state: StableRefsInput): StableRefs {
       thinkingEnabledRef,
       reasoningEffortRef,
       compactionReasoningEffortRef,
-      compactionModelRef,
-      compactionProviderIdRef,
+      compactionRef,
       defaultCompactionModelRef,
       defaultCompactionProviderIdRef,
       defaultReasoningEffortRef,

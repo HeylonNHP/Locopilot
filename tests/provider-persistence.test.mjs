@@ -90,13 +90,29 @@ describe('provider persistence', () => {
 
     test('a conversation that inherits the global compaction model keeps inheriting it', async () => {
       const writes = await captureWrites(() =>
-        saveSelectionChanges(7, { compactionModel: null }, {})
+        saveSelectionChanges(7, { compaction: { kind: 'inherit-default' } }, {})
       );
 
-      // "Use the default" is an explicit null in the row, and the default
-      // itself is not re-written.
-      expect(writes.sessionRow).toStrictEqual({ compactionModel: null });
+      // "Use the default" is one value that names no model of its own, and
+      // the default itself is not re-written.
+      expect(writes.sessionRow).toStrictEqual({ compaction: { kind: 'inherit-default' } });
       expect(writes.config).toStrictEqual({});
+    });
+
+    test('the compaction selection travels as ONE value, never as two fields', async () => {
+      const writes = await captureWrites(() =>
+        saveSelectionChanges(
+          7,
+          { compaction: { kind: 'explicit', model: 'cheap-compactor', providerId: 'openai' } },
+          {}
+        )
+      );
+
+      expect(writes.sessionRow).toStrictEqual({
+        compaction: { kind: 'explicit', model: 'cheap-compactor', providerId: 'openai' },
+      });
+      expect(writes.sessionRow).not.toHaveProperty('compactionModel');
+      expect(writes.sessionRow).not.toHaveProperty('compactionProviderId');
     });
 
     test('a reasoning pick writes only that level', async () => {

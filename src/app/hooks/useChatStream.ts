@@ -17,6 +17,11 @@ import {
 } from '@/app/lib/streamMachine';
 import { type Attachment, langFromFilename } from '@/components/ChatInput';
 import { DEFAULT_SESSION_NAME } from '@/constants';
+import {
+  compactionSelectionToPair,
+  inheritDefaultCompactionSelection,
+  parseCompactionSelection,
+} from '@/services/sessionSelection';
 
 import type { StableRefs, WritableRef } from './useStableRefs';
 
@@ -257,6 +262,16 @@ export function useChatStream(
           setRetryPayload(realId, retryBodyForSession(pendingRetry, realId));
         }
         refs.sessionIdRef.current = realId;
+        // The compaction selection the server stored, as the row's two
+        // columns. The frame carries ONE value (the union), so a row can
+        // never hold a compaction model without the provider that serves it.
+        // A frame that carries no selection — or one that does not parse —
+        // falls back to "inherit the global default", which is the only
+        // state that names no model of its own.
+        const parsedCompaction = parseCompactionSelection(data.compaction);
+        const pair = compactionSelectionToPair(
+          parsedCompaction.ok ? parsedCompaction.selection : inheritDefaultCompactionSelection()
+        );
         // The row is added BEFORE the view switches, so the reducer can
         // restore the conversation's own model selection from it instead of
         // falling back to the global default for an instant.
@@ -269,8 +284,8 @@ export function useChatStream(
             // screen when the frame arrives.
             model: data.model ?? refs.modelRef.current,
             provider_id: data.providerId ?? null,
-            compaction_model: data.compactionModel ?? null,
-            compaction_provider_id: data.compactionProviderId ?? null,
+            compaction_model: pair.model,
+            compaction_provider_id: pair.providerId,
             // The levels the server PINNED at creation, not whatever happens
             // to be on screen when the frame arrives.
             reasoning_effort: data.reasoningEffort ?? null,
@@ -670,12 +685,12 @@ export function useChatStream(
         // that rule in a second place.
         reasoningEffort: refs.reasoningEffortRef.current ?? undefined,
         compactionReasoningEffort: refs.compactionReasoningEffortRef.current ?? undefined,
-        // A conversation that has not pinned a compaction model of its own
-        // inherits the global one. The field is OMITTED in that case, so the
-        // server's own resolution decides — the client does not repeat that
-        // rule in a second place.
-        compactionModel: refs.compactionModelRef.current ?? undefined,
-        compactionProviderId: refs.compactionProviderIdRef.current ?? undefined,
+        // The conversation's compaction selection — ONE value. The server
+        // resolves it (the conversation's own pin, then the global default,
+        // then the conversation's main model), so the client does not repeat
+        // that rule in a second place. A value that is not a union cannot
+        // be a half-pair, so there is nothing for the client to check.
+        compaction: refs.compactionRef.current,
         chatTimeoutMs: refs.chatTimeoutMsRef.current,
         webSearch: refs.webSearchRef.current,
         completionMode: refs.completionModeRef.current,
