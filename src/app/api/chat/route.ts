@@ -83,6 +83,7 @@ import {
   compactionModelServiceProblem,
   compactionProblemFor,
   configProblemFor,
+  planModelSwitch,
   providerNotConfiguredMessage,
 } from '@/services/contextWindow/configProblem';
 import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
@@ -127,6 +128,7 @@ import {
 } from '@/services/mermaidRecovery';
 import { checkCompleteness } from '@/services/promptLoop';
 import {
+  buildProviderRequestContext,
   getNormalizedProviders,
   resolveProvider,
   resolveProviderRequestContext,
@@ -384,7 +386,11 @@ export async function POST(req: NextRequest): Promise<Response> {
       }
     );
   }
-  const sessionCompaction = parsedCompaction.selection;
+  // The conversation's own compaction selection — ONE value — and the
+  // selection THIS TURN runs with. A mid-turn switch replaces it whole (see
+  // `applyPendingModelSwitch`), so it is mutable: a second switch that
+  // names no compaction must not fall back to the one the REQUEST carried.
+  let sessionCompaction = parsedCompaction.selection;
   // The compaction half is checked with the SHARED resolver, so the chat, the
   // compact route and the title route cannot disagree about which provider
   // serves the compaction model.
@@ -1130,8 +1136,12 @@ export async function POST(req: NextRequest): Promise<Response> {
          * only displays what the status events report. There is no default:
          * a window that is missing is 0, and the preflight refuses the turn.
          */
-        const resolveNumCtxForModel = async (fromSavedSetting = false): Promise<void> => {
-          const setting = await settingSource(fromSavedSetting);
+        const resolveNumCtxForModel = async (
+          fromSavedSetting = false,
+          settingOverride?: Config | null
+        ): Promise<void> => {
+          const setting =
+            settingOverride === undefined ? await settingSource(fromSavedSetting) : settingOverride;
           const resolution = await resolveNumCtx({
             ctx: llmRequestContext,
             model,
@@ -1236,14 +1246,16 @@ export async function POST(req: NextRequest): Promise<Response> {
          * matching or by resolveProvider's unrelated default provider.
          */
         const resolveCompactionRuntime = async (
-          sessionCompaction: CompactionSelection,
-          fromSavedSetting = false
+          compactionSelection: CompactionSelection,
+          fromSavedSetting = false,
+          settingOverride?: Config | null
         ): Promise<void> => {
-          const setting = await settingSource(fromSavedSetting);
+          const setting =
+            settingOverride === undefined ? await settingSource(fromSavedSetting) : settingOverride;
           const selection = resolveCompactionSelection({
             config: setting,
             mainModel: model,
-            sessionCompaction,
+            sessionCompaction: compactionSelection,
           });
           effectiveCompactionModel = selection.model;
           if (selection.problem !== null) {
@@ -1521,60 +1533,76 @@ export async function POST(req: NextRequest): Promise<Response> {
           const pending = peekModelSwitch(activeSessionId);
           if (!pending) return;
 
-          // The model itself only changes when the request asks for a new
-          // name AND it differs from what we're already running on. The
-          // provider can change independently — moving the same model name
-          // to a different provider must re-derive activeProvider /
-          // llmRequestContext / numCtx / vision / sampling so the next
-          // LLM call hits the right endpoint with the right credentials
-          // (otherwise a stale activeProvider would silently send
-          // requests to the old provider). The actual model mutation
-          // stays gated on modelChanged so a provider-only switch does
-          // not also rewrite the model name.
+          // The saved setting AS IT IS NOW. The switch is planned AND
+          // applied against ONE read of config.json, so the check and the
+          // apply can never disagree about which provider serves what.
+          const setting = await loadConfig().catch(() => null);
+
+          // The PAIR the switch would form, checked against the same checks
+          // a new turn is put through: the main pair through
+          // `configProblemFor` and the compaction pair through
+          // `compactionProblemFor`. `unknown` from the model index never
+          // refuses, and the checks themselves kick the background refresh.
+          const plan = planModelSwitch(setting, {
+            currentModel: model,
+            currentProviderId: activeProvider?.id ?? null,
+            model: pending.model,
+            providerId: pending.providerId,
+            compaction: pending.compaction,
+            currentCompaction: sessionCompaction,
+          });
+
           let mainWindow: Promise<void> = Promise.resolve();
-          const modelChanged = pending.model !== undefined && pending.model !== model;
-          const providerChanged =
-            pending.providerId !== undefined && pending.providerId !== providerId;
-          // The model is only applied once the switch is known to be
-          // honourable: a refused switch leaves the turn on the model and
-          // the provider it already runs on.
-          const targetModel = modelChanged ? (pending.model as string) : model;
-          if (modelChanged || providerChanged) {
-            // The switch's PROVIDER is resolved BY ID ONLY whenever the
-            // request carries an id: a model name must never cross-wire
-            // another provider's endpoint and apiKey into this turn. The
-            // model name is the last resort, used only when the request
-            // names no provider at all.
-            const resolvedProviderId =
-              pending.providerId ?? (modelChanged ? providerId : undefined);
-            const resolved = resolvedProviderId
-              ? resolveProviderRequestContext(config, resolvedProviderId, undefined, requestId)
-              : resolveProviderRequestContext(config, undefined, targetModel, requestId);
-            if (resolved) {
-              model = targetModel;
-              activeProvider = resolved.provider;
-              llmRequestContext = resolved.ctx;
-              // The window probe runs alongside the vision and sampling probes.
-              mainWindow = resolveNumCtxForModel(true);
-              visionSupported = await resolveVisionForModel();
-              samplingParamSupport = await resolveSamplingSupportForModel();
-              refreshSystemPrompt();
-            } else {
-              // The provider this switch names is not configured. A running
-              // turn must not die, so the switch is REFUSED: the turn keeps
-              // the model and the provider it already runs on. Continuing on
-              // the body's baseUrl instead would be the wrong endpoint
-              // without its credentials — a silent wrong endpoint, which is
-              // the failure this whole rule exists to end.
-              debugLog.diagnostic({
-                layer: 'route',
-                phase: 'switch_provider_unresolved',
-                requestId,
-                sessionId: parsedSessionId,
-                model: model as string,
-                reason: resolvedProviderId ?? 'no_provider_id',
-              });
-            }
+
+          if (!plan.ok) {
+            // The switch cannot be honoured, so the WHOLE switch is
+            // refused: the turn keeps the model and the provider it already
+            // runs on, and the compaction keeps the selection it already
+            // has. A half-applied switch - the main model moved but the
+            // compaction left behind, or the other way round - is the
+            // ambiguity this rule exists to avoid, and a running turn must
+            // not die (CONFIRMATIONS C-027).
+            //
+            // The refusal is ANNOUNCED. `model_switched` is the client's
+            // only "the swap landed" signal, so a refusal has to say so in
+            // its own voice, with the reason.
+            sendEvent('status', {
+              phase: 'model_switch_refused',
+              reason: plan.problem,
+              model,
+              compactionModel: effectiveCompactionModel,
+            });
+            debugLog.diagnostic({
+              layer: 'route',
+              phase: 'model_switch_refused',
+              requestId,
+              sessionId: parsedSessionId,
+              model: model as string,
+              reason: plan.problem,
+            });
+            // The entry is dropped: the switch has been answered (with a
+            // refusal), and leaving it would refuse it again on every
+            // tool-call iteration.
+            acknowledgeModelSwitch(activeSessionId, pending);
+            return;
+          }
+
+          // The main pair, applied only when it actually changes. The
+          // provider is the one the plan resolved, so the check and the
+          // apply cannot disagree about it. A switch that names no provider
+          // moves the MODEL, not the endpoint: the turn keeps the provider
+          // it already runs on.
+          const target = plan.target;
+          const providerChanged = target.provider.id !== activeProvider?.id;
+          if (target.model !== model || providerChanged) {
+            model = target.model;
+            activeProvider = target.provider;
+            llmRequestContext = buildProviderRequestContext(target.provider, requestId);
+            // The window probe runs alongside the vision and sampling probes.
+            mainWindow = resolveNumCtxForModel(true, setting);
+            visionSupported = await resolveVisionForModel();
+            samplingParamSupport = await resolveSamplingSupportForModel();
+            refreshSystemPrompt();
           }
 
           // Always re-resolve the compaction runtime: an explicit switch
@@ -1582,17 +1610,23 @@ export async function POST(req: NextRequest): Promise<Response> {
           // anyone on "same as main".
           //
           // The GLOBAL half of the compaction pair is not spelled out
-          // here: `resolveCompactionRuntime(…, true)` re-reads the saved
-          // config, so the global compaction model and provider apply as
-          // they are saved NOW.
+          // here: the global compaction model and provider apply as they
+          // are saved NOW.
           //
           // The conversation's own compaction selection is ONE value, so a
           // switch replaces it WHOLE. "Same as the main model" is the main
-          // model on the MAIN provider — a provider carried over from the
+          // model on the MAIN provider - a provider carried over from the
           // previous selection cannot survive it, because there is no
           // provider to carry in that state.
-          const nextCompaction = pending.compaction ?? sessionCompaction;
-          await Promise.all([mainWindow, resolveCompactionRuntime(nextCompaction, true)]);
+          //
+          // The turn keeps the selection it NOW has: a second switch that
+          // names no compaction must not fall back to the one the REQUEST
+          // carried.
+          sessionCompaction = target.compaction;
+          await Promise.all([
+            mainWindow,
+            resolveCompactionRuntime(sessionCompaction, true, setting),
+          ]);
 
           // Mutating in place (rather than rebuilding the context) is what
           // lets an already-running run_subagents batch see the new model.

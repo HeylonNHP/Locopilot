@@ -328,6 +328,57 @@ describe('status', () => {
     ]);
   });
 
+  test('a refused model switch clears the pending switch of ITS session and reports the reason', () => {
+    // A refusal must never look like a successful switch: `model_switched`
+    // is the only "the swap landed" signal, and nothing else would clear
+    // the pending flag.
+    const actions = actionsFor('status', {
+      phase: 'model_switch_refused',
+      reason: 'The provider "NVIDIA" does not serve the model "beam".',
+    });
+    expect(actions[0]).toStrictEqual({
+      type: 'SET_MODEL_SWITCH_PENDING',
+      sessionId: 7,
+      pending: false,
+    });
+    expect(actions[1].type).toBe('SET_ERROR');
+    expect(actions[1].error).toMatch(/does not serve the model "beam"/);
+    // and it says what the refusal MEANS
+    expect(actions[1].error).toMatch(/keeps the model and the compaction it has/);
+  });
+
+  test('a refused model switch with no owning session reports the error without touching a session', () => {
+    const actions = actionsFor(
+      'status',
+      { phase: 'model_switch_refused', reason: 'nope' },
+      UNOWNED
+    );
+    expect(actions).toHaveLength(1);
+    expect(actions[0].type).toBe('SET_ERROR');
+    expect(actions[0].error).toMatch(/nope/);
+  });
+
+  test('a refused model switch without a reason still says something', () => {
+    const actions = actionsFor('status', { phase: 'model_switch_refused' });
+    expect(actions[1].type).toBe('SET_ERROR');
+    expect(actions[1].error).toMatch(/refused/i);
+  });
+
+  test('a refused model switch does not fail the turn', () => {
+    // The turn is still running - it simply kept the model it had - so the
+    // turn must not be marked failed and the t/s read-out must stay.
+    const outcome = routeSseEvent(
+      'status',
+      { phase: 'model_switch_refused', reason: 'nope' },
+      OWNED
+    );
+    expect(outcome.markFailed).toBeUndefined();
+    expect(outcome.clearTps).toBeUndefined();
+    // AND it did produce actions - otherwise the two assertions above would
+    // hold trivially on a router that knows nothing about the phase.
+    expect(outcome.actions.length).toBeGreaterThan(0);
+  });
+
   test('steer_applied echoes the held draft and releases it', () => {
     expect(
       actionsFor(

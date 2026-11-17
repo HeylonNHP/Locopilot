@@ -1,10 +1,11 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **open - 10 bugs triaged, none fixed yet** (2026-11-17).
+Status: **open - 10 bugs triaged, 4 fixed** (2026-11-17). BUG 1, BUG 2, BUG 3 and BUG 8 are done.
 
-Branch: `feature/provider-pair-integrity` @ `1efe87e`
-Base: `origin/dev` @ `5dd33ac` (merge-base == `origin/dev` tip)
-Change set: **52 files, +3690 / -526**, 5 commits.
+Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
+(merge-base == `origin/dev` tip). The branch is several commits ahead of the
+base as of 2026-11-17; run `git diff origin/dev...HEAD --shortstat` for the
+current scope rather than trusting a number written here.
 
 This file is the durable record of the review that was done on 2026-11-17. It
 exists so the work can be chipped away one bug at a time across sessions
@@ -308,7 +309,13 @@ entry for this bug.
 
 ---
 
-### [ ] BUG 2 - HIGH - a REFUSED mid-turn switch is reported as a successful switch
+### [x] BUG 2 - HIGH - a REFUSED mid-turn switch is reported as a successful switch
+
+**FIXED 2026-11-17.** A refused switch is now refused WHOLE and ANNOUNCED:
+the turn keeps the model and the provider it already runs on, the compaction
+keeps the selection it already has, and a new SSE phase
+`model_switch_refused` carries the reason to the client. See "THE FIX" at
+the end of this entry.
 
 - `src/app/api/chat/route.ts:1509-1515` - the switch resolves the provider; on
   failure it logs `switch_provider_unresolved` and leaves the turn alone.
@@ -333,9 +340,39 @@ false`) and only emit `model_switched` when it was. Gate the compaction
 re-resolution on the same flag, or at least on `pending.compaction` being
 explicitly meaningful.
 
+#### THE FIX (2026-11-17)
+
+The decision the owner took: **refuse the whole switch.** A half-applied
+switch - the main model moved but the compaction left behind, or the other
+way round - is exactly the ambiguity this bug is about.
+
+- `src/app/api/chat/route.ts` - `applyPendingModelSwitch` now PLANS the
+  switch first (`planModelSwitch`). When the plan is not ok it applies
+  NOTHING: the model, the provider, the compaction selection, the request
+  context and the window are all left as they were, the compaction runtime
+  is not even called, and the refusal is announced on a new SSE phase
+  `model_switch_refused` with the reason. The pending entry is
+  acknowledged, so a refused switch is not refused again on every tool-call
+  iteration.
+- `src/types/sse.ts`, `src/services/sseNames.ts` - the new phase, and a
+  `reason` field on the `status` payload.
+- `src/app/lib/sseRouting.ts` - the new phase clears the "(switching...)"
+  flag for the owning session and raises `SET_ERROR` with the reason. It is
+  deliberately NOT the `error` SSE event: that one means the turn failed
+  (`markFailed`), and the turn is still running.
+- `src/app/lib/switchModelClient.ts` and the two components - a refusal is
+  REPORTED, not swallowed (see BUG 8's fix).
+
+The store is NOT rolled back: it mirrors the conversation's SAVED selection,
+which the server already accepted. A refused switch means the running turn
+did not adopt the new selection early, not that the selection was not saved.
+
 ---
 
-### [ ] BUG 3 - HIGH - the mid-turn switch applies a (model, provider) pair with no coherence check
+### [x] BUG 3 - HIGH - the mid-turn switch applies a (model, provider) pair with no coherence check
+
+**FIXED 2026-11-17.** The switch is now checked as a pair, through the same
+checks a new turn is put through. This was the last route to the production 404. See "THE FIX" at the end of this entry.
 
 - `src/app/api/chat/route.ts:1507-1511` - `resolveProviderRequestContext(config,
 resolvedProviderId, undefined, requestId)` resolves **by ID only** and there
@@ -355,6 +392,47 @@ new pair check was not applied.
 `configProblemFor(config, resolvedProviderId, targetModel)` before applying it.
 If it returns a problem, refuse the switch (like the unresolvable case) and
 log it.
+
+#### THE FIX (2026-11-17)
+
+- `src/services/contextWindow/configProblem.ts` - `planModelSwitch(config,
+input)` forms the pair the switch WOULD form and puts it through the same
+  checks a new turn is put through: the main pair through `configProblemFor`,
+  the compaction pair through `compactionProblemFor`. It returns
+  `{ok: true, target}` or `{ok: false, problem}`.
+- **The check is the TURN's, not the route's.** The turn knows what it runs
+  on RIGHT NOW - the model, the provider and the compaction selection it is
+  actually using - and only the turn can say whether an `inherit-default`
+  compaction would inherit the provider the switch moves it to. The route
+  (`/api/chat/switch-model`) would have to guess the live pair, which is
+  either a false refusal or a missed one. The route stays a thin registry
+  writer: one owner for the pair rule.
+- **The target provider.** The provider the switch names, resolved BY ID
+  ONLY; otherwise the provider the turn ALREADY runs on, because a switch
+  that names no provider moves the MODEL, not the endpoint; otherwise the
+  model name, as the only hint there is. The middle case closes the
+  cross-wire C-027 removed everywhere else: a model-only switch used to
+  recover a provider by MODEL NAME, which lands on `providers[0]` whenever
+  the switched-to model is that provider's default - so the turn moved to
+  another endpoint, with that provider's apiKey.
+- **`unknown` NEVER refuses.** A cold cache, a failed fetch and an empty
+  list all let the switch through, because a dead or slow provider must not
+  block a turn. The checks themselves kick the background refresh.
+- `src/app/api/chat/route.ts` - the switch reads `config.json` ONCE and
+  hands the same snapshot to the plan, to the window probe and to the
+  compaction runtime, so the check and the apply cannot disagree.
+- The refusal message names the provider that does not serve the model AND
+  the one that does. For the compaction half it says "the provider the
+  switch names", because the switch is refused and the conversation does not
+  end up on that provider.
+
+**Tests:** 9 new in `tests/model-index.test.mjs`, plus a structural test in
+`tests/provider-resolution.test.mjs` that pins the ORDER - the refusal has to
+come before every mutation it protects, which a bare `toContain` cannot
+see. A revert simulation (the new test bodies run against the pre-fix
+source) fails them, so they are not vacuous. Note that
+`tests/model-index.test.mjs` cannot even LOAD on the pre-fix source, because
+`planModelSwitch` does not exist there.
 
 ---
 
@@ -510,7 +588,11 @@ a bare boolean, and surface it in the `SET_ERROR` dispatch.
 
 ---
 
-### [ ] BUG 8 - MEDIUM - "Use the default" mid-turn sends an empty request that the server refuses
+### [x] BUG 8 - MEDIUM - "Use the default" mid-turn sends an empty request that the server refuses
+
+**FIXED 2026-11-17.** The switch now carries the selection in every state
+("Use the default" included), and a refusal is reported instead of
+swallowed. See "THE FIX" at the end of this entry.
 
 - `src/components/ModelSelector/ModelSelector.tsx:588-593` -
   `...(nextCompactionModel === null ? {} : { compaction: picked })`. For "Use
@@ -542,6 +624,54 @@ pair correctly.
 omitting the key (the server already understands it), or skip the switch
 request entirely when there is nothing else to switch. Separately, surface the
 switch error instead of only clearing the flag.
+
+#### THE FIX (2026-11-17)
+
+- `src/app/lib/switchModelClient.ts` - `requestMidTurnModelSwitch` returns
+  `{accepted, message}` instead of a bare boolean, and READS the response
+  body (the JSON `error` field, or the raw text). `buildMidTurnSwitch`
+  builds the body from the parts that changed and `isEmptyMidTurnSwitch`
+  says whether it says anything - an empty payload sends NO request at all,
+  so the route's HTTP 400 is unreachable from the client. The route's 400
+  stays: it is a real boundary, and a stale tab can still send an empty body.
+- `src/components/ModelSelector/ModelSelector.tsx` and
+  `src/components/SettingsModal/SettingsModal.tsx` - the mid-turn payload
+  carries the compaction selection WHOLE, in every state, and neither caller
+  swallows a refusal any more: both dispatch `SET_ERROR` with the
+  server's message, which the `ErrorBanner` renders.
+- `src/app/lib/sseRouting.ts` - the server's own refusal (the new
+  `model_switch_refused` phase) is handled too.
+
+**WHY THE OLD OMISSION WAS WRONG.** The pick was not dropped for a reason
+that still holds. It was dropped because the OLD flat two-field wire shape
+had NO spelling for "inherit the global default" (`null` meant "not sent",
+`''` meant "same as main"), and sending a provider without a model was the
+half-pair that produced the 404s. The union has that spelling now, and the
+OTHER two states were already carried and already changed the running turn's
+compaction - so there was never a coherent rule that exempted the third.
+
+**THE BEHAVIOUR CHANGE.** The running turn's compaction now follows "Use the
+default" too: it resolves the GLOBAL pair at the next tool boundary, exactly
+as the next turn would. Before, it kept the compaction it had resolved until
+the next turn. This is recorded in `docs/CHANGELOG.md` (2026-11-17) and it
+supersedes the 2026-11-16 entry's "Use the default is still NOT carried ...
+unchanged behaviour".
+
+**WHAT THE CLIENT DOES NOT DO.** It does not roll the store back when the
+server refuses a switch: the store mirrors the conversation's SAVED
+selection, and a refused switch means the running turn did not adopt it
+early. Rolling back would make the browser disagree with the row the server
+just accepted.
+
+**SILENT IS ONLY WHERE THERE IS NOTHING TO SAY.** No streaming turn for that
+session (HTTP 404) and a request the user aborted with Stop report nothing:
+the selection is saved, and the next turn runs on it.
+
+**Tests:** `tests/mid-turn-switch.test.mjs` (new, 18 tests). The strongest
+is "an empty payload sends NO request at all": the pre-fix client ALWAYS
+fetched, so the assertion fails on the pre-fix code. Four of the eighteen
+pin the ROUTE, which this change does not touch - they are characterisation
+tests, and they pass on both sides.
 
 ---
 
@@ -611,20 +741,22 @@ is fixed.
 
 ## 5. ALSO FOUND (lower severity - not in the top 10)
 
-| #   | Sev    | Where                                                                                                                            | Issue                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| --- | ------ | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | Medium | `src/app/api/sessions/route.ts:56` vs `src/app/api/chat/route.ts:369-371` vs `src/app/api/chat/switch-model/route.ts:69`         | The **same** request body resolves to a **different** compaction selection per endpoint. `POST /api/sessions` falls back to the conversation's **main** model; `POST /api/chat` falls back to the **global** compaction model; `switch-model` falls back to the **switched** model. Probe: the same legacy body gives `{model:'llama3', providerId:'ollama-cloud'}` on `/api/sessions` and `{model:'beam', providerId:'ollama-cloud'}` on `/api/chat`.                                                           |
-| A2  | Medium | `src/app/hooks/useSessionEvents.ts:74-83`                                                                                        | A `model-changed` frame whose `compaction` is missing or unparseable is **silently repaired** to `inheritDefaultCompactionSelection()` - the exact silent repair the branch removes server-side. It also **ignores** the legacy `compactionModel`/`compactionProviderId` fields entirely: they are declared at `:57-59` and never read, so a legacy frame loses the pinned compaction model. Reachability is limited to a malformed/legacy frame, but this is the one place the client performs a silent repair. |
-| A3  | Medium | `src/app/hooks/useDataLoaders.ts:362-370`                                                                                        | The dangling-provider repair only inspects `state.model` / `state.activeProviderId`. The **compaction** half of the pair is not repaired, so a dead compaction provider blocks every turn with a 409 while the main half self-heals. The two halves of one pair now behave differently.                                                                                                                                                                                                                          |
-| A4  | Low    | `src/services/contextWindow/configProblem.ts:62-64`                                                                              | **FIXED 2026-11-17** with BUG 1: the "which provider _does_ serve it" hint now excludes the offending provider by ID rather than by name, so two providers sharing a name no longer hide the one that serves the model. Proven before the fix: `"The provider \"Same Name\" does not serve the model \"y\". No configured provider is known to serve it."` while provider `b` did serve `y`.                                                                                                                     |
-| A5  | Low    | `tests/session-model-selection.test.mjs:158-171`                                                                                 | `toStrictEqual` -> `toMatchObject` (a recursive **subset** match) on exactly the legacy-path assertions the branch's "the client keeps working" guarantee rests on. A `compaction` carrying extra fields still matches.                                                                                                                                                                                                                                                                                          |
-| A6  | Low    | `tests/session-model-selection.test.mjs:818`, `tests/session-compaction-pair.test.mjs:162`, `tests/compaction-rule.test.mjs:361` | `expect(x).not.toBeNull()` - passes on `undefined` and `''`. Zero weight. The **content** of every "loud" refusal is unchecked, even though the message is the whole point.                                                                                                                                                                                                                                                                                                                                      |
-| A7  | Low    | `tests/provider-resolution.test.mjs:130-142`                                                                                     | Source-text greps standing in for behaviour. `expect(chatRoute).toContain('providerNotConfiguredMessage')` passes even if the 409 gate is deleted; `not.toMatch(/activeProvider = null/)` is a spelling proxy that a reformatted `activeProvider = (null as ProviderConfig \| null)` would slip past.                                                                                                                                                                                                            |
-| A8  | Low    | `tests/provider-persistence.test.mjs:100-116`                                                                                    | The new test asserts the **echo of its own input** (`saveSessionPatch` is literally `JSON.stringify(patch)`), so it cannot prove the client never emits the flat pair.                                                                                                                                                                                                                                                                                                                                           |
-| A9  | Low    | `tests/session-model-selection.test.mjs:215`                                                                                     | A **deleted** assertion: the legacy-patch branch (`{compactionModel: null}`) used to be pinned and now has no unit-level test of the new refusal it produces.                                                                                                                                                                                                                                                                                                                                                    |
-| A10 | Info   | `docs/PROVIDER_PAIR_PLAN.md` "Verification"                                                                                      | The listed `npm test --` invocation omits the two new suites `tests/model-index` and `tests/provider-resolution`. The plan also still claims `npm run type-check` has pre-existing errors - it is now **clean** (exit 0).                                                                                                                                                                                                                                                                                        |
-| A11 | Info   | `tests/context-window.test.mjs:236-243`, `:256-262`                                                                              | Not touched by the branch, but still dispatch the **pre-2.3 flat shape** (`compactionModel`, `compactionProviderId`). After the dispatch `state.compaction === undefined` and `state.defaultCompactionProviderId === undefined` - the store silently accepts a state its own types forbid, and the test would keep passing after any regression in the compaction wiring.                                                                                                                                        |
-| A12 | Low    | `src/services/modelIndex.ts` (the TTL), `src/services/contextWindow/configProblem.ts`                                            | Found while VERIFYING the BUG 1 fix: a stale model index (a list up to 5 minutes old) can answer "not served" wrongly, and the background refresh is only kicked on "unknown", so such a refusal does NOT self-heal until the TTL expires. The MAIN-pair check already had this exposure; the BUG 1 fix adds a second pair that can refuse a whole turn on a stale answer.                                                                                                                                       |
+| #   | Sev    | Where                                                                                                                            | Issue                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --- | ------ | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Medium | `src/app/api/sessions/route.ts:56` vs `src/app/api/chat/route.ts:369-371` vs `src/app/api/chat/switch-model/route.ts:69`         | The **same** request body resolves to a **different** compaction selection per endpoint. `POST /api/sessions` falls back to the conversation's **main** model; `POST /api/chat` falls back to the **global** compaction model; `switch-model` falls back to the **switched** model. Probe: the same legacy body gives `{model:'llama3', providerId:'ollama-cloud'}` on `/api/sessions` and `{model:'beam', providerId:'ollama-cloud'}` on `/api/chat`.                                                                                               |
+| A2  | Medium | `src/app/hooks/useSessionEvents.ts:74-83`                                                                                        | A `model-changed` frame whose `compaction` is missing or unparseable is **silently repaired** to `inheritDefaultCompactionSelection()` - the exact silent repair the branch removes server-side. It also **ignores** the legacy `compactionModel`/`compactionProviderId` fields entirely: they are declared at `:57-59` and never read, so a legacy frame loses the pinned compaction model. Reachability is limited to a malformed/legacy frame, but this is the one place the client performs a silent repair.                                     |
+| A3  | Medium | `src/app/hooks/useDataLoaders.ts:362-370`                                                                                        | The dangling-provider repair only inspects `state.model` / `state.activeProviderId`. The **compaction** half of the pair is not repaired, so a dead compaction provider blocks every turn with a 409 while the main half self-heals. The two halves of one pair now behave differently.                                                                                                                                                                                                                                                              |
+| A4  | Low    | `src/services/contextWindow/configProblem.ts:62-64`                                                                              | **FIXED 2026-11-17** with BUG 1: the "which provider _does_ serve it" hint now excludes the offending provider by ID rather than by name, so two providers sharing a name no longer hide the one that serves the model. Proven before the fix: `"The provider \"Same Name\" does not serve the model \"y\". No configured provider is known to serve it."` while provider `b` did serve `y`.                                                                                                                                                         |
+| A5  | Low    | `tests/session-model-selection.test.mjs:158-171`                                                                                 | `toStrictEqual` -> `toMatchObject` (a recursive **subset** match) on exactly the legacy-path assertions the branch's "the client keeps working" guarantee rests on. A `compaction` carrying extra fields still matches.                                                                                                                                                                                                                                                                                                                              |
+| A6  | Low    | `tests/session-model-selection.test.mjs:818`, `tests/session-compaction-pair.test.mjs:162`, `tests/compaction-rule.test.mjs:361` | `expect(x).not.toBeNull()` - passes on `undefined` and `''`. Zero weight. The **content** of every "loud" refusal is unchecked, even though the message is the whole point.                                                                                                                                                                                                                                                                                                                                                                          |
+| A7  | Low    | `tests/provider-resolution.test.mjs:130-142`                                                                                     | Source-text greps standing in for behaviour. `expect(chatRoute).toContain('providerNotConfiguredMessage')` passes even if the 409 gate is deleted; `not.toMatch(/activeProvider = null/)` is a spelling proxy that a reformatted `activeProvider = (null as ProviderConfig \| null)` would slip past.                                                                                                                                                                                                                                                |
+| A8  | Low    | `tests/provider-persistence.test.mjs:100-116`                                                                                    | The new test asserts the **echo of its own input** (`saveSessionPatch` is literally `JSON.stringify(patch)`), so it cannot prove the client never emits the flat pair.                                                                                                                                                                                                                                                                                                                                                                               |
+| A9  | Low    | `tests/session-model-selection.test.mjs:215`                                                                                     | A **deleted** assertion: the legacy-patch branch (`{compactionModel: null}`) used to be pinned and now has no unit-level test of the new refusal it produces.                                                                                                                                                                                                                                                                                                                                                                                        |
+| A10 | Info   | `docs/PROVIDER_PAIR_PLAN.md` "Verification"                                                                                      | The listed `npm test --` invocation omits the two new suites `tests/model-index` and `tests/provider-resolution`. The plan also still claims `npm run type-check` has pre-existing errors - it is now **clean** (exit 0).                                                                                                                                                                                                                                                                                                                            |
+| A11 | Info   | `tests/context-window.test.mjs:236-243`, `:256-262`                                                                              | Not touched by the branch, but still dispatch the **pre-2.3 flat shape** (`compactionModel`, `compactionProviderId`). After the dispatch `state.compaction === undefined` and `state.defaultCompactionProviderId === undefined` - the store silently accepts a state its own types forbid, and the test would keep passing after any regression in the compaction wiring.                                                                                                                                                                            |
+| A12 | Low    | `src/services/modelIndex.ts` (the TTL), `src/services/contextWindow/configProblem.ts`                                            | Found while VERIFYING the BUG 1 fix: a stale model index (a list up to 5 minutes old) can answer "not served" wrongly, and the background refresh is only kicked on "unknown", so such a refusal does NOT self-heal until the TTL expires. The MAIN-pair check already had this exposure; the BUG 1 fix adds a second pair that can refuse a whole turn on a stale answer.                                                                                                                                                                           |
+| A14 | Low    | `src/app/lib/modelSwitchRegistry.ts` (`acknowledgeModelSwitch`), `src/app/api/chat/route.ts` (`applyPendingModelSwitch`)         | A NARROW RACE found while VERIFYING the BUG 2 / BUG 3 fix: `acknowledgeModelSwitch` refuses to drop the entry when a newer request merged in during the switch, and the merge sits between the peek and the acknowledge. The merged entry then carries the refused half forward and is refused again - so the banner is set again (with the same text, so it is not visible twice) and a compaction-only second switch is lost. The window is one file read. The behaviour is LOUD, which is the branch's rule, so it is recorded rather than fixed. |
+| A13 | Low    | `src/app/api/chat/route.ts` (`applyPendingModelSwitch`), `src/app/lib/sseRouting.ts``                                            | Found while fixing BUG 2: a switch that arrives while the FINAL answer is streaming is never applied - `applyPendingModelSwitch` runs at the top of each tool-loop iteration - so no `model_switched` and no `model_switch_refused` follows it, and the "(switching...)" badge stays until the turn stops. The fix is to clear the pending flag on `done`/`error` in `sseRouting.ts`. NOT fixed here: it is a separate bug from BUG 2 and deserves its own row.                                                                                      |
 
 ---
 
@@ -683,33 +815,33 @@ is fixed.
 
 1. **BUG 1** - DONE (2026-11-17). The branch's own C-025(b) criterion; the
    original production incident.
-2. **BUG 2 + BUG 3** - both live in `applyPendingModelSwitch`
-   (`src/app/api/chat/route.ts:1475-1614`). Fix them together; they share the
-   same "was the switch applied?" flag.
+2. **BUG 2 + BUG 3** - DONE (2026-11-17), together with BUG 8. The switch
+   is checked as a pair, a refused switch is refused whole, and the refusal
+   is reported.
 3. **BUG 6 + BUG 10** - fix the write path _and_ its test together, otherwise
    the new test fails until the writer is fixed.
 4. **BUG 5** - refuse an unconfigured compaction provider at write time.
 5. **BUG 7** - surface the server's refusal messages.
 6. **BUG 4** - make `/api/dump` work again.
-7. **BUG 8** - send the inherit-default compaction switch.
+7. **BUG 8** - DONE (2026-11-17), with BUG 2 and BUG 3.
 8. **BUG 9** - guard `defaultCompactionProviderId`.
 9. The "Also found" list.
 
 ## 8. PROGRESS TRACKER
 
-| Bug                                       | Severity    | Status | Commit                                                                              | Notes                                                                                                                                  |
-| ----------------------------------------- | ----------- | ------ | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 - global compaction pair unchecked      | High        | [x]    | `fix(compaction): the inherited global pair is checked against the chat's provider` | `compactionProblemFor` now takes the resolved main provider and checks the inherited global pair against it. `CONFIRMATIONS.md` C-030. |
-| 2 - refused switch reported as applied    | High        | [ ]    |                                                                                     |                                                                                                                                        |
-| 3 - mid-turn switch has no pair check     | High        | [ ]    |                                                                                     |                                                                                                                                        |
-| 4 - /api/dump refuses a valid pair        | Medium-High | [ ]    |                                                                                     |                                                                                                                                        |
-| 5 - session created with a ghost provider | Medium      | [ ]    |                                                                                     |                                                                                                                                        |
-| 6 - write path does not normalise         | Medium      | [ ]    |                                                                                     |                                                                                                                                        |
-| 7 - refusal messages discarded            | Medium      | [ ]    |                                                                                     |                                                                                                                                        |
-| 8 - empty mid-turn switch body            | Medium      | [ ]    |                                                                                     |                                                                                                                                        |
-| 9 - global compaction pin wiped           | Medium      | [ ]    |                                                                                     |                                                                                                                                        |
-| 10 - guarantee test is vacuous            | Medium      | [ ]    |                                                                                     |                                                                                                                                        |
-| A1-A11                                    | Low/Info    | [ ]    |                                                                                     |                                                                                                                                        |
+| Bug                                       | Severity    | Status | Commit                                                                               | Notes                                                                                                                                                                         |
+| ----------------------------------------- | ----------- | ------ | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 - global compaction pair unchecked      | High        | [x]    | `fix(compaction): the inherited global pair is checked against the chat's provider`  | `compactionProblemFor` now takes the resolved main provider and checks the inherited global pair against it. `CONFIRMATIONS.md` C-030.                                        |
+| 2 - refused switch reported as applied    | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | A refused switch is refused WHOLE and announced on the new `model_switch_refused` SSE phase; the client clears the pending flag and shows the reason.                         |
+| 3 - mid-turn switch has no pair check     | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | `planModelSwitch` forms the pair the switch would form and puts it through the same checks a new turn is put through. The last route to the production 404.                   |
+| 4 - /api/dump refuses a valid pair        | Medium-High | [ ]    |                                                                                      |                                                                                                                                                                               |
+| 5 - session created with a ghost provider | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
+| 6 - write path does not normalise         | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
+| 7 - refusal messages discarded            | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
+| 8 - empty mid-turn switch body            | Medium      | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | The switch carries `compaction: {kind:"inherit-default"}`; an empty payload sends no request; the route 400 and the server SSE refusal are both reported through `SET_ERROR`. |
+| 9 - global compaction pin wiped           | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
+| 10 - guarantee test is vacuous            | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
+| A1-A11                                    | Low/Info    | [ ]    |                                                                                      |                                                                                                                                                                               |
 
 ## 9. REVIEW HYGIENE
 

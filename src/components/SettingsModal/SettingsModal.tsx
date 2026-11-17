@@ -6,7 +6,7 @@ import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 import { useChat } from '@/app/lib/chatStore';
 import { describeContextWindow, interpretNumCtxInput } from '@/app/lib/contextWindow';
 import { saveSessionPatch } from '@/app/lib/sessionSelectionClient';
-import { requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
+import { buildMidTurnSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { timeoutPartsToMs } from '@/app/lib/timeoutParts';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS } from '@/constants';
 import {
@@ -485,14 +485,12 @@ export default function SettingsModal({ onClose }: Props) {
       // longer leave half a pair behind — the model and the provider that
       // serves it are always switched together.
       //
-      // "Use the default" is still NOT carried: the running turn keeps the
-      // compaction it has resolved until the next turn sends the resolved one.
-      const compactionSwitch =
-        pickedCompaction.kind === 'inherit-default' ? undefined : pickedCompaction;
-      if (
-        streamingSessionId !== null &&
-        (modelChanged || providerChanged || compactionChanged)
-      ) {
+      // "Use the default" travels TOO: the union can say it, so the running
+      // turn resolves the GLOBAL pair at its next tool step, exactly like
+      // the next turn would. Before the union existed the switch could not
+      // express it, so the pick was dropped — and what was left was an
+      // EMPTY request the route refuses with HTTP 400.
+      if (streamingSessionId !== null && (modelChanged || providerChanged || compactionChanged)) {
         dispatch({
           type: 'SET_MODEL_SWITCH_PENDING',
           sessionId: streamingSessionId,
@@ -505,13 +503,13 @@ export default function SettingsModal({ onClose }: Props) {
         // independently of model.)
         const sendProviderId =
           (modelChanged || providerChanged) && mainProviderId ? mainProviderId : undefined;
-        const accepted = await requestMidTurnModelSwitch(
+        const result = await requestMidTurnModelSwitch(
           streamingSessionId,
-          {
-            ...(modelChanged ? { model } : {}),
-            ...(sendProviderId ? { providerId: sendProviderId } : {}),
-            ...(compactionChanged && compactionSwitch ? { compaction: compactionSwitch } : {}),
-          },
+          buildMidTurnSwitch({
+            model: modelChanged ? model : undefined,
+            providerId: sendProviderId,
+            compaction: compactionChanged ? pickedCompaction : undefined,
+          }),
           // Attach to the running turn's signal — looked up per session
           // from the shared abort map, so it is the SAME controller the
           // Stop button aborts. A Stop click while the switch request is in
@@ -520,12 +518,19 @@ export default function SettingsModal({ onClose }: Props) {
           // `pendingSwitches[sessionId]` entry.
           abortControllersRef.current.get(streamingSessionId)?.signal
         );
-        if (!accepted) {
+        if (!result.accepted) {
           dispatch({
             type: 'SET_MODEL_SWITCH_PENDING',
             sessionId: streamingSessionId,
             pending: false,
           });
+        }
+        // A refusal is REPORTED, not swallowed: the server's message names
+        // the cause. The modal's own `saveError` is not used here - the
+        // modal closes on the next line, so a message shown inside it would
+        // never be seen.
+        if (result.message !== null) {
+          dispatch({ type: 'SET_ERROR', error: result.message });
         }
       }
 

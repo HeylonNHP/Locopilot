@@ -20,6 +20,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from '@jest/g
 import {
   compactionProblemFor,
   configProblemFor,
+  planModelSwitch,
 } from '../src/services/contextWindow/configProblem.ts';
 import {
   invalidateModelIndex,
@@ -326,5 +327,186 @@ describe('an inherited global compaction model is checked against the provider t
         compaction: { kind: 'inherit-default' },
       })
     ).toBeNull();
+  });
+});
+
+describe('a mid-turn model switch is checked against the pair it would form', () => {
+  // The switch is the only path that introduces a NEW (model, provider) pair
+  // while a turn is running, and it used to be the only UNCHECKED one: the
+  // route accepted any provider id and the turn applied it without asking
+  // whether the provider carries the model. That is how the global
+  // compaction model "beam" still reached NVIDIA (CONFIRMATIONS C-025).
+  const NVIDIA = provider({ id: 'p1', name: 'NVIDIA', baseUrl: 'http://p1', model: 'llama3' });
+  const CLOUD = provider({
+    id: 'p2',
+    name: 'Ollama Cloud',
+    baseUrl: 'http://p2',
+    model: undefined,
+  });
+
+  const switchConfig = {
+    numCtx: 131_072,
+    providers: [NVIDIA, CLOUD],
+  };
+
+  /** The switch as the turn sees it: it runs on the cloud provider. */
+  const onCloud = {
+    currentModel: 'llama3',
+    currentProviderId: 'p2',
+    currentCompaction: { kind: 'inherit-default' },
+  };
+
+  test('a switch onto a provider that does not serve the model is REFUSED', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+    recordProviderModels('p2', 'http://p2', ['llama3', 'beam']);
+
+    // The switch would run "beam" on NVIDIA, which does not serve it.
+    const plan = planModelSwitch(switchConfig, {
+      ...onCloud,
+      model: 'beam',
+      providerId: 'p1',
+    });
+    expect(plan.ok).toBe(false);
+    expect(plan.problem).toMatch(/does not serve the model "beam"/);
+  });
+
+  test('a switch onto a provider that DOES serve the model is honoured', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+    recordProviderModels('p2', 'http://p2', ['llama3', 'beam']);
+
+    // The same switch, but Ollama Cloud is the one that serves "beam".
+    const plan = planModelSwitch(switchConfig, {
+      ...onCloud,
+      model: 'beam',
+      providerId: 'p2',
+    });
+    expect(plan.ok).toBe(true);
+    expect(plan.target.provider.id).toBe('p2');
+    expect(plan.target.model).toBe('beam');
+  });
+
+  test('a model-only switch keeps the provider the turn already runs on', () => {
+    // The cross-wire that C-027 removed everywhere else: a model-only
+    // switch used to recover a provider by MODEL NAME, and NVIDIA's
+    // default model IS "beam" here - so the old behaviour moved the turn
+    // to NVIDIA, with NVIDIA's apiKey, while the user only asked for a
+    // different model.
+    const trap = {
+      numCtx: 131_072,
+      providers: [
+        provider({ id: 'p1', name: 'NVIDIA', baseUrl: 'http://p1', model: 'beam' }),
+        provider({ id: 'p2', name: 'Ollama Cloud', baseUrl: 'http://p2', model: undefined }),
+      ],
+    };
+    recordProviderModels('p1', 'http://p1', ['beam']);
+    recordProviderModels('p2', 'http://p2', ['llama3', 'beam']);
+
+    // the trap: the model name alone names NVIDIA
+    expect(resolveProvider(trap, undefined, 'beam')?.id).toBe('p1');
+
+    const plan = planModelSwitch(trap, {
+      ...onCloud,
+      model: 'beam',
+    });
+    expect(plan.ok).toBe(true);
+    expect(plan.target.model).toBe('beam');
+    expect(plan.target.provider.id).toBe('p2');
+  });
+
+  test('a switch that would strand the global compaction model on a provider that does not serve it is REFUSED', () => {
+    // THE PRODUCTION CASE: the global compaction model is "beam" with no
+    // global compaction provider, so the compaction runs on the provider
+    // the switch moves the turn to. NVIDIA does not serve "beam".
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+    recordProviderModels('p2', 'http://p2', ['llama3', 'beam']);
+
+    const plan = planModelSwitch(
+      { ...switchConfig, compactionModel: 'beam', compactionProviderId: null },
+      { ...onCloud, providerId: 'p1' }
+    );
+    expect(plan.ok).toBe(false);
+    expect(plan.problem).toMatch(/compaction model "beam"/);
+    expect(plan.problem).toMatch(/the provider the switch names/);
+    expect(plan.problem).toMatch(/NVIDIA/);
+  });
+
+  test('the same switch WITHOUT a global compaction model is honoured', () => {
+    // The control for the test above: it refuses because of the compaction
+    // pair, not because of the main pair.
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+    recordProviderModels('p2', 'http://p2', ['llama3', 'beam']);
+
+    const plan = planModelSwitch(switchConfig, { ...onCloud, providerId: 'p1' });
+    expect(plan.ok).toBe(true);
+    expect(plan.target.provider.id).toBe('p1');
+  });
+
+  test('a COLD index never refuses a switch', () => {
+    // Fail open: an index that cannot say must never break a running turn.
+    const plan = planModelSwitch(switchConfig, { ...onCloud, providerId: 'p1' });
+    expect(plan.ok).toBe(true);
+  });
+
+  test('a switch onto a provider that is not configured is REFUSED', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+
+    const plan = planModelSwitch(switchConfig, { ...onCloud, providerId: 'gone' });
+    expect(plan.ok).toBe(false);
+    expect(plan.problem).toMatch(/"gone" is not configured/);
+  });
+
+  test('an explicit compaction selection is checked against its OWN provider', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+    recordProviderModels('p2', 'http://p2', ['llama3', 'beam']);
+
+    // The main provider (NVIDIA) does NOT serve "beam", but the explicit
+    // selection names the provider that does.
+    const good = planModelSwitch(switchConfig, {
+      ...onCloud,
+      providerId: 'p1',
+      compaction: { kind: 'explicit', model: 'beam', providerId: 'p2' },
+    });
+    expect(good.ok).toBe(true);
+    expect(good.target.compaction).toStrictEqual({
+      kind: 'explicit',
+      model: 'beam',
+      providerId: 'p2',
+    });
+
+    // The same selection on the provider that does NOT serve it is refused.
+    const bad = planModelSwitch(switchConfig, {
+      ...onCloud,
+      providerId: 'p1',
+      compaction: { kind: 'explicit', model: 'beam', providerId: 'p1' },
+    });
+    expect(bad.ok).toBe(false);
+    expect(bad.problem).toMatch(/does not serve the model "beam"/);
+  });
+
+  test('the switch replaces the compaction selection WHOLE', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+    recordProviderModels('p2', 'http://p2', ['llama3', 'beam']);
+
+    // A switch that names a compaction selection uses it...
+    const named = planModelSwitch(switchConfig, {
+      ...onCloud,
+      providerId: 'p1',
+      compaction: { kind: 'same-as-main' },
+    });
+    expect(named.ok).toBe(true);
+    expect(named.target.compaction).toStrictEqual({ kind: 'same-as-main' });
+
+    // ...and a switch that names none keeps the one the turn has.
+    const unnamed = planModelSwitch(switchConfig, {
+      ...onCloud,
+      providerId: 'p1',
+      currentCompaction: { kind: 'explicit', model: 'beam', providerId: 'p2' },
+    });
+    expect(unnamed.ok).toBe(true);
+    expect(unnamed.target.compaction).toStrictEqual({
+      kind: 'explicit',
+      model: 'beam',
+      providerId: 'p2',
+    });
   });
 });

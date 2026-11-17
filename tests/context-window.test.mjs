@@ -512,7 +512,7 @@ describe('the wiring that must stay', () => {
 describe('Retry and the mid-turn switch use the setting as it is now', () => {
   test('the route resolves a mid-turn switch from the saved setting, not the body', () => {
     const route = read('src/app/api/chat/route.ts');
-    expect(route).toContain('resolveNumCtxForModel(true)');
+    expect(route).toContain('resolveNumCtxForModel(true, setting)');
     expect(route).toMatch(/fromSavedSetting \? await loadConfig\(\)/);
     expect(route).not.toContain('bodyRequested');
     expect(route).toContain("phase: 'config_unavailable'");

@@ -2,6 +2,7 @@ import type { ChatAction, DoneReason } from '@/app/lib/chatStore';
 import type { SseEventPayloadMap } from '@/types/sse';
 
 import { positiveInteger } from '@/app/lib/contextWindow';
+import { switchFailureMessage } from '@/app/lib/switchModelClient';
 import { formatCompactionReceipt } from '@/services/compact/receipt';
 
 /**
@@ -352,7 +353,7 @@ export function routeSseEvent(
       // needs to update its own display state for the warning UI.
       // Any other phase is left alone — visionState is initialized
       // to 'unknown' and updated only on this signal.
-      const { phase } = data;
+      const { phase, reason } = data;
       if (phase === 'vision_unsupported') {
         actions.push({ type: 'SET_VISION_STATE', state: 'unsupported' });
       }
@@ -371,7 +372,31 @@ export function routeSseEvent(
         }
         actions.push({ type: 'SET_VISION_STATE', state: 'unknown' });
       }
-      // The server has spliced a queued steering message into the
+      // The server REFUSED a requested model switch: the (model, provider)
+      // pair it named could not be honoured, so the turn kept the model
+      // and the provider it already runs on.
+      //
+      // The pending flag must be cleared - nothing else would clear it,
+      // because no `model_switched` follows a refusal - and the reason must
+      // reach the user. A refusal nobody sees looks exactly like a
+      // successful switch.
+      if (phase === 'model_switch_refused') {
+        if (targetSessionId !== undefined) {
+          actions.push({
+            type: 'SET_MODEL_SWITCH_PENDING',
+            sessionId: targetSessionId,
+            pending: false,
+          });
+        }
+        actions.push({
+          type: 'SET_ERROR',
+          error: switchFailureMessage(
+            'The model switch was refused',
+            typeof reason === 'string' ? reason : null
+          ),
+          ...(targetSessionId === undefined ? {} : { targetSessionId }),
+        });
+      } // The server has spliced a queued steering message into the
       // conversation. Only now — not when the send was first accepted
       // — do we echo it into the transcript and release the held
       // draft, matching on `steerId` so a stale ack from an earlier

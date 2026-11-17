@@ -115,6 +115,7 @@ export type DiagnosticPhase =
   | 'abort'
   | 'error'
   | 'model_switched'
+  | 'model_switch_refused'
   | 'config_unavailable'
   | 'numctx_probe_failed'
   | 'compaction_provider_unresolved'

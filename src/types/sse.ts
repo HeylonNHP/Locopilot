@@ -136,9 +136,22 @@ export interface SseEventPayloadMap {
      * applied, so the client can flip its "switching…" indicator only once
      * the swap has really taken effect. `compactionModel` is the resolved
      * value, so it equals `model` when the user is on "same as main".
+     *
+     * On `phase: 'model_switch_refused'` the same two fields name the
+     * models the turn CONTINUES on, because a refused switch leaves the
+     * turn exactly as it was.
      */
     model?: string;
     compactionModel?: string;
+    /**
+     * Set on `phase: 'model_switch_refused'`. The reason the switch was
+     * REFUSED: the (model, provider) pair it named could not be honoured,
+     * so the turn kept the model and the provider it already ran on. The
+     * client shows it - a refused switch must never look like a
+     * successful one, because `model_switched` is the only "the swap
+     * landed" signal.
+     */
+    reason?: string;
     /**
      * Set on `phase: 'steer_applied'`. Identifies which queued steering
      * message (by the id `/api/chat/steer` returned) was just spliced into

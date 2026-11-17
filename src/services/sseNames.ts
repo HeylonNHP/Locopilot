@@ -79,6 +79,7 @@ export type ChatPhase =
   | 'vision_unsupported'
   | 'sampling_param_unsupported'
   | 'model_switched'
+  | 'model_switch_refused'
   | 'steer_applied'
   | 'mermaid_retry';
 
@@ -97,6 +98,7 @@ export const CHAT_PHASES: readonly ChatPhase[] = [
   'vision_unsupported',
   'sampling_param_unsupported',
   'model_switched',
+  'model_switch_refused',
   'steer_applied',
   'mermaid_retry',
 ];

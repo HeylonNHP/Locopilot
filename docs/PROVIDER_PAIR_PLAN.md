@@ -193,6 +193,53 @@ reachable one switch away. The switch path logs rather than refuses, because
 a running turn must not die - closing it needs a decision of its own. See
 `CONFIRMATIONS.md` C-030.
 
+### Phase 2.5 â€” the mid-turn switch is checked as a pair, and a refused switch is refused WHOLE
+
+**Status: DONE (2026-11-17).** Implemented as described below; see
+`CONFIRMATIONS.md` C-030.
+
+Phase 2.2b closed the turn-start path. The switch was the last one.
+
+**The switch was the only path that introduced a new pair without checking
+it.** `POST /api/chat/switch-model` accepted any provider id and the turn
+applied it unchecked, so switching onto NVIDIA while the global compaction
+model was `beam` (an Ollama Cloud model) sent `beam` to NVIDIA and 404ed -
+the original production failure, reached one switch away.
+
+**The check is the turn's, not the route's.** `planModelSwitch`
+(`src/services/contextWindow/configProblem.ts`) forms the pair the switch
+WOULD form and puts it through the same checks a new turn is put through:
+the main pair through `configProblemFor`, the compaction pair through
+`compactionProblemFor`. The turn is the only place that knows what it runs
+on RIGHT NOW, and only the turn can say whether an `inherit-default`
+compaction would inherit the provider the switch moves it to. The route
+stays a thin registry writer - one owner for the pair rule.
+
+**A refused switch is refused WHOLE.** The turn keeps the model and the
+provider it already runs on, and the compaction keeps the selection it
+already has. A half-applied switch - the main model moved but the
+compaction left behind, or the other way round - is the ambiguity this rule
+exists to avoid. The turn stays alive: a running turn must not die.
+
+**The refusal is announced.** A new `status` phase,
+`model_switch_refused`, carries the reason. It is deliberately NOT the
+`error` event: that one means the turn failed, and the turn is still
+running. The client clears the "(switching...)" flag - nothing else would,
+because no `model_switched` follows a refusal - and shows the reason.
+
+**The client reports a refusal instead of swallowing it, and carries
+"Use the default".** `requestMidTurnModelSwitch` returns `{accepted,
+message}` and reads the response body; the message reaches the error
+banner. The switch sends `compaction: {kind:'inherit-default'}` instead of
+dropping it: the union can say it, the OLD flat pair could not (`null`
+meant "not sent"), which is why the pick used to be dropped and what was
+left was an empty request the route refused with HTTP 400.
+
+**A model-only switch moves the MODEL, not the endpoint.** It keeps the
+provider the turn already runs on. It used to recover a provider by MODEL
+NAME, which lands on `providers[0]` whenever the switched-to model is that
+provider's default - the cross-wire C-027 removed everywhere else.
+
 ### Phase 2.3 — the selection is one value with three states
 
 `CompactionSelection` in `src/services/sessionSelection.ts`:
@@ -332,9 +379,11 @@ residual is recorded as C-029 in `CONFIRMATIONS.md`.
 - `npx eslint src tests --max-warnings 0` — clean.
 - `npm test -- tests/compaction-rule tests/session-model-selection
   tests/session-compaction-pair tests/provider-persistence tests/config-load
-  tests/numctx-resolver` — green.
-- `npm run type-check` — only the pre-existing errors (the mermaid renderer's
-  `minNodeWidth` and the seven MCP OAuth `issuer` errors).
+  tests/numctx-resolver` — green. The two suites added later,
+  `tests/model-index` and `tests/provider-resolution`, are not in this list.
+- `npm run type-check` — clean (measured 2026-11-17; an earlier revision of
+  this plan recorded pre-existing mermaid / MCP OAuth errors that no longer
+  appear).
 - The full `npm test` — the same 21 pre-existing failing suites as before
   this branch (measured on 2026-11-17 on this machine; the plan said 22).
   They fail on a clean tree too (Node v22 has no `require(esm)`, and Windows

@@ -92,6 +92,17 @@ export function providerDoesNotServeMessage(
 }
 
 /**
+ * Whose provider a refusal is talking about.
+ *
+ * `'current'` is the provider the conversation RUNS ON - the turn-start
+ * case. `'switch-target'` is the provider a SWITCH would move it to, and a
+ * switch that names an incoherent pair is REFUSED, so the conversation does
+ * NOT end up on it. Saying "the provider this conversation uses" there
+ * would name a provider the conversation is not on.
+ */
+export type MainProviderRole = 'current' | 'switch-target';
+
+/**
  * The problem with a COMPACTION model that has no provider of its own, when
  * the provider it inherits - the one the CHAT runs on - does not serve it.
  *
@@ -111,14 +122,19 @@ export function providerDoesNotServeMessage(
 export function compactionProviderDoesNotServeMessage(
   config: Config | null,
   provider: ProviderConfig,
-  model: string
+  model: string,
+  role: MainProviderRole = 'current'
 ): string {
   const serving = servingProviderNames(config, provider, model);
   const hint =
     serving.length > 0
       ? ` The model "${model}" is served by ${serving.join(', ')} instead.`
       : ` No configured provider is known to serve it.`;
-  return `The compaction model "${model}" has no provider of its own, so it runs on the provider this conversation uses ("${provider.name}"), which does not serve it.${hint} Give the compaction model a provider that serves it - set "compactionProviderId" in config.json, or pick a compaction model and provider that belong together in Settings.`;
+  const whose =
+    role === 'switch-target'
+      ? `the provider the switch names ("${provider.name}")`
+      : `the provider this conversation uses ("${provider.name}")`;
+  return `The compaction model "${model}" has no provider of its own, so it runs on ${whose}, which does not serve it.${hint} Give the compaction model a provider that serves it - set "compactionProviderId" in config.json, or pick a compaction model and provider that belong together in Settings.`;
 }
 
 /**
@@ -136,11 +152,12 @@ export function compactionProviderDoesNotServeMessage(
 export function compactionModelServiceProblem(
   config: Config | null,
   provider: ProviderConfig,
-  model: string
+  model: string,
+  role: MainProviderRole = 'current'
 ): string | null {
   const service = providerServesModel(provider.id, provider.baseUrl, model);
   if (service === 'not-served') {
-    return compactionProviderDoesNotServeMessage(config, provider, model);
+    return compactionProviderDoesNotServeMessage(config, provider, model, role);
   }
   if (service === 'unknown') {
     // The index cannot answer yet. Refresh it in the background, so the
@@ -231,6 +248,14 @@ export function compactionProblemFor(
      */
     mainProvider: ProviderConfig | null;
     /**
+     * How the main provider is described when the refusal names it.
+     * `'current'` (the default) is the provider the chat runs on;
+     * `'switch-target'` is the provider a switch would move it to - and a
+     * switch that names an incoherent pair is REFUSED, so the conversation
+     * does not end up on it.
+     */
+    mainProviderRole?: MainProviderRole;
+    /**
      * The conversation's own compaction selection — ONE value, so it cannot
      * be a model without the provider that serves it.
      */
@@ -256,7 +281,12 @@ export function compactionProblemFor(
     // compaction model with no global compaction provider. It runs on the
     // provider the chat runs on, so THAT provider has to serve it. This is
     // the case that sent "beam" to NVIDIA (CONFIRMATIONS C-025).
-    return compactionModelServiceProblem(config, input.mainProvider, selection.model);
+    return compactionModelServiceProblem(
+      config,
+      input.mainProvider,
+      selection.model,
+      input.mainProviderRole ?? 'current'
+    );
   }
   return configProblemFor(config, selection.providerId, selection.model);
 }
@@ -311,4 +341,162 @@ export function requireWindow(effective: number | null): number {
     throw new Error(CONTEXT_SIZE_NOT_SET_MESSAGE);
   }
   return effective;
+}
+
+/**
+ * The problem with a provider id that names no configured provider, in a
+ * MODEL SWITCH.
+ *
+ * Its own wording, not `providerNotConfiguredMessage`'s: that one is about a
+ * REQUEST that cannot run on the provider, and this one is about a SWITCH
+ * that cannot use it.
+ */
+export function switchProviderNotConfiguredMessage(providerId: string): string {
+  return `The provider "${providerId}" is not configured, so the model switch cannot use it. Open Settings and pick a model and provider again.`;
+}
+
+/** What a switch would move the turn to. */
+export interface ModelSwitchTarget {
+  /** The model the turn would run on. */
+  model: string;
+  /** The provider the turn would run on. */
+  provider: ProviderConfig;
+  /** The compaction selection the turn would use. */
+  compaction: CompactionSelection;
+}
+
+/** What a mid-turn model switch would do, and whether it can be done. */
+export type ModelSwitchPlan =
+  | { ok: true; target: ModelSwitchTarget }
+  | { ok: false; problem: string };
+
+/** What a switch asks for, and what the turn runs on right now. */
+export interface ModelSwitchInput {
+  /** The model the turn runs on right now. */
+  currentModel: string;
+  /**
+   * The id of the provider the turn runs on right now, or `null` when it
+   * has none.
+   */
+  currentProviderId: string | null;
+  /** The switch's new main model, or `undefined` when it does not change it. */
+  model?: string | undefined;
+  /** The switch's new provider id, or `undefined` when it does not change it. */
+  providerId?: string | undefined;
+  /**
+   * The switch's new compaction selection, or `undefined` when the switch
+   * leaves the compaction alone.
+   */
+  compaction?: CompactionSelection | undefined;
+  /** The compaction selection the turn runs on right now. */
+  currentCompaction: CompactionSelection;
+}
+
+/**
+ * What a mid-turn model switch would do, and whether it can be done.
+ *
+ * A switch names a MODEL, a PROVIDER and a COMPACTION selection, and each of
+ * them forms a (model, provider) PAIR. The pair is only coherent if the
+ * provider actually carries the model, so the switch is put through exactly
+ * the checks a new turn is put through: the main pair through
+ * {@link configProblemFor} and the compaction pair through
+ * {@link compactionProblemFor} - both against the pair the switch WOULD
+ * form, not the one the turn has now.
+ *
+ * THE WHOLE SWITCH IS REFUSED when any of its pairs is incoherent. A
+ * half-applied switch is the ambiguity this rule exists to avoid: the turn
+ * would run on one model and compact with another, and neither would match
+ * what the user asked for. The refusal keeps the turn alive - a running
+ * turn must not die (CONFIRMATIONS C-027) - by leaving the turn exactly as
+ * it was.
+ *
+ * THE TARGET PROVIDER. The provider the switch names, resolved BY ID ONLY -
+ * a model name must never cross-wire another provider's endpoint and apiKey
+ * into this turn; otherwise the provider the turn ALREADY runs on, because
+ * a switch that names no provider moves the MODEL, not the endpoint;
+ * otherwise, with no provider at all, the model name is the only hint there
+ * is.
+ *
+ * WHY THE TURN DECIDES AND NOT THE ROUTE. The turn knows what it runs on
+ * RIGHT NOW - the model, the provider and the compaction selection it is
+ * actually using - and only the turn can say whether an `inherit-default`
+ * compaction would inherit the provider the switch moves it to. The route
+ * (`/api/chat/switch-model`) only has the request, so a route-side check
+ * would have to guess the live pair: a false refusal, or a missed one. This
+ * is the same decision C-027 already makes in the turn (a switch onto an
+ * unresolvable provider is refused there, not in the route).
+ *
+ * `unknown` from the model index NEVER refuses: a cold cache, a failed
+ * fetch and an empty list all let the switch through, because a dead or
+ * slow provider must not block a turn. The checks themselves kick the
+ * background refresh, so the NEXT switch can ask the question.
+ */
+export function planModelSwitch(config: Config | null, input: ModelSwitchInput): ModelSwitchPlan {
+  if (config === null) {
+    return {
+      ok: false,
+      problem:
+        'The saved configuration could not be read, so there is no provider to switch to. Check config.json and try again.',
+    };
+  }
+
+  // The MODEL the switch would run on. An empty model means "the model the
+  // turn already runs on" (the route drops an empty one).
+  const requestedModel = typeof input.model === 'string' ? input.model.trim() : '';
+  const targetModel = requestedModel === '' ? input.currentModel : requestedModel;
+
+  // The COMPACTION selection the switch would use: the switch replaces it
+  // WHOLE, and a switch that names none leaves the current one alone.
+  const targetCompaction = input.compaction ?? input.currentCompaction;
+
+  // The PROVIDER the switch would run on. A blank id is "no id": the route
+  // drops one, and `resolveProvider` treats `''` as falsy and falls through
+  // to the MODEL-NAME step - the cross-wire C-027 removed everywhere else.
+  const requestedProviderId = typeof input.providerId === 'string' ? input.providerId.trim() : '';
+  const targetProviderId =
+    requestedProviderId === '' ? input.currentProviderId : requestedProviderId;
+  const provider =
+    targetProviderId !== null && targetProviderId !== undefined
+      ? resolveProvider(config, targetProviderId)
+      : resolveProvider(config, undefined, targetModel);
+  if (provider === null) {
+    return {
+      ok: false,
+      problem:
+        targetProviderId !== null && targetProviderId !== undefined
+          ? switchProviderNotConfiguredMessage(targetProviderId)
+          : MODEL_NOT_CHOSEN_MESSAGE,
+    };
+  }
+
+  // The MAIN pair: the model the turn would run on, on the provider it
+  // would run on. The same check a new turn is put through.
+  const mainProblem = configProblemFor(config, provider.id, targetModel);
+  if (mainProblem !== null) {
+    return { ok: false, problem: mainProblem };
+  }
+
+  // The COMPACTION pair, checked against the pair the switch WOULD form: an
+  // explicit selection against its own provider, "same as main" against the
+  // new main pair, and an inherited global pair against the global provider
+  // - or, when there is none, against the provider the turn would run on.
+  // That last case is the one that sent "beam" to NVIDIA (CONFIRMATIONS
+  // C-025: 221 failures in 14 minutes).
+  const compactionProblem = compactionProblemFor(config, {
+    mainModel: targetModel,
+    mainProvider: provider,
+    // The provider is the one the switch WOULD move the turn to, and the
+    // switch is refused, so the message must not call it the one the
+    // conversation uses.
+    mainProviderRole: 'switch-target',
+    compaction: targetCompaction,
+  });
+  if (compactionProblem !== null) {
+    return { ok: false, problem: compactionProblem };
+  }
+
+  return {
+    ok: true,
+    target: { model: targetModel, provider, compaction: targetCompaction },
+  };
 }

@@ -564,7 +564,10 @@ describe('the server owns the window: no request body value is used', () => {
   test('the chat route resolves a mid-turn switch from the saved config, and keeps both hooks', () => {
     const route = read('src/app/api/chat/route.ts');
     expect(route).toMatch(/fromSavedSetting \? await loadConfig\(\)/);
-    expect(route).toContain('resolveNumCtxForModel(true)');
+    // The switch reads the saved config ONCE and hands the same snapshot
+    // to the plan, to the window probe and to the compaction runtime, so
+    // the check and the apply cannot disagree.
+    expect(route).toContain('resolveNumCtxForModel(true, setting)');
     expect(route).toContain('refreshModels');
   });
 

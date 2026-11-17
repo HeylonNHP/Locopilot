@@ -5,7 +5,12 @@ import { createPortal } from 'react-dom';
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { type LLmModel, useChat } from '@/app/lib/chatStore';
 import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
-import { type MidTurnModelSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
+import {
+  buildMidTurnSwitch,
+  isEmptyMidTurnSwitch,
+  type MidTurnModelSwitch,
+  requestMidTurnModelSwitch,
+} from '@/app/lib/switchModelClient';
 import { resolveCompactionRule } from '@/services/compactionRule';
 import {
   compactionSelectionForModel,
@@ -280,8 +285,7 @@ export default function ModelSelector({
   // inherits the global default and `''` when it compacts with its own main
   // model. The pickers show what the conversation chose; the status bar
   // shows what is actually used.
-  const activeModel =
-    mode === 'compaction' ? compactionSelectionToPair(compaction).model : model;
+  const activeModel = mode === 'compaction' ? compactionSelectionToPair(compaction).model : model;
 
   const inheritedCompactionName = defaultCompactionModel || model || 'the main model';
 
@@ -308,6 +312,10 @@ export default function ModelSelector({
   const switchMidTurn = useCallback(
     async (payload: MidTurnModelSwitch) => {
       if (streamingSessionId === null) return;
+      // Nothing to switch: the route refuses an empty body with HTTP 400,
+      // and there is no request to make. The "(switching...)" badge must
+      // not appear for a switch that does not exist.
+      if (isEmptyMidTurnSwitch(payload)) return;
       dispatch({
         type: 'SET_MODEL_SWITCH_PENDING',
         sessionId: streamingSessionId,
@@ -320,17 +328,24 @@ export default function ModelSelector({
       // server-side `pendingSwitches[sessionId]` is cleared by the route's
       // `unregisterActiveTurn` rather than being silently dropped after the
       // turn's finally runs.
-      const accepted = await requestMidTurnModelSwitch(
+      const result = await requestMidTurnModelSwitch(
         streamingSessionId,
         payload,
         abortControllersRef.current.get(streamingSessionId)?.signal
       );
-      if (!accepted) {
+      if (!result.accepted) {
         dispatch({
           type: 'SET_MODEL_SWITCH_PENDING',
           sessionId: streamingSessionId,
           pending: false,
         });
+      }
+      // A refusal is REPORTED. The server's message names the cause, and
+      // the error banner is where the rest of the app says what went
+      // wrong. A switch that was refused and not shown is a switch the
+      // user believes happened.
+      if (result.message !== null) {
+        dispatch({ type: 'SET_ERROR', error: result.message });
       }
     },
     [dispatch, streamingSessionId, abortControllersRef]
@@ -371,9 +386,7 @@ export default function ModelSelector({
       // The EFFECTIVE pair, not the raw pin: a conversation that pinned a
       // model without a provider of its own still runs on a provider, and
       // highlighting by the raw pin would match nothing at all.
-      return (
-        m.name === effectiveCompaction.model && m.providerId === effectiveCompactionProviderId
-      );
+      return m.name === effectiveCompaction.model && m.providerId === effectiveCompactionProviderId;
     },
     [mode, activeModel, activeProviderId, effectiveCompaction.model, effectiveCompactionProviderId]
   );
@@ -541,10 +554,7 @@ export default function ModelSelector({
         // The main model changed; the default compaction model and both
         // reasoning defaults are not touched.
         { model: modelName, providerId: providerId ?? null },
-        {
-          model: modelName,
-          ...(providerId ? { providerId } : {}),
-        }
+        buildMidTurnSwitch({ model: modelName, providerId })
       ),
     [applySelection]
   );
@@ -585,12 +595,16 @@ export default function ModelSelector({
               // pair then means "the main model on the main provider".
               compactionProviderId: providerId ?? null,
             },
-        {
-          // "Use the default" is NOT carried by the mid-turn switch: the
-          // running turn keeps the compaction it has resolved until the next
-          // turn sends the resolved one.
-          ...(nextCompactionModel === null ? {} : { compaction: picked }),
-        }
+        // The compaction selection travels WHOLE, in every state.
+        //
+        // "Use the default" travels too: the union can say it, so the
+        // running turn resolves the GLOBAL pair at its next tool step,
+        // exactly like the next turn would. Before the union existed the
+        // switch could not express it (the flat pair had no spelling for
+        // it), so the pick was dropped - and what was left was an EMPTY
+        // request, which the route refuses with HTTP 400 while the client
+        // threw the refusal away.
+        buildMidTurnSwitch({ compaction: picked })
       );
     },
     [applySelection, dispatch, onClose]
