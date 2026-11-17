@@ -17,7 +17,85 @@ Companion documents:
 - `docs/PROVIDER_PAIR_PLAN.md` - the branch's own design document (the
   authoritative statement of intent).
 - `CONFIRMATIONS.md` - the repo's record of confirmed gaps. The findings below
-  map onto C-025, C-026, C-027 and C-029.
+  map onto C-025, C-026, C-027, C-028, C-029 and C-030.
+
+---
+
+## 0. RESUME HERE
+
+**Read this section first. It is the whole handoff.**
+
+### Where the work stands
+
+Six of the ten bugs are fixed and committed. The branch is clean, and the
+full test suite fails the same 21 environmental suites it failed before any
+of this work started.
+
+| Bug | Severity         | Status   | Commit    | One line                                                                                                                      |
+| --- | ---------------- | -------- | --------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 1   | High             | **done** | `5db11d1` | The inherited global compaction pair is checked against the provider the chat runs on.                                        |
+| 2   | High             | **done** | `6a1e98b` | A refused mid-turn switch is refused WHOLE and announced.                                                                     |
+| 3   | High             | **done** | `6a1e98b` | The mid-turn switch is checked as a pair.                                                                                     |
+| 6   | Medium           | **done** | `7ca24ad` | The WRITE path normalises the pair; the frame carries what was written.                                                       |
+| 8   | Medium           | **done** | `6a1e98b` | "Use the default" is carried mid-turn; a refusal is reported.                                                                 |
+| 10  | Medium           | **done** | `7ca24ad` | The guarantee test reads the RAW row, so it can see a half-pair.                                                              |
+| 4   | Medium-High      | **open** | -         | `/api/dump` refuses a (model, provider) pair the chat accepts.                                                                |
+| 5   | Medium           | **open** | -         | A conversation can be created with a compaction provider that does not exist.                                                 |
+| 7   | Medium           | **open** | -         | The client throws away every server refusal message.                                                                          |
+| 9   | Low (was Medium) | **open** | -         | The global compaction-provider pin is wiped. Re-rated: every dispatcher supplies the key, so it is unreachable in production. |
+
+### The next action
+
+**BUG 7 - the client throws away every server refusal message.** It is the
+highest-value one left: every refusal the server makes (a ghost provider, an
+incoherent pair, a legacy half-pair) reaches the user as _"The model could
+not be saved for this conversation."_ instead of the cause.
+
+The fix is mostly a REUSE, not new machinery: the switch path already has
+`readErrorMessage` and `switchFailureMessage`
+(`src/app/lib/switchModelClient.ts`, added by BUG 8's fix). The two write
+paths in `src/app/lib/sessionSelectionClient.ts` (`saveSessionPatch` and
+`saveDefaultsPatch`) return a bare `res.ok` and throw the body away.
+
+Its call sites are `ModelSelector.applySelection`, `SettingsModal` and
+`ReasoningEffortSelector` - each currently shows a generic message and
+`SET_ERROR`s it.
+
+Then BUG 5 (+ A3), then BUG 4, then BUG 9.
+
+### The cycle that was used for each fix
+
+1. **Plan** with a sub-agent (one focused brief; a long brief got the agent
+   cancelled once - split it).
+2. **Implement** the plan by hand.
+3. **Verify and bug-hunt** with a SECOND sub-agent, told explicitly not to
+   touch the repo. This step earned its keep every time: it found a
+   destroyed CHANGELOG bullet, a vacuous new test, two wrong doc claims, a
+   blank-provider-id cross-wire and a stale scratchpad header - none of
+   which I had spotted.
+4. **Prove the new tests are not vacuous** with a revert simulation (see
+   section 11).
+5. **Update the docs**: `docs/CHANGELOG.md` (a new entry at the TOP),
+   `CONFIRMATIONS.md` (the entries the fix touches), `docs/PROVIDER_PAIR_PLAN.md`
+   (a phase section when the design changes), and THIS file (tick the bug,
+   add a "THE FIX" section, update the tracker).
+
+### Where the design decisions are written down
+
+- `docs/PROVIDER_PAIR_PLAN.md` - Phase 2.2b (the turn-start check) and
+  Phase 2.5 (the mid-turn switch).
+- `CONFIRMATIONS.md` - C-030 is the entry for the switch work; C-028 was
+  corrected when the write path was fixed.
+- The "THE FIX" sections in this file, under each bug.
+
+### Things a new session MUST NOT re-derive
+
+- The base is `origin/dev`, not `origin/master` (section 1).
+- The 21 failing suites are the baseline, not a regression (section 3).
+- The review's own false positives are listed in section 6 - do not re-audit
+  them.
+- The tooling traps that cost two rounds of corrupted edits are in
+  section 10. Read them before editing a file.
 
 ---
 
@@ -87,11 +165,12 @@ cd C:\git\Locopilot-dev
 npx eslint src tests --max-warnings 0
 npx tsc --noEmit
 
-# the branch's own suites - 8 suites / 208 tests, all green
+# the branch's own suites - 11 suites / 337 tests, all green
 npx cross-env NODE_OPTIONS="--experimental-vm-modules --no-warnings" jest `
+  tests/mid-turn-switch tests/model-index tests/sse-routing `
+  tests/provider-resolution tests/numctx-resolver tests/context-window `
   tests/compaction-rule tests/session-model-selection tests/session-compaction-pair `
-  tests/model-index tests/provider-resolution tests/provider-persistence `
-  tests/config-load tests/numctx-resolver
+  tests/provider-persistence tests/config-load
 
 # the whole suite - see the baseline below
 npm test
@@ -711,7 +790,14 @@ tests, and they pass on both sides.
 
 ---
 
-### [ ] BUG 9 - MEDIUM - picking a model wipes the global compaction-provider pin
+### [ ] BUG 9 - LOW (re-rated from Medium on 2026-11-17) - picking a model wipes the global compaction-provider pin
+
+**Re-rated on 2026-11-17: LOW.** All four `SET_SESSION_SELECTION` dispatchers
+(`ModelSelector.applySelection`, `SettingsModal`, `ReasoningEffortSelector`
+and `useSlashCommands`) build their `defaults` with `compactionProviderId`
+ALWAYS present, so the wipe is **unreachable in production** - only the
+branch's own tests dispatch a `defaults` object without the key. It is a
+typing weakness worth a one-line `=== undefined` guard, not a live bug.
 
 - `src/app/lib/chatStore.ts:1508` - `defaultCompactionProviderId:
 defaults.compactionProviderId` assigned **unconditionally**.
@@ -875,19 +961,26 @@ the fix.
 
 ## 7. SUGGESTED ORDER OF WORK
 
-1. **BUG 1** - DONE (2026-11-17). The branch's own C-025(b) criterion; the
-   original production incident.
-2. **BUG 2 + BUG 3** - DONE (2026-11-17), together with BUG 8. The switch
-   is checked as a pair, a refused switch is refused whole, and the refusal
-   is reported.
-3. **BUG 6 + BUG 10** - DONE (2026-11-17), together: the write path
-   normalises and the test reads the raw row.
-4. **BUG 5** - refuse an unconfigured compaction provider at write time.
-5. **BUG 7** - surface the server's refusal messages.
-6. **BUG 4** - make `/api/dump` work again.
-7. **BUG 8** - DONE (2026-11-17), with BUG 2 and BUG 3.
-8. **BUG 9** - guard `defaultCompactionProviderId`.
-9. The "Also found" list.
+1. **BUG 1** - DONE (2026-11-17, `5db11d1`). The branch's own C-025(b)
+   criterion; the original production incident.
+2. **BUG 2 + BUG 3** - DONE (2026-11-17, `6a1e98b`), together with BUG 8.
+   The switch is checked as a pair, a refused switch is refused whole, and
+   the refusal is reported.
+3. **BUG 6 + BUG 10** - DONE (2026-11-17, `7ca24ad`), together: the write
+   path normalises and the test reads the raw row.
+4. **BUG 7** - **NEXT.** Surface the server's refusal messages on the two
+   write paths in `src/app/lib/sessionSelectionClient.ts`. `readErrorMessage`
+   and `switchFailureMessage` already exist (added by BUG 8's fix) - this is a
+   reuse, not new machinery.
+5. **BUG 5 (+ A3)** - refuse an unconfigured compaction provider at write
+   time, and let the client repair a dangling COMPACTION provider the way it
+   already repairs a dangling main one.
+6. **BUG 4** - make `/api/dump` work again: it resolves the provider by
+   model name because the client sends no provider id, so the new pair check
+   judges the model against `providers[0]`.
+7. **BUG 9** - LOW. A one-line `=== undefined` guard; unreachable in
+   production.
+8. The "Also found" list (A1-A14), of which A4 is done.
 
 ## 8. PROGRESS TRACKER
 
@@ -901,16 +994,207 @@ the fix.
 | 6 - write path does not normalise         | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | `selectionToColumns` now goes through `coherentCompactionPair` - the same repair the read path uses - and the `model-changed` frame carries the pair that was actually written. |     |     |
 | 7 - refusal messages discarded            | Medium      | [ ]    |                                                                                      |                                                                                                                                                                                 |
 | 8 - empty mid-turn switch body            | Medium      | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | The switch carries `compaction: {kind:"inherit-default"}`; an empty payload sends no request; the route 400 and the server SSE refusal are both reported through `SET_ERROR`.   |
-| 9 - global compaction pin wiped           | Medium      | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| 9 - global compaction pin wiped           | Low         | [ ]    |                                                                                      |                                                                                                                                                                                 |
 | 10 - guarantee test is vacuous            | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | The test reads the RAW SQLite row instead of the normalised `listSessions()` projection, so it fails if the write path stops normalising. A second test pins the frame.         |     |     |
 | A1-A11                                    | Low/Info    | [ ]    |                                                                                      |                                                                                                                                                                                 |
 
 ## 9. REVIEW HYGIENE
 
-- All 7 probe files used by this review were deleted.
-- The throwaway `origin/dev` worktree (`%TEMP%\locopilot-base-check`) was
-  removed and `git worktree prune` was run.
-- `git status --short` at the end of the review showed only the four entries
-  that pre-dated it: `next-env.d.ts` (modified, gitignored anyway), and
-  `.claude/launch.json`, `.tmp-base/`, `config.json.tmp` (untracked).
+- Every probe file used along the way was deleted. The throwaway worktrees
+  (`%TEMP%\locopilot-base-check`, `%TEMP%\revert-check`, `%TEMP%\revert6`)
+  were removed and `git worktree prune` was run each time.
+- `git status --short` shows ONLY the four entries that pre-dated the work:
+  `M next-env.d.ts` (Next.js regenerates it; it is in `.gitignore` but was
+  already tracked) and the untracked `.claude/launch.json`, `.tmp-base/`,
+  `config.json.tmp`. Nothing else is ever staged.
+- The verification sub-agents were instructed not to touch the repo, and each
+  confirmed `git status --short` was byte-identical at the end.
 - The only file this scratchpad adds to the tree is this one.
+
+---
+
+## 10. TOOLING NOTES - how to edit this repo safely
+
+These are the traps that actually cost time. Read them before editing a
+file, not after.
+
+### 10.1 The `patch_file` tool mangles content whose lines begin with `- `
+
+A markdown bullet in the NEW text came out as `-- `, and two bullets were
+JOINED into one line. The same happened with a line starting with `**- `.
+
+**For markdown, use a PowerShell script file that does a LITERAL string
+replacement** instead. It has no line-marker ambiguity:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$enc = New-Object System.Text.UTF8Encoding($false)
+$t = [System.IO.File]::ReadAllText($path, $enc)
+$work = $t.Replace("`r`n", "`n")
+$count = ([regex]::Matches($work, [regex]::Escape($old))).Count
+if ($count -ne 1) { throw "anchor matches $count (expected 1) - ABORT" }
+$work = $work.Replace($old, $new)
+$work = $work.Replace("`n", "`r`n")
+[System.IO.File]::WriteAllText($path, $work, $enc)
+```
+
+The anchor-count assertion matters: it stops a replacement from silently
+hitting the wrong place, or from being applied twice.
+
+`patch_file` is fine for TypeScript source, as long as no line in the new
+text starts with `- `.
+
+### 10.2 PowerShell 5.1 reads a `.ps1` file as ANSI, not UTF-8
+
+A non-ASCII character written into a script file arrives mangled, and the
+anchor then does not match. Build the characters in code instead:
+
+```powershell
+$em    = [char]0x2014   # em dash
+$arrow = [char]0x2192   # right arrow
+$rsq   = [char]0x2019   # right single quote
+$apos  = [char]0x0027   # plain apostrophe
+```
+
+This repo's markdown uses `â†’` (U+2192) and `â€”` (U+2014), and plain ASCII
+apostrophes. Check what a file actually holds with:
+
+```powershell
+$enc = New-Object System.Text.UTF8Encoding($false)
+$t = [System.IO.File]::ReadAllText($f, $enc)
+$i = $t.IndexOf('needle')
+$t.Substring($i, 60).ToCharArray() | ForEach-Object { "U+{0:X4}" -f [int]$_ }
+```
+
+### 10.3 `git show` through PowerShell DESTROYS the encoding
+
+`git show HEAD:file | Out-String` pipes through the console codepage, so
+every em-dash becomes `?`. That silently flattened 72 em-dashes in
+`CONFIRMATIONS.md` once, and the file had to be rebuilt from HEAD.
+
+To read HEAD's bytes safely:
+
+```powershell
+cmd /c "git show HEAD:$f > `"$env:TEMP\h.txt`""     # raw bytes, no pipeline
+$h = [System.IO.File]::ReadAllText("$env:TEMP\h.txt", $enc)
+```
+
+`Get-Content` mangles non-ASCII too - use `[System.IO.File]::ReadAllText`
+or the `read_file` tool.
+
+### 10.4 A here-string terminator must be ALONE on its line
+
+`'@; $work = ...` breaks it - the here-string swallows the rest of the
+command. And a here-string inside an inline `run_command` is worse: put the
+script in a `.ps1` file and run it.
+
+### 10.5 Prettier: do NOT run it over the repo's existing markdown
+
+The repo's markdown is NOT prettier-formatted - several tracked `.md` files
+fail `npx prettier --check`, so CI's `npx prettier --check .` was already
+failing on them. Running prettier over `docs/CHANGELOG.md`,
+`CONFIRMATIONS.md` or `docs/PROVIDER_PAIR_PLAN.md` therefore reformats
+pre-existing lines: unrelated churn in a bug-fix commit, and it once broke
+a bullet in `CONFIRMATIONS.md`.
+
+- **Do** run prettier over the source and test files you touch.
+- **Do** run prettier over `docs/PROVIDER_PAIR_BUG_HUNT.md` (this file) -
+  it was clean at HEAD and is meant to stay that way. Run it AFTER any edit
+  made with the PowerShell script above: that script writes CRLF, and this
+  file's prettier config is `endOfLine: lf`, so `prettier --check` will
+  fail on a CRLF file even when the content is fine.
+- **Do not** run prettier over the other three.
+
+A `git stash` round-trip also rewrites the working tree with CRLF, which
+makes a prettier-clean file look unclean (the config is `endOfLine: lf`).
+Re-run prettier after any stash.
+
+### 10.6 Other small ones
+
+- `Get-Content "src/app/api/sessions/[id]/route.ts"` FAILS - PowerShell
+  treats `[id]` as a wildcard. Use `-LiteralPath`.
+- `git commit -m` with a long message gets mangled by the shell. Write the
+  message to `.git/COMMIT_EDITMSG_TMP.txt` and use `git commit -F`.
+- The commit convention HERE is `type(scope): summary` (e.g.
+  `fix(compaction): ...`), NOT the `DT-nnn:` style other repos use.
+- Do NOT stage `next-env.d.ts`: Next.js modifies it in the working tree and
+  it pre-dates this work. The other three untracked entries
+  (`.claude/launch.json`, `.tmp-base/`, `config.json.tmp`) are local and
+  must not be committed either.
+- `npx prettier --check .` reports ~1055 unclean files, almost all inside
+  `.claude/worktrees/` and `.tmp-base/` (local, untracked, not in CI).
+  Ignore that number.
+
+## 11. PROVING A TEST IS NOT VACUOUS - the revert simulation
+
+A test that passes on the pre-fix code pins nothing. This branch has a known
+history of vacuous tests (findings A5-A8), so every new test needs a
+revert simulation.
+
+```powershell
+$w = "$env:TEMP\revert-check"
+if (Test-Path $w) { Remove-Item -Recurse -Force $w }
+git worktree add --detach $w HEAD
+New-Item -ItemType Junction -Path "$w\node_modules" -Target "C:\git\Locopilot-dev\node_modules"
+Copy-Item tests/your-new.test.mjs "$w\tests\" -Force
+cd $w
+npx cross-env NODE_OPTIONS="--experimental-vm-modules --no-warnings" jest tests/your-new.test.mjs
+cd C:\git\Locopilot-dev
+Remove-Item -Recurse -Force $w; git worktree prune
+```
+
+A test that FAILS there is a real regression test. One that PASSES is
+vacuous: strengthen it or delete it.
+
+**The caveat, and it matters.** If the new test imports a function that did
+not exist before, the whole SUITE fails to LOAD - which counts as "fails",
+but it does not prove the individual assertions bite. Say that in the commit
+message rather than claiming more than the simulation shows. The BUG 1 and
+BUG 3 fixes both had this shape.
+
+## 12. THE SUB-AGENT BRIEFS THAT WORKED
+
+**Plan with one sub-agent.** Give it a SELF-CONTAINED brief: the repo path,
+the branch and base, the exact goal, the design decisions already made, the
+files in scope, the environment gotchas, and what to return. A very long
+brief got the agent cancelled once - split it into two focused briefs
+instead (the server half and the client half worked well).
+
+**Verify with a SECOND sub-agent**, told explicitly not to touch the repo.
+Ask for five things:
+
+1. Prove it works - with quoted probe output, marked PROVEN or INFERRED.
+2. Hunt for bugs it introduced or left behind, ranked, each with file:line.
+3. A false-refusal sweep - every legitimate scenario, and what happens.
+4. Test quality - would each NEW test catch a revert? Name the vacuous ones.
+5. Doc accuracy - every claim in the new docs that the code does not support.
+
+It found real defects every time - a destroyed CHANGELOG bullet, a vacuous
+new test, two wrong doc claims, a blank-provider-id cross-wire, a stale
+header. Do not skip it.
+
+Tell it: probes under `%TEMP%` only, no `git add/commit/stash/checkout/
+restore/reset`, and that `git status --short` must be identical at the end.
+
+## 13. WHAT THE BRANCH LOOKS LIKE NOW
+
+Nine commits on top of `origin/dev`:
+
+```
+7ca24ad fix(compaction): the WRITE path normalises the compaction pair
+6a1e98b fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported
+5db11d1 fix(compaction): the inherited global pair is checked against the chat's provider
+293577e docs(provider-pair): record the bug hunt findings as a scratchpad
+1efe87e feat(compaction): the store and the wire carry the selection as ONE value
+b65f097 feat(compaction): the compaction model and its provider are ONE value
+2b7f18e feat(provider): validate the (model, provider) pair against a cached model index
+29c5a12 fix(provider): resolve a stale provider id by id ONLY, and refuse it by name
+6de53ed feat(compaction): one rule decides the compaction model AND its provider
+```
+
+The three `fix(compaction)` commits at the top are THIS work. The five below
+them are the branch itself.
+
+Current numbers: the branch's 11 suites are **337/337 green**; the full
+suite fails the **same 21 environmental suites** as the base branch, with
+1899 passing of 1997.
