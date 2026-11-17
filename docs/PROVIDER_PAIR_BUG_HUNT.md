@@ -1,6 +1,6 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A4, A12 and A13. Of the A-table backlog, A5, A6, A7, A8, A9 and A10 are done and committed, and A1 is done (2026-11-18, not yet committed); A2, A3, A11 and A14 are open. See section 5.1.
+Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A4, A12 and A13. Of the A-table backlog, A5, A6, A7, A8, A9 and A10 are done and committed, and A1 is done (2026-11-18, `8d48a58`); A2, A3, A11 and A14 are open. See section 5.1.
 
 Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
 (merge-base == `origin/dev` tip). The branch is several commits ahead of the
