@@ -855,7 +855,8 @@ describe('the compaction selection is ONE value — the half-pair cannot exist',
   test('a provider with no model is refused too', () => {
     const parsed = parseCompactionSelection({ kind: 'explicit', providerId: 'openai' });
     expect(parsed.ok).toBe(false);
-    expect(parsed.error).not.toBeNull();
+    expect(parsed.error).toContain('names no model');
+    expect(parsed.error).toContain('together');
   });
 
   test('an unknown kind is refused', () => {

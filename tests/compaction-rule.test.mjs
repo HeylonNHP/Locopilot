@@ -75,7 +75,7 @@ function buildConfig(overrides = {}) {
 }
 
 describe('resolveCompactionRule — the model', () => {
-  test("a conversation pinned to the main model runs on its own main model", () => {
+  test('a conversation pinned to the main model runs on its own main model', () => {
     const result = resolveCompactionRule({
       mainModel: MAIN_MODEL,
       sessionCompaction: SAME_AS_MAIN,
@@ -363,7 +363,9 @@ describe('resolveCompactionSelection — the server composer', () => {
       mainModel: 'gpt-main',
       sessionCompaction: explicit('llama-local', 'ollama'),
     });
-    expect(selection.problem).not.toBeNull();
+    // It names the provider that could not be resolved, so the owner knows
+    // what to fix.
+    expect(selection.problem).toContain('The compaction provider "ollama" is not configured');
   });
 
   test('no pins at all resolves to the main model on the main provider', () => {

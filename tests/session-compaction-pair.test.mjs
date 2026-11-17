@@ -197,7 +197,10 @@ describe('PATCH /api/sessions/[id] — the compaction selection', () => {
       const { status, json } = await patch(id, { compactionProviderId: 'openai' });
 
       expect(status).toBe(400);
-      expect(json.error).not.toBeNull();
+      // The CONTENT is the point of a loud refusal: it names what was sent
+      // alone and says what to send instead.
+      expect(json.error).toContain('without the compaction model it serves');
+      expect(json.error).toContain('together');
       expect(getSessionSelection(id).compaction).toEqual({ kind: 'inherit-default' });
     });
   });
