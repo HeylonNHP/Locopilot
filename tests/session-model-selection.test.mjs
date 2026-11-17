@@ -239,6 +239,35 @@ describe('the selection vocabulary', () => {
     );
   });
 
+  describe('the LEGACY flat pair in a patch (a tab open before the change)', () => {
+    // The pair is ONE value, so a legacy patch states BOTH halves or NEITHER:
+    // editing one half alone leaves the other half describing a different
+    // choice. These are the unit-level pins of that refusal; the route-level
+    // ones are in session-compaction-pair.test.mjs.
+    test.each([
+      [{ compactionModel: null }, 'without the compaction provider it travels with'],
+      [{ compactionModel: '' }, 'without the compaction provider it travels with'],
+      [
+        { compactionModel: 'cheap' },
+        'The compaction model "cheap" was changed without the provider',
+      ],
+      [{ compactionProviderId: 'p' }, 'without the compaction model it serves'],
+    ])('%j alone is refused with a message that says what to send', (patch, fragment) => {
+      const result = validateSessionSelectionPatch(patch);
+      expect(typeof result).toBe('string');
+      expect(result).toContain(fragment);
+      expect(result).toContain('together');
+    });
+
+    test.each([
+      [{ compactionModel: null, compactionProviderId: null }, INHERIT_DEFAULT],
+      [{ compactionModel: '', compactionProviderId: null }, SAME_AS_MAIN],
+      [{ compactionModel: 'c', compactionProviderId: 'p' }, explicit('c', 'p')],
+    ])('%j, both halves together, means one selection', (patch, compaction) => {
+      expect(validateSessionSelectionPatch(patch)).toStrictEqual({ compaction });
+    });
+  });
+
   test('a patch merges onto the stored selection without touching absent fields', () => {
     const current = {
       model: 'm',
