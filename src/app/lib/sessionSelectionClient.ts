@@ -2,6 +2,40 @@
 
 import type { SessionDefaultsPatch, SessionSelectionPatch } from '@/services/sessionSelection';
 
+import { readErrorMessage } from '@/app/lib/switchModelClient';
+
+/**
+ * What a save achieved.
+ *
+ * A failure carries the server's own words when it said any: the server
+ * writes a message that names the cause (ground rule 3 of the provider-pair
+ * work: "a pair that cannot be honoured is refused with a message that names
+ * the cause"), and a bare boolean threw it away, so every refusal reached the
+ * user as the same generic sentence. `message` is `null` when there is
+ * nothing to add - the request never got an answer, or the answer had no
+ * body.
+ */
+export type SaveResult = { ok: true } | { ok: false; message: string | null };
+
+const SAVED: SaveResult = { ok: true };
+
+/**
+ * `fallback` with the server's cause appended, or `fallback` alone when the
+ * server said nothing.
+ *
+ * The error banner shows the FIRST line as its headline, so the cause goes in
+ * the first line, after the generic sentence.
+ */
+export function saveFailureMessage(fallback: string, result: SaveResult): string {
+  if (result.ok || result.message === null) return fallback;
+  return `${fallback.replace(/\.$/, '')}: ${result.message}`;
+}
+
+/** The failure for a response the server refused. */
+async function refused(res: Response): Promise<SaveResult> {
+  return { ok: false, message: await readErrorMessage(res) };
+}
+
 /**
  * The body that writes the global defaults - what a NEW conversation starts
  * with - to `config.json`.
@@ -37,19 +71,20 @@ function defaultsBody(patch: SessionDefaultsPatch): Record<string, unknown> {
 /**
  * Save a field-preserving change to the global defaults.
  *
- * Returns false when the server refused it. The defaults are what a new
- * conversation starts with; the conversation on screen is unaffected.
+ * Reports the server's refusal instead of swallowing it. The defaults are
+ * what a new conversation starts with; the conversation on screen is
+ * unaffected.
  */
-export async function saveDefaultsPatch(patch: SessionDefaultsPatch): Promise<boolean> {
+export async function saveDefaultsPatch(patch: SessionDefaultsPatch): Promise<SaveResult> {
   try {
     const res = await fetch('/api/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(defaultsBody(patch)),
     });
-    return res.ok;
+    return res.ok ? SAVED : await refused(res);
   } catch {
-    return false;
+    return { ok: false, message: null };
   }
 }
 
@@ -59,24 +94,24 @@ export async function saveDefaultsPatch(patch: SessionDefaultsPatch): Promise<bo
  * A new chat has no row yet: there is nothing to write, and the values become
  * part of the `POST /api/sessions` body that creates it.
  *
- * Returns false when the row could not be written. The caller puts the old
+ * Reports why the row could not be written. The caller puts the old
  * selection back / reports the failure: a selection the server does not know
  * about is a selection that is lost on the next reload.
  */
 export async function saveSessionPatch(
   sessionId: number | null,
   patch: SessionSelectionPatch
-): Promise<boolean> {
-  if (sessionId === null) return true;
+): Promise<SaveResult> {
+  if (sessionId === null) return SAVED;
   try {
     const res = await fetch(`/api/sessions/${sessionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
-    return res.ok;
+    return res.ok ? SAVED : await refused(res);
   } catch {
-    return false;
+    return { ok: false, message: null };
   }
 }
 
@@ -93,7 +128,7 @@ export async function saveSessionPatch(
  * their next new conversation, while a row that failed to save would lose the
  * value of the conversation they are in.
  *
- * Returns false when EITHER write failed. The caller must not dispatch the
+ * Fails when EITHER write failed. The caller must not dispatch the
  * new values as saved in that case — in particular, a defaults write that
  * failed must not be shown as the new default.
  */
@@ -101,7 +136,8 @@ export async function saveSelectionChanges(
   sessionId: number | null,
   selectionPatch: SessionSelectionPatch,
   defaultsPatch: SessionDefaultsPatch
-): Promise<boolean> {
-  if (!(await saveSessionPatch(sessionId, selectionPatch))) return false;
+): Promise<SaveResult> {
+  const sessionSaved = await saveSessionPatch(sessionId, selectionPatch);
+  if (!sessionSaved.ok) return sessionSaved;
   return saveDefaultsPatch(defaultsPatch);
 }

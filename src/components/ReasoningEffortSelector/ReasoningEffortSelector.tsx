@@ -4,12 +4,13 @@ import { createPortal } from 'react-dom';
 
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { useChat } from '@/app/lib/chatStore';
-import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
-import { resolveCompactionRule } from '@/services/compactionRule';
 import {
-  type SessionDefaults,
-  type SessionSelection,
-} from '@/services/sessionSelection';
+  saveDefaultsPatch,
+  saveFailureMessage,
+  saveSessionPatch,
+} from '@/app/lib/sessionSelectionClient';
+import { resolveCompactionRule } from '@/services/compactionRule';
+import { type SessionDefaults, type SessionSelection } from '@/services/sessionSelection';
 import {
   type ProviderConfig,
   REASONING_EFFORT_LABELS,
@@ -214,15 +215,18 @@ export default function ReasoningEffortSelector({
       };
 
       const sessionSaved = await saveSessionPatch(currentSessionId, selectionPatch);
-      if (!sessionSaved) {
+      if (!sessionSaved.ok) {
         dispatch({
           type: 'SET_ERROR',
-          error: 'The reasoning level could not be saved for this conversation.',
+          error: saveFailureMessage(
+            'The reasoning level could not be saved for this conversation.',
+            sessionSaved
+          ),
         });
         return;
       }
       const defaultsSaved = await saveDefaultsPatch(defaultsPatch);
-      if (!defaultsSaved) {
+      if (!defaultsSaved.ok) {
         // The conversation's row IS saved, so the screen follows it (the
         // server's row is the truth) and only the global default is behind.
         if (currentSessionId !== null) {
@@ -230,7 +234,10 @@ export default function ReasoningEffortSelector({
         }
         dispatch({
           type: 'SET_ERROR',
-          error: 'The reasoning level was saved for this conversation, but not for new chats.',
+          error: saveFailureMessage(
+            'The reasoning level was saved for this conversation, but not for new chats.',
+            defaultsSaved
+          ),
         });
         return;
       }

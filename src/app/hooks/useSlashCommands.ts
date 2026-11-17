@@ -5,7 +5,11 @@ import { type Dispatch, type SetStateAction, useCallback } from 'react';
 
 import { type ChatMessage, useChat } from '@/app/lib/chatStore';
 import { positiveInteger } from '@/app/lib/contextWindow';
-import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
+import {
+  saveDefaultsPatch,
+  saveFailureMessage,
+  saveSessionPatch,
+} from '@/app/lib/sessionSelectionClient';
 import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
 import { COMPACT_FOCUS_MAX_CHARS, normaliseCompactionFocus } from '@/services/compact/focus';
 import { formatCompactionReceipt } from '@/services/compact/receipt';
@@ -359,15 +363,20 @@ export function useSlashCommands({
                 model: modelName,
                 providerId: modelProviderId,
               });
-              if (!sessionSaved) {
-                addSystem('The model could not be saved for this conversation.');
+              if (!sessionSaved.ok) {
+                addSystem(
+                  saveFailureMessage(
+                    'The model could not be saved for this conversation.',
+                    sessionSaved
+                  )
+                );
                 return;
               }
               const defaultsSaved = await saveDefaultsPatch({
                 model: modelName,
                 providerId: modelProviderId,
               });
-              if (!defaultsSaved) {
+              if (!defaultsSaved.ok) {
                 // The conversation's row IS saved, so the screen follows it
                 // (the server's row is the truth) and only the global
                 // default is behind.
@@ -376,7 +385,10 @@ export function useSlashCommands({
                   dispatch({ type: 'APPLY_SESSION_SELECTION', sessionId, selection });
                 }
                 addSystem(
-                  'The model was set for this conversation, but the default for new chats could not be saved.'
+                  saveFailureMessage(
+                    'The model was set for this conversation, but the default for new chats could not be saved.',
+                    defaultsSaved
+                  )
                 );
                 return;
               }

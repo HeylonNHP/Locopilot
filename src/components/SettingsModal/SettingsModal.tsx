@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { useModalOverlay } from '@/app/hooks/useModalOverlay';
 import { useChat } from '@/app/lib/chatStore';
 import { describeContextWindow, interpretNumCtxInput } from '@/app/lib/contextWindow';
-import { saveSessionPatch } from '@/app/lib/sessionSelectionClient';
+import { saveFailureMessage, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import { buildMidTurnSwitch, requestMidTurnModelSwitch } from '@/app/lib/switchModelClient';
 import { timeoutPartsToMs } from '@/app/lib/timeoutParts';
 import { DEFAULT_OLLAMA_CHAT_TIMEOUT_MS, DEFAULT_WEB_SEARCH_REQUEST_TIMEOUT_MS } from '@/constants';
@@ -364,8 +364,13 @@ export default function SettingsModal({ onClose }: Props) {
       // saves.
       if (model.trim().length > 0 && Object.keys(selectionPatch).length > 0) {
         const selectionSaved = await saveSessionPatch(state.currentSessionId, selectionPatch);
-        if (!selectionSaved) {
-          throw new Error('The model could not be saved for this conversation.');
+        if (!selectionSaved.ok) {
+          throw new Error(
+            saveFailureMessage(
+              'The model could not be saved for this conversation.',
+              selectionSaved
+            )
+          );
         }
       }
 

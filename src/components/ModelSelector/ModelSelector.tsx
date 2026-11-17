@@ -4,7 +4,11 @@ import { createPortal } from 'react-dom';
 
 import { useClickOutsideEscape } from '@/app/hooks/useClickOutsideEscape';
 import { type LLmModel, useChat } from '@/app/lib/chatStore';
-import { saveDefaultsPatch, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
+import {
+  saveDefaultsPatch,
+  saveFailureMessage,
+  saveSessionPatch,
+} from '@/app/lib/sessionSelectionClient';
 import {
   buildMidTurnSwitch,
   isEmptyMidTurnSwitch,
@@ -507,15 +511,20 @@ export default function ModelSelector({
           defaultsPatch.compactionReasoningEffort ?? defaultCompactionReasoningEffort,
       };
 
-      if (!(await saveSessionPatch(currentSessionId, selectionPatch))) {
+      const sessionSaved = await saveSessionPatch(currentSessionId, selectionPatch);
+      if (!sessionSaved.ok) {
         dispatch({
           type: 'SET_ERROR',
-          error: 'The model could not be saved for this conversation.',
+          error: saveFailureMessage(
+            'The model could not be saved for this conversation.',
+            sessionSaved
+          ),
         });
         onClose();
         return;
       }
-      if (!(await saveDefaultsPatch(defaultsPatch))) {
+      const defaultsSaved = await saveDefaultsPatch(defaultsPatch);
+      if (!defaultsSaved.ok) {
         // The conversation's row IS saved, so the screen follows it (the
         // server's row is the truth) and only the global default is behind.
         // The default stays as the server has it, which is what the store
@@ -525,7 +534,10 @@ export default function ModelSelector({
         }
         dispatch({
           type: 'SET_ERROR',
-          error: 'The model was saved for this conversation, but not for new chats.',
+          error: saveFailureMessage(
+            'The model was saved for this conversation, but not for new chats.',
+            defaultsSaved
+          ),
         });
         onClose();
         return;

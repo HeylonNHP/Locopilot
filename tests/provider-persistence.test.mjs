@@ -10,6 +10,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   saveDefaultsPatch,
+  saveFailureMessage,
   saveSelectionChanges,
   saveSessionPatch,
 } from '../src/app/lib/sessionSelectionClient.ts';
@@ -132,7 +133,7 @@ describe('provider persistence', () => {
           { model: 'qwen3-coder:30b', providerId: 'openrouter' },
           { model: 'qwen3-coder:30b', providerId: 'openrouter' }
         );
-        expect(saved).toBe(false);
+        expect(saved.ok).toBe(false);
       } finally {
         fetchSpy.mockRestore();
       }
@@ -151,10 +152,84 @@ describe('provider persistence', () => {
           { reasoningEffort: 'high' },
           { reasoningEffort: 'high' }
         );
-        expect(saved).toBe(false);
+        expect(saved.ok).toBe(false);
       } finally {
         fetchSpy.mockRestore();
       }
+    });
+
+    test("the server's own refusal reaches the caller, from the row write and from the defaults write", async () => {
+      // BUG 7: both writes returned `res.ok` and threw the body away, so every
+      // refusal reached the user as the same generic sentence.
+      const refusal = (message) => ({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: message }),
+      });
+      const fetchSpy = jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(refusal('The compaction provider "ghost" is not configured.'));
+      try {
+        const row = await saveSessionPatch(7, { reasoningEffort: 'high' });
+        expect(row).toStrictEqual({
+          ok: false,
+          message: 'The compaction provider "ghost" is not configured.',
+        });
+        const defaults = await saveDefaultsPatch({ reasoningEffort: 'high' });
+        expect(defaults).toStrictEqual({
+          ok: false,
+          message: 'The compaction provider "ghost" is not configured.',
+        });
+        // and a failed row write stops the pair: the defaults are not written
+        fetchSpy.mockClear();
+        const both = await saveSelectionChanges(7, { reasoningEffort: 'high' }, {});
+        expect(both.ok).toBe(false);
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    test('a request that never got an answer has no message to add', async () => {
+      const fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('down'));
+      try {
+        expect(await saveSessionPatch(7, { reasoningEffort: 'high' })).toStrictEqual({
+          ok: false,
+          message: null,
+        });
+        expect(await saveDefaultsPatch({ reasoningEffort: 'high' })).toStrictEqual({
+          ok: false,
+          message: null,
+        });
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    test('a successful write is ok, and a new chat has no row to write', async () => {
+      const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true });
+      try {
+        expect(await saveSessionPatch(7, { reasoningEffort: 'high' })).toStrictEqual({ ok: true });
+        expect(await saveSessionPatch(null, { reasoningEffort: 'high' })).toStrictEqual({
+          ok: true,
+        });
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    test('the failure message carries the cause in its FIRST line, the banner headline', () => {
+      const generic = 'The model could not be saved for this conversation.';
+      const message = saveFailureMessage(generic, {
+        ok: false,
+        message: 'ghost is not configured',
+      });
+      expect(message.split('\n')[0]).toBe(
+        'The model could not be saved for this conversation: ghost is not configured'
+      );
+      // nothing to add: the generic sentence is kept as it was
+      expect(saveFailureMessage(generic, { ok: false, message: null })).toBe(generic);
+      expect(saveFailureMessage(generic, { ok: true })).toBe(generic);
     });
 
     test('a new chat has no row to write', async () => {

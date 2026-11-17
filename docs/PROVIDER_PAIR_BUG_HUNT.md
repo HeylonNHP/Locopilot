@@ -1,6 +1,6 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **open - 10 bugs triaged, 6 fixed** (2026-11-17). BUG 1, BUG 2, BUG 3, BUG 6, BUG 8 and BUG 10 are done.
+Status: **open - 10 bugs triaged, 7 fixed** (2026-11-17). BUG 1, BUG 2, BUG 3, BUG 6, BUG 7, BUG 8 and BUG 10 are done.
 
 Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
 (merge-base == `origin/dev` tip). The branch is several commits ahead of the
@@ -27,8 +27,7 @@ Companion documents:
 
 ### Where the work stands
 
-Six of the ten bugs are fixed and committed. The branch is clean, and the
-full test suite fails the same 21 environmental suites it failed before any
+Seven of the ten bugs are fixed and committed. The full test suite fails the same 21 environmental suites it failed before any
 of this work started.
 
 | Bug | Severity         | Status   | Commit    | One line                                                                                                                      |
@@ -41,27 +40,21 @@ of this work started.
 | 10  | Medium           | **done** | `7ca24ad` | The guarantee test reads the RAW row, so it can see a half-pair.                                                              |
 | 4   | Medium-High      | **open** | -         | `/api/dump` refuses a (model, provider) pair the chat accepts.                                                                |
 | 5   | Medium           | **open** | -         | A conversation can be created with a compaction provider that does not exist.                                                 |
-| 7   | Medium           | **open** | -         | The client throws away every server refusal message.                                                                          |
+| 7   | Medium           | **done** | see tracker | The save helpers return the server's refusal message and every call site shows it.                                          |
 | 9   | Low (was Medium) | **open** | -         | The global compaction-provider pin is wiped. Re-rated: every dispatcher supplies the key, so it is unreachable in production. |
 
 ### The next action
 
-**BUG 7 - the client throws away every server refusal message.** It is the
-highest-value one left: every refusal the server makes (a ghost provider, an
-incoherent pair, a legacy half-pair) reaches the user as _"The model could
-not be saved for this conversation."_ instead of the cause.
+**BUG 5 - a conversation can be created, or its selection patched, with a pair
+the chat would refuse** (`POST /api/sessions`, `PATCH /api/sessions/[id]`),
+together with A3. It is also the root of a gap found while reviewing `6a1e98b`:
+the pickers save the selection BEFORE asking the running turn to switch, and
+the PATCH route runs no pair check, so a refused mid-turn switch leaves an
+incoherent selection saved. With the check in PATCH, the save fails first and
+no switch is sent. BUG 7's fix means the refusal text will now reach the user.
 
-The fix is mostly a REUSE, not new machinery: the switch path already has
-`readErrorMessage` and `switchFailureMessage`
-(`src/app/lib/switchModelClient.ts`, added by BUG 8's fix). The two write
-paths in `src/app/lib/sessionSelectionClient.ts` (`saveSessionPatch` and
-`saveDefaultsPatch`) return a bare `res.ok` and throw the body away.
-
-Its call sites are `ModelSelector.applySelection`, `SettingsModal` and
-`ReasoningEffortSelector` - each currently shows a generic message and
-`SET_ERROR`s it.
-
-Then BUG 5 (+ A3), then BUG 4, then BUG 9.
+Then BUG 4, then BUG 9. A13 (the "(switching...)" badge that sticks when a
+switch arrives during the final answer) is a one-line fix worth its own row.
 
 ### The cycle that was used for each fix
 
@@ -672,7 +665,7 @@ client's reaction to a half-pair frame is to **silently reset the pin** (see
 
 ---
 
-### [ ] BUG 7 - MEDIUM - the client throws away every server refusal message
+### [x] BUG 7 - MEDIUM - the client throws away every server refusal message
 
 - `src/app/lib/sessionSelectionClient.ts:50` - `saveDefaultsPatch` returns
   `res.ok`.
@@ -992,7 +985,7 @@ the fix.
 | 4 - /api/dump refuses a valid pair        | Medium-High | [ ]    |                                                                                      |                                                                                                                                                                                 |
 | 5 - session created with a ghost provider | Medium      | [ ]    |                                                                                      |                                                                                                                                                                                 |
 | 6 - write path does not normalise         | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | `selectionToColumns` now goes through `coherentCompactionPair` - the same repair the read path uses - and the `model-changed` frame carries the pair that was actually written. |     |     |
-| 7 - refusal messages discarded            | Medium      | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| 7 - refusal messages discarded            | Medium      | [x]    | `fix(client): report the server's refusal when a selection cannot be saved`          | `saveSessionPatch` / `saveDefaultsPatch` / `saveSelectionChanges` return `SaveResult`; `saveFailureMessage` puts the server's cause in the banner headline at all five call sites. |
 | 8 - empty mid-turn switch body            | Medium      | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | The switch carries `compaction: {kind:"inherit-default"}`; an empty payload sends no request; the route 400 and the server SSE refusal are both reported through `SET_ERROR`.   |
 | 9 - global compaction pin wiped           | Low         | [ ]    |                                                                                      |                                                                                                                                                                                 |
 | 10 - guarantee test is vacuous            | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | The test reads the RAW SQLite row instead of the normalised `listSessions()` projection, so it fails if the write path stops normalising. A second test pins the frame.         |     |     |
