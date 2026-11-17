@@ -100,7 +100,17 @@ describe('provider persistence', () => {
       expect(writes.config).toStrictEqual({});
     });
 
-    test('the compaction selection travels as ONE value, never as two fields', async () => {
+    test('a compaction pick is written as the one value it was given, and the writer adds no flat fields of its own', async () => {
+      // WHAT THIS PROVES: `saveSessionPatch` forwards the patch it is handed,
+      // and does not synthesise the legacy flat pair (`compactionModel` /
+      // `compactionProviderId`) next to the union - a writer that mirrored the
+      // union into both shapes would fail here. WHAT IT DOES NOT PROVE: that no
+      // caller builds a flat pair. That guarantee lives elsewhere: the patch
+      // type (`SessionSelectionPatch`) has no flat fields, so `tsc` refuses an
+      // object LITERAL that names one (it does not catch a non-literal that
+      // also carries a valid field), and the server refuses a half-pair in
+      // either shape (`session-compaction-pair.test.mjs`).
+
       const writes = await captureWrites(() =>
         saveSelectionChanges(
           7,
