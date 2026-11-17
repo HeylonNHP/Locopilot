@@ -223,8 +223,7 @@ export function compactionSelectionFromPayload(
     return parseCompactionSelection(payload.compaction);
   }
   const providerGiven =
-    typeof payload.compactionProviderId === 'string' &&
-    payload.compactionProviderId.trim() !== '';
+    typeof payload.compactionProviderId === 'string' && payload.compactionProviderId.trim() !== '';
   if (typeof payload.compactionModel !== 'string' && providerGiven) {
     const providerId = (payload.compactionProviderId as string).trim();
     const model = fallbackModel.trim();
@@ -324,10 +323,7 @@ export function compactionSelectionForModel(
  * user picked something" and "the row says the same thing again" must not
  * look alike.
  */
-export function compactionSelectionEquals(
-  a: CompactionSelection,
-  b: CompactionSelection
-): boolean {
+export function compactionSelectionEquals(a: CompactionSelection, b: CompactionSelection): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'explicit' && b.kind === 'explicit') {
     return a.model === b.model && a.providerId === b.providerId;
@@ -494,11 +490,16 @@ export function selectionFromColumns(columns: SessionSelectionColumns): SessionS
 }
 
 export function selectionToColumns(selection: SessionSelection): SessionSelectionColumns {
-  // The pair is normalised on the way out too, so the illegal combination
-  // cannot reach the row even if a caller built one by hand. The write
-  // paths REFUSE an incoherent pair before they get here; this is the
-  // belt to that pair of braces.
-  const pair = compactionSelectionToPair(selection.compaction);
+  // The pair is NORMALISED on the way out, so the illegal combination
+  // cannot reach the row even if a caller built one by hand. The repair is
+  // the SAME one the read path uses (`compactionSelectionFromLoosePair`),
+  // so the row and a browser that reads it back agree - and so the frame
+  // that announces the change can be the pair that was actually written.
+  //
+  // The write paths REFUSE an incoherent pair before they get here; this is
+  // the belt to that pair of braces.
+  const loose = compactionSelectionToPair(selection.compaction);
+  const pair = coherentCompactionPair(loose.model, loose.providerId);
   return {
     model: selection.model,
     provider_id: selection.providerId,

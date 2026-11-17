@@ -1,6 +1,6 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **open - 10 bugs triaged, 4 fixed** (2026-11-17). BUG 1, BUG 2, BUG 3 and BUG 8 are done.
+Status: **open - 10 bugs triaged, 6 fixed** (2026-11-17). BUG 1, BUG 2, BUG 3, BUG 6, BUG 8 and BUG 10 are done.
 
 Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
 (merge-base == `origin/dev` tip). The branch is several commits ahead of the
@@ -506,7 +506,11 @@ run time.
 
 ---
 
-### [ ] BUG 6 - MEDIUM - the write path does not normalise, and the SSE frame announces the raw pair
+### [x] BUG 6 - MEDIUM - the write path does not normalise, and the SSE frame announces the raw pair
+
+**FIXED 2026-11-17.** The write path now goes through the SAME repair the
+read path uses, and the frame carries the pair that was actually written.
+See "THE FIX" at the end of this entry.
 
 Two false comments and one latent hole.
 
@@ -543,6 +547,38 @@ from `selectionFromColumns` (normalised) and `patch.compaction` comes from
 `parseCompactionSelection` (validated), so the merge is always coherent. It is
 reachable from any internal caller that builds a `SessionSelection` by hand -
 which is exactly what the branch's own test does.
+
+#### THE FIX (2026-11-17)
+
+- `src/services/sessionSelection.ts` - `selectionToColumns` now goes through
+  `coherentCompactionPair`, the SAME repair the READ path uses
+  (`compactionSelectionFromLoosePair`). Before, it called
+  `compactionSelectionToPair`, which is a pure projection and repairs
+  nothing - so the comment "this is the belt to that pair of braces" was
+  false. One function, and BOTH database writes are covered: `createSession`
+  (`src/services/history.ts:455`) and `updateSessionSelection`
+  (`src/services/history.ts:476`).
+- `src/services/history.ts` - the `model-changed` frame announces
+  `selectionFromColumns(columns).compaction`, the pair that was actually
+  written, rather than the selection the caller handed over. A browser can
+  therefore never be handed a compaction model with no provider - and a
+  browser that received one would have silently reset the pin to "inherit
+  the global default".
+
+**Proof, after the fix:**
+
+```
+PROBE raw row = {"compaction_model":null,"compaction_provider_id":null}
+PROBE announced compaction = {"kind":"inherit-default"}
+```
+
+**A NOTE ON THE FALSE COMMENTS.** Two comments in the branch claimed this
+was handled when it was not: one in `selectionToColumns` ("this is the belt
+to that pair of braces") and one in `history.ts` ("the NORMALISED one...
+the row can never hold a compaction model without the provider that serves
+it"). Both were false until 2026-11-17. `CONFIRMATIONS.md` C-028 listed the
+write path as one of the branch's defences; that claim was false too, and is
+now corrected there.
 
 **Why it still matters.** (a) The safety lives in the callers, not the writer,
 and both comments actively tell the next developer it is handled. (b) The
@@ -702,7 +738,11 @@ asserted by **no test in the repo** (grep for it in `tests/` returns 0 hits).
 
 ---
 
-### [ ] BUG 10 - MEDIUM - the branch's central guarantee test passes while the row violates it
+### [x] BUG 10 - MEDIUM - the branch's central guarantee test passes while the row violates it
+
+**FIXED 2026-11-17.** The test reads the RAW row now, so it can actually
+see a half-pair - and it fails if the write path stops normalising. See
+"THE FIX" at the end of this entry.
 
 - `tests/session-model-selection.test.mjs:842-853` - the test _"a row can never
   hold a compaction model without its provider"_:
@@ -736,6 +776,28 @@ leave it green. The branch's single most important guarantee is untested.
 assert on `compaction_model` rather than on the `listSessions()` projection.
 Fix this together with BUG 6, or the new test will fail until the write path
 is fixed.
+
+#### THE FIX (2026-11-17)
+
+- `tests/session-model-selection.test.mjs` - "a row can never hold a
+  compaction model without its provider" now reads the RAW SQLite row, the
+  way the sibling test at `:866` already did. It is async now, because it
+  opens the database itself.
+- A second test pins the frame: "the announced compaction selection is the
+  NORMALISED one".
+
+**They are not vacuous.** A revert simulation - the updated test file run
+against the pre-fix source - fails BOTH:
+
+```
+â— the selection in the database â€º the announced compaction selection is the NORMALISED one
+â— ... â€º a row can never hold a compaction model without its provider
+    expect(received).toBeNull()
+    Received: "cheap-compactor"
+```
+
+The second failure is the half-pair, in the row, exactly as it was before
+the fix.
 
 ---
 
@@ -818,8 +880,8 @@ is fixed.
 2. **BUG 2 + BUG 3** - DONE (2026-11-17), together with BUG 8. The switch
    is checked as a pair, a refused switch is refused whole, and the refusal
    is reported.
-3. **BUG 6 + BUG 10** - fix the write path _and_ its test together, otherwise
-   the new test fails until the writer is fixed.
+3. **BUG 6 + BUG 10** - DONE (2026-11-17), together: the write path
+   normalises and the test reads the raw row.
 4. **BUG 5** - refuse an unconfigured compaction provider at write time.
 5. **BUG 7** - surface the server's refusal messages.
 6. **BUG 4** - make `/api/dump` work again.
@@ -829,19 +891,19 @@ is fixed.
 
 ## 8. PROGRESS TRACKER
 
-| Bug                                       | Severity    | Status | Commit                                                                               | Notes                                                                                                                                                                         |
-| ----------------------------------------- | ----------- | ------ | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 - global compaction pair unchecked      | High        | [x]    | `fix(compaction): the inherited global pair is checked against the chat's provider`  | `compactionProblemFor` now takes the resolved main provider and checks the inherited global pair against it. `CONFIRMATIONS.md` C-030.                                        |
-| 2 - refused switch reported as applied    | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | A refused switch is refused WHOLE and announced on the new `model_switch_refused` SSE phase; the client clears the pending flag and shows the reason.                         |
-| 3 - mid-turn switch has no pair check     | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | `planModelSwitch` forms the pair the switch would form and puts it through the same checks a new turn is put through. The last route to the production 404.                   |
-| 4 - /api/dump refuses a valid pair        | Medium-High | [ ]    |                                                                                      |                                                                                                                                                                               |
-| 5 - session created with a ghost provider | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
-| 6 - write path does not normalise         | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
-| 7 - refusal messages discarded            | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
-| 8 - empty mid-turn switch body            | Medium      | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | The switch carries `compaction: {kind:"inherit-default"}`; an empty payload sends no request; the route 400 and the server SSE refusal are both reported through `SET_ERROR`. |
-| 9 - global compaction pin wiped           | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
-| 10 - guarantee test is vacuous            | Medium      | [ ]    |                                                                                      |                                                                                                                                                                               |
-| A1-A11                                    | Low/Info    | [ ]    |                                                                                      |                                                                                                                                                                               |
+| Bug                                       | Severity    | Status | Commit                                                                               | Notes                                                                                                                                                                           |
+| ----------------------------------------- | ----------- | ------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- |
+| 1 - global compaction pair unchecked      | High        | [x]    | `fix(compaction): the inherited global pair is checked against the chat's provider`  | `compactionProblemFor` now takes the resolved main provider and checks the inherited global pair against it. `CONFIRMATIONS.md` C-030.                                          |
+| 2 - refused switch reported as applied    | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | A refused switch is refused WHOLE and announced on the new `model_switch_refused` SSE phase; the client clears the pending flag and shows the reason.                           |
+| 3 - mid-turn switch has no pair check     | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | `planModelSwitch` forms the pair the switch would form and puts it through the same checks a new turn is put through. The last route to the production 404.                     |
+| 4 - /api/dump refuses a valid pair        | Medium-High | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| 5 - session created with a ghost provider | Medium      | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| 6 - write path does not normalise         | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | `selectionToColumns` now goes through `coherentCompactionPair` - the same repair the read path uses - and the `model-changed` frame carries the pair that was actually written. |     |     |
+| 7 - refusal messages discarded            | Medium      | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| 8 - empty mid-turn switch body            | Medium      | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | The switch carries `compaction: {kind:"inherit-default"}`; an empty payload sends no request; the route 400 and the server SSE refusal are both reported through `SET_ERROR`.   |
+| 9 - global compaction pin wiped           | Medium      | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| 10 - guarantee test is vacuous            | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | The test reads the RAW SQLite row instead of the normalised `listSessions()` projection, so it fails if the write path stops normalising. A second test pins the frame.         |     |     |
+| A1-A11                                    | Low/Info    | [ ]    |                                                                                      |                                                                                                                                                                                 |
 
 ## 9. REVIEW HYGIENE
 

@@ -491,8 +491,9 @@ export function updateSessionSelection(sessionId: number, selection: SessionSele
     // The compaction selection is ONE value — the NORMALISED one, the pair
     // that was actually written: the row can never hold a compaction model
     // without the provider that serves it, so neither may the frame that
-    // announces the change.
-    compaction: selection.compaction,
+    // announces the change. It is read back out of the columns that were
+    // written, so the frame and the row cannot disagree.
+    compaction: selectionFromColumns(columns).compaction,
     reasoningEffort: columns.reasoning_effort,
     compactionReasoningEffort: columns.compaction_reasoning_effort,
   });
@@ -546,10 +547,7 @@ export function getSessionName(sessionId: number): string | undefined {
  */
 function normaliseSessionRow(row: Session): Session {
   const pair = coherentCompactionPair(row.compaction_model, row.compaction_provider_id);
-  if (
-    pair.model === row.compaction_model &&
-    pair.providerId === row.compaction_provider_id
-  ) {
+  if (pair.model === row.compaction_model && pair.providerId === row.compaction_provider_id) {
     return row;
   }
   return {

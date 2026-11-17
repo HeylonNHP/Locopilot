@@ -147,18 +147,16 @@ describe('the selection vocabulary', () => {
       reasoningEffort: null,
       compactionReasoningEffort: null,
     });
-    expect(
-      validateSessionSelection({ model: 'm', compaction: SAME_AS_MAIN })
-    ).toStrictEqual({
+    expect(validateSessionSelection({ model: 'm', compaction: SAME_AS_MAIN })).toStrictEqual({
       model: 'm',
       providerId: null,
       compaction: SAME_AS_MAIN,
       reasoningEffort: null,
       compactionReasoningEffort: null,
     });
-    expect(
-      validateSessionSelection({ model: 'm', compaction: explicit('c', 'p') })
-    ).toMatchObject({ compaction: explicit('c', 'p') });
+    expect(validateSessionSelection({ model: 'm', compaction: explicit('c', 'p') })).toMatchObject({
+      compaction: explicit('c', 'p'),
+    });
   });
 
   test('the LEGACY flat pair is still read, and its meaning is kept', () => {
@@ -379,6 +377,30 @@ describe('the selection in the database', () => {
         compactionReasoningEffort: null,
       },
     ]);
+  });
+
+  test('the announced compaction selection is the NORMALISED one', () => {
+    // The frame must carry the pair that was actually WRITTEN, so a browser
+    // can never be handed a half-pair. A hand-built half-pair is repaired
+    // on the way to the row, and the frame has to carry the repaired value
+    // - otherwise the browser receives a compaction model with no provider
+    // and silently resets the pin.
+    const id = createSession('New chat', SELECTION);
+    const events = [];
+    const unsubscribe = subscribeSessionEvents((event) => events.push(event));
+
+    try {
+      updateSessionSelection(id, {
+        model: 'minimax-m3.1-flash',
+        providerId: 'minimax',
+        compaction: { kind: 'explicit', model: 'cheap-compactor' },
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].compaction).toStrictEqual(INHERIT_DEFAULT);
   });
 });
 
@@ -839,17 +861,32 @@ describe('the compaction selection is ONE value — the half-pair cannot exist',
     });
   });
 
-  test('a row can never hold a compaction model without its provider', () => {
-    // The pair is only ever produced by the projection, so the illegal
-    // combination cannot reach the row even if a caller builds one by hand.
+  test('a row can never hold a compaction model without its provider', async () => {
+    // The pair is normalised on the way OUT of the projection, so the
+    // illegal combination cannot reach the row even if a caller built one
+    // by hand.
+    //
+    // The assertion is on the RAW row. `listSessions()` REPAIRS the pair on
+    // the way out, so asserting on it would pass even while the row held
+    // the illegal combination - which is exactly what it used to do.
     const id = createSession('New chat', {
       ...SELECTION,
       compaction: { kind: 'explicit', model: 'cheap-compactor' },
     });
 
-    const stored = listSessions().find((s) => s.id === id);
-    expect(stored.compaction_model).toBeNull();
-    expect(stored.compaction_provider_id).toBeNull();
+    const { default: Database } = await import('better-sqlite3');
+    const db = new Database(path.join(root, 'locopilot.db'));
+    let row;
+    try {
+      row = db
+        .prepare('SELECT compaction_model, compaction_provider_id FROM sessions WHERE id = ?')
+        .get(id);
+    } finally {
+      db.close();
+    }
+
+    expect(row.compaction_model).toBeNull();
+    expect(row.compaction_provider_id).toBeNull();
   });
 
   test('an explicit selection is stored as a pair', () => {
