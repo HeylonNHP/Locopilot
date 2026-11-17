@@ -1,6 +1,6 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **open - 10 bugs triaged, 7 fixed** (2026-11-17). BUG 1, BUG 2, BUG 3, BUG 6, BUG 7, BUG 8 and BUG 10 are done.
+Status: **open - 10 bugs triaged, 8 fixed** (2026-11-17). BUG 1, BUG 2, BUG 3, BUG 5, BUG 6, BUG 7, BUG 8 and BUG 10 are done.
 
 Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
 (merge-base == `origin/dev` tip). The branch is several commits ahead of the
@@ -27,7 +27,7 @@ Companion documents:
 
 ### Where the work stands
 
-Seven of the ten bugs are fixed and committed. The full test suite fails the same 21 environmental suites it failed before any
+Eight of the ten bugs are fixed and committed. The full test suite fails the same 21 environmental suites it failed before any
 of this work started.
 
 | Bug | Severity         | Status   | Commit    | One line                                                                                                                      |
@@ -39,22 +39,21 @@ of this work started.
 | 8   | Medium           | **done** | `6a1e98b` | "Use the default" is carried mid-turn; a refusal is reported.                                                                 |
 | 10  | Medium           | **done** | `7ca24ad` | The guarantee test reads the RAW row, so it can see a half-pair.                                                              |
 | 4   | Medium-High      | **open** | -         | `/api/dump` refuses a (model, provider) pair the chat accepts.                                                                |
-| 5   | Medium           | **open** | -         | A conversation can be created with a compaction provider that does not exist.                                                 |
+| 5   | Medium           | **done** | see tracker | A selection is checked as a pair before it is written (POST and PATCH); A12 folded in.                                      |
 | 7   | Medium           | **done** | see tracker | The save helpers return the server's refusal message and every call site shows it.                                          |
 | 9   | Low (was Medium) | **open** | -         | The global compaction-provider pin is wiped. Re-rated: every dispatcher supplies the key, so it is unreachable in production. |
 
 ### The next action
 
-**BUG 5 - a conversation can be created, or its selection patched, with a pair
-the chat would refuse** (`POST /api/sessions`, `PATCH /api/sessions/[id]`),
-together with A3. It is also the root of a gap found while reviewing `6a1e98b`:
-the pickers save the selection BEFORE asking the running turn to switch, and
-the PATCH route runs no pair check, so a refused mid-turn switch leaves an
-incoherent selection saved. With the check in PATCH, the save fails first and
-no switch is sent. BUG 7's fix means the refusal text will now reach the user.
+**BUG 4 - `/api/dump` refuses a (model, provider) pair the chat accepts.**
+Either read `body.providerId` in the dump route and have the client send it,
+or exempt the dump from the pair check the way it is already exempt from the
+compaction check. The dump is the tool you reach for when something is broken.
 
-Then BUG 4, then BUG 9. A13 (the "(switching...)" badge that sticks when a
-switch arrives during the final answer) is a one-line fix worth its own row.
+Then A13 (the "(switching...)" badge that sticks when a switch arrives during
+the final answer; one line, deserves its own row) and BUG 9 (one-line guard).
+A3 was NOT done with BUG 5: it needs a new store action and is a silent,
+unpersisted client repair; see the changelog entry.
 
 ### The cycle that was used for each fix
 
@@ -542,7 +541,7 @@ way it is already exempt from the compaction check.
 
 ---
 
-### [ ] BUG 5 - MEDIUM - a conversation can be created with a compaction provider that does not exist
+### [x] BUG 5 - MEDIUM - a conversation can be created with a compaction provider that does not exist
 
 - `src/app/api/sessions/route.ts:56` - `validateSessionSelection({...})`.
 - `src/app/api/sessions/[id]/route.ts:78` - `validateSessionSelectionPatch(...)`.
@@ -983,7 +982,7 @@ the fix.
 | 2 - refused switch reported as applied    | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | A refused switch is refused WHOLE and announced on the new `model_switch_refused` SSE phase; the client clears the pending flag and shows the reason.                           |
 | 3 - mid-turn switch has no pair check     | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | `planModelSwitch` forms the pair the switch would form and puts it through the same checks a new turn is put through. The last route to the production 404.                     |
 | 4 - /api/dump refuses a valid pair        | Medium-High | [ ]    |                                                                                      |                                                                                                                                                                                 |
-| 5 - session created with a ghost provider | Medium      | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| 5 - session created with a ghost provider | Medium      | [x]    | `fix(sessions): check a selection as a pair before it is written`                    | `selectionWriteProblem` checks the pair on POST and PATCH (409, names the cause, writes nothing); only the halves the write changes; pair only, never the window. A12 folded in. |
 | 6 - write path does not normalise         | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | `selectionToColumns` now goes through `coherentCompactionPair` - the same repair the read path uses - and the `model-changed` frame carries the pair that was actually written. |     |     |
 | 7 - refusal messages discarded            | Medium      | [x]    | `fix(client): report the server's refusal when a selection cannot be saved`          | `saveSessionPatch` / `saveDefaultsPatch` / `saveSelectionChanges` return `SaveResult`; `saveFailureMessage` puts the server's cause in the banner headline at all five call sites. |
 | 8 - empty mid-turn switch body            | Medium      | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | The switch carries `compaction: {kind:"inherit-default"}`; an empty payload sends no request; the route 400 and the server SSE refusal are both reported through `SET_ERROR`.   |

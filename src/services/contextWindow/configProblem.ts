@@ -8,7 +8,7 @@
  * the message below, which is what the owner sees.
  */
 
-import type { CompactionSelection } from '@/services/sessionSelection';
+import type { CompactionSelection, SessionSelection } from '@/services/sessionSelection';
 import type { Config, ProviderConfig } from '@/types/chatConfig';
 
 import { resolveCompactionSelection } from '@/services/compactionSelection';
@@ -156,8 +156,53 @@ export function compactionModelServiceProblem(
   role: MainProviderRole = 'current'
 ): string | null {
   const service = providerServesModel(provider.id, provider.baseUrl, model);
+  if (service !== 'served') {
+    // Refresh the index in the background so the NEXT ask is better
+    // informed: for `unknown` the index cannot answer yet, and for
+    // `not-served` the list may be up to MODEL_LIST_TTL_MS old (a model
+    // pulled or added since), so a wrong refusal heals within a minute
+    // instead of at the end of the TTL. The refresh is throttled and never
+    // blocks this call.
+    refreshModelIndexInBackground(config);
+  }
+  return service === 'not-served'
+    ? compactionProviderDoesNotServeMessage(config, provider, model, role)
+    : null;
+}
+
+/**
+ * The problem with the (model, provider) PAIR alone, or `null`: the provider
+ * must exist and must serve the model. It says nothing about the context
+ * window.
+ *
+ * That is the half a WRITE of a selection is checked against. The window is
+ * a property of the config, not of the selection, and the Settings modal
+ * saves a conversation's model BEFORE the context size it sets in the same
+ * Save - refusing the model for a missing window would make that one Save
+ * impossible. A TURN is still refused for a missing window, by
+ * {@link configProblemFor}.
+ */
+export function pairProblemFor(
+  config: Config,
+  providerId: string | undefined,
+  model: string
+): string | null {
+  const provider = resolveProvider(config, providerId, model);
+  if (!provider) {
+    // An explicit id that names no configured provider is a DIFFERENT
+    // problem from "no model is set up yet": the id is what has to be
+    // fixed, so the message names it. Without an id there is nothing to
+    // name, and the only thing left to say is that nothing is set up.
+    return providerId ? providerNotConfiguredMessage(providerId) : MODEL_NOT_CHOSEN_MESSAGE;
+  }
+  // The pair itself: does this provider serve this model? The index answers
+  // "unknown" when it cannot say, and unknown NEVER refuses.
+  const service = providerServesModel(provider.id, provider.baseUrl, model);
   if (service === 'not-served') {
-    return compactionProviderDoesNotServeMessage(config, provider, model, role);
+    // Refreshed too (see compactionModelServiceProblem): a stale list must
+    // not keep refusing a model the provider serves now.
+    refreshModelIndexInBackground(config);
+    return providerDoesNotServeMessage(config, provider, model);
   }
   if (service === 'unknown') {
     // The index cannot answer yet. Refresh it in the background, so the
@@ -177,26 +222,13 @@ export function configProblemFor(
   providerId: string | undefined,
   model: string
 ): string | null {
+  const pairProblem = pairProblemFor(config, providerId, model);
+  if (pairProblem !== null) {
+    return pairProblem;
+  }
+  // `pairProblemFor` found a provider, so this cannot be null.
   const provider = resolveProvider(config, providerId, model);
-  if (!provider) {
-    // An explicit id that names no configured provider is a DIFFERENT
-    // problem from "no model is set up yet": the id is what has to be
-    // fixed, so the message names it. Without an id there is nothing to
-    // name, and the only thing left to say is that nothing is set up.
-    return providerId ? providerNotConfiguredMessage(providerId) : MODEL_NOT_CHOSEN_MESSAGE;
-  }
-  // The pair itself: does this provider serve this model? The index answers
-  // "unknown" when it cannot say, and unknown NEVER refuses.
-  const service = providerServesModel(provider.id, provider.baseUrl, model);
-  if (service === 'not-served') {
-    return providerDoesNotServeMessage(config, provider, model);
-  }
-  if (service === 'unknown') {
-    // The index cannot answer yet. Refresh it in the background, so the
-    // NEXT turn can ask the question instead of guessing.
-    refreshModelIndexInBackground(config);
-  }
-  if (pickRequestedNumCtx(provider.numCtx, config.numCtx) === null) {
+  if (provider && pickRequestedNumCtx(provider.numCtx, config.numCtx) === null) {
     return CONTEXT_SIZE_NOT_SET_MESSAGE;
   }
   return null;
@@ -330,6 +362,100 @@ export function requestProblemFor(
     mainProvider: resolveProvider(config, providerId, body.model),
     compaction: body.compaction,
   });
+}
+
+/**
+ * The problem with the COMPACTION pair of a selection that is being WRITTEN,
+ * or `null`. Pair only (no window), and only what the selection itself
+ * decides:
+ *
+ * - `explicit`: the named provider must exist and serve the named model.
+ * - `same-as-main`: the main pair, which the caller checks.
+ * - `inherit-default`: the global pair is the owner's configuration, not this
+ *   write's doing, so a problem in it is not reported here. The one thing a
+ *   write CAN cause is moving the conversation onto a provider that does not
+ *   serve a global compaction model that has no provider of its own, because
+ *   that model is then sent to the provider the chat runs on (C-025).
+ */
+function compactionPairProblemFor(
+  config: Config,
+  input: {
+    mainModel: string;
+    mainProvider: ProviderConfig | null;
+    compaction: CompactionSelection;
+  }
+): string | null {
+  const selection = resolveCompactionSelection({
+    config,
+    mainModel: input.mainModel,
+    sessionCompaction: input.compaction,
+  });
+  if (selection.problem !== null) {
+    return input.compaction.kind === 'explicit' ? selection.problem : null;
+  }
+  if (selection.providerId === null) {
+    if (selection.model === input.mainModel || input.mainProvider === null) {
+      return null;
+    }
+    return compactionModelServiceProblem(config, input.mainProvider, selection.model);
+  }
+  return input.compaction.kind === 'explicit'
+    ? pairProblemFor(config, selection.providerId, selection.model)
+    : null;
+}
+
+/** Which halves of a selection a write has to answer for. */
+export interface SelectionWriteScope {
+  /** The main (model, provider) pair. */
+  main: boolean;
+  /** The compaction pair. */
+  compaction: boolean;
+}
+
+/**
+ * Why a selection may not be WRITTEN to a conversation, or `null`.
+ *
+ * The write paths used to check the SHAPE of the pair and nothing else, so a
+ * conversation could be saved pointing at a provider that does not exist (or
+ * does not serve the model) and was then refused at its first turn: a
+ * conversation the server accepted and then would not run (bug hunt BUG 5).
+ * The pair checks a turn makes are made here too, so the write is refused
+ * where the cause can still be named.
+ *
+ * `scope` says what the write ITSELF changes. A half the write did not touch
+ * is not re-checked: a conversation already broken by a removed provider must
+ * stay editable, or the fix for one half would be refused because of the
+ * other and the conversation could never be repaired. For the same reason
+ * only the PAIR is checked here and never the context window (see
+ * {@link pairProblemFor}).
+ *
+ * Same three-valued index as the turn's checks: `unknown` never refuses.
+ * `null` config (unreadable) is not this write's problem and is not refused.
+ */
+export function selectionWriteProblem(
+  config: Config | null,
+  selection: SessionSelection,
+  scope: SelectionWriteScope
+): string | null {
+  if (config === null) {
+    return null;
+  }
+  const model = selection.model.trim();
+  const providerId = selection.providerId?.trim() || undefined;
+  if (scope.main && model !== '') {
+    const mainProblem = pairProblemFor(config, providerId, model);
+    if (mainProblem !== null) {
+      return mainProblem;
+    }
+  }
+  if (scope.compaction) {
+    return compactionPairProblemFor(config, {
+      mainModel: model,
+      mainProvider: resolveProvider(config, providerId, model),
+      compaction: selection.compaction,
+    });
+  }
+  return null;
 }
 
 /**

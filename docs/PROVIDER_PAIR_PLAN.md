@@ -240,6 +240,23 @@ provider the turn already runs on. It used to recover a provider by MODEL
 NAME, which lands on `providers[0]` whenever the switched-to model is that
 provider's default - the cross-wire C-027 removed everywhere else.
 
+### Phase 2.6 - a selection is checked as a pair before it is WRITTEN
+
+**Status: DONE (2026-11-17).** See the changelog entry of that date and bug
+hunt BUG 5.
+
+`POST /api/sessions` and `PATCH /api/sessions/[id]` validated the shape of a
+selection only. `selectionWriteProblem` (`configProblem.ts`) now runs the pair
+checks a turn makes on the selection about to be written, and a refusal is
+HTTP 409 with the message that names the cause. Three rules keep it from
+refusing a write that should pass: only the halves the write changes are
+checked (a conversation broken by a removed provider stays editable, and
+repairing one half is not refused because of the other); only the PAIR is
+checked, never the context window (`pairProblemFor`; the Settings modal saves
+the model before the context size of the same Save); and `POST` checks only
+what the request names, not what it leaves to the defaults. A `not-served`
+answer from the index also kicks the background refresh now (A12).
+
 ### Phase 2.3 — the selection is one value with three states
 
 `CompactionSelection` in `src/services/sessionSelection.ts`:

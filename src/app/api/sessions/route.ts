@@ -3,11 +3,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { loadConfig } from '@/services/configManager';
+import { selectionWriteProblem } from '@/services/contextWindow/configProblem';
 import { createSession, listSessions, searchSessions } from '@/services/history';
-import {
-  resolveCreationSelection,
-  validateSessionSelection,
-} from '@/services/sessionSelection';
+import { resolveCreationSelection, validateSessionSelection } from '@/services/sessionSelection';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -76,6 +74,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       reasoningEffort: config?.reasoningEffort,
       compactionReasoningEffort: config?.compactionReasoningEffort,
     });
+
+    // The pair the request NAMES is checked before the conversation exists:
+    // a pinned provider must exist and serve the model, and an explicit
+    // compaction provider must too. A conversation born pointing at a ghost
+    // provider is a conversation the server created and then refuses to run
+    // (bug hunt BUG 5). What the request leaves to the defaults is not
+    // checked here - the defaults are the owner's configuration, a turn
+    // checks them, and a new chat must still open when they are broken.
+    const problem = selectionWriteProblem(config, selection, {
+      main: selection.providerId !== null,
+      compaction: selection.compaction.kind === 'explicit',
+    });
+    if (problem !== null) {
+      return NextResponse.json({ error: problem }, { status: 409 });
+    }
 
     const id = createSession(name, selection);
     const sessions = listSessions();

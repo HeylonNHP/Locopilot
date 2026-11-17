@@ -15,7 +15,7 @@
  *     DOES serve the model.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 
 import {
   compactionProblemFor,
@@ -508,5 +508,49 @@ describe('a mid-turn model switch is checked against the pair it would form', ()
       model: 'beam',
       providerId: 'p2',
     });
+  });
+});
+
+describe('a refusal on a stale list heals instead of waiting out the TTL (A12)', () => {
+  test('a "not served" answer kicks the background refresh, so the next ask sees the new list', async () => {
+    // The list is a few minutes old and the provider has gained the model
+    // since. The first ask is refused on the stale list - and it must start
+    // the refresh, or the refusal would stand until the whole TTL ran out.
+    recordProviderModels('p1', 'http://p1', ['other']);
+    setModelIndexDeps({ fetchModels: async () => ['beam', 'other'] });
+    // 90 s later: past the refresh throttle (60 s), inside the TTL (5 min).
+    const realNow = Date.now();
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(realNow + 90_000);
+    try {
+      expect(configProblemFor(config, 'p1', 'beam')).toMatch(/does not serve the model "beam"/);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(configProblemFor(config, 'p1', 'beam')).toBeNull();
+    } finally {
+      nowSpy.mockRestore();
+      setModelIndexDeps({ fetchModels: async () => [] });
+    }
+  });
+
+  test('the same holds for an inherited compaction model with no provider of its own', async () => {
+    recordProviderModels('p2', 'http://p2', ['llama3']);
+    setModelIndexDeps({ fetchModels: async (p) => (p.id === 'p2' ? ['llama3', 'beam'] : []) });
+    // 200 s later, so the sweep the previous test started (a module-level
+    // throttle of 60 s) is out of the way, and still inside the 5 min TTL.
+    const realNow = Date.now();
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(realNow + 200_000);
+    try {
+      const input = {
+        mainModel: 'llama3',
+        mainProvider: config.providers[1],
+        compaction: { kind: 'inherit-default' },
+      };
+      const withBeam = { ...config, compactionModel: 'beam' };
+      expect(compactionProblemFor(withBeam, input)).toMatch(/compaction model "beam"/);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(compactionProblemFor(withBeam, input)).toBeNull();
+    } finally {
+      nowSpy.mockRestore();
+      setModelIndexDeps({ fetchModels: async () => [] });
+    }
   });
 });
