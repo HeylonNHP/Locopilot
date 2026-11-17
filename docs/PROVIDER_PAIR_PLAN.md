@@ -396,13 +396,14 @@ residual is recorded as C-029 in `CONFIRMATIONS.md`.
 - `npx eslint src tests --max-warnings 0` — clean.
 - `npm test -- tests/compaction-rule tests/session-model-selection
   tests/session-compaction-pair tests/provider-persistence tests/config-load
-  tests/numctx-resolver` — green. The two suites added later,
-  `tests/model-index` and `tests/provider-resolution`, are not in this list.
-- `npm run type-check` — clean (measured 2026-11-17; an earlier revision of
-  this plan recorded pre-existing mermaid / MCP OAuth errors that no longer
-  appear).
-- The full `npm test` — the same 21 pre-existing failing suites as before
-  this branch (measured on 2026-11-17 on this machine; the plan said 22).
-  They fail on a clean tree too (Node v22 has no `require(esm)`, and Windows
-  holds the SQLite file open), and none of them touches the compaction
-  selection.
+  tests/numctx-resolver tests/model-index tests/provider-resolution
+  tests/mid-turn-switch tests/sse-routing tests/chat-store
+  tests/dump-route-provider tests/context-window` - green.
+- `npm run type-check` - clean (measured 2026-11-17).
+- The full `npm test` - green on the Linux development machine as of
+  2026-11-17 (86 suites, 2200 passed, 2 skipped). An earlier revision of this
+  plan recorded 21-22 "pre-existing failing suites"; those were measured on a
+  Windows machine (Windows holds the SQLite file open, and the Node there had
+  no `require(esm)`), and none of them touched the compaction selection. If
+  they reappear on a given machine, that is the environment, not this branch;
+  confirm by running the same suite on a clean checkout of the base.
