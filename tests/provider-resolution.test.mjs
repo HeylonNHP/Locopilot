@@ -12,7 +12,7 @@
  * means one thing everywhere: this conversation cannot run as it is.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -21,7 +21,11 @@ import {
   providerNotConfiguredMessage,
   requestProblemFor,
 } from '../src/services/contextWindow/configProblem.ts';
-import { setModelIndexDeps } from '../src/services/modelIndex.ts';
+import {
+  invalidateModelIndex,
+  recordProviderModels,
+  setModelIndexDeps,
+} from '../src/services/modelIndex.ts';
 import { resolveProvider } from '../src/services/providerResolver.ts';
 
 const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), 'utf8');
@@ -38,6 +42,12 @@ beforeAll(() => {
 
 afterAll(() => {
   setModelIndexDeps(null);
+});
+
+// Each test starts with a COLD index: an index that cannot answer must
+// never refuse, and a warm one from a previous test would answer.
+beforeEach(() => {
+  invalidateModelIndex();
 });
 
 const provider = (extra = {}) => ({
@@ -140,5 +150,55 @@ describe('the routes read the same id the gate read', () => {
     // wrong endpoint without its credentials.
     expect(chatRoute).toContain('switch_provider_unresolved');
     expect(chatRoute).not.toMatch(/activeProvider = null/);
+  });
+});
+
+describe('the compaction check runs against the provider the request runs on', () => {
+  // The global compaction model with NO global compaction provider runs on
+  // the provider the CHAT runs on, and that provider has to serve it
+  // (CONFIRMATIONS C-025: `beam` went to NVIDIA and 404ed 221 times).
+  const globalConfig = {
+    ...config,
+    compactionModel: 'beam',
+    compactionProviderId: null,
+  };
+
+  test('an inherited global compaction model the provider does not serve is REFUSED', () => {
+    // `p2` is the provider the request runs on, and it serves `other`, not
+    // the global compaction model `beam`.
+    recordProviderModels('p1', 'http://p1', ['beam']);
+    recordProviderModels('p2', 'http://p2', ['other']);
+
+    const problem = requestProblemFor(globalConfig, {
+      providerId: 'p2',
+      model: 'other',
+      compaction: { kind: 'inherit-default' },
+    });
+    expect(problem).toMatch(/does not serve it/);
+    expect(problem).toMatch(/beam/);
+    // the message names the provider that DOES serve it
+    expect(problem).toMatch(/P/);
+  });
+
+  test('the same request on a provider that DOES serve the compaction model runs', () => {
+    recordProviderModels('p2', 'http://p2', ['other', 'beam']);
+
+    expect(
+      requestProblemFor(globalConfig, {
+        providerId: 'p2',
+        model: 'other',
+        compaction: { kind: 'inherit-default' },
+      })
+    ).toBeNull();
+  });
+
+  test('the chat route hands the compaction check the RESOLVED provider', () => {
+    // The resolved provider, not the raw id and never `providers[0]`: a
+    // provider with no default model would otherwise be checked against
+    // the wrong endpoint, and a working turn refused. The id must be IN
+    // there - `resolveProvider(config, undefined, model)` would drop it and
+    // land on `providers[0]`, which is the trap. The behavioural half of
+    // this is pinned in `tests/model-index.test.mjs`.
+    expect(chatRoute).toMatch(/mainProvider: resolveProvider\([^)]*providerId/);
   });
 });

@@ -141,6 +141,58 @@ out. Ollama tag tolerance follows the existing adapter precedent
 **The refusal** names the provider that DOES serve the model, so the fix is
 one click in Settings rather than a hunt.
 
+### Phase 2.2b — the inherited global pair is checked against the provider the chat runs on
+
+**Status: DONE (2026-11-17).** Implemented as described below; see
+`CONFIRMATIONS.md` C-030.
+
+Phase 2.2 covered two of the three ways a compaction model reaches an
+endpoint. It missed the third.
+
+The rule hands a compaction model that has no provider of its own to the
+provider the chat runs on: the global compaction model with no global
+compaction provider (`resolveCompactionRule`, `src/services/compactionRule.ts`).
+That is a legitimate meaning of the global pair - see "What is deliberately
+NOT changed" - and it is honoured whenever the main provider serves the
+model.
+
+The gap was that the main provider was never ASKED. `compactionProblemFor`
+returned `null` as soon as the resolved compaction provider id was `null`,
+on the reasoning that "the main check already covered its window". The main
+check had covered the main MODEL's window. It had never asked whether the
+main provider serves the COMPACTION model - so the global compaction model
+`beam` still went to NVIDIA and 404ed, which is the exact production failure
+this whole effort exists to end (C-025: 221 failures in 14 minutes).
+
+**What it does now.** A compaction model with no provider of its own, whose
+model is not the conversation's own main model, is checked against the
+provider the chat runs on, using the same three-valued index and the same
+fail-open rule: `unknown` never refuses, because a dead or slow provider
+must not block a turn.
+
+**The check is made against the RESOLVED main provider.** The chat route
+passes the provider it resolved from the request's own provider id, never
+`providers[0]`. That matters: the owner's `ollama-cloud` provider has no
+`model` field in `config.json`, so it never wins a model-name match. A check
+against `providers[0]` would have examined NVIDIA and refused a turn that
+works - a false refusal is worse than the bug.
+
+**The rule is unchanged.** `src/services/compactionRule.ts` still has no
+runtime imports and still decides only which model and which provider; it
+never asks a provider what it serves and it never refuses. The refusal lives
+in `src/services/contextWindow/configProblem.ts`, with the rest of the
+server's pair checks.
+
+**What is NOT checked again.** `same-as-main`, and a conversation with no
+global compaction model: the main pair check already answered those. An
+EXPLICIT compaction pair is still checked against its OWN provider.
+
+**What this does NOT close.** The mid-turn model switch still applies a
+provider with no pair check, so the identical wrong-endpoint 404 is still
+reachable one switch away. The switch path logs rather than refuses, because
+a running turn must not die - closing it needs a decision of its own. See
+`CONFIRMATIONS.md` C-030.
+
 ### Phase 2.3 — the selection is one value with three states
 
 `CompactionSelection` in `src/services/sessionSelection.ts`:
@@ -249,7 +301,11 @@ residual is recorded as C-029 in `CONFIRMATIONS.md`.
   migration is additive only, per the repo's rule.
 - **The global config's shape.** `Config.compactionModel` +
   `Config.compactionProviderId` stay two fields in `config.json` (the file is
-  hand-edited); the SERVER is what resolves them, through the same rule.
+  hand-edited); the SERVER is what resolves them, through the same rule. The
+  SHAPE is unchanged; what changed is that neither shape is trusted any
+  more (Phase 2.2b): a global pair that names a provider is validated
+  against the live model list, and a global model with no provider of its own
+  is validated against the provider the chat runs on.
 - **Provider ids.** They stay name slugs. Opaque ids (a Phase 3 idea) need a
   migration of every row that references one, and a rename is rare.
 - **The client's repair.** `useDataLoaders` already re-points a dangling
@@ -279,7 +335,8 @@ residual is recorded as C-029 in `CONFIRMATIONS.md`.
   tests/numctx-resolver` — green.
 - `npm run type-check` — only the pre-existing errors (the mermaid renderer's
   `minNodeWidth` and the seven MCP OAuth `issuer` errors).
-- The full `npm test` — the same 22 pre-existing failing suites as before
-  this branch. They fail on a clean tree too (Node v22 has no `require(esm)`,
-  and Windows holds the SQLite file open), and none of them touches the
-  compaction selection.
+- The full `npm test` — the same 21 pre-existing failing suites as before
+  this branch (measured on 2026-11-17 on this machine; the plan said 22).
+  They fail on a clean tree too (Node v22 has no `require(esm)`, and Windows
+  holds the SQLite file open), and none of them touches the compaction
+  selection.

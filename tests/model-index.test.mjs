@@ -17,7 +17,10 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
 
-import { configProblemFor } from '../src/services/contextWindow/configProblem.ts';
+import {
+  compactionProblemFor,
+  configProblemFor,
+} from '../src/services/contextWindow/configProblem.ts';
 import {
   invalidateModelIndex,
   peekProviderModels,
@@ -27,6 +30,7 @@ import {
   recordProviderModels,
   setModelIndexDeps,
 } from '../src/services/modelIndex.ts';
+import { resolveProvider } from '../src/services/providerResolver.ts';
 
 const provider = (extra = {}) => ({
   id: 'p1',
@@ -138,5 +142,189 @@ describe('a pair whose provider does not serve the model is refused', () => {
   test('with no index the pair cannot be checked, and nothing is refused', () => {
     // Fail open: an index that cannot say must never break a turn.
     expect(configProblemFor(config, 'p1', 'llama3')).toBeNull();
+  });
+
+  test('two providers with the same name do not hide the one that serves the model', () => {
+    // The offending provider is excluded from the hint by its ID: two
+    // providers may share a name, and excluding by name would drop the
+    // serving one too - the message would then say that NOBODY serves the
+    // model when one of them does.
+    const duplicates = {
+      numCtx: 131_072,
+      providers: [
+        provider({ id: 'p1', name: 'Same Name', baseUrl: 'http://p1', model: 'other' }),
+        provider({ id: 'p2', name: 'Same Name', baseUrl: 'http://p2', model: undefined }),
+      ],
+    };
+    recordProviderModels('p1', 'http://p1', ['other']);
+    recordProviderModels('p2', 'http://p2', ['beam']);
+
+    const refusal = configProblemFor(duplicates, 'p1', 'beam');
+    expect(refusal).toMatch(/does not serve the model "beam"/);
+    expect(refusal).toMatch(/served by Same Name instead/);
+    expect(refusal).not.toMatch(/No configured provider is known to serve it/);
+  });
+});
+
+describe('an inherited global compaction model is checked against the provider the CHAT runs on', () => {
+  // The production incident (CONFIRMATIONS C-025): the global compaction
+  // model was `beam`, an Ollama Cloud model, and the global config had NO
+  // way to say which provider served it. So the compaction call went to the
+  // main chat provider (NVIDIA), which does not serve `beam`, and answered
+  // HTTP 404 - 221 times in 14 minutes under one request id.
+  //
+  // The shape here is the owner's: `ollama-cloud` has NO `model` field in
+  // config.json, so it never wins a model-name match.
+  const NVIDIA = provider({ id: 'p1', name: 'NVIDIA', baseUrl: 'http://p1', model: 'llama3' });
+  const CLOUD = provider({
+    id: 'p2',
+    name: 'Ollama Cloud',
+    baseUrl: 'http://p2',
+    model: undefined,
+  });
+
+  const globalConfig = {
+    numCtx: 131_072,
+    compactionModel: 'beam',
+    compactionProviderId: null,
+    providers: [NVIDIA, CLOUD],
+  };
+
+  test('a global compaction model the MAIN provider does not serve is REFUSED', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+    recordProviderModels('p2', 'http://p2', ['beam']);
+
+    const refusal = compactionProblemFor(globalConfig, {
+      mainModel: 'llama3',
+      mainProvider: resolveProvider(globalConfig, 'p1', 'llama3'),
+      compaction: { kind: 'inherit-default' },
+    });
+
+    expect(refusal).toMatch(/The compaction model "beam" has no provider of its own/);
+    expect(refusal).toMatch(/"NVIDIA"/);
+    // the fix is one pick, so the message names the provider that DOES serve it
+    expect(refusal).toMatch(/Ollama Cloud/);
+  });
+
+  test('the check is made against the provider the CHAT runs on, not against providers[0]', () => {
+    // The trap: `ollama-cloud` has no default model, so a resolution that
+    // dropped the request's provider id would land on `providers[0]`
+    // (NVIDIA) and refuse a turn that works.
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+    recordProviderModels('p2', 'http://p2', ['beam']);
+
+    expect(resolveProvider(globalConfig, undefined, 'llama3')?.id).toBe('p1');
+
+    expect(
+      compactionProblemFor(globalConfig, {
+        mainModel: 'llama3',
+        mainProvider: resolveProvider(globalConfig, 'p2', 'llama3'),
+        compaction: { kind: 'inherit-default' },
+      })
+    ).toBeNull();
+  });
+
+  test('a global compaction model the MAIN provider DOES serve runs', () => {
+    recordProviderModels('p2', 'http://p2', ['beam']);
+
+    expect(
+      compactionProblemFor(globalConfig, {
+        mainModel: 'llama3',
+        mainProvider: resolveProvider(globalConfig, 'p2', 'llama3'),
+        compaction: { kind: 'inherit-default' },
+      })
+    ).toBeNull();
+  });
+
+  test('a COLD index never refuses - the pair is trusted until it can be checked', () => {
+    // Fail open: an index that cannot say must never block a turn.
+    expect(
+      compactionProblemFor(globalConfig, {
+        mainModel: 'llama3',
+        mainProvider: resolveProvider(globalConfig, 'p1', 'llama3'),
+        compaction: { kind: 'inherit-default' },
+      })
+    ).toBeNull();
+  });
+
+  test('"same as the main model" is NOT checked again - the main pair check covered it', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+
+    expect(
+      compactionProblemFor(globalConfig, {
+        mainModel: 'llama3',
+        mainProvider: resolveProvider(globalConfig, 'p1', 'llama3'),
+        compaction: { kind: 'same-as-main' },
+      })
+    ).toBeNull();
+  });
+
+  test('no global compaction model - the main model on the main provider - is NOT checked again', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+
+    expect(
+      compactionProblemFor(
+        { ...globalConfig, compactionModel: '' },
+        {
+          mainModel: 'llama3',
+          mainProvider: resolveProvider(globalConfig, 'p1', 'llama3'),
+          compaction: { kind: 'inherit-default' },
+        }
+      )
+    ).toBeNull();
+  });
+
+  test('an EXPLICIT compaction pair is checked against ITS OWN provider, not the main one', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+    recordProviderModels('p2', 'http://p2', ['beam']);
+
+    // The main provider does NOT serve `beam`; the explicit pair names the
+    // provider that does, and its own check covers it.
+    expect(
+      compactionProblemFor(globalConfig, {
+        mainModel: 'llama3',
+        mainProvider: resolveProvider(globalConfig, 'p1', 'llama3'),
+        compaction: { kind: 'explicit', model: 'beam', providerId: 'p2' },
+      })
+    ).toBeNull();
+  });
+
+  test('the global pair WITH a provider is still refused when that provider does not serve the model', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+
+    const refusal = compactionProblemFor(
+      { ...globalConfig, compactionProviderId: 'p1' },
+      {
+        mainModel: 'llama3',
+        mainProvider: resolveProvider(globalConfig, 'p1', 'llama3'),
+        compaction: { kind: 'inherit-default' },
+      }
+    );
+    expect(refusal).toMatch(/does not serve the model "beam"/);
+  });
+
+  test('a global provider id that names no configured provider is still refused by the composer', () => {
+    // Not double-handled: the composer owns this refusal.
+    const refusal = compactionProblemFor(
+      { ...globalConfig, compactionProviderId: 'gone' },
+      {
+        mainModel: 'llama3',
+        mainProvider: resolveProvider(globalConfig, 'p1', 'llama3'),
+        compaction: { kind: 'inherit-default' },
+      }
+    );
+    expect(refusal).toContain('global compaction provider');
+  });
+
+  test('no main provider - nothing to check the pair against, and nothing is refused', () => {
+    recordProviderModels('p1', 'http://p1', ['llama3']);
+
+    expect(
+      compactionProblemFor(globalConfig, {
+        mainModel: 'llama3',
+        mainProvider: null,
+        compaction: { kind: 'inherit-default' },
+      })
+    ).toBeNull();
   });
 });

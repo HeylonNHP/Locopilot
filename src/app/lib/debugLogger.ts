@@ -118,6 +118,7 @@ export type DiagnosticPhase =
   | 'config_unavailable'
   | 'numctx_probe_failed'
   | 'compaction_provider_unresolved'
+  | 'compaction_model_not_served'
   | 'provider_unresolved'
   | 'switch_provider_unresolved'
   | 'cleanup'

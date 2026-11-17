@@ -80,6 +80,7 @@ import {
 } from '@/services/configDefaults';
 import { loadConfig, readConfig } from '@/services/configManager';
 import {
+  compactionModelServiceProblem,
   compactionProblemFor,
   configProblemFor,
   providerNotConfiguredMessage,
@@ -125,7 +126,11 @@ import {
   validateMermaidFences,
 } from '@/services/mermaidRecovery';
 import { checkCompleteness } from '@/services/promptLoop';
-import { getNormalizedProviders, resolveProviderRequestContext } from '@/services/providerResolver';
+import {
+  getNormalizedProviders,
+  resolveProvider,
+  resolveProviderRequestContext,
+} from '@/services/providerResolver';
 import {
   type CompactionSelection,
   compactionSelectionFromPayload,
@@ -371,10 +376,13 @@ export async function POST(req: NextRequest): Promise<Response> {
     globalCompactionModel === '' ? model : globalCompactionModel
   );
   if (!parsedCompaction.ok) {
-    return new Response(`event: error\ndata: ${JSON.stringify({ message: parsedCompaction.error })}\n\n`, {
-      status: HTTP_BAD_REQUEST,
-      headers: { 'Content-Type': SSE_CONTENT_TYPE },
-    });
+    return new Response(
+      `event: error\ndata: ${JSON.stringify({ message: parsedCompaction.error })}\n\n`,
+      {
+        status: HTTP_BAD_REQUEST,
+        headers: { 'Content-Type': SSE_CONTENT_TYPE },
+      }
+    );
   }
   const sessionCompaction = parsedCompaction.selection;
   // The compaction half is checked with the SHARED resolver, so the chat, the
@@ -384,6 +392,13 @@ export async function POST(req: NextRequest): Promise<Response> {
     configProblemFor(savedConfig.config, providerId, model) ??
     compactionProblemFor(savedConfig.config, {
       mainModel: model,
+      // The provider this turn runs on - the same resolution the runtime
+      // makes (`resolveProviderRequestContext(config, providerId, model)`).
+      // The compaction inherits the MAIN provider when it has none of its
+      // own, so the pair has to be checked against THIS provider: checked
+      // against `providers[0]` instead, a turn pinned to a provider with no
+      // default model would be refused for the wrong reason.
+      mainProvider: resolveProvider(savedConfig.config, providerId, model),
       compaction: sessionCompaction,
     });
   if (turnProblem !== null) {
@@ -1252,6 +1267,35 @@ export async function POST(req: NextRequest): Promise<Response> {
               : resolveProviderRequestContext(setting, selection.providerId, undefined, requestId);
           compactionLlmRequestContext = resolved?.ctx ?? llmRequestContext;
 
+          // The compaction, when it has no provider of its own, runs on the
+          // MAIN provider. The preflight refused a turn whose main provider
+          // does not serve the compaction model, but the pair is asked again
+          // here, because the answer can change: a mid-turn model switch can
+          // move the turn onto another provider, and the gate and the
+          // runtime read config.json separately, so they can already
+          // disagree. A running turn must not die - the switch path's policy
+          // is to LOG, not to refuse (C-025) - so this only records the
+          // diagnostic.
+          if (
+            selection.providerId === null &&
+            selection.model !== model &&
+            activeProvider !== null
+          ) {
+            const problem = compactionModelServiceProblem(setting, activeProvider, selection.model);
+            if (problem !== null) {
+              debugLog.diagnostic({
+                layer: 'route',
+                phase: 'compaction_model_not_served',
+                requestId,
+                sessionId: parsedSessionId,
+                model: model as string,
+                provider: activeProvider.id,
+                compactionModel: selection.model,
+                reason: problem,
+              });
+            }
+          }
+
           // The compaction model has its own maximum, which can be lower than
           // the main model's. When it is the SAME endpoint and model as the main
           // request the probe is the one the main window just made (the cache
@@ -1327,10 +1371,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           // The GLOBAL compaction pair comes from the saved config, not from
           // the body: the body carries the conversation's own pin only, and
           // the resolver merges the two.
-          await Promise.all([
-            resolveNumCtxForModel(),
-            resolveCompactionRuntime(sessionCompaction),
-          ]);
+          await Promise.all([resolveNumCtxForModel(), resolveCompactionRuntime(sessionCompaction)]);
 
           // Compute allowedTools from always-apply skills (best-effort)
           let allowedTools: string[] | undefined;
