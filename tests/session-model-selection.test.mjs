@@ -154,19 +154,37 @@ describe('the selection vocabulary', () => {
       reasoningEffort: null,
       compactionReasoningEffort: null,
     });
-    expect(validateSessionSelection({ model: 'm', compaction: explicit('c', 'p') })).toMatchObject({
+    expect(validateSessionSelection({ model: 'm', compaction: explicit('c', 'p') })).toStrictEqual({
+      model: 'm',
+      providerId: null,
       compaction: explicit('c', 'p'),
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
     });
   });
 
   test('the LEGACY flat pair is still read, and its meaning is kept', () => {
     // A tab that was open before the change still sends the two fields.
+    // `toStrictEqual`, not a subset match: a `compaction` that carried extra
+    // fields (the flat halves leaking through) would pass `toMatchObject`.
     expect(
       validateSessionSelection({ model: 'm', compactionModel: '', compactionProviderId: null })
-    ).toMatchObject({ compaction: SAME_AS_MAIN });
+    ).toStrictEqual({
+      model: 'm',
+      providerId: null,
+      compaction: SAME_AS_MAIN,
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
+    });
     expect(
       validateSessionSelection({ model: 'm', compactionModel: 'c', compactionProviderId: 'p' })
-    ).toMatchObject({ compaction: explicit('c', 'p') });
+    ).toStrictEqual({
+      model: 'm',
+      providerId: null,
+      compaction: explicit('c', 'p'),
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
+    });
   });
 
   test('a reasoning level is validated, and null means "inherit the default"', () => {
