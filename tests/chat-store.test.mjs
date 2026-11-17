@@ -825,6 +825,53 @@ describe('steering drafts, restore text and the model-switch flag', () => {
     expect([...state.modelSwitchPendingSessions]).toStrictEqual([5]);
   });
 
+  test('SET_SESSION_SELECTION leaves the global compaction provider alone when the defaults do not state it (BUG 9)', () => {
+    // `defaults.compactionProviderId` is typed as always present, so a caller
+    // that omits it compiles; the reducer used to write `undefined` over a
+    // pin that was set.
+    const selection = {
+      model: 'm',
+      providerId: 'p',
+      compaction: { kind: 'inherit-default' },
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
+    };
+    const defaultsWithout = {
+      model: 'm',
+      providerId: 'p',
+      compactionModel: 'beam',
+      reasoningEffort: 'off',
+      compactionReasoningEffort: 'off',
+    };
+    let state = chatReducer(initialState, {
+      type: 'SET_DEFAULT_SELECTION',
+      model: 'm',
+      providerId: 'p',
+      compactionModel: 'beam',
+      compactionProviderId: 'ollama-cloud',
+    });
+    expect(state.defaultCompactionProviderId).toBe('ollama-cloud');
+    state = chatReducer(state, {
+      type: 'SET_SESSION_SELECTION',
+      selection,
+      defaults: defaultsWithout,
+    });
+    expect(state.defaultCompactionProviderId).toBe('ollama-cloud');
+    // a stated value is applied, and `null` still means "clear it"
+    state = chatReducer(state, {
+      type: 'SET_SESSION_SELECTION',
+      selection,
+      defaults: { ...defaultsWithout, compactionProviderId: 'other' },
+    });
+    expect(state.defaultCompactionProviderId).toBe('other');
+    state = chatReducer(state, {
+      type: 'SET_SESSION_SELECTION',
+      selection,
+      defaults: { ...defaultsWithout, compactionProviderId: null },
+    });
+    expect(state.defaultCompactionProviderId).toBeNull();
+  });
+
   test('discarding a session drops its steer and switch state', () => {
     let state = twoStreaming();
     state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 9, draft: steerDraft('d9') });

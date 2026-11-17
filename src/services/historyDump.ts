@@ -5,7 +5,15 @@ export interface ConversationDumpInput {
   sessionName?: string | undefined;
   currentModel: string;
   baseUrl: string;
-  runtimeNumCtx: number;
+  /** The window the server resolves for the model, or `null` when it could not. */
+  runtimeNumCtx: number | null;
+  /**
+   * Which provider the conversation runs on, in words - or why none could be
+   * resolved (a removed provider id, an unreadable config). The dump is the
+   * tool you reach for when the configuration is broken, so it says what is
+   * broken instead of refusing.
+   */
+  providerLabel?: string | undefined;
   savedNumCtx?: number | undefined;
   systemPrompt: string;
   messages: ChatMessage[];
@@ -218,7 +226,8 @@ export function buildConversationDumpMarkdown(input: ConversationDumpInput): str
     `- Session Name: ${trimmedSessionName && trimmedSessionName.length > 0 ? trimmedSessionName : '(unnamed)'}`,
     `- Current Model: ${input.currentModel}`,
     `- Base URL: ${input.baseUrl}`,
-    `- Runtime num_ctx: ${input.runtimeNumCtx}`,
+    ...(input.providerLabel === undefined ? [] : [`- Provider: ${input.providerLabel}`]),
+    `- Runtime num_ctx: ${input.runtimeNumCtx ?? '(unknown)'}`,
     `- Saved num_ctx: ${input.savedNumCtx ?? '(unset)'}`,
     `- Message Count: ${input.messages.length}`,
     `- Role Counts: ${summarizeRoles(input.messages)}`,

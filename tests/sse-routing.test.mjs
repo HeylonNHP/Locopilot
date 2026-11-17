@@ -541,6 +541,7 @@ describe('terminal events', () => {
     );
     expect(outcome.actions).toStrictEqual([
       { type: 'SET_TOKEN_STATS', stats: { totalTokens: 10 }, targetSessionId: 7 },
+      { type: 'SET_MODEL_SWITCH_PENDING', sessionId: 9, pending: false },
       { type: 'SET_DONE_REASON', reason: 'length', targetSessionId: 9 },
     ]);
     expect(outcome.clearTps).toBe(true);
@@ -553,6 +554,7 @@ describe('terminal events', () => {
       { targetSessionId: 7, doneOwner: 9 }
     );
     expect(outcome.actions).toStrictEqual([
+      { type: 'SET_MODEL_SWITCH_PENDING', sessionId: 9, pending: false },
       { type: 'SET_DONE_REASON', reason: 'unknown', targetSessionId: 9 },
     ]);
   });
@@ -568,6 +570,7 @@ describe('terminal events', () => {
   test('error marks the turn failed and clears the live rate', () => {
     const outcome = routeSseEvent('error', { message: 'boom' }, { targetSessionId: 7 });
     expect(outcome.actions).toStrictEqual([
+      { type: 'SET_MODEL_SWITCH_PENDING', sessionId: 7, pending: false },
       { type: 'SET_ERROR', error: 'boom', targetSessionId: 7 },
     ]);
     expect(outcome.markFailed).toBe(true);
@@ -587,12 +590,40 @@ describe('terminal events', () => {
     );
     expect(outcome.markFailed).toBe(false);
     expect(outcome.actions).toStrictEqual([
+      { type: 'SET_MODEL_SWITCH_PENDING', sessionId: 7, pending: false },
       {
         type: 'SET_ERROR',
         error: 'Session not found. It may have been deleted in another tab.',
         targetSessionId: 7,
       },
     ]);
+  });
+
+  test('the end of a turn releases a model switch that never found a tool step to land on (A13)', () => {
+    // A switch asked for while the FINAL answer streams is never applied to
+    // this turn: no refusal and no confirmation follows it. The badge must not
+    // wait for the end-of-turn database reload before it goes.
+    const done = routeSseEvent(
+      'done',
+      { doneReason: 'stop' },
+      { targetSessionId: 7, doneOwner: 9 }
+    );
+    expect(done.actions).toContainEqual({
+      type: 'SET_MODEL_SWITCH_PENDING',
+      sessionId: 9,
+      pending: false,
+    });
+    const failed = routeSseEvent('error', { message: 'boom' }, { targetSessionId: 7 });
+    expect(failed.actions).toContainEqual({
+      type: 'SET_MODEL_SWITCH_PENDING',
+      sessionId: 7,
+      pending: false,
+    });
+  });
+
+  test('a done with no owner touches no session’s switch state', () => {
+    const ownerless = routeSseEvent('done', { doneReason: 'stop' }, { targetSessionId: 7 });
+    expect(ownerless.actions.some((a) => a.type === 'SET_MODEL_SWITCH_PENDING')).toBe(false);
   });
 
   test('an ordinary error still marks the turn as failed', () => {

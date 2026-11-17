@@ -747,6 +747,7 @@ export function useSlashCommands({
               body: JSON.stringify({
                 messages: currentMessages,
                 model: refs.modelRef.current,
+                providerId: refs.activeProviderIdRef.current,
                 baseUrl: refs.baseUrlRef.current,
                 sessionId: refs.sessionIdRef.current,
               }),

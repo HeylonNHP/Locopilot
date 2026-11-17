@@ -948,11 +948,7 @@ function selectionMirror(
   selection: SessionSelection
 ): Pick<
   ChatState,
-  | 'model'
-  | 'activeProviderId'
-  | 'compaction'
-  | 'reasoningEffort'
-  | 'compactionReasoningEffort'
+  'model' | 'activeProviderId' | 'compaction' | 'reasoningEffort' | 'compactionReasoningEffort'
 > {
   return {
     model: selection.model,
@@ -1505,7 +1501,15 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         defaultModel: defaults.model,
         defaultProviderId: defaults.providerId,
         defaultCompactionModel: defaults.compactionModel,
-        defaultCompactionProviderId: defaults.compactionProviderId,
+        // A defaults object that does not state the global compaction
+        // provider leaves it alone, as `SET_DEFAULT_SELECTION` does. An
+        // unconditional assignment wrote `undefined` over a pin that was
+        // set (the type says the key is always present, so the compiler
+        // cannot catch a caller that omits it; bug hunt BUG 9). `null` is
+        // still a real value: "clear it".
+        ...(defaults.compactionProviderId === undefined
+          ? {}
+          : { defaultCompactionProviderId: defaults.compactionProviderId }),
         defaultReasoningEffort: defaults.reasoningEffort,
         defaultCompactionReasoningEffort: defaults.compactionReasoningEffort,
       };
@@ -1566,9 +1570,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         ...(defaultModel === undefined ? {} : { defaultModel }),
         ...(defaultProviderId === undefined ? {} : { defaultProviderId }),
         ...(defaultCompactionModel === undefined ? {} : { defaultCompactionModel }),
-        ...(defaultCompactionProviderId === undefined
-          ? {}
-          : { defaultCompactionProviderId }),
+        ...(defaultCompactionProviderId === undefined ? {} : { defaultCompactionProviderId }),
         ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
         ...(defaultCompactionReasoningEffort === undefined
           ? {}

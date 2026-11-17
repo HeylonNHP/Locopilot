@@ -2,7 +2,6 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 import { DEFAULT_OLLAMA_BASE_URL } from '@/services/configDefaults';
 import { readConfig } from '@/services/configManager';
-import { requestProblemFor, requireWindow } from '@/services/contextWindow/configProblem';
 import { resolveNumCtx } from '@/services/contextWindow/resolveNumCtx';
 import { listSessions } from '@/services/history';
 import {
@@ -11,7 +10,7 @@ import {
   type ConversationDumpInput,
 } from '@/services/historyDump';
 import { buildLlmRequestContext, type ChatMessage } from '@/services/llm';
-import { resolveProviderRequestContext } from '@/services/providerResolver';
+import { buildProviderRequestContext, resolveProvider } from '@/services/providerResolver';
 import { getLastWebCompactionDebug } from '@/tools/impl/contentCompactor';
 
 export const dynamic = 'force-dynamic';
@@ -42,6 +41,13 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const messages = Array.isArray(body.messages) ? (body.messages as ChatMessage[]) : null;
   const model = typeof body.model === 'string' ? body.model.trim() : '';
+  // The provider the conversation runs on. Without it the model name is the
+  // only hint, and a provider with no default `model` never wins that match,
+  // so the dump would label (and judge) `providers[0]` instead.
+  const providerId =
+    typeof body.providerId === 'string' && body.providerId.trim() !== ''
+      ? body.providerId.trim()
+      : undefined;
 
   if (!messages) {
     return NextResponse.json({ error: 'Messages array is required.' }, { status: 400 });
@@ -51,47 +57,61 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: 'Model name is required.' }, { status: 400 });
   }
 
-  // Refused before the dump is built when the saved config cannot run this
-  // model (the window it labels comes from the same config).
+  // THE DUMP NEVER REFUSES FOR THE CONFIGURATION. It makes no model call: it
+  // writes down what the page already holds, and the only thing it asks of a
+  // provider is a metadata probe so it can LABEL the window. It is the tool
+  // you reach for when something is broken, so a removed provider, a
+  // provider that does not serve the model, a missing context size and an
+  // unreadable `config.json` are all things it REPORTS in the file.
   const savedConfig = await readConfig();
-  if (!savedConfig.ok) {
-    return NextResponse.json({ error: savedConfig.message }, { status: 503 });
-  }
-  // The dump never compacts, so a broken compaction provider is not its
-  // problem: the dump is the tool you reach for when something is broken.
-  const requestProblem = requestProblemFor(savedConfig.config, { model }, { checkCompaction: false });
-  if (requestProblem !== null) {
-    return NextResponse.json({ error: requestProblem }, { status: 409 });
-  }
+  const config = savedConfig.ok ? savedConfig.config : null;
 
   try {
-    const config = savedConfig.config;
     const effectiveBaseUrl =
       typeof body.baseUrl === 'string' && body.baseUrl.trim().length > 0
         ? body.baseUrl.trim()
         : DEFAULT_OLLAMA_BASE_URL;
-    // The dump labels the window the server resolves for this model: the saved
-    // setting (the provider's own numCtx, else the global one) capped by the
-    // model's maximum. The request body is not an input. The dump is
-    // informational (no LLM call), so a failed lookup is just an unlabelled
-    // window. `savedNumCtx` is the global setting as saved.
     const configRequested =
       config?.numCtx && Number.isFinite(config.numCtx) && config.numCtx > 0
         ? Math.trunc(config.numCtx)
         : undefined;
-    // Prefer the resolved provider's context (credentials + baseUrl); fall
-    // back to an unauthenticated context against the effective base URL when
-    // no provider resolves.
-    const resolvedProvider = resolveProviderRequestContext(config, undefined, model);
-    const windowResolution = await resolveNumCtx({
-      ctx: resolvedProvider
-        ? resolvedProvider.ctx
-        : buildLlmRequestContext({ baseUrl: effectiveBaseUrl }),
-      model,
-      providerNumCtx: resolvedProvider?.provider.numCtx,
-      configNumCtx: config?.numCtx,
-    });
-    const effectiveNumCtx = requireWindow(windowResolution.effective);
+
+    // The provider the conversation runs on, resolved exactly as a turn
+    // resolves it (by id when the page sent one), so the file says which
+    // provider it is about - or why none could be found.
+    const provider = config === null ? null : resolveProvider(config, providerId, model);
+    let providerLabel: string;
+    if (config === null) {
+      providerLabel = `(config.json could not be read: ${savedConfig.ok ? '' : savedConfig.message})`;
+    } else if (provider !== null) {
+      providerLabel = `${provider.name} (${provider.id})`;
+    } else if (providerId === undefined) {
+      providerLabel = '(no provider is configured)';
+    } else {
+      providerLabel = `(the provider "${providerId}" is not configured)`;
+    }
+
+    // Label the window the server resolves for this model: the saved setting
+    // (the provider's own numCtx, else the global one) capped by the model's
+    // maximum. The request body is not an input. The probe never throws, and
+    // a window that cannot be resolved is labelled `(unknown)`.
+    //
+    // The probe goes to the provider the conversation runs on. When the page
+    // NAMED a provider that is not configured there is nowhere right to ask,
+    // so nothing is probed; with no id at all the base URL the page sent is
+    // the fallback.
+    let runtimeNumCtx: number | null = null;
+    if (providerId === undefined || provider !== null) {
+      const windowResolution = await resolveNumCtx({
+        ctx: provider
+          ? buildProviderRequestContext(provider)
+          : buildLlmRequestContext({ baseUrl: effectiveBaseUrl }),
+        model,
+        providerNumCtx: provider?.numCtx,
+        configNumCtx: config?.numCtx,
+      });
+      runtimeNumCtx = windowResolution.effective;
+    }
     const savedNumCtx = configRequested;
     const parsedSessionId = parsePositiveInteger(body.sessionId);
     const sessionName = parsedSessionId
@@ -103,11 +123,16 @@ export async function POST(request: NextRequest): Promise<Response> {
       sessionName,
       currentModel: model,
       baseUrl: effectiveBaseUrl,
-      runtimeNumCtx: effectiveNumCtx,
+      providerLabel,
+      runtimeNumCtx,
       savedNumCtx,
       systemPrompt: extractSystemPrompt(messages),
       messages,
-      config,
+      // An unreadable config is shown as what it is, not omitted.
+      config: config ?? {
+        error: 'config.json could not be read',
+        reason: savedConfig.ok ? null : savedConfig.message,
+      },
       webCompactionDebug: getLastWebCompactionDebug(),
     };
 

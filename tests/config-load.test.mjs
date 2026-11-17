@@ -229,7 +229,6 @@ describe('the server has no window default, and the routes refuse first', () => 
     'src/app/api/chat/route.ts',
     'src/app/api/compact/route.ts',
     'src/app/api/title/route.ts',
-    'src/app/api/dump/route.ts',
   ])('%s reads the saved config and refuses first', (file) => {
     const source = read(file);
     // it reads the saved config
@@ -238,6 +237,17 @@ describe('the server has no window default, and the routes refuse first', () => 
     expect(source).toContain('status: 503');
     // it refuses a config that cannot run the request
     expect(source).toMatch(/configProblemFor\(|requestProblemFor\(/);
+  });
+
+  test('the dump reads the saved config but never refuses for it: it makes no model call', () => {
+    const source = read('src/app/api/dump/route.ts');
+    expect(source).toContain('await readConfig()');
+    // an unreadable config is reported in the file, not answered with a 503
+    expect(source).not.toContain('status: 503');
+    // and no pair, provider or window check can refuse it
+    expect(source).not.toMatch(
+      /configProblemFor\(|requestProblemFor\(|requireWindow\(|status: 409/
+    );
   });
 
   test('the config PUT refuses an unreadable file before it saves, and writes no window', () => {

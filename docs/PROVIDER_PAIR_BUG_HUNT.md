@@ -1,6 +1,6 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **open - 10 bugs triaged, 8 fixed** (2026-11-17). BUG 1, BUG 2, BUG 3, BUG 5, BUG 6, BUG 7, BUG 8 and BUG 10 are done.
+Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A12 and A13. The A-table (A1-A11, A14) is the remaining backlog.
 
 Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
 (merge-base == `origin/dev` tip). The branch is several commits ahead of the
@@ -27,7 +27,7 @@ Companion documents:
 
 ### Where the work stands
 
-Eight of the ten bugs are fixed and committed. The full test suite fails the same 21 environmental suites it failed before any
+All ten bugs are fixed and committed. The full test suite fails the same 21 environmental suites it failed before any
 of this work started.
 
 | Bug | Severity         | Status   | Commit    | One line                                                                                                                      |
@@ -38,22 +38,21 @@ of this work started.
 | 6   | Medium           | **done** | `7ca24ad` | The WRITE path normalises the pair; the frame carries what was written.                                                       |
 | 8   | Medium           | **done** | `6a1e98b` | "Use the default" is carried mid-turn; a refusal is reported.                                                                 |
 | 10  | Medium           | **done** | `7ca24ad` | The guarantee test reads the RAW row, so it can see a half-pair.                                                              |
-| 4   | Medium-High      | **open** | -         | `/api/dump` refuses a (model, provider) pair the chat accepts.                                                                |
+| 4   | Medium-High      | **done** | see tracker | `/api/dump` refuses a (model, provider) pair the chat accepts.                                                                |
 | 5   | Medium           | **done** | see tracker | A selection is checked as a pair before it is written (POST and PATCH); A12 folded in.                                      |
 | 7   | Medium           | **done** | see tracker | The save helpers return the server's refusal message and every call site shows it.                                          |
-| 9   | Low (was Medium) | **open** | -         | The global compaction-provider pin is wiped. Re-rated: every dispatcher supplies the key, so it is unreachable in production. |
+| 9   | Low (was Medium) | **done** | see tracker | The global compaction-provider pin is wiped. Re-rated: every dispatcher supplies the key, so it is unreachable in production. |
 
 ### The next action
 
-**BUG 4 - `/api/dump` refuses a (model, provider) pair the chat accepts.**
-Either read `body.providerId` in the dump route and have the client send it,
-or exempt the dump from the pair check the way it is already exempt from the
-compaction check. The dump is the tool you reach for when something is broken.
-
-Then A13 (the "(switching...)" badge that sticks when a switch arrives during
-the final answer; one line, deserves its own row) and BUG 9 (one-line guard).
-A3 was NOT done with BUG 5: it needs a new store action and is a silent,
-unpersisted client repair; see the changelog entry.
+All ten bugs are done. What is left is the A-table in section 5: A1 (the same
+legacy body resolves to a different compaction selection per endpoint), A2 (a
+silent client repair of a `model-changed` frame), A3 (a dangling COMPACTION
+provider id is not repaired on the client; deliberately not done with BUG 5),
+A5-A9 and A11 (weak or vacuous tests), A14 (a narrow switch-registry race).
+A12 and A13 are fixed. Before closing the branch, check that the model index
+matches what Ollama Cloud and NVIDIA actually list: no live provider has
+exercised any refusal.
 
 ### The cycle that was used for each fix
 
@@ -507,7 +506,7 @@ source) fails them, so they are not vacuous. Note that
 
 ---
 
-### [ ] BUG 4 - MEDIUM-HIGH - `/api/dump` refuses a (model, provider) pair the chat accepts
+### [x] BUG 4 - MEDIUM-HIGH - `/api/dump` refuses a (model, provider) pair the chat accepts
 
 - `src/app/api/dump/route.ts:62` -
   `requestProblemFor(savedConfig.config, { model }, { checkCompaction: false })`
@@ -782,7 +781,7 @@ tests, and they pass on both sides.
 
 ---
 
-### [ ] BUG 9 - LOW (re-rated from Medium on 2026-11-17) - picking a model wipes the global compaction-provider pin
+### [x] BUG 9 - LOW (re-rated from Medium on 2026-11-17) - picking a model wipes the global compaction-provider pin
 
 **Re-rated on 2026-11-17: LOW.** All four `SET_SESSION_SELECTION` dispatchers
 (`ModelSelector.applySelection`, `SettingsModal`, `ReasoningEffortSelector`
@@ -981,12 +980,12 @@ the fix.
 | 1 - global compaction pair unchecked      | High        | [x]    | `fix(compaction): the inherited global pair is checked against the chat's provider`  | `compactionProblemFor` now takes the resolved main provider and checks the inherited global pair against it. `CONFIRMATIONS.md` C-030.                                          |
 | 2 - refused switch reported as applied    | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | A refused switch is refused WHOLE and announced on the new `model_switch_refused` SSE phase; the client clears the pending flag and shows the reason.                           |
 | 3 - mid-turn switch has no pair check     | High        | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | `planModelSwitch` forms the pair the switch would form and puts it through the same checks a new turn is put through. The last route to the production 404.                     |
-| 4 - /api/dump refuses a valid pair        | Medium-High | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| 4 - /api/dump refuses a valid pair        | Medium-High | [x]    | `fix(dump): the dump never refuses for the configuration`                            | The client sends `providerId`; the route resolves by id, and the dump never refuses for the configuration (it makes no model call): it reports a removed provider, a missing window or an unreadable config in the file. A13 (badge released on `done`/`error`) shipped with it. |
 | 5 - session created with a ghost provider | Medium      | [x]    | `fix(sessions): check a selection as a pair before it is written`                    | `selectionWriteProblem` checks the pair on POST and PATCH (409, names the cause, writes nothing); only the halves the write changes; pair only, never the window. A12 folded in. |
 | 6 - write path does not normalise         | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | `selectionToColumns` now goes through `coherentCompactionPair` - the same repair the read path uses - and the `model-changed` frame carries the pair that was actually written. |     |     |
 | 7 - refusal messages discarded            | Medium      | [x]    | `fix(client): report the server's refusal when a selection cannot be saved`          | `saveSessionPatch` / `saveDefaultsPatch` / `saveSelectionChanges` return `SaveResult`; `saveFailureMessage` puts the server's cause in the banner headline at all five call sites. |
 | 8 - empty mid-turn switch body            | Medium      | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | The switch carries `compaction: {kind:"inherit-default"}`; an empty payload sends no request; the route 400 and the server SSE refusal are both reported through `SET_ERROR`.   |
-| 9 - global compaction pin wiped           | Low         | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| 9 - global compaction pin wiped           | Low         | [x]    | `fix(dump): the dump never refuses for the configuration`                            | `SET_SESSION_SELECTION` leaves `defaultCompactionProviderId` alone when the defaults omit it; `null` still clears.                                                              |
 | 10 - guarantee test is vacuous            | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | The test reads the RAW SQLite row instead of the normalised `listSessions()` projection, so it fails if the write path stops normalising. A second test pins the frame.         |     |     |
 | A1-A11                                    | Low/Info    | [ ]    |                                                                                      |                                                                                                                                                                                 |
 

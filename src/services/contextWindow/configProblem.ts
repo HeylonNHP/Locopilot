@@ -324,10 +324,12 @@ export function compactionProblemFor(
 }
 
 /**
- * The same check for a route whose body fields are not typed yet (compact,
- * title and dump). The compaction half is checked too, since the compaction
- * provider's window is the one the summarising calls are planned against —
- * but a route that never compacts (the dump) can opt out of it.
+ * The same check for a route whose body fields are not typed yet (compact and
+ * title). The compaction half is checked too, since the compaction provider's
+ * window is the one the summarising calls are planned against.
+ *
+ * `/dump` does NOT use this: it makes no model call, so it has nothing to
+ * refuse (see `src/app/api/dump/route.ts`).
  */
 export function requestProblemFor(
   config: Config,
@@ -340,8 +342,7 @@ export function requestProblemFor(
      * "can it actually run" half.
      */
     compaction?: CompactionSelection | null | undefined;
-  },
-  options?: { checkCompaction?: boolean }
+  }
 ): string | null {
   const providerId =
     typeof body.providerId === 'string' && body.providerId.trim()
@@ -350,9 +351,6 @@ export function requestProblemFor(
   const mainProblem = configProblemFor(config, providerId, body.model);
   if (mainProblem !== null) {
     return mainProblem;
-  }
-  if (options?.checkCompaction === false) {
-    return null;
   }
   return compactionProblemFor(config, {
     mainModel: body.model,

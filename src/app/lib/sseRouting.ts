@@ -522,6 +522,19 @@ export function routeSseEvent(
           ...(targetSessionId === undefined ? {} : { targetSessionId }),
         });
       }
+      // A switch asked for while the FINAL answer was streaming has no tool
+      // step left to land on, so it is never applied to this turn (the saved
+      // selection applies from the next one). Without this the "(switching...)"
+      // badge stays until the end-of-turn reload from the database finishes
+      // and `STOP_STREAMING` runs; the turn is over now, so say so now.
+      //
+      // Scoped to the done OWNER (the session whose turn this `done` ends),
+      // so it can never touch another conversation's switch state. The owner
+      // is always set on the live path; the guard covers a caller that has
+      // none.
+      if (doneOwner !== undefined) {
+        actions.push({ type: 'SET_MODEL_SWITCH_PENDING', sessionId: doneOwner, pending: false });
+      }
       const doneToolCalls = (data as { tool_calls?: Array<{ id?: string }> }).tool_calls;
       trace('done event', {
         hasToolCalls: !!doneToolCalls?.length,
@@ -556,6 +569,15 @@ export function routeSseEvent(
       // as failed (so the user's retry payload is preserved)
       // and surface the message to the owning session.
       const errorMessage = typeof data.message === 'string' ? data.message : 'Unknown error';
+      // The turn is over, so a switch that was waiting for its next tool step
+      // never will be applied.
+      if (targetSessionId !== undefined) {
+        actions.push({
+          type: 'SET_MODEL_SWITCH_PENDING',
+          sessionId: targetSessionId,
+          pending: false,
+        });
+      }
       if (targetSessionId === undefined) {
         actions.push({ type: 'SET_ERROR', error: errorMessage });
       } else {
