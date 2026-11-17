@@ -140,42 +140,10 @@ describe('the routes read the same id the gate read', () => {
     expect(source).toMatch(/body\.providerId === 'string' && body\.providerId\.trim\(\)/);
   });
 
-  test('the chat route refuses a provider it cannot resolve instead of guessing one', () => {
-    expect(chatRoute).toContain('providerNotConfiguredMessage');
-  });
-
-  test('a mid-turn switch onto an unconfigured provider is refused, not applied', () => {
-    // The switch must keep the turn on the provider and the model it
-    // already runs on. Continuing on the body's baseUrl would be the
-    // wrong endpoint without its credentials.
-    //
-    // The refusal is PLANNED (the pair the switch would form is checked
-    // before anything is applied) and ANNOUNCED (the client is told, so a
-    // refusal cannot look like a successful switch).
-    expect(chatRoute).toContain('planModelSwitch');
-    expect(chatRoute).toContain('model_switch_refused');
-    expect(chatRoute).not.toMatch(/activeProvider = null/);
-  });
-
-  test('the refusal comes BEFORE anything is applied', () => {
-    // A bare `toContain` cannot see the wiring: if the plan's result were
-    // ignored, every other assertion in this file would still pass and no
-    // switch would ever be refused. The ORDER is the thing - the refusal
-    // has to come before the mutations it is protecting.
-    const refusal = chatRoute.indexOf("phase: 'model_switch_refused'");
-    const appliesModel = chatRoute.indexOf('model = target.model;');
-    const appliesProvider = chatRoute.indexOf('activeProvider = target.provider;');
-    const appliesCompaction = chatRoute.indexOf('sessionCompaction = target.compaction;');
-    const reResolvesCompaction = chatRoute.indexOf(
-      'resolveCompactionRuntime(sessionCompaction, true, setting)'
-    );
-
-    expect(refusal).toBeGreaterThan(-1);
-    expect(appliesModel).toBeGreaterThan(refusal);
-    expect(appliesProvider).toBeGreaterThan(refusal);
-    expect(appliesCompaction).toBeGreaterThan(refusal);
-    expect(reResolvesCompaction).toBeGreaterThan(refusal);
-  });
+  // The chat route's refusal of a provider it cannot resolve, and the mid-turn
+  // switch's refusal (announced, and applied to nothing), are driven END TO END
+  // in `chat-route-pair-gates.test.mjs`. They used to be pinned here by reading
+  // the route's source, which passes even when the gate is deleted.
 });
 
 describe('the compaction check runs against the provider the request runs on', () => {

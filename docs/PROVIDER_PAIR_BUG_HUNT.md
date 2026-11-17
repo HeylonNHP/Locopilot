@@ -1,6 +1,6 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A12 and A13. The A-table (A1-A11, A14) is the remaining backlog.
+Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A4, A12 and A13. Of the A-table backlog, A5, A6, A7, A8, A9 and A10 are done and committed; A1, A2, A3, A11 and A14 are open. See section 5.1.
 
 Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
 (merge-base == `origin/dev` tip). The branch is several commits ahead of the
@@ -27,8 +27,9 @@ Companion documents:
 
 ### Where the work stands
 
-All ten bugs are fixed and committed. The full test suite fails the same 21 environmental suites it failed before any
-of this work started.
+All ten bugs are fixed and committed. The full test suite is green on the Linux
+development machine (86 suites, 2200 passed, 2 skipped as of 2026-11-17); the
+"21 environmental suites" recorded earlier were measured on a Windows machine.
 
 | Bug | Severity         | Status   | Commit    | One line                                                                                                                      |
 | --- | ---------------- | -------- | --------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -38,21 +39,33 @@ of this work started.
 | 6   | Medium           | **done** | `7ca24ad` | The WRITE path normalises the pair; the frame carries what was written.                                                       |
 | 8   | Medium           | **done** | `6a1e98b` | "Use the default" is carried mid-turn; a refusal is reported.                                                                 |
 | 10  | Medium           | **done** | `7ca24ad` | The guarantee test reads the RAW row, so it can see a half-pair.                                                              |
-| 4   | Medium-High      | **done** | see tracker | `/api/dump` refuses a (model, provider) pair the chat accepts.                                                                |
-| 5   | Medium           | **done** | see tracker | A selection is checked as a pair before it is written (POST and PATCH); A12 folded in.                                      |
-| 7   | Medium           | **done** | see tracker | The save helpers return the server's refusal message and every call site shows it.                                          |
-| 9   | Low (was Medium) | **done** | see tracker | The global compaction-provider pin is wiped. Re-rated: every dispatcher supplies the key, so it is unreachable in production. |
+| 4   | Medium-High      | **done** | `d893ddf` | `/api/dump` refuses a (model, provider) pair the chat accepts.                                                                |
+| 5   | Medium           | **done** | `11011df` | A selection is checked as a pair before it is written (POST and PATCH); A12 folded in.                                      |
+| 7   | Medium           | **done** | `1faba56` | The save helpers return the server's refusal message and every call site shows it.                                          |
+| 9   | Low (was Medium) | **done** | `d893ddf` | The global compaction-provider pin is wiped. Re-rated: every dispatcher supplies the key, so it is unreachable in production. |
 
 ### The next action
 
-All ten bugs are done. What is left is the A-table in section 5: A1 (the same
-legacy body resolves to a different compaction selection per endpoint), A2 (a
-silent client repair of a `model-changed` frame), A3 (a dangling COMPACTION
-provider id is not repaired on the client; deliberately not done with BUG 5),
-A5-A9 and A11 (weak or vacuous tests), A14 (a narrow switch-registry race).
-A12 and A13 are fixed. Before closing the branch, check that the model index
-matches what Ollama Cloud and NVIDIA actually list: no live provider has
-exercised any refusal.
+All ten bugs are done. What is left is the A-table backlog (section 5.1 has
+the per-item status):
+
+- **A7** is done (`tests/chat-route-pair-gates.test.mjs`). Two gaps remain
+  that no test covers: a refused mid-turn switch that still applies its
+  compaction selection, and one that nulls `activeProvider`. Neither is
+  observable from the SSE frames or the provider requests of a one-iteration
+  turn; a test needs a second tool-call iteration or a spy on the compaction
+  runtime.
+- **A11** (two tests in `tests/context-window.test.mjs` still dispatch the
+  pre-2.3 flat shape) is a test-only fix.
+- **The four behaviour changes, each needing its own review:** A1 (the same
+  legacy body resolves to a different compaction selection per endpoint), A2
+  (a silent client repair of a `model-changed` frame in
+  `useSessionEvents.ts`), A3 (a dangling COMPACTION provider id is not
+  repaired on the client; deliberately not done with BUG 5, needs a new
+  store action), A14 (a narrow switch-registry race).
+
+Before closing the branch, check that the model index matches what Ollama
+Cloud and NVIDIA actually list: no live provider has exercised any refusal.
 
 ### The cycle that was used for each fix
 
@@ -899,6 +912,31 @@ the fix.
 
 ---
 
+### 5.1 Progress on the A-table (2026-11-17)
+
+| #   | Status        | Commit / note                                                                                                                                        |
+| --- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | open          | Needs a decision on which fallback is right (the conversation's main model, the global compaction model, or the switched model) before it is unified. |
+| A2  | open          | `src/app/hooks/useSessionEvents.ts`: make the silent repair loud, and read the legacy flat fields.                                                   |
+| A3  | open          | Client repair of a dangling compaction provider id; needs a new store action. Not done with BUG 5 on purpose.                                        |
+| A4  | **done**      | `5db11d1` (with BUG 1).                                                                                                                              |
+| A5  | **done**      | `50c39c2` - the legacy-path assertions are `toStrictEqual` on the whole selection.                                                                   |
+| A6  | **done**      | `484d4a6` - the three `not.toBeNull()` refusal assertions check the message text. One more candidate, outside this branch: `compact-receipt.test.mjs:156`. |
+| A7  | **done**      | `test(chat): drive the real chat route for the provider and switch gates` - `tests/chat-route-pair-gates.test.mjs` replaces three source-grep tests with end-to-end ones. The review found that title-generation calls leaked into the next test's request log and made the model assertion vacuous; fixed (named sessions, streaming calls only). KNOWN GAPS, covered by no test: a refused switch that still applies its COMPACTION selection, and one that nulls `activeProvider` (the old source greps did not catch the first either). |
+| A8  | **done**      | `039a084` - reframed to what it proves; a behavioural test of the client request bodies needs pure body builders first (bodies are built inline in React callbacks). The comment's type-check claim is limited to object literals. |
+| A9  | **done**      | `b43a7bf` - unit tests for every branch of `legacyCompactionPairPatchProblem`.                                                                       |
+| A10 | **done**      | `56eca27` - the plan's Verification section lists every suite and the measured baseline.                                                            |
+| A11 | open          | Test-only: the two `context-window.test.mjs` dispatches of the pre-2.3 flat shape.                                                                  |
+| A12 | **done**      | `11011df` - a "not served" answer kicks the index refresh too.                                                                                       |
+| A13 | **done**      | `d893ddf` - `done` and `error` clear the "(switching...)" flag.                                                                                      |
+| A14 | open          | `acknowledgeModelSwitch` race: a merged entry can carry a refused half forward and be refused again.                                                 |
+
+Every fix in this round was checked by an independent sub-agent before it was
+committed; the reviews found a test that could not see half of its own fix
+(BUG 4), a wording claim that overstated a type check (A8) and nothing else.
+
+---
+
 ## 6. VERIFIED CORRECT - do not re-check these
 
 - **The half-pair really is dead on every reachable path.** `createSession`,
@@ -987,7 +1025,7 @@ the fix.
 | 8 - empty mid-turn switch body            | Medium      | [x]    | `fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported` | The switch carries `compaction: {kind:"inherit-default"}`; an empty payload sends no request; the route 400 and the server SSE refusal are both reported through `SET_ERROR`.   |
 | 9 - global compaction pin wiped           | Low         | [x]    | `fix(dump): the dump never refuses for the configuration`                            | `SET_SESSION_SELECTION` leaves `defaultCompactionProviderId` alone when the defaults omit it; `null` still clears.                                                              |
 | 10 - guarantee test is vacuous            | Medium      | [x]    | `fix(compaction): the WRITE path normalises the compaction pair`                     | The test reads the RAW SQLite row instead of the normalised `listSessions()` projection, so it fails if the write path stops normalising. A second test pins the frame.         |     |     |
-| A1-A11                                    | Low/Info    | [ ]    |                                                                                      |                                                                                                                                                                                 |
+| A1-A14 (see section 5.1)                  | Low/Info    | partly |                                                                                      |                                                                                                                                                                                 |
 
 ## 9. REVIEW HYGIENE
 
