@@ -218,13 +218,11 @@ describe('a refusal is reported, not swallowed', () => {
   });
 
   test('a refused HTTP response is reported as a refusal, not as a promise', async () => {
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue({
-        ok: false,
-        status: 400,
-        text: async () => JSON.stringify({ error: 'bad' }),
-      });
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ error: 'bad' }),
+    });
     const result = await requestMidTurnModelSwitch(7, { model: 'x' });
     expect(result.accepted).toBe(false);
     expect(result.message).not.toContain('applies from the next turn');
@@ -255,6 +253,47 @@ describe('the route accepts the selection the client now sends', () => {
     const body = await response.json();
     expect(body.error).toContain('At least one of');
     unregisterActiveTurn(4244);
+  });
+
+  test('a legacy provider-only pin is paired with the main model when no global one is set', async () => {
+    // Bug hunt A1: this route used to pair it with the switched-to model
+    // WITHOUT looking at the global compaction model, so the same body
+    // resolved differently here than on /api/chat.
+    registerActiveTurn(4246, 'probe');
+    const response = await postSwitch({
+      sessionId: 4246,
+      model: 'main-m',
+      compactionProviderId: 'p1',
+    });
+    expect(response.status).toBe(200);
+    expect(peekModelSwitch(4246)?.compaction).toStrictEqual({
+      kind: 'explicit',
+      model: 'main-m',
+      providerId: 'p1',
+    });
+    unregisterActiveTurn(4246);
+  });
+
+  test('a legacy provider-only pin is paired with the GLOBAL compaction model when one is set', async () => {
+    const configPath = path.join(tmp, 'config.json');
+    fs.writeFileSync(configPath, JSON.stringify({ compactionModel: 'global-c' }));
+    try {
+      registerActiveTurn(4247, 'probe');
+      const response = await postSwitch({
+        sessionId: 4247,
+        model: 'main-m',
+        compactionProviderId: 'p1',
+      });
+      expect(response.status).toBe(200);
+      expect(peekModelSwitch(4247)?.compaction).toStrictEqual({
+        kind: 'explicit',
+        model: 'global-c',
+        providerId: 'p1',
+      });
+      unregisterActiveTurn(4247);
+    } finally {
+      fs.rmSync(configPath, { force: true });
+    }
   });
 
   test('the route still refuses a half-pair', async () => {

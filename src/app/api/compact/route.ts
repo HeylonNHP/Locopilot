@@ -27,7 +27,10 @@ import {
   type LlmRequestContext,
 } from '@/services/llm';
 import { resolveProviderRequestContext } from '@/services/providerResolver';
-import { compactionSelectionFromPayload } from '@/services/sessionSelection';
+import {
+  compactionSelectionFromPayload,
+  legacyCompactionFallbackModel,
+} from '@/services/sessionSelection';
 import { getAgentWorkingDirectory } from '@/tools/workingDirectory';
 import {
   forwardableReasoningEffort,
@@ -133,10 +136,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!savedConfig.ok) {
     return NextResponse.json({ error: savedConfig.message }, { status: 503 });
   }
-  const globalCompactionModel = savedConfig.config.compactionModel?.trim() ?? '';
   const parsedCompaction = compactionSelectionFromPayload(
     compactionPayload,
-    globalCompactionModel === '' ? model.trim() : globalCompactionModel
+    legacyCompactionFallbackModel(savedConfig.config.compactionModel, model)
   );
   if (!parsedCompaction.ok) {
     return NextResponse.json({ error: parsedCompaction.error }, { status: 400 });
@@ -203,11 +205,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       let compactStartedAt: number | null = null;
       try {
         const config = savedConfig.config;
-        const resolved = resolveProviderRequestContext(
-          config,
-          providerId,
-          model as string
-        );
+        const resolved = resolveProviderRequestContext(config, providerId, model as string);
         // No provider resolved. The preflight refuses a request whose
         // provider id names no configured provider (409), so this is a
         // config that changed in between. Fall back to the body baseUrl or
@@ -248,11 +246,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         const compactionResolved =
           compactionSelection.providerId === null
             ? null
-            : resolveProviderRequestContext(
-                config,
-                compactionSelection.providerId,
-                undefined
-              );
+            : resolveProviderRequestContext(config, compactionSelection.providerId, undefined);
         const compactionLlmRequestContext = compactionResolved?.ctx ?? llmRequestContext;
 
         // The windows come from the server's saved setting and each model's own

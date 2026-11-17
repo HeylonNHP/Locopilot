@@ -198,6 +198,28 @@ export function coherentCompactionPair(
 }
 
 /**
+ * The model a LEGACY provider-only compaction pin is paired with: the global
+ * compaction model, else the conversation's own main model.
+ *
+ * It is the order the server resolved a model-less pin in before the pair
+ * became one value (the body, then `config.compactionModel`, then the main
+ * model), so a stale tab keeps the compaction model its pin ran with. Every
+ * endpoint that reads the legacy shape (chat, compact, title, session
+ * creation, mid-turn switch) calls THIS, so the same body can never resolve to
+ * a different selection per endpoint (bug hunt A1).
+ *
+ * Returns '' when neither is known; `compactionSelectionFromPayload` then
+ * refuses the body with a message that says so.
+ */
+export function legacyCompactionFallbackModel(
+  globalCompactionModel: string | null | undefined,
+  mainModel: string | null | undefined
+): string {
+  const global = globalCompactionModel?.trim() ?? '';
+  return global === '' ? (mainModel?.trim() ?? '') : global;
+}
+
+/**
  * The selection a request body carries — the NEW union, or the LEGACY pair.
  *
  * The legacy shape (`compactionModel` + `compactionProviderId`, two
@@ -208,8 +230,8 @@ export function coherentCompactionPair(
  * A legacy pair that names a model WITHOUT its provider is REFUSED: it is the
  * state that sent a compaction model to an endpoint that did not have it. A
  * legacy pair that names a provider WITHOUT a model has its model resolved to
- * `fallbackModel` — the caller says which model that is (the global default's
- * model, or the conversation's own) — and becomes an `explicit` selection.
+ * `fallbackModel` and becomes an `explicit` selection. Callers pass
+ * {@link legacyCompactionFallbackModel}, so every endpoint agrees on it.
  */
 export function compactionSelectionFromPayload(
   payload: {
@@ -594,7 +616,11 @@ function parseReasoningLevel(
  * resolved values through {@link resolveCreationSelection}, so null only
  * reaches the database when the caller explicitly asked to inherit.
  */
-export function validateSessionSelection(value: unknown): SessionSelection | string {
+export function validateSessionSelection(
+  value: unknown,
+  /** The saved global compaction model, for a legacy provider-only pin. */
+  globalCompactionModel?: string | null
+): SessionSelection | string {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return 'The model selection must be an object';
   }
@@ -609,7 +635,10 @@ export function validateSessionSelection(value: unknown): SessionSelection | str
   ) {
     return 'providerId must be a string or null';
   }
-  const compaction = compactionSelectionFromPayload(payload, payload.model);
+  const compaction = compactionSelectionFromPayload(
+    payload,
+    legacyCompactionFallbackModel(globalCompactionModel, payload.model)
+  );
   if (!compaction.ok) return compaction.error;
   const reasoningEffort = parseReasoningLevel('reasoningEffort', payload.reasoningEffort);
   if (!reasoningEffort.ok) return reasoningEffort.error;

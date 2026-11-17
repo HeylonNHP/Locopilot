@@ -13,7 +13,11 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { type ModelSwitchRequest, requestModelSwitch } from '@/app/lib/modelSwitchRegistry';
-import { compactionSelectionFromPayload } from '@/services/sessionSelection';
+import { readConfig } from '@/services/configManager';
+import {
+  compactionSelectionFromPayload,
+  legacyCompactionFallbackModel,
+} from '@/services/sessionSelection';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,13 +70,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     body.compactionModel !== undefined ||
     body.compactionProviderId !== undefined;
   if (hasCompaction) {
+    // A legacy provider-only pin is paired with the global compaction model,
+    // else the main model the switch names - the rule every endpoint shares
+    // (bug hunt A1). An unreadable config means no global model is known; the
+    // chat route reports the config problem itself.
+    const savedConfig = await readConfig();
     const parsed = compactionSelectionFromPayload(
       {
         compaction: body.compaction,
         compactionModel: body.compactionModel,
         compactionProviderId: body.compactionProviderId,
       },
-      model ?? ''
+      legacyCompactionFallbackModel(
+        savedConfig.ok ? savedConfig.config.compactionModel : null,
+        model
+      )
     );
     if (!parsed.ok) {
       return NextResponse.json({ error: parsed.error }, { status: 400 });

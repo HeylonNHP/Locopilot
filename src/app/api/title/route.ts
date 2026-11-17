@@ -13,7 +13,10 @@ import {
   type LlmRequestContext,
 } from '@/services/llm';
 import { resolveProviderRequestContext } from '@/services/providerResolver';
-import { compactionSelectionFromPayload } from '@/services/sessionSelection';
+import {
+  compactionSelectionFromPayload,
+  legacyCompactionFallbackModel,
+} from '@/services/sessionSelection';
 import { generateSessionTitle } from '@/services/titleGeneration';
 import { isReasoningEffort, type ReasoningEffort } from '@/types/chatConfig';
 
@@ -70,10 +73,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!savedConfig.ok) {
     return NextResponse.json({ error: savedConfig.message }, { status: 503 });
   }
-  const globalCompactionModel = savedConfig.config.compactionModel?.trim() ?? '';
   const parsedCompaction = compactionSelectionFromPayload(
     compactionPayload,
-    globalCompactionModel === '' ? model.trim() : globalCompactionModel
+    legacyCompactionFallbackModel(savedConfig.config.compactionModel, model)
   );
   if (!parsedCompaction.ok) {
     return NextResponse.json({ error: parsedCompaction.error }, { status: 400 });

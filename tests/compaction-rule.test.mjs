@@ -42,6 +42,7 @@ import {
   compactionSelectionFromLoosePair,
   compactionSelectionFromPair,
   compactionSelectionFromPayload,
+  legacyCompactionFallbackModel,
 } from '../src/services/sessionSelection.ts';
 
 const MAIN_MODEL = 'main-model';
@@ -413,6 +414,26 @@ describe('resolveCompactionSelection — the server composer', () => {
     );
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toContain('llama-local');
+  });
+
+  test.each([
+    ['the global model wins over the main model', 'global-c', 'main-m', 'global-c'],
+    ['a blank global model falls back to the main model', '   ', 'main-m', 'main-m'],
+    ['an absent global model falls back to the main model', undefined, 'main-m', 'main-m'],
+    ['a null global model falls back to the main model', null, ' main-m ', 'main-m'],
+    ['both are trimmed', ' global-c ', 'main-m', 'global-c'],
+    ['neither known is the empty string', null, undefined, ''],
+  ])('legacyCompactionFallbackModel: %s', (_name, globalModel, mainModel, expected) => {
+    expect(legacyCompactionFallbackModel(globalModel, mainModel)).toBe(expected);
+  });
+
+  test('a legacy provider-only body with no model known is refused, not guessed', () => {
+    const parsed = compactionSelectionFromPayload(
+      { compactionProviderId: 'ollama' },
+      legacyCompactionFallbackModel(null, undefined)
+    );
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain('no model is known');
   });
 
   test('a legacy provider without a model resolves the model HERE', () => {

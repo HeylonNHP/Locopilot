@@ -136,6 +136,7 @@ import {
 import {
   type CompactionSelection,
   compactionSelectionFromPayload,
+  legacyCompactionFallbackModel,
 } from '@/services/sessionSelection';
 import {
   discoverSkills,
@@ -372,10 +373,9 @@ export async function POST(req: NextRequest): Promise<Response> {
   //
   // The legacy flat pair is read here too (a tab open before the change),
   // and its model-without-provider is refused the same way.
-  const globalCompactionModel = savedConfig.config.compactionModel?.trim() ?? '';
   const parsedCompaction = compactionSelectionFromPayload(
     compactionPayload,
-    globalCompactionModel === '' ? model : globalCompactionModel
+    legacyCompactionFallbackModel(savedConfig.config.compactionModel, model)
   );
   if (!parsedCompaction.ok) {
     return new Response(

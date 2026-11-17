@@ -51,15 +51,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // compaction model and no provider that serves it would be born into the
     // state that sends a compaction model to an endpoint that does not have
     // it. `validateSessionSelection` refuses that, rather than repairing it.
-    const validated = validateSessionSelection({
-      model: body.model,
-      providerId: body.providerId,
-      compaction: body.compaction,
-      compactionModel: body.compactionModel,
-      compactionProviderId: body.compactionProviderId,
-      reasoningEffort: body.reasoningEffort,
-      compactionReasoningEffort: body.compactionReasoningEffort,
-    });
+    //
+    // The saved config is read first because a LEGACY body that names a
+    // compaction provider without a model is paired with the global
+    // compaction model (else the main model) - the same rule every other
+    // endpoint applies (bug hunt A1).
+    const config = await loadConfig().catch(() => null);
+    const validated = validateSessionSelection(
+      {
+        model: body.model,
+        providerId: body.providerId,
+        compaction: body.compaction,
+        compactionModel: body.compactionModel,
+        compactionProviderId: body.compactionProviderId,
+        reasoningEffort: body.reasoningEffort,
+        compactionReasoningEffort: body.compactionReasoningEffort,
+      },
+      config?.compactionModel
+    );
     if (typeof validated === 'string') {
       return NextResponse.json({ error: validated }, { status: 400 });
     }
@@ -69,7 +78,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // stored, so a later default change does not move an existing
     // conversation. The level itself was validated above; this only supplies
     // the default it inherits.
-    const config = await loadConfig().catch(() => null);
     const selection = resolveCreationSelection(validated, {
       reasoningEffort: config?.reasoningEffort,
       compactionReasoningEffort: config?.compactionReasoningEffort,

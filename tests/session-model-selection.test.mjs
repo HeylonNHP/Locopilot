@@ -187,6 +187,19 @@ describe('the selection vocabulary', () => {
     });
   });
 
+  test('a legacy provider-only body is paired with the global compaction model, else the main one', () => {
+    // Bug hunt A1: creation used to pair it with the conversation's main
+    // model only, so the same body resolved differently than on /api/chat.
+    expect(validateSessionSelection({ model: 'm', compactionProviderId: 'p' })).toMatchObject({
+      compaction: { kind: 'explicit', model: 'm', providerId: 'p' },
+    });
+    expect(
+      validateSessionSelection({ model: 'm', compactionProviderId: 'p' }, 'global-c')
+    ).toMatchObject({
+      compaction: { kind: 'explicit', model: 'global-c', providerId: 'p' },
+    });
+  });
+
   test('a reasoning level is validated, and null means "inherit the default"', () => {
     // Absent and null both mean inherit; the two explicit levels travel.
     expect(
