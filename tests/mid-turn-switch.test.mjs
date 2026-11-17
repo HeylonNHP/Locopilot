@@ -204,6 +204,32 @@ describe('a refusal is reported, not swallowed', () => {
     );
     expect(message.split('\n')[0]).toContain('NVIDIA does not serve it');
   });
+  test('only a request that never got an answer promises the next turn', () => {
+    const refused = switchFailureMessage('The model switch was refused', 'nope', {
+      outcome: 'refused',
+      runningModel: 'm1',
+    });
+    expect(refused).not.toContain('applies from the next turn');
+    expect(refused).toContain('"m1"');
+    const notSent = switchFailureMessage('The model switch could not be sent', null, {
+      outcome: 'not-sent',
+    });
+    expect(notSent).toContain('applies from the next turn');
+  });
+
+  test('a refused HTTP response is reported as a refusal, not as a promise', async () => {
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: 'bad' }),
+      });
+    const result = await requestMidTurnModelSwitch(7, { model: 'x' });
+    expect(result.accepted).toBe(false);
+    expect(result.message).not.toContain('applies from the next turn');
+  });
+
   test('the error field is read out of a JSON body, and a plain body is read as it is', async () => {
     expect(
       await readErrorMessage({ text: async () => JSON.stringify({ error: 'named cause' }) })

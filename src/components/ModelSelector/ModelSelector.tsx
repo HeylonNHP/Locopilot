@@ -344,8 +344,15 @@ export default function ModelSelector({
       // the error banner is where the rest of the app says what went
       // wrong. A switch that was refused and not shown is a switch the
       // user believes happened.
+      //
+      // Aimed at the conversation whose turn was asked to switch: the user
+      // may have moved to another one while the request was in flight.
       if (result.message !== null) {
-        dispatch({ type: 'SET_ERROR', error: result.message });
+        dispatch({
+          type: 'SET_ERROR',
+          error: result.message,
+          targetSessionId: streamingSessionId,
+        });
       }
     },
     [dispatch, streamingSessionId, abortControllersRef]

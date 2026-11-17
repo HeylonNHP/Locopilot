@@ -42,19 +42,6 @@ export function providerNotConfiguredMessage(providerId: string): string {
 }
 
 /**
- * The problem with a pair whose provider does not serve the model.
- *
- * A pair is only coherent if the provider actually CARRIES the model.
- * `config.json` cannot answer that (it holds a provider's default model and
- * nothing else), so the answer comes from the cached model → provider index
- * (`src/services/modelIndex.ts`), which is built from the providers' LIVE
- * model lists. A pair that names a real provider which does not serve the
- * model is refused here instead of 404ing at the provider.
- *
- * The message names the provider that DOES serve the model, so the fix is
- * one pick in Settings rather than a hunt.
- */
-/**
  * The names of the configured providers that SERVE `model`, other than
  * `provider` itself.
  *
@@ -78,6 +65,19 @@ function servingProviderNames(
     .filter((name): name is string => typeof name === 'string');
 }
 
+/**
+ * The problem with a pair whose provider does not serve the model.
+ *
+ * A pair is only coherent if the provider actually CARRIES the model.
+ * `config.json` cannot answer that (it holds a provider's default model and
+ * nothing else), so the answer comes from the cached model → provider index
+ * (`src/services/modelIndex.ts`), which is built from the providers' LIVE
+ * model lists. A pair that names a real provider which does not serve the
+ * model is refused here instead of 404ing at the provider.
+ *
+ * The message names the provider that DOES serve the model, so the fix is
+ * one pick in Settings rather than a hunt.
+ */
 export function providerDoesNotServeMessage(
   config: Config,
   provider: ProviderConfig,

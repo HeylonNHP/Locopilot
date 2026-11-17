@@ -353,7 +353,7 @@ export function routeSseEvent(
       // needs to update its own display state for the warning UI.
       // Any other phase is left alone — visionState is initialized
       // to 'unknown' and updated only on this signal.
-      const { phase, reason } = data;
+      const { phase, reason, model: switchedModel } = data;
       if (phase === 'vision_unsupported') {
         actions.push({ type: 'SET_VISION_STATE', state: 'unsupported' });
       }
@@ -392,7 +392,9 @@ export function routeSseEvent(
           type: 'SET_ERROR',
           error: switchFailureMessage(
             'The model switch was refused',
-            typeof reason === 'string' ? reason : null
+            typeof reason === 'string' ? reason : null,
+            // The frame names the model the turn CONTINUES on.
+            { outcome: 'refused', runningModel: switchedModel }
           ),
           ...(targetSessionId === undefined ? {} : { targetSessionId }),
         });

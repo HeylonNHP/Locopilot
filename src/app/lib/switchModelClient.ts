@@ -77,18 +77,46 @@ export function isEmptyMidTurnSwitch(payload: MidTurnModelSwitch): boolean {
 }
 
 /**
+ * How a switch that did not happen ended.
+ *
+ * `refused`: the server answered and said no. The selection was ALREADY
+ * saved (the pickers write the conversation and the new-chat defaults before
+ * they ask the running turn to switch), so the saved selection is the one the
+ * next turn will be checked against, and the same check fails again.
+ *
+ * `not-sent`: the request never got an answer. Nothing says the selection is
+ * bad, so the next turn simply runs on it.
+ */
+export type SwitchFailureOutcome = 'refused' | 'not-sent';
+
+/**
  * The message shown when a switch did not happen.
  *
  * `headline` says what happened; `reason` is the server's own words, which
  * name the cause (ground rule 3: "a pair that cannot be honoured is refused
  * with a message that names the cause"). The second line says what the
- * failure MEANS: the running turn kept the model and the compaction it had,
- * and the selection that WAS saved applies from the next turn.
+ * failure MEANS, and it must not promise what will not happen: after a
+ * REFUSAL the saved selection is not applied "from the next turn" - the next
+ * turn is checked against it and is likely to be refused for the same
+ * reason. `runningModel` names the model the turn is still on, because the
+ * status bar shows the SAVED selection and would otherwise look as if the
+ * switch had landed.
  */
-export function switchFailureMessage(headline: string, reason: string | null | undefined): string {
+export function switchFailureMessage(
+  headline: string,
+  reason: string | null | undefined,
+  options: { outcome?: SwitchFailureOutcome; runningModel?: string | null | undefined } = {}
+): string {
   const trimmed = typeof reason === 'string' ? reason.trim() : '';
   const first = trimmed === '' ? `${headline}.` : `${headline}: ${trimmed}`;
-  return `${first}\nThe running turn keeps the model and the compaction it has. The new selection applies from the next turn.`;
+  const running =
+    typeof options.runningModel === 'string' && options.runningModel.trim() !== ''
+      ? ` ("${options.runningModel.trim()}")`
+      : '';
+  if (options.outcome === 'refused') {
+    return `${first}\nThe running turn keeps the model${running} and the compaction it has. Your new selection is saved and shown in the status bar, but the next message is likely to be refused for the same reason until you change the selection or fix the configuration.`;
+  }
+  return `${first}\nThe running turn keeps the model${running} and the compaction it has. The new selection applies from the next turn.`;
 }
 
 /**
@@ -155,7 +183,7 @@ export async function requestMidTurnModelSwitch(
     }
     return {
       accepted: false,
-      message: switchFailureMessage('The model switch was refused', reason),
+      message: switchFailureMessage('The model switch was refused', reason, { outcome: 'refused' }),
     };
   } catch {
     if (signal?.aborted) {

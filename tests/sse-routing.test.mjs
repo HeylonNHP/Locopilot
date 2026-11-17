@@ -347,6 +347,23 @@ describe('status', () => {
     expect(actions[1].error).toMatch(/keeps the model and the compaction it has/);
   });
 
+  test('a refusal does not promise the saved selection applies next turn, and names the running model', () => {
+    // The pickers save the selection BEFORE asking the running turn to
+    // switch, so after a refusal the status bar shows the saved model while
+    // the turn runs on another. The next turn is checked against the saved
+    // selection and is likely refused for the same reason.
+    const actions = actionsFor('status', {
+      phase: 'model_switch_refused',
+      reason: 'nope',
+      model: 'old-model',
+    });
+    const message = actions[1].error;
+    expect(message).not.toMatch(/applies from the next turn/);
+    expect(message).toMatch(/"old-model"/);
+    expect(message).toMatch(/saved/);
+    expect(message).toMatch(/likely to be refused/);
+  });
+
   test('a refused model switch with no owning session reports the error without touching a session', () => {
     const actions = actionsFor(
       'status',

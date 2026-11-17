@@ -529,8 +529,15 @@ export default function SettingsModal({ onClose }: Props) {
         // the cause. The modal's own `saveError` is not used here - the
         // modal closes on the next line, so a message shown inside it would
         // never be seen.
+        //
+        // Aimed at the conversation whose turn was asked to switch: the
+        // user may have moved to another one while the request was in flight.
         if (result.message !== null) {
-          dispatch({ type: 'SET_ERROR', error: result.message });
+          dispatch({
+            type: 'SET_ERROR',
+            error: result.message,
+            targetSessionId: streamingSessionId,
+          });
         }
       }
 
