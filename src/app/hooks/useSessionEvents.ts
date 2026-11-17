@@ -3,11 +3,7 @@
 import { useEffect } from 'react';
 
 import { useChat } from '@/app/lib/chatStore';
-import {
-  inheritDefaultCompactionSelection,
-  parseCompactionSelection,
-  type SessionSelection,
-} from '@/services/sessionSelection';
+import { parseCompactionSelection, type SessionSelection } from '@/services/sessionSelection';
 import { SESSIONS_SSE_EVENT_NAME } from '@/services/sseNames';
 import { isReasoningEffort } from '@/types/chatConfig';
 
@@ -55,8 +51,6 @@ export function parseSessionEvent(
       name?: unknown;
       model?: unknown;
       providerId?: unknown;
-      compactionModel?: unknown;
-      compactionProviderId?: unknown;
       compaction?: unknown;
       reasoningEffort?: unknown;
       compactionReasoningEffort?: unknown;
@@ -68,19 +62,25 @@ export function parseSessionEvent(
     }
     if (payload.kind === 'model-changed') {
       if (typeof payload.model !== 'string') return null;
-      // The compaction selection is ONE value. A frame that carries none —
-      // or one that does not parse — is read as "inherit the global
-      // default", the only state that names no model of its own.
+      // The compaction selection is ONE value, and the server always sends
+      // it (`history.ts` announces the pair that was actually written). A
+      // frame without a usable one can only come from a server bug, so it is
+      // IGNORED and reported. Reading it as "inherit the global default"
+      // would silently overwrite the compaction model the user pinned.
       const compaction = parseCompactionSelection(payload.compaction);
+      if (!compaction.ok) {
+        console.warn(
+          `Ignored a model-changed frame for conversation ${payload.sessionId}: ${compaction.error}`
+        );
+        return null;
+      }
       return {
         kind: 'model-changed',
         sessionId: payload.sessionId,
         selection: {
           model: payload.model,
           providerId: typeof payload.providerId === 'string' ? payload.providerId : null,
-          compaction: compaction.ok
-            ? compaction.selection
-            : inheritDefaultCompactionSelection(),
+          compaction: compaction.selection,
           // An absent or unrecognised level means "inherit the global
           // default", which is what a NULL row means everywhere else.
           reasoningEffort: isReasoningEffort(payload.reasoningEffort)

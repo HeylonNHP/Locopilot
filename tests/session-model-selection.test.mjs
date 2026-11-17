@@ -30,7 +30,7 @@
  * open and mutate the checkout's real ./locopilot.db.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, jest, test } from '@jest/globals';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -850,21 +850,27 @@ describe('the selection on the wire', () => {
     });
   });
 
-  test('a frame with no compaction selection means "inherit the global default"', () => {
-    // Older frames carry none. The honest reading is the state that names
-    // no model of its own.
-    const frame = JSON.stringify({
-      kind: 'model-changed',
-      sessionId: 29,
-      model: 'gpt-5',
-      providerId: null,
-    });
-
-    expect(parseSessionEvent(frame)?.selection).toMatchObject({
-      compaction: INHERIT_DEFAULT,
-      reasoningEffort: null,
-      compactionReasoningEffort: null,
-    });
+  test('a frame whose compaction selection is missing or unusable is IGNORED and reported', () => {
+    // The server always announces the pair it wrote, so such a frame is a
+    // server bug. Reading it as "inherit the global default" would silently
+    // overwrite the compaction model the user pinned (bug hunt A2).
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const base = { kind: 'model-changed', sessionId: 29, model: 'gpt-5', providerId: null };
+      // Absent, a half-pair (a model with no provider), and a legacy flat pair.
+      for (const extra of [
+        {},
+        { compaction: { kind: 'explicit', model: 'beam' } },
+        { compactionModel: 'beam', compactionProviderId: 'ollama-cloud' },
+      ]) {
+        expect(parseSessionEvent(JSON.stringify({ ...base, ...extra }))).toBeNull();
+      }
+      expect(warn).toHaveBeenCalledTimes(3);
+      expect(warn.mock.calls[0][0]).toContain('conversation 29');
+      expect(warn.mock.calls[1][0]).toContain('"beam"');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test('a rename frame is still parsed as a rename', () => {
