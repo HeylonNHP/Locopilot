@@ -7,16 +7,16 @@ import { useEffect, useRef } from 'react';
  * (e.g. in useSlashCommands) can read the latest value without re-creating
  * the callback on every render.
  */
-export function useSyncRefs(isCompacting: boolean, isGeneratingTitle: boolean) {
-  const isCompactingRef = useRef(false);
+export function useSyncRefs(compactingSessions: ReadonlySet<number>, isGeneratingTitle: boolean) {
+  const compactingSessionsRef = useRef<ReadonlySet<number>>(new Set());
   const isGeneratingTitleRef = useRef(false);
 
   useEffect(() => {
-    isCompactingRef.current = isCompacting;
-  }, [isCompacting]);
+    compactingSessionsRef.current = compactingSessions;
+  }, [compactingSessions]);
   useEffect(() => {
     isGeneratingTitleRef.current = isGeneratingTitle;
   }, [isGeneratingTitle]);
 
-  return { isCompactingRef, isGeneratingTitleRef };
+  return { compactingSessionsRef, isGeneratingTitleRef };
 }

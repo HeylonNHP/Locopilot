@@ -509,6 +509,10 @@ export function useChatStream(
     const sessionKey = streamKeyFor(refs.sessionIdRef.current);
     const stored = retryPayloadsRef.current.get(sessionKey);
     if (stored === undefined || state.streamingSessions.has(sessionKey)) return;
+    // Something else already owns this conversation's abort slot (a running
+    // `/compact`): starting a turn would overwrite its controller, and Stop
+    // could then no longer cancel it.
+    if (abortControllersRef.current.has(sessionKey)) return;
     // The stored body is replayed as it was. It carries no context window:
     // the server decides the window itself, from the setting as it is when
     // the retry arrives, so a setting lowered since cannot be undone by a replay.
@@ -528,7 +532,7 @@ export function useChatStream(
     await runTurn(sessionKey, body, (owner) =>
       dispatch({ type: 'SET_ERROR', error: null, targetSessionId: owner })
     );
-  }, [dispatch, clearTokenRates, runTurn, refs, state.streamingSessions]);
+  }, [dispatch, clearTokenRates, runTurn, refs, state.streamingSessions, abortControllersRef]);
 
   // ---------------------------------------------------------------------------
   // Attachment resolution — converts Attachment[] into extra message content

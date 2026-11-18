@@ -10,6 +10,7 @@ import {
   saveFailureMessage,
   saveSessionPatch,
 } from '@/app/lib/sessionSelectionClient';
+import { NEW_SESSION_KEY, streamKeyFor } from '@/app/lib/streamKey';
 import { IMAGE_TOKEN_ESTIMATE } from '@/constants';
 import { COMPACT_FOCUS_MAX_CHARS, normaliseCompactionFocus } from '@/services/compact/focus';
 import { formatCompactionReceipt } from '@/services/compact/receipt';
@@ -20,12 +21,19 @@ import { isAbortError } from '@/util/error';
 import type { StableRefs, WritableRef } from './useStableRefs';
 
 /**
- * Sentinel key under which the in-flight /compact, /title, and /dump
- * AbortControllers are registered in `abortControllersRef`. Real session
- * IDs are positive integers (the DB primary key), so a negative sentinel
- * cannot collide. The Stop button iterates every value in the map, so
- * registering here means the user can cancel these long-running commands
- * with the same button that aborts a chat stream.
+ * Sentinel key under which the in-flight /title and /dump AbortControllers
+ * are registered in `abortControllersRef`. Real session IDs are positive
+ * integers (the DB primary key), so a negative sentinel cannot collide.
+ * `handleStop` deliberately ignores it (see `useActionHandlers`), so a Stop in
+ * one conversation cannot cancel a command running for another.
+ *
+ * `/compact` does NOT use it: a compaction belongs to ONE conversation, so it
+ * registers under that conversation's own stream key (`streamKeyFor`). That is
+ * what lets the visible Stop button cancel exactly the compaction of the
+ * conversation on screen, lets two conversations compact at once without
+ * overwriting each other's controller, and lets deleting a conversation
+ * cancel its compaction. A conversation never has a chat stream and a
+ * compaction at the same time (each refuses to start while the other runs).
  */
 export const COMPACTION_ABORT_KEY = Number.MIN_SAFE_INTEGER;
 
@@ -70,13 +78,19 @@ class CompactionError extends Error {
 interface SlashCommandDeps {
   refs: StableRefs;
   isCurrentSessionStreaming: boolean;
-  isCompactingRef: WritableRef<boolean>;
+  compactingSessionsRef: WritableRef<ReadonlySet<number>>;
   isGeneratingTitleRef: WritableRef<boolean>;
   abortControllersRef: WritableRef<Map<number, AbortController>>;
-  setIsCompacting: Dispatch<SetStateAction<boolean>>;
+  setCompactingSessions: Dispatch<SetStateAction<ReadonlySet<number>>>;
   setIsGeneratingTitle: Dispatch<SetStateAction<boolean>>;
   onOpenSettings: () => void;
   loadSessions: () => Promise<void>;
+  /** Reloads a conversation from the database without changing the view. */
+  loadSessionMessages: (
+    sessionId: number,
+    allowEmptyWhileStreaming?: boolean,
+    options?: { keepCurrentSession?: boolean }
+  ) => Promise<void>;
   sendChatMessage: (message: string) => Promise<void>;
 }
 
@@ -86,13 +100,14 @@ interface SlashCommandDeps {
 export function useSlashCommands({
   refs,
   isCurrentSessionStreaming,
-  isCompactingRef,
+  compactingSessionsRef,
   isGeneratingTitleRef,
   abortControllersRef,
-  setIsCompacting,
+  setCompactingSessions,
   setIsGeneratingTitle,
   onOpenSettings,
   loadSessions,
+  loadSessionMessages,
   sendChatMessage,
 }: SlashCommandDeps) {
   const { dispatch } = useChat();
@@ -426,7 +441,7 @@ export function useSlashCommands({
             addSystem('Stop the current response before running /compact.');
             return;
           }
-          if (isCompactingRef.current) {
+          if (compactingSessionsRef.current.has(refs.sessionIdRef.current ?? NEW_SESSION_KEY)) {
             addSystem('Compaction is already in progress.');
             return;
           }
@@ -457,19 +472,40 @@ export function useSlashCommands({
           // ensures the result lands in the correct session slot rather than
           // overwriting whatever session happens to be active at resolve-time.
           const compactSessionId = refs.sessionIdRef.current;
-          isCompactingRef.current = true;
-          setIsCompacting(true);
+          const compactKey = compactSessionId ?? NEW_SESSION_KEY;
+          // Everything this run dispatches is aimed at the conversation it was
+          // started in: progress, the receipt and any error must never land in
+          // whichever conversation is on screen when they arrive.
+          const toCompactSession =
+            compactSessionId === null ? {} : { targetSessionId: compactSessionId };
+          const addCompactSystem = (content: string) =>
+            dispatch({
+              type: 'ADD_MESSAGE',
+              message: { role: 'system', content },
+              ...toCompactSession,
+            });
+          const markCompacting = (on: boolean) => {
+            const next = new Set(compactingSessionsRef.current);
+            if (on) next.add(compactKey);
+            else next.delete(compactKey);
+            compactingSessionsRef.current = next;
+            setCompactingSessions(next);
+          };
+          markCompacting(true);
           // Clear any stale phases from previous compactions so the indicator
           // starts fresh.
-          dispatch({ type: 'CLEAR_COMPACT_PROGRESS' });
+          dispatch({ type: 'CLEAR_COMPACT_PROGRESS', ...toCompactSession });
 
-          // Register an AbortController under a sentinel key so the Stop
-          // button (which iterates every value in the map) can also cancel
-          // this long-running SSE stream. Real session IDs are positive
-          // integers, so a negative sentinel cannot collide.
+          // Register the AbortController under THIS conversation's stream key,
+          // so the Stop button (which aborts the visible conversation's
+          // controller) cancels this compaction and no other.
           const abortController = new AbortController();
-          abortControllersRef.current.set(COMPACTION_ABORT_KEY, abortController);
+          const abortKey = streamKeyFor(compactSessionId);
+          abortControllersRef.current.set(abortKey, abortController);
           let reader: ReadableStreamDefaultReader<EventSourceMessage> | null = null;
+          // Set once the server's result has arrived: a Stop pressed after that
+          // came too late to cancel anything, so it must not be reported as one.
+          let resultReceived = false;
           try {
             const response = await fetch('/api/compact', {
               method: 'POST',
@@ -515,13 +551,26 @@ export function useSlashCommands({
             let errorKind: 'client_abort' | 'llm_error' | undefined;
 
             while (true) {
-              const { done, value } = await reader.read();
+              let chunk: ReadableStreamReadResult<EventSourceMessage>;
+              try {
+                chunk = await reader.read();
+              } catch (err) {
+                // The result is in hand: a stream that dies (or a Stop that
+                // lands) after it is not a failure of the compaction.
+                if (resultReceived) break;
+                throw err;
+              }
+              const { done, value } = chunk;
               if (done) break;
               const event = value.event || 'message';
               try {
                 const parsed = JSON.parse(value.data);
                 if (event === 'compact_progress' && typeof parsed.message === 'string') {
-                  dispatch({ type: 'COMPACT_PROGRESS', message: parsed.message });
+                  dispatch({
+                    type: 'COMPACT_PROGRESS',
+                    message: parsed.message,
+                    ...toCompactSession,
+                  });
                 } else if (event === 'status' && typeof parsed.tps === 'number') {
                   // Live compaction speed for the t/s badge (same badge as
                   // generation). Scoped to the compacting session so a
@@ -533,6 +582,7 @@ export function useSlashCommands({
                   });
                 } else if (event === 'compact' && Array.isArray(parsed.messages)) {
                   compactData = parsed;
+                  resultReceived = true;
                 } else if (event === 'error' && typeof parsed.message === 'string') {
                   errorMessage = parsed.message;
                   errorKind =
@@ -593,18 +643,31 @@ export function useSlashCommands({
               // into the prompt, so the quote cannot be multi-line.
               ...(focusNote === undefined ? {} : { focus: focusNote }),
             });
-            addSystem(receipt.text);
+            addCompactSystem(receipt.text);
             if (receipt.warning !== null) {
-              addSystem(receipt.warning);
+              addCompactSystem(receipt.warning);
             }
             await loadSessions();
           } catch (err) {
-            if (isConnectionLossError(err)) {
-              addSystem(
+            if (abortController.signal.aborted && !resultReceived) {
+              // The user pressed Stop (or deleted the conversation). The
+              // server may have finished saving just before it saw the abort,
+              // so the screen is reloaded from the database first: what it
+              // shows is then what is stored, whichever way the race went.
+              // The notice is added AFTER the reload, which would otherwise
+              // replace it (system notices are never saved).
+              if (compactSessionId !== null) {
+                await loadSessionMessages(compactSessionId, false, {
+                  keepCurrentSession: true,
+                }).catch(() => {});
+              }
+              addCompactSystem('Compaction cancelled.');
+            } else if (isConnectionLossError(err)) {
+              addCompactSystem(
                 'Compaction stream was interrupted — the server may still have completed it. Reload the session to check before retrying.'
               );
             } else {
-              addSystem(
+              addCompactSystem(
                 `Compaction failed: ${err instanceof Error ? err.message : 'Unknown error'}`
               );
             }
@@ -618,11 +681,11 @@ export function useSlashCommands({
                 // Ignore — the stream may already be closed.
               }
             }
-            if (abortControllersRef.current.get(COMPACTION_ABORT_KEY) === abortController) {
-              abortControllersRef.current.delete(COMPACTION_ABORT_KEY);
+            if (abortControllersRef.current.get(abortKey) === abortController) {
+              abortControllersRef.current.delete(abortKey);
             }
-            isCompactingRef.current = false;
-            setIsCompacting(false);
+            markCompacting(false);
+            dispatch({ type: 'CLEAR_COMPACT_PROGRESS', ...toCompactSession });
             // The badge was showing the compaction LLM's speed — clear it so
             // a stale rate does not linger after compaction ends.
             dispatch({
@@ -640,7 +703,7 @@ export function useSlashCommands({
             addSystem('Stop the current response before running /title.');
             return;
           }
-          if (isCompactingRef.current) {
+          if (compactingSessionsRef.current.has(refs.sessionIdRef.current ?? NEW_SESSION_KEY)) {
             addSystem('Wait for compaction to finish before running /title.');
             return;
           }
@@ -723,7 +786,7 @@ export function useSlashCommands({
             addSystem('Stop the current response before running /dump.');
             return;
           }
-          if (isCompactingRef.current) {
+          if (compactingSessionsRef.current.has(refs.sessionIdRef.current ?? NEW_SESSION_KEY)) {
             addSystem('Wait for compaction to finish before running /dump.');
             return;
           }
@@ -965,10 +1028,10 @@ export function useSlashCommands({
       dispatch,
       refs,
       isCurrentSessionStreaming,
-      isCompactingRef,
+      compactingSessionsRef,
       isGeneratingTitleRef,
       abortControllersRef,
-      setIsCompacting,
+      setCompactingSessions,
       setIsGeneratingTitle,
       onOpenSettings,
       loadSessions,

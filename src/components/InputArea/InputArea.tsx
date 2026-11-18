@@ -61,6 +61,9 @@ export function InputArea({
     return (
       <div className="streaming-indicator">
         <span className="text-accent font-14">● {phase}</span>
+        <button onClick={onStop} className="stop-btn">
+          Stop
+        </button>
       </div>
     );
   }

@@ -26,7 +26,7 @@ import { COMPACTION_ABORT_KEY, useSlashCommands } from './hooks/useSlashCommands
 import { useStableRefs } from './hooks/useStableRefs';
 import { useSyncRefs } from './hooks/useSyncRefs';
 import { useChat } from './lib/chatStore';
-import { streamKeyFor } from './lib/streamKey';
+import { NEW_SESSION_KEY, streamKeyFor } from './lib/streamKey';
 
 /** Inner component — uses useSearchParams so must live inside Suspense. */
 function HomeInner() {
@@ -39,10 +39,16 @@ function HomeInner() {
   // Session staged for deletion — the confirmation dialog is the only thing
   // gating handleDeleteSession, which stays the single delete executor.
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
-  const [isCompacting, setIsCompacting] = useState(false);
+  // Compaction belongs to the conversation it was started in: a Set of session
+  // keys (NEW_SESSION_KEY for an unsaved chat), never one global flag.
+  const [compactingSessions, setCompactingSessions] = useState<ReadonlySet<number>>(new Set());
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
 
-  const { isCompactingRef, isGeneratingTitleRef } = useSyncRefs(isCompacting, isGeneratingTitle);
+  const { compactingSessionsRef, isGeneratingTitleRef } = useSyncRefs(
+    compactingSessions,
+    isGeneratingTitle
+  );
+  const isCompacting = compactingSessions.has(state.currentSessionId ?? NEW_SESSION_KEY);
 
   const refs = useStableRefs(state);
   const {
@@ -160,22 +166,24 @@ function HomeInner() {
   const { handleSlashCommand } = useSlashCommands({
     refs,
     isCurrentSessionStreaming,
-    isCompactingRef,
+    compactingSessionsRef,
     isGeneratingTitleRef,
     abortControllersRef,
-    setIsCompacting,
+    setCompactingSessions,
     setIsGeneratingTitle,
     onOpenSettings: handleOpenSettings,
     loadSessions,
+    loadSessionMessages,
     sendChatMessage,
   });
 
   const handleSend = useSendHandler(dispatch, handleSlashCommand, sendChatMessage);
 
   // The set of abort-controller map keys that `handleStop` must NOT
-  // touch. Reserved for non-session work (compact / title / dump) so
-  // the user can keep using these in a background tab while pressing
-  // Stop in the foreground.
+  // touch. Reserved for non-session work (title / dump) so the user can
+  // keep using these in a background tab while pressing Stop in the
+  // foreground. `/compact` is registered under its own conversation's key
+  // instead, so Stop reaches it.
   const reservedAbortKeys = useRef<ReadonlySet<number>>(new Set<number>([COMPACTION_ABORT_KEY]));
 
   const { handleStop, handleSkillPrompt } = useActionHandlers(

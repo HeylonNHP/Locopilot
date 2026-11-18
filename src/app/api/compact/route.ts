@@ -362,10 +362,25 @@ export async function POST(request: NextRequest): Promise<Response> {
           // Use a reducer so the queue reads current DB state inside the
           // critical section. Compaction replaces the conversation with the
           // summarised result.
-          await enqueueSessionWrite(parsedSessionId, (_currentMessages) => result.newMessages, {
-            promptEvalCount: result.stats.newTokenCount,
-            evalCount: 0,
-          });
+          //
+          // The abort is checked INSIDE the write's critical section, the last
+          // moment before the commit: the queue may have held this write behind
+          // another one, so a check made before `enqueueSessionWrite` could be
+          // stale by the time it runs. Throwing from the reducer skips the
+          // write, so a compaction the user stopped is never saved.
+          await enqueueSessionWrite(
+            parsedSessionId,
+            (_currentMessages) => {
+              if (request.signal.aborted) {
+                throw new DOMException('Compaction was aborted before it was saved.', 'AbortError');
+              }
+              return result.newMessages;
+            },
+            {
+              promptEvalCount: result.stats.newTokenCount,
+              evalCount: 0,
+            }
+          );
         }
 
         debugLog.diagnostic({

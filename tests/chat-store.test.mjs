@@ -1164,3 +1164,40 @@ describe('the server’s book of traces writes what the client’s reducer write
     expect(tracesOf(state)).toStrictEqual(book.take('call-1'));
   });
 });
+
+describe('a compaction started in one conversation stays in it', () => {
+  const onSessionSeven = () => {
+    let state = chatReducer(initialState, { type: 'SET_CURRENT_SESSION', id: 7 });
+    state = chatReducer(state, {
+      type: 'COMPACT_PROGRESS',
+      message: 'Summarising…',
+      targetSessionId: 7,
+    });
+    // The user opens another conversation while it runs.
+    return chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
+  };
+
+  test('progress aimed at the old conversation does not show in the new one', () => {
+    let state = onSessionSeven();
+    state = chatReducer(state, {
+      type: 'COMPACT_PROGRESS',
+      message: 'Distilling…',
+      targetSessionId: 7,
+    });
+    expect(state.compactingPhases).toStrictEqual([]);
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 7 });
+    expect(state.compactingPhases).toStrictEqual(['Summarising…', 'Distilling…']);
+  });
+
+  test('the receipt lands in the old conversation, not the one on screen', () => {
+    let state = onSessionSeven();
+    state = chatReducer(state, {
+      type: 'ADD_MESSAGE',
+      message: { role: 'system', content: '⚡ Conversation compacted' },
+      targetSessionId: 7,
+    });
+    expect(state.messages).toStrictEqual([]);
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 7 });
+    expect(state.messages.map((m) => m.content)).toContain('⚡ Conversation compacted');
+  });
+});
