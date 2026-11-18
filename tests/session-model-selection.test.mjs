@@ -55,6 +55,7 @@ let resolveCreationSelection;
 let parseCompactionSelection;
 let compactionSelectionToPair;
 let danglingCompactionProviderId;
+let planCompactionRepair;
 let chatReducer;
 let initialState;
 let parseSessionEvent;
@@ -76,6 +77,7 @@ beforeAll(async () => {
     compactionSelectionToPair,
     danglingCompactionProviderId,
   } = await import(moduleUrl('../src/services/sessionSelection.ts')));
+  ({ planCompactionRepair } = await import(moduleUrl('../src/app/lib/compactionRepair.ts')));
   ({ chatReducer, initialState } = await import(moduleUrl('../src/app/lib/chatStore.ts')));
   ({ parseSessionEvent } = await import(moduleUrl('../src/app/hooks/useSessionEvents.ts')));
 });
@@ -478,6 +480,48 @@ describe('a compaction pin that names a removed provider (A3)', () => {
     ['an empty provider list is not evidence of removal', explicit('cheap', 'gone'), [], null],
   ])('%s', (_name, compaction, list, expected) => {
     expect(danglingCompactionProviderId(compaction, list)).toBe(expected);
+  });
+
+  describe('the repair plan the page acts on', () => {
+    const onScreen = {
+      currentSessionId: 7,
+      compaction: explicit('cheap', 'gone'),
+      providers,
+      model: 'gpt-5',
+      activeProviderId: 'openai',
+      reasoningEffort: 'high',
+      compactionReasoningEffort: undefined,
+    };
+
+    test('resets only the compaction and carries everything else over', () => {
+      expect(planCompactionRepair(onScreen)).toStrictEqual({
+        sessionId: 7,
+        missingProviderId: 'gone',
+        selection: {
+          model: 'gpt-5',
+          providerId: 'openai',
+          compaction: INHERIT_DEFAULT,
+          reasoningEffort: 'high',
+          compactionReasoningEffort: null,
+        },
+      });
+    });
+
+    test.each([
+      ['a new chat has no pin to lose', { currentSessionId: null }],
+      ['a pin on a configured provider', { compaction: explicit('cheap', 'openai') }],
+      ['the providers have not loaded', { providers: [] }],
+      ['an inherited compaction', { compaction: INHERIT_DEFAULT }],
+    ])('plans nothing when %s', (_name, change) => {
+      expect(planCompactionRepair({ ...onScreen, ...change })).toBeNull();
+    });
+
+    test('once repaired, the same state plans nothing again (no loop)', () => {
+      const plan = planCompactionRepair(onScreen);
+      expect(
+        planCompactionRepair({ ...onScreen, compaction: plan.selection.compaction })
+      ).toBeNull();
+    });
   });
 
   test('resetting the pin through APPLY_SESSION_SELECTION fixes the row AND the screen', () => {

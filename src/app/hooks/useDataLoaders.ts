@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { hasLiveTranscript, useChat } from '@/app/lib/chatStore';
+import { planCompactionRepair } from '@/app/lib/compactionRepair';
 import { isStaleNumCtxAnswer, positiveInteger } from '@/app/lib/contextWindow';
 import { createLatestGate } from '@/app/lib/latestGate';
 import { fetchModelList } from '@/app/lib/modelsClient';
@@ -14,8 +15,6 @@ import {
 import {
   compactionSelectionEquals,
   compactionSelectionFromLoosePair,
-  danglingCompactionProviderId,
-  inheritDefaultCompactionSelection,
 } from '@/services/sessionSelection';
 
 import type { StableRefs } from './useStableRefs';
@@ -382,24 +381,20 @@ export function useDataLoaders(refs: StableRefs) {
   // comes back with the next reload. The user is told: the pin was theirs.
   const compactionRepairingRef = useRef<number | null>(null);
   useEffect(() => {
-    const sessionId = state.currentSessionId;
-    if (sessionId === null) return;
-    const missing = danglingCompactionProviderId(state.compaction, state.providers);
-    if (missing === null || compactionRepairingRef.current === sessionId) return;
-    compactionRepairingRef.current = sessionId;
-    const repaired = inheritDefaultCompactionSelection();
-    dispatch({
-      type: 'APPLY_SESSION_SELECTION',
-      sessionId,
-      selection: {
-        model: state.model,
-        providerId: state.activeProviderId,
-        compaction: repaired,
-        reasoningEffort: state.reasoningEffort ?? null,
-        compactionReasoningEffort: state.compactionReasoningEffort ?? null,
-      },
+    const repair = planCompactionRepair({
+      currentSessionId: state.currentSessionId,
+      compaction: state.compaction,
+      providers: state.providers,
+      model: state.model,
+      activeProviderId: state.activeProviderId,
+      reasoningEffort: state.reasoningEffort,
+      compactionReasoningEffort: state.compactionReasoningEffort,
     });
-    void saveSessionPatch(sessionId, { compaction: repaired }).then((saved) => {
+    if (repair === null || compactionRepairingRef.current === repair.sessionId) return;
+    const { sessionId, missingProviderId: missing, selection } = repair;
+    compactionRepairingRef.current = sessionId;
+    dispatch({ type: 'APPLY_SESSION_SELECTION', sessionId, selection });
+    void saveSessionPatch(sessionId, { compaction: selection.compaction }).then((saved) => {
       compactionRepairingRef.current = null;
       dispatch({
         type: 'SET_ERROR',
