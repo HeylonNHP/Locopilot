@@ -306,6 +306,32 @@ describe('a result that fits is accepted as it is', () => {
     expect(progress.join('\n')).not.toMatch(/Measuring|Dropped|retrying|Re-attached/);
     expectGolden('fits first time', result);
   });
+
+  test('the summary says it covers the older turns, and the newer messages follow it as they were', async () => {
+    // The cut can fall between a question and its answer. The summariser never
+    // sees the newer turns, so the model that reads the result is told what the
+    // summary covers and which side wins where they differ. The phrases are typed
+    // out here, not imported, so a reworded preamble has to be re-read to pass.
+    const messages = base(14);
+    const { value, error } = await compact({
+      messages,
+      numCtx: 8192,
+      respond: () => ({ text: 'SUMMARY ONE' }),
+    });
+    expect(error).toBeUndefined();
+
+    const [summary, ...kept] = value.newMessages;
+    expect(summary.content).toContain('summarises the older part of the conversation');
+    expect(summary.content).toContain('The messages after it are newer and are kept as they were');
+    expect(summary.content).toContain('was open when the older turns ended');
+    expect(summary.content).toContain('go by the newer message');
+    // It no longer claims to cover everything: the window follows it.
+    expect(summary.content).not.toContain('everything important that has occurred so far');
+
+    // What follows the summary really is the end of the input, unchanged.
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept).toStrictEqual(messages.slice(-kept.length));
+  });
 });
 
 describe('a result inside the confirm band is measured once', () => {
@@ -791,7 +817,8 @@ describe('the calibration is pinned for the whole pass', () => {
     // is pinned when the pass begins, so every count in it uses one scale, or
     // "did the history shrink?" would compare two of them.
     const history = withSmallOutputs();
-    const respond = ({ kind }) => (kind === 'distil' ? { text: 'DIGEST xx' } : { text: summaryOf(2600) });
+    const respond = ({ kind }) =>
+      kind === 'distil' ? { text: 'DIGEST xx' } : { text: summaryOf(2600) };
     const steady = await compact({ messages: history, respond });
     expect(steady.error).toBeUndefined();
     let requests = 0;
@@ -819,7 +846,6 @@ describe('the calibration is pinned for the whole pass', () => {
     expect(shifting.progress).toStrictEqual(steady.progress);
   });
 });
-
 
 describe('the stub is a checked attach', () => {
   test('the stub is attached out of the room below the boundary, system prompt paid', async () => {
@@ -924,7 +950,13 @@ describe('a compaction that cannot proceed says why', () => {
 
 describe('EXPLORE3', () => {
   test('attach refusal', async () => {
-    for (const [sys, summary] of [[60, 1640], [60, 1690], [38, 1760], [80, 1560], [30, 1800]]) {
+    for (const [sys, summary] of [
+      [60, 1640],
+      [60, 1690],
+      [38, 1760],
+      [80, 1560],
+      [30, 1800],
+    ]) {
       const messages = base(24);
       messages[0] = { role: 'system', content: lines('sys', sys) };
       const touched = Date.now() - 7200_000;
@@ -933,8 +965,24 @@ describe('EXPLORE3', () => {
         writeFileSync(file, `export const MARKER = 'UNIQUE_MARKER_${name}';\n${lines(name, 60)}`);
         return { path: file, tool: 'read_file', hits: 3, lastSeenAt: touched };
       });
-      const r = await compact({ messages, respond: () => ({ text: summaryOf(summary) }), recentFiles: files });
-      console.log('E3', sys, summary, JSON.stringify({ err: r.error?.message, est: diagnostics[0]?.estimatedNewTokens, sysTok: diagnostics[0]?.systemPromptTokens, rf: diagnostics[0]?.recentFiles, second: r.value?.newMessages[1]?.content.slice(0, 24), stub: r.progress.filter((l) => l.startsWith('Re-attached')) }));
+      const r = await compact({
+        messages,
+        respond: () => ({ text: summaryOf(summary) }),
+        recentFiles: files,
+      });
+      console.log(
+        'E3',
+        sys,
+        summary,
+        JSON.stringify({
+          err: r.error?.message,
+          est: diagnostics[0]?.estimatedNewTokens,
+          sysTok: diagnostics[0]?.systemPromptTokens,
+          rf: diagnostics[0]?.recentFiles,
+          second: r.value?.newMessages[1]?.content.slice(0, 24),
+          stub: r.progress.filter((l) => l.startsWith('Re-attached')),
+        })
+      );
     }
   });
 });

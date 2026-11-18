@@ -228,6 +228,36 @@ const RETURN_PLAIN_TEXT_LINE =
   'Return ONLY plain summary text (no markdown syntax — no bullets, no bold, no code fences): the section paragraphs above and nothing else. No preamble, no commentary, no closing note.';
 
 /**
+ * The rule for an item the visible turns leave open.
+ *
+ * WHY it exists: the summariser reads only the OLDER turns, and the cut can
+ * fall between a question and its answer. Told only what it can see, the model
+ * wrote the question as "still pending" while the answer sat, word for word,
+ * right after the summary. The model cannot know whether the unseen turns
+ * settled the item, and the no-invention rule forbids it to guess in either
+ * direction, so it is asked to state the one thing it does know: the item was
+ * open at the end of the turns it was given. The reader is told what that
+ * means by `SUMMARY_PREAMBLE` (constants.ts), which is the half of this fix
+ * that does not depend on the model following a prompt.
+ *
+ * It never claims that a later turn settled anything: the model has not seen
+ * one, and a claim of that kind would be invented.
+ *
+ * @param sentence - the sentence about the preserved turns the rule follows.
+ * @param unseen - the rule's subject: what the model cannot see, such as
+ *   `Those newer turns` or `The later slices`.
+ * @returns the sentence followed by the rule.
+ */
+function withOpenAtTheCutRule(sentence: string, unseen: string): string {
+  const rule =
+    `${unseen} may already have settled something that the turns you are given left open, ` +
+    'and you cannot see them. Write every open item as open at the end of these turns (for ' +
+    'example, "had not been answered by the end of these turns"), never as a flat "pending" ' +
+    'or "still to do".';
+  return `${sentence} ${rule}`;
+}
+
+/**
  * The sentence that tells the summariser what happens to the NEWER turns.
  *
  * WHY the wording is careful: the older version said the newer turns are
@@ -242,6 +272,11 @@ const RETURN_PLAIN_TEXT_LINE =
  * The "only record" claim is also conditional: it only holds when this
  * request covers the WHOLE older slice. A chunk covers one slice of it, and
  * the sibling chunks are summarised separately.
+ *
+ * Wherever turns exist that this request cannot show the model, the sentence
+ * ends with `withOpenAtTheCutRule`: those turns may have settled an item the
+ * visible turns left open. The one branch without it is a single pass with NO
+ * preserved turns, where nothing follows the summary.
  */
 function preservedTurnsSentence(
   preservedRecentTokens: number | undefined,
@@ -252,19 +287,22 @@ function preservedTurnsSentence(
     'the count is measured before tool outputs are distilled, so it can overstate the window';
 
   if (preservedRecentTokens === undefined) {
-    return (
+    return withOpenAtTheCutRule(
       'NEWER recent turns are preserved outside this summary ' +
-      `(${digestNote}; the count is not known here), so write it so that a later turn can act on ` +
-      'the older turns without ever seeing them.'
+        `(${digestNote}; the count is not known here), so write it so that a later turn can act on ` +
+        'the older turns without ever seeing them.',
+      'Those newer turns'
     );
   }
 
   if (preservedRecentTokens <= 0) {
     if (chunked) {
-      return (
+      // No newer turns, but the slices after this one are still unseen.
+      return withOpenAtTheCutRule(
         'NO newer turns are preserved outside this summary (0 estimated tokens), so this summary ' +
-        'is the only record of THIS slice of the conversation so far — write it so that a later ' +
-        'turn can act on it without ever seeing it.'
+          'is the only record of THIS slice of the conversation so far — write it so that a later ' +
+          'turn can act on it without ever seeing it.',
+        'The later slices'
       );
     }
     return (
@@ -275,18 +313,20 @@ function preservedTurnsSentence(
   }
 
   if (chunked) {
-    return (
+    return withOpenAtTheCutRule(
       'NEWER recent turns are preserved outside this summary ' +
-      `(${preservedRecentTokens} estimated tokens — ${countCaveat}; ${digestNote}), so a later ` +
-      'turn will read them next to your summary of this slice.'
+        `(${preservedRecentTokens} estimated tokens — ${countCaveat}; ${digestNote}), so a later ` +
+        'turn will read them next to your summary of this slice.',
+      'The later slices and those newer turns'
     );
   }
 
-  return (
+  return withOpenAtTheCutRule(
     'NEWER recent turns are preserved outside this summary ' +
-    `(${preservedRecentTokens} estimated tokens — ${countCaveat}; ${digestNote}), so this summary ` +
-    'is the only record of the older turns — write it so that a later turn can act on them ' +
-    'without ever seeing them.'
+      `(${preservedRecentTokens} estimated tokens — ${countCaveat}; ${digestNote}), so this summary ` +
+      'is the only record of the older turns — write it so that a later turn can act on them ' +
+      'without ever seeing them.',
+    'Those newer turns'
   );
 }
 

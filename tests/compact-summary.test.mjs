@@ -283,10 +283,17 @@ describe('chunking budget', () => {
     const chunks = splitHistoryIntoChunks(history, EFFECTIVE_INPUT_BUDGET, MODEL, (message) =>
       estimateSerializedMessageTokens(message, { toolNames }, MODEL)
     );
+    // The chunker adds up a count per message; this test counts the joined text
+    // once. Tokenising joined text can differ from the sum of its parts by a
+    // token or two (a merge across the boundary), so the check allows 1 %, which
+    // is far more than that effect and far less than a chunk that is really
+    // over budget. The production budget is 60 % of the window, so the effect
+    // never reaches the window.
+    const tolerance = Math.ceil(EFFECTIVE_INPUT_BUDGET * 0.01);
     for (const chunk of chunks) {
       const serialized = serializeHistoryForSummaryText(chunk, { toolNames });
       const tokens = countTextTokens(serialized, MODEL);
-      expect(tokens).toBeLessThanOrEqual(EFFECTIVE_INPUT_BUDGET);
+      expect(tokens).toBeLessThanOrEqual(EFFECTIVE_INPUT_BUDGET + tolerance);
     }
   });
 

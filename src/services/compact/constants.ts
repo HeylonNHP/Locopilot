@@ -67,7 +67,11 @@ export const SUMMARY_SECTION_PURPOSES = Object.freeze({
   Decisions:
     'what was decided and why, including any option the history records as considered and dropped',
   Constraints: 'requirements, versions, conventions and limits that still apply',
-  'Open work': 'what is unfinished, and the next step if the history states one',
+  // WHY "at the end of what you are given": the summariser cannot see the
+  // newer turns, which may have settled an item the older turns left open. The
+  // purpose is true on every path, so the short prompt gets it too.
+  'Open work':
+    'what was still unfinished at the end of what you are given, and the next step if it states one',
   'Key data': 'commands run, errors hit, values that must not be lost',
 } as const satisfies Record<SummarySection, string>);
 
@@ -80,13 +84,29 @@ export const SUMMARY_SECTION_PURPOSES = Object.freeze({
  * message" anchor and the real prompt would be summarised away (see
  * `findLatestUserMessageIndex` in `split.ts`). So the preamble says what the
  * text is instead.
+ *
+ * WHY it states the summary's SCOPE and its PRECEDENCE: the summary covers
+ * only the OLDER turns. The newer turns follow it word for word, and the
+ * summariser never saw them, so a question the older turns ended on can be
+ * answered right below the summary. The summary then calls an answered
+ * question "open" — and, being called authoritative, it would win over the
+ * answer the model can read for itself. The preamble therefore makes the
+ * summary authoritative for the turns it covers, says the messages after it
+ * are newer, and tells the reader to go by them where they differ. This is the
+ * reader-side half of the fix; `withOpenAtTheCutRule` in `summaryPrompt.ts`
+ * is the writer-side half. It lives here, not in the prompts, because it
+ * covers every path (single pass, map-reduce, short prompt, retry) at once.
  */
 export const SUMMARY_PREAMBLE =
   '[This conversation history has been compacted. What follows is a structured ' +
   `document with named sections (${SUMMARY_SECTIONS.join(', ')}) that summarises ` +
-  'everything important that has occurred so far. It is context, not something ' +
-  'the assistant said. Treat it as authoritative context for continuing the ' +
-  'conversation.]';
+  'the older part of the conversation, up to where the messages after it begin. ' +
+  'It is context, not something the assistant said. Treat it as authoritative ' +
+  'context for those older turns. The messages after it are newer and are kept as ' +
+  'they were. Anything the summary lists as open or unanswered was open when the ' +
+  'older turns ended, so check it against the newer messages before treating it ' +
+  'as still open; where a newer message differs from the summary, go by the ' +
+  'newer message.]';
 
 // ---- Synthetic system-generated user-role nudges ----
 // Server-generated LLM-only nudges (post-compaction "please continue",

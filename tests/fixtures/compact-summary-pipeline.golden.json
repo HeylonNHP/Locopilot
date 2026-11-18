@@ -11,7 +11,7 @@
           "num_predict": 60
         },
         "tools": [],
-        "systemSha": "8fe021d01d8f",
+        "systemSha": "7b1447f55d51",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
         "userChars": 182,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Please rename the "
@@ -33,7 +33,7 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c71685ce0ed0",
+        "systemSha": "752a7672d3c8",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
         "userChars": 7477,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1. lorem i"
@@ -48,7 +48,7 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1fd7c8f5bd5c",
+        "systemSha": "5311cee05a80",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
         "userChars": 7480,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 7. lorem i"
@@ -63,7 +63,7 @@
           "num_predict": 391
         },
         "tools": [],
-        "systemSha": "acae7dbf714e",
+        "systemSha": "2787b3e89882",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
         "userChars": 2529,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 13. lorem "
@@ -299,7 +299,7 @@
           "num_predict": 60
         },
         "tools": [],
-        "systemSha": "7f8d85bbfe8c",
+        "systemSha": "511d7d6f7a90",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
         "userChars": 182,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Please rename the "
@@ -314,7 +314,7 @@
           "num_predict": 60
         },
         "tools": [],
-        "systemSha": "05cbd7da7f3b",
+        "systemSha": "3c8050bf60f6",
         "systemHead": "You are a conversation summariser. Write ONE summary of the ",
         "userChars": 158,
         "userHead": "Summarise this conversation:\n\n[USER]: Please rename the helper and update its ca"
@@ -337,7 +337,7 @@
           "num_predict": 60
         },
         "tools": [],
-        "systemSha": "7f8d85bbfe8c",
+        "systemSha": "511d7d6f7a90",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
         "userChars": 182,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Please rename the "
@@ -352,7 +352,7 @@
           "num_predict": 60
         },
         "tools": [],
-        "systemSha": "05cbd7da7f3b",
+        "systemSha": "3c8050bf60f6",
         "systemHead": "You are a conversation summariser. Write ONE summary of the ",
         "userChars": 158,
         "userHead": "Summarise this conversation:\n\n[USER]: Please rename the helper and update its ca"

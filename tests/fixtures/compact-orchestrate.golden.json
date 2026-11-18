@@ -11,7 +11,7 @@
           "num_predict": 982
         },
         "tools": [],
-        "systemSha": "e80a47e6254d",
+        "systemSha": "8f677800208e",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
         "userChars": 3512,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
@@ -30,7 +30,7 @@
         "numCtx": 8192,
         "acceptanceBudget": 7372,
         "oldTokenCount": 2671,
-        "estimatedNewTokens": 1226,
+        "estimatedNewTokens": 1292,
         "systemPromptTokens": 11,
         "retried": false,
         "retry": false
@@ -38,14 +38,14 @@
     ],
     "stats": {
       "oldTokenCount": 2671,
-      "newTokenCount": 1226
+      "newTokenCount": 1292
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 358,
+        "chars": 669,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": "ative context for continuing the conversation.]\n\nSUMMARY ONE"
+        "tail": "ers from the summary, go by the newer message.]\n\nSUMMARY ONE"
       },
       {
         "role": "user",
@@ -97,9 +97,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3737d06e69cb",
+        "systemSha": "54580969da0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -112,10 +112,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1ab2baa17fb1",
+        "systemSha": "5b82cd1955fd",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 3,
@@ -127,10 +127,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c8c48f37de73",
+        "systemSha": "4ec288cf243f",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2287,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 4,
@@ -217,7 +217,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 4571,
-        "estimatedNewTokens": 3714,
+        "estimatedNewTokens": 3780,
         "systemPromptTokens": 11,
         "confirmedNewTokens": 3001,
         "retried": false,
@@ -226,12 +226,12 @@
     ],
     "stats": {
       "oldTokenCount": 4571,
-      "newTokenCount": 3714
+      "newTokenCount": 3780
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 8768,
+        "chars": 9079,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
         "tail": "e 253: value=642 token-253\nsum line 254: value=489 token-254"
       },
@@ -267,9 +267,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3737d06e69cb",
+        "systemSha": "54580969da0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -282,10 +282,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1ab2baa17fb1",
+        "systemSha": "5b82cd1955fd",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 3,
@@ -297,10 +297,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c8c48f37de73",
+        "systemSha": "4ec288cf243f",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2287,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 4,
@@ -388,7 +388,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 4571,
-        "estimatedNewTokens": 3545,
+        "estimatedNewTokens": 3611,
         "systemPromptTokens": 11,
         "confirmedNewTokens": 4001,
         "windowTrim": {
@@ -402,12 +402,12 @@
     ],
     "stats": {
       "oldTokenCount": 4571,
-      "newTokenCount": 3545
+      "newTokenCount": 3611
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 8862,
+        "chars": 9173,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
         "tail": "pped to fit the context window and is not represented here.]"
       },
@@ -437,9 +437,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3737d06e69cb",
+        "systemSha": "54580969da0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -452,10 +452,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1ab2baa17fb1",
+        "systemSha": "5b82cd1955fd",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 3,
@@ -467,10 +467,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c8c48f37de73",
+        "systemSha": "4ec288cf243f",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2287,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 4,
@@ -527,9 +527,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "7340c1c9b2df",
+        "systemSha": "0b6d80c8ef1a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 10457,
+        "userChars": 10768,
         "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: [This convers"
       }
     ],
@@ -547,12 +547,12 @@
       "AI is summarizing... (9948 chars)",
       "Reducing summaries...",
       "AI is summarizing... (9948 chars)",
-      "Dropped the 1 oldest preserved message(s) (~190 tokens) to make room — the history was trimmed rather than re-summarised. Still 4086 tokens against a 3686-token target.",
+      "Dropped the 1 oldest preserved message(s) (~190 tokens) to make room — the history was trimmed rather than re-summarised. Still 4152 tokens against a 3686-token target.",
       "No un-digested oversized tool output(s) left in the preserved window — the leftover distillation budget (~4096 tokens) has nothing to spend on.",
-      "Compacted to 4086 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
+      "Compacted to 4152 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
       "Preparing compaction: summarizing 1 messages, preserving 2 recent messages",
       "Tool distillation: distilled 0 of 0 oversized tool output(s) (~0 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
-      "History is too large for a single pass (3693 tokens) — splitting into 1 chunks for map-reduce compaction.",
+      "History is too large for a single pass (3759 tokens) — splitting into 1 chunks for map-reduce compaction.",
       "chunk 1/1 — AI is summarizing... (13 chars)",
       "Reducing chunk summaries..."
     ],
@@ -563,8 +563,8 @@
         "method": "local-estimate",
         "numCtx": 4096,
         "acceptanceBudget": 3686,
-        "oldTokenCount": 4086,
-        "estimatedNewTokens": 466,
+        "oldTokenCount": 4152,
+        "estimatedNewTokens": 532,
         "systemPromptTokens": 11,
         "retried": false,
         "retry": false
@@ -576,7 +576,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 4571,
-        "estimatedNewTokens": 466,
+        "estimatedNewTokens": 532,
         "systemPromptTokens": 11,
         "windowTrim": {
           "droppedCount": 1,
@@ -593,14 +593,14 @@
     ],
     "stats": {
       "oldTokenCount": 4571,
-      "newTokenCount": 466
+      "newTokenCount": 532
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 360,
+        "chars": 671,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": "ive context for continuing the conversation.]\n\nSMALL SUMMARY"
+        "tail": "s from the summary, go by the newer message.]\n\nSMALL SUMMARY"
       },
       {
         "role": "user",
@@ -658,9 +658,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "38a107dfe644",
+        "systemSha": "7c49b3e01431",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -673,13 +673,28 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "b9b5e34fe7d4",
+        "systemSha": "265863c2ade0",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 5,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 318
+        },
+        "tools": [],
+        "systemSha": "8c23bce29a6f",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 947,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
+      },
+      {
+        "index": 6,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -694,7 +709,37 @@
         "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
-        "index": 6,
+        "index": 7,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 9109,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nsu"
+      },
+      {
+        "index": 8,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 18152,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
+      },
+      {
+        "index": 9,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -709,7 +754,7 @@
         "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
       },
       {
-        "index": 7,
+        "index": 10,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -732,17 +777,22 @@
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 4 oversized tool output(s) (~1252 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
       "Tool distillation is capped at 2 model call(s) for a 4096-token context — 2 oversized tool output(s) the call cap left verbatim (2 in the preserved window, 0 in the older history).",
-      "History is too large for a single pass (3039 tokens) — splitting into 2 chunks for map-reduce compaction.",
-      "chunk 1/2 — AI is summarizing... (9031 chars)",
-      "chunk 2/2 — AI is summarizing... (9031 chars)",
+      "History is too large for a single pass (3039 tokens) — splitting into 3 chunks for map-reduce compaction.",
+      "chunk 1/3 — AI is summarizing... (9031 chars)",
+      "chunk 2/3 — AI is summarizing... (9031 chars)",
+      "chunk 3/3 — AI is summarizing... (9031 chars)",
       "Reducing chunk summaries...",
+      "Reducing reduction group 1/2...",
+      "AI is summarizing... (9031 chars)",
+      "Reducing reduction group 2/2...",
+      "AI is summarizing... (9031 chars)",
       "Reducing summaries...",
       "AI is summarizing... (9031 chars)",
       "Distilling tool output 5/6 (run_command)... (9 chars)",
       "Distilled tool output 1/2 (run_command)",
       "Distilling tool output 6/6 (run_command)... (9 chars)",
       "Distilled tool output 2/2 (run_command)",
-      "Spent the leftover distillation budget on 2 more oversized tool output(s) of the preserved window (~1252 tokens of prefill) — the compacted history is now within budget (3493 tokens against a 3686-token budget)."
+      "Spent the leftover distillation budget on 2 more oversized tool output(s) of the preserved window (~1252 tokens of prefill) — the compacted history is now within budget (3559 tokens against a 3686-token budget)."
     ],
     "diagnostics": [
       {
@@ -752,7 +802,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 5188,
-        "estimatedNewTokens": 3493,
+        "estimatedNewTokens": 3559,
         "systemPromptTokens": 11,
         "extraDistill": {
           "distilledCount": 2,
@@ -764,12 +814,12 @@
     ],
     "stats": {
       "oldTokenCount": 5188,
-      "newTokenCount": 3493
+      "newTokenCount": 3559
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 9378,
+        "chars": 9689,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
         "tail": "e 271: value=915 token-271\nsum line 272: value=762 token-272"
       },
@@ -853,9 +903,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "38a107dfe644",
+        "systemSha": "7c49b3e01431",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -868,13 +918,28 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "b9b5e34fe7d4",
+        "systemSha": "265863c2ade0",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 5,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 318
+        },
+        "tools": [],
+        "systemSha": "8c23bce29a6f",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 947,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
+      },
+      {
+        "index": 6,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -889,49 +954,34 @@
         "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
-        "index": 6,
-        "kind": "distil",
-        "stream": true,
-        "options": {
-          "num_ctx": 4096,
-          "temperature": 0,
-          "num_predict": 1024
-        },
-        "tools": [],
-        "systemSha": "3fd069ec5bac",
-        "systemHead": "You are a tool-output distiller. You will be given one tool ",
-        "userChars": 1362,
-        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
-      },
-      {
         "index": 7,
-        "kind": "distil",
+        "kind": "summary",
         "stream": true,
         "options": {
           "num_ctx": 4096,
           "temperature": 0,
-          "num_predict": 1024
+          "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3fd069ec5bac",
-        "systemHead": "You are a tool-output distiller. You will be given one tool ",
-        "userChars": 1362,
-        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout3 line 0:"
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 9109,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nsu"
       },
       {
         "index": 8,
-        "kind": "distil",
+        "kind": "summary",
         "stream": true,
         "options": {
           "num_ctx": 4096,
           "temperature": 0,
-          "num_predict": 1024
+          "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3fd069ec5bac",
-        "systemHead": "You are a tool-output distiller. You will be given one tool ",
-        "userChars": 1362,
-        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 18152,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
         "index": 9,
@@ -946,10 +996,55 @@
         "systemSha": "3fd069ec5bac",
         "systemHead": "You are a tool-output distiller. You will be given one tool ",
         "userChars": 1362,
-        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout3 line 0:"
+        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
       },
       {
         "index": 10,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 1362,
+        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout3 line 0:"
+      },
+      {
+        "index": 11,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 1362,
+        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
+      },
+      {
+        "index": 12,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 1362,
+        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout3 line 0:"
+      },
+      {
+        "index": 13,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -958,9 +1053,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "9c024dbbf518",
+        "systemSha": "e6dcca69a697",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 9445,
+        "userChars": 9756,
         "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: [This convers"
       }
     ],
@@ -972,10 +1067,15 @@
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 4 oversized tool output(s) (~1252 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
       "Tool distillation is capped at 2 model call(s) for a 4096-token context — 2 oversized tool output(s) the call cap left verbatim (2 in the preserved window, 0 in the older history).",
-      "History is too large for a single pass (3039 tokens) — splitting into 2 chunks for map-reduce compaction.",
-      "chunk 1/2 — AI is summarizing... (9031 chars)",
-      "chunk 2/2 — AI is summarizing... (9031 chars)",
+      "History is too large for a single pass (3039 tokens) — splitting into 3 chunks for map-reduce compaction.",
+      "chunk 1/3 — AI is summarizing... (9031 chars)",
+      "chunk 2/3 — AI is summarizing... (9031 chars)",
+      "chunk 3/3 — AI is summarizing... (9031 chars)",
       "Reducing chunk summaries...",
+      "Reducing reduction group 1/2...",
+      "AI is summarizing... (9031 chars)",
+      "Reducing reduction group 2/2...",
+      "AI is summarizing... (9031 chars)",
       "Reducing summaries...",
       "AI is summarizing... (9031 chars)",
       "Distilling tool output 5/6 (run_command)... (3571 chars)",
@@ -983,14 +1083,14 @@
       "Distilling tool output 6/6 (run_command)... (3571 chars)",
       "Distilled tool output 2/2 (run_command)",
       "Spent the leftover distillation budget on 2 more oversized tool output(s) of the preserved window (~1252 tokens of prefill) — but the digests were no smaller than the outputs they replace, so the window is unchanged.",
-      "Compacted to 4495 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
+      "Compacted to 4561 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
       "Preparing compaction: summarizing 1 messages, preserving 6 recent messages",
       "Distilling tool output 5/6 (run_command)... (3571 chars)",
       "Distilled tool output 1/2 (run_command)",
       "Distilling tool output 6/6 (run_command)... (3571 chars)",
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 2 oversized tool output(s) (~1252 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
-      "History is too large for a single pass (3347 tokens) — splitting into 1 chunks for map-reduce compaction.",
+      "History is too large for a single pass (3413 tokens) — splitting into 1 chunks for map-reduce compaction.",
       "chunk 1/1 — AI is summarizing... (13 chars)",
       "Reducing chunk summaries..."
     ],
@@ -1001,8 +1101,8 @@
         "method": "local-estimate",
         "numCtx": 4096,
         "acceptanceBudget": 3686,
-        "oldTokenCount": 4495,
-        "estimatedNewTokens": 2555,
+        "oldTokenCount": 4561,
+        "estimatedNewTokens": 2621,
         "systemPromptTokens": 11,
         "retried": false,
         "retry": false
@@ -1014,7 +1114,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 5188,
-        "estimatedNewTokens": 2555,
+        "estimatedNewTokens": 2621,
         "systemPromptTokens": 11,
         "extraDistill": {
           "distilledCount": 2,
@@ -1026,14 +1126,14 @@
     ],
     "stats": {
       "oldTokenCount": 5188,
-      "newTokenCount": 2555
+      "newTokenCount": 2621
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 360,
+        "chars": 671,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": "ive context for continuing the conversation.]\n\nSMALL SUMMARY"
+        "tail": "s from the summary, go by the newer message.]\n\nSMALL SUMMARY"
       },
       {
         "role": "user",
@@ -1115,9 +1215,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "38a107dfe644",
+        "systemSha": "7c49b3e01431",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -1130,13 +1230,28 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "b9b5e34fe7d4",
+        "systemSha": "265863c2ade0",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 5,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 318
+        },
+        "tools": [],
+        "systemSha": "8c23bce29a6f",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 947,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
+      },
+      {
+        "index": 6,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -1151,7 +1266,37 @@
         "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
-        "index": 6,
+        "index": 7,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 10365,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nsu"
+      },
+      {
+        "index": 8,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 20664,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
+      },
+      {
+        "index": 9,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -1166,7 +1311,7 @@
         "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
       },
       {
-        "index": 7,
+        "index": 10,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -1181,7 +1326,7 @@
         "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout3 line 0:"
       },
       {
-        "index": 8,
+        "index": 11,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -1196,7 +1341,7 @@
         "userHead": "Tool name: run_command\nTool output length: 2468 chars\n\nTool output:\n[Distilled t"
       },
       {
-        "index": 9,
+        "index": 12,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -1211,7 +1356,7 @@
         "userHead": "Tool name: run_command\nTool output length: 2468 chars\n\nTool output:\n[Distilled t"
       },
       {
-        "index": 10,
+        "index": 13,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -1220,9 +1365,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "2f51f6f0b2de",
+        "systemSha": "1f8e8e3270cf",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 10701,
+        "userChars": 11012,
         "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: [This convers"
       }
     ],
@@ -1234,25 +1379,30 @@
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 4 oversized tool output(s) (~1252 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
       "Tool distillation is capped at 2 model call(s) for a 4096-token context — 2 oversized tool output(s) the call cap left verbatim (2 in the preserved window, 0 in the older history).",
-      "History is too large for a single pass (3039 tokens) — splitting into 2 chunks for map-reduce compaction.",
-      "chunk 1/2 — AI is summarizing... (10287 chars)",
-      "chunk 2/2 — AI is summarizing... (10287 chars)",
+      "History is too large for a single pass (3039 tokens) — splitting into 3 chunks for map-reduce compaction.",
+      "chunk 1/3 — AI is summarizing... (10287 chars)",
+      "chunk 2/3 — AI is summarizing... (10287 chars)",
+      "chunk 3/3 — AI is summarizing... (10287 chars)",
       "Reducing chunk summaries...",
+      "Reducing reduction group 1/2...",
+      "AI is summarizing... (10287 chars)",
+      "Reducing reduction group 2/2...",
+      "AI is summarizing... (10287 chars)",
       "Reducing summaries...",
       "AI is summarizing... (10287 chars)",
       "Distilling tool output 5/6 (run_command)... (2400 chars)",
       "Distilled tool output 1/2 (run_command)",
       "Distilling tool output 6/6 (run_command)... (2400 chars)",
       "Distilled tool output 2/2 (run_command)",
-      "Spent the leftover distillation budget on 2 more oversized tool output(s) of the preserved window (~1252 tokens of prefill) — the compacted history is still over budget (4732 tokens against a 3686-token budget).",
-      "Compacted to 4732 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
+      "Spent the leftover distillation budget on 2 more oversized tool output(s) of the preserved window (~1252 tokens of prefill) — the compacted history is still over budget (4798 tokens against a 3686-token budget).",
+      "Compacted to 4798 tokens but limit is 4096 — retrying with 1.6x stronger compression (2 attempt(s) left)...",
       "Preparing compaction: summarizing 1 messages, preserving 6 recent messages",
       "Distilling tool output 5/6 (run_command)... (2400 chars)",
       "Distilled tool output 1/2 (run_command)",
       "Distilling tool output 6/6 (run_command)... (2400 chars)",
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 2 oversized tool output(s) (~1924 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
-      "History is too large for a single pass (3792 tokens) — splitting into 1 chunks for map-reduce compaction.",
+      "History is too large for a single pass (3858 tokens) — splitting into 1 chunks for map-reduce compaction.",
       "chunk 1/1 — AI is summarizing... (13 chars)",
       "Reducing chunk summaries..."
     ],
@@ -1263,8 +1413,8 @@
         "method": "local-estimate",
         "numCtx": 4096,
         "acceptanceBudget": 3686,
-        "oldTokenCount": 4732,
-        "estimatedNewTokens": 1013,
+        "oldTokenCount": 4798,
+        "estimatedNewTokens": 1079,
         "systemPromptTokens": 11,
         "retried": false,
         "retry": false
@@ -1276,7 +1426,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 5188,
-        "estimatedNewTokens": 1013,
+        "estimatedNewTokens": 1079,
         "systemPromptTokens": 11,
         "extraDistill": {
           "distilledCount": 2,
@@ -1288,14 +1438,14 @@
     ],
     "stats": {
       "oldTokenCount": 5188,
-      "newTokenCount": 1013
+      "newTokenCount": 1079
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 360,
+        "chars": 671,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": "ive context for continuing the conversation.]\n\nSMALL SUMMARY"
+        "tail": "s from the summary, go by the newer message.]\n\nSMALL SUMMARY"
       },
       {
         "role": "user",
@@ -1377,9 +1527,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "38a107dfe644",
+        "systemSha": "7c49b3e01431",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -1392,13 +1542,28 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "b9b5e34fe7d4",
+        "systemSha": "265863c2ade0",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 5,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 318
+        },
+        "tools": [],
+        "systemSha": "8c23bce29a6f",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 947,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
+      },
+      {
+        "index": 6,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -1413,49 +1578,34 @@
         "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
-        "index": 6,
-        "kind": "distil",
-        "stream": true,
-        "options": {
-          "num_ctx": 4096,
-          "temperature": 0,
-          "num_predict": 1024
-        },
-        "tools": [],
-        "systemSha": "3fd069ec5bac",
-        "systemHead": "You are a tool-output distiller. You will be given one tool ",
-        "userChars": 1362,
-        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
-      },
-      {
         "index": 7,
-        "kind": "distil",
+        "kind": "summary",
         "stream": true,
         "options": {
           "num_ctx": 4096,
           "temperature": 0,
-          "num_predict": 1024
+          "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3fd069ec5bac",
-        "systemHead": "You are a tool-output distiller. You will be given one tool ",
-        "userChars": 1362,
-        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout3 line 0:"
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 9109,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nsu"
       },
       {
         "index": 8,
-        "kind": "distil",
+        "kind": "summary",
         "stream": true,
         "options": {
           "num_ctx": 4096,
           "temperature": 0,
-          "num_predict": 1024
+          "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3fd069ec5bac",
-        "systemHead": "You are a tool-output distiller. You will be given one tool ",
-        "userChars": 1362,
-        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 18152,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
         "index": 9,
@@ -1470,10 +1620,55 @@
         "systemSha": "3fd069ec5bac",
         "systemHead": "You are a tool-output distiller. You will be given one tool ",
         "userChars": 1362,
-        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout3 line 0:"
+        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
       },
       {
         "index": 10,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 1362,
+        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout3 line 0:"
+      },
+      {
+        "index": 11,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 1362,
+        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
+      },
+      {
+        "index": 12,
+        "kind": "distil",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 1024
+        },
+        "tools": [],
+        "systemSha": "3fd069ec5bac",
+        "systemHead": "You are a tool-output distiller. You will be given one tool ",
+        "userChars": 1362,
+        "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout3 line 0:"
+      },
+      {
+        "index": 13,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -1482,9 +1677,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "9c024dbbf518",
+        "systemSha": "e6dcca69a697",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 9445,
+        "userChars": 9756,
         "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: [This convers"
       }
     ],
@@ -1496,19 +1691,24 @@
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 4 oversized tool output(s) (~1252 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
       "Tool distillation is capped at 2 model call(s) for a 4096-token context — 2 oversized tool output(s) the call cap left verbatim (2 in the preserved window, 0 in the older history).",
-      "History is too large for a single pass (3039 tokens) — splitting into 2 chunks for map-reduce compaction.",
-      "chunk 1/2 — AI is summarizing... (9031 chars)",
-      "chunk 2/2 — AI is summarizing... (9031 chars)",
+      "History is too large for a single pass (3039 tokens) — splitting into 3 chunks for map-reduce compaction.",
+      "chunk 1/3 — AI is summarizing... (9031 chars)",
+      "chunk 2/3 — AI is summarizing... (9031 chars)",
+      "chunk 3/3 — AI is summarizing... (9031 chars)",
       "Reducing chunk summaries...",
+      "Reducing reduction group 1/2...",
+      "AI is summarizing... (9031 chars)",
+      "Reducing reduction group 2/2...",
+      "AI is summarizing... (9031 chars)",
       "Reducing summaries...",
       "AI is summarizing... (9031 chars)",
       "2 of 2 tool distillation call(s) failed (the provider returned an error) — those tool output(s) stay verbatim and the compaction continues.",
       "All 2 extra distillation call(s) failed — 2 un-digested oversized tool output(s) stay verbatim in the preserved window.",
-      "Compacted to 4495 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
+      "Compacted to 4561 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
       "Preparing compaction: summarizing 1 messages, preserving 6 recent messages",
       "2 of 2 tool distillation call(s) failed (the provider returned an error) — those tool output(s) stay verbatim and the compaction continues.",
       "Tool distillation: distilled 0 of 2 oversized tool output(s) (~1252 tokens of prefill of a 4096-token budget; 2 call(s) failed and stay verbatim)",
-      "History is too large for a single pass (3347 tokens) — splitting into 1 chunks for map-reduce compaction.",
+      "History is too large for a single pass (3413 tokens) — splitting into 1 chunks for map-reduce compaction.",
       "chunk 1/1 — AI is summarizing... (13 chars)",
       "Reducing chunk summaries..."
     ],
@@ -1519,8 +1719,8 @@
         "method": "local-estimate",
         "numCtx": 4096,
         "acceptanceBudget": 3686,
-        "oldTokenCount": 4495,
-        "estimatedNewTokens": 1221,
+        "oldTokenCount": 4561,
+        "estimatedNewTokens": 1287,
         "systemPromptTokens": 11,
         "retried": false,
         "retry": false
@@ -1532,7 +1732,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 5188,
-        "estimatedNewTokens": 1221,
+        "estimatedNewTokens": 1287,
         "systemPromptTokens": 11,
         "extraDistill": {
           "distilledCount": 0,
@@ -1544,14 +1744,14 @@
     ],
     "stats": {
       "oldTokenCount": 5188,
-      "newTokenCount": 1221
+      "newTokenCount": 1287
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 360,
+        "chars": 671,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": "ive context for continuing the conversation.]\n\nSMALL SUMMARY"
+        "tail": "s from the summary, go by the newer message.]\n\nSMALL SUMMARY"
       },
       {
         "role": "user",
@@ -1633,9 +1833,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "fbfe02f0b5e4",
+        "systemSha": "1f2291f4b47a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -1648,13 +1848,28 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1dea9a30f200",
+        "systemSha": "d76b61b51f20",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 5,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 318
+        },
+        "tools": [],
+        "systemSha": "6719e8bd0fdc",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 947,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
+      },
+      {
+        "index": 6,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -1669,7 +1884,37 @@
         "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
-        "index": 6,
+        "index": 7,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 7280,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nsu"
+      },
+      {
+        "index": 8,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 14494,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
+      },
+      {
+        "index": 9,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -1684,7 +1929,7 @@
         "userHead": "Tool name: run_command\nTool output length: 5714 chars\n\nTool output:\nout2 line 0:"
       },
       {
-        "index": 7,
+        "index": 10,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -1699,7 +1944,7 @@
         "userHead": "Tool name: run_command\nTool output length: 5714 chars\n\nTool output:\nout3 line 0:"
       },
       {
-        "index": 8,
+        "index": 11,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -1708,9 +1953,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "410613a005e5",
+        "systemSha": "45b0b94282ac",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 7616,
+        "userChars": 7927,
         "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: [This convers"
       }
     ],
@@ -1722,22 +1967,27 @@
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 4 oversized tool output(s) (~3778 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
       "Tool distillation is capped at 2 model call(s) for a 4096-token context — 2 oversized tool output(s) the call cap left verbatim (2 in the preserved window, 0 in the older history).",
-      "History is too large for a single pass (3039 tokens) — splitting into 2 chunks for map-reduce compaction.",
-      "chunk 1/2 — AI is summarizing... (7202 chars)",
-      "chunk 2/2 — AI is summarizing... (7202 chars)",
+      "History is too large for a single pass (3039 tokens) — splitting into 3 chunks for map-reduce compaction.",
+      "chunk 1/3 — AI is summarizing... (7202 chars)",
+      "chunk 2/3 — AI is summarizing... (7202 chars)",
+      "chunk 3/3 — AI is summarizing... (7202 chars)",
       "Reducing chunk summaries...",
+      "Reducing reduction group 1/2...",
+      "AI is summarizing... (7202 chars)",
+      "Reducing reduction group 2/2...",
+      "AI is summarizing... (7202 chars)",
       "Reducing summaries...",
       "AI is summarizing... (7202 chars)",
       "2 oversized tool output(s) were left verbatim: the compaction's distillation prefill budget ran out.",
       "The leftover distillation budget (~318 tokens) cannot pay for another distillation call — 2 un-digested oversized tool output(s) stay verbatim in the preserved window.",
-      "Compacted to 7229 tokens but limit is 4096 — retrying with 2.4x stronger compression (2 attempt(s) left)...",
+      "Compacted to 7295 tokens but limit is 4096 — retrying with 2.4x stronger compression (2 attempt(s) left)...",
       "Preparing compaction: summarizing 1 messages, preserving 6 recent messages",
       "Distilling tool output 5/6 (run_command)... (9 chars)",
       "Distilled tool output 1/2 (run_command)",
       "Distilling tool output 6/6 (run_command)... (9 chars)",
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 2 oversized tool output(s) (~3778 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
-      "History is too large for a single pass (2699 tokens) — splitting into 1 chunks for map-reduce compaction.",
+      "History is too large for a single pass (2765 tokens) — splitting into 1 chunks for map-reduce compaction.",
       "chunk 1/1 — AI is summarizing... (13 chars)",
       "Reducing chunk summaries..."
     ],
@@ -1748,8 +1998,8 @@
         "method": "local-estimate",
         "numCtx": 4096,
         "acceptanceBudget": 3686,
-        "oldTokenCount": 7229,
-        "estimatedNewTokens": 219,
+        "oldTokenCount": 7295,
+        "estimatedNewTokens": 285,
         "systemPromptTokens": 11,
         "retried": false,
         "retry": false
@@ -1761,7 +2011,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 11952,
-        "estimatedNewTokens": 219,
+        "estimatedNewTokens": 285,
         "systemPromptTokens": 11,
         "extraDistill": {
           "distilledCount": 0,
@@ -1773,14 +2023,14 @@
     ],
     "stats": {
       "oldTokenCount": 11952,
-      "newTokenCount": 219
+      "newTokenCount": 285
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 360,
+        "chars": 671,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": "ive context for continuing the conversation.]\n\nSMALL SUMMARY"
+        "tail": "s from the summary, go by the newer message.]\n\nSMALL SUMMARY"
       },
       {
         "role": "user",
@@ -1832,9 +2082,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3737d06e69cb",
+        "systemSha": "54580969da0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -1847,10 +2097,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1ab2baa17fb1",
+        "systemSha": "5b82cd1955fd",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 3,
@@ -1862,10 +2112,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c8c48f37de73",
+        "systemSha": "4ec288cf243f",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2287,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 4,
@@ -1953,7 +2203,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 5167,
-        "estimatedNewTokens": 3601,
+        "estimatedNewTokens": 3667,
         "systemPromptTokens": 607,
         "confirmedNewTokens": 4001,
         "windowTrim": {
@@ -1967,12 +2217,12 @@
     ],
     "stats": {
       "oldTokenCount": 5167,
-      "newTokenCount": 3601
+      "newTokenCount": 3667
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 7340,
+        "chars": 7651,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
         "tail": "pped to fit the context window and is not represented here.]"
       },
@@ -2032,9 +2282,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "38a107dfe644",
+        "systemSha": "7c49b3e01431",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -2047,13 +2297,28 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "b9b5e34fe7d4",
+        "systemSha": "265863c2ade0",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 5,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 318
+        },
+        "tools": [],
+        "systemSha": "8c23bce29a6f",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 947,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
+      },
+      {
+        "index": 6,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -2068,7 +2333,37 @@
         "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
-        "index": 6,
+        "index": 7,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 6638,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nsu"
+      },
+      {
+        "index": 8,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 13210,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
+      },
+      {
+        "index": 9,
         "kind": "measure",
         "stream": false,
         "options": {
@@ -2083,7 +2378,7 @@
         "userHead": "Now run the checks and report."
       },
       {
-        "index": 7,
+        "index": 10,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -2098,7 +2393,7 @@
         "userHead": "Tool name: run_command\nTool output length: 1294 chars\n\nTool output:\nout2 line 0:"
       },
       {
-        "index": 8,
+        "index": 11,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -2121,10 +2416,15 @@
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 4 oversized tool output(s) (~1252 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
       "Tool distillation is capped at 2 model call(s) for a 4096-token context — 2 oversized tool output(s) the call cap left verbatim (2 in the preserved window, 0 in the older history).",
-      "History is too large for a single pass (3039 tokens) — splitting into 2 chunks for map-reduce compaction.",
-      "chunk 1/2 — AI is summarizing... (6560 chars)",
-      "chunk 2/2 — AI is summarizing... (6560 chars)",
+      "History is too large for a single pass (3039 tokens) — splitting into 3 chunks for map-reduce compaction.",
+      "chunk 1/3 — AI is summarizing... (6560 chars)",
+      "chunk 2/3 — AI is summarizing... (6560 chars)",
+      "chunk 3/3 — AI is summarizing... (6560 chars)",
       "Reducing chunk summaries...",
+      "Reducing reduction group 1/2...",
+      "AI is summarizing... (6560 chars)",
+      "Reducing reduction group 2/2...",
+      "AI is summarizing... (6560 chars)",
       "Reducing summaries...",
       "AI is summarizing... (6560 chars)",
       "Measuring conversation tokens...",
@@ -2132,7 +2432,7 @@
       "Distilled tool output 1/2 (run_command)",
       "Distilling tool output 6/6 (run_command)... (9 chars)",
       "Distilled tool output 2/2 (run_command)",
-      "Spent the leftover distillation budget on 2 more oversized tool output(s) of the preserved window (~1252 tokens of prefill) — the compacted history is now within budget (2617 tokens against a 3686-token budget)."
+      "Spent the leftover distillation budget on 2 more oversized tool output(s) of the preserved window (~1252 tokens of prefill) — the compacted history is now within budget (2683 tokens against a 3686-token budget)."
     ],
     "diagnostics": [
       {
@@ -2142,7 +2442,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 5188,
-        "estimatedNewTokens": 2617,
+        "estimatedNewTokens": 2683,
         "systemPromptTokens": 11,
         "confirmedNewTokens": 4001,
         "extraDistill": {
@@ -2155,12 +2455,12 @@
     ],
     "stats": {
       "oldTokenCount": 5188,
-      "newTokenCount": 2617
+      "newTokenCount": 2683
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 6907,
+        "chars": 7218,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
         "tail": "e 198: value=985 token-198\nsum line 199: value=832 token-199"
       },
@@ -2244,9 +2544,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "41a1356faaa5",
+        "systemSha": "acfba1ea9c0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -2259,10 +2559,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "0c845be65235",
+        "systemSha": "bb49ac8f799a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 5,
@@ -2274,10 +2574,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "82e08e3c7224",
+        "systemSha": "dfc695358d33",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2737,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 6,
@@ -2286,13 +2586,13 @@
         "options": {
           "num_ctx": 4096,
           "temperature": 0,
-          "num_predict": 600
+          "num_predict": 159
         },
         "tools": [],
-        "systemSha": "c1d77c31cf31",
-        "systemHead": "You are a conversation summariser working in a map-reduce pi",
-        "userChars": 21276,
-        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
+        "systemSha": "72a89f03f9c2",
+        "systemHead": "You are a conversation summariser. You will be given OLDER c",
+        "userChars": 502,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 22.\nm"
       },
       {
         "index": 7,
@@ -2306,8 +2606,8 @@
         "tools": [],
         "systemSha": "c1d77c31cf31",
         "systemHead": "You are a conversation summariser working in a map-reduce pi",
-        "userChars": 10671,
-        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nsu"
+        "userChars": 21276,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
         "index": 8,
@@ -2322,10 +2622,25 @@
         "systemSha": "c1d77c31cf31",
         "systemHead": "You are a conversation summariser working in a map-reduce pi",
         "userChars": 21276,
-        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 3]:\nsu"
       },
       {
         "index": 9,
+        "kind": "summary",
+        "stream": true,
+        "options": {
+          "num_ctx": 4096,
+          "temperature": 0,
+          "num_predict": 600
+        },
+        "tools": [],
+        "systemSha": "c1d77c31cf31",
+        "systemHead": "You are a conversation summariser working in a map-reduce pi",
+        "userChars": 21276,
+        "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
+      },
+      {
+        "index": 10,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -2340,7 +2655,7 @@
         "userHead": "Tool name: run_command\nTool output length: 1250 chars\n\nTool output:\n############"
       },
       {
-        "index": 10,
+        "index": 11,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -2355,7 +2670,7 @@
         "userHead": "Tool name: run_command\nTool output length: 1400 chars\n\nTool output:\n------------"
       },
       {
-        "index": 11,
+        "index": 12,
         "kind": "distil",
         "stream": true,
         "options": {
@@ -2370,7 +2685,7 @@
         "userHead": "Tool name: run_command\nTool output length: 1350 chars\n\nTool output:\n============"
       },
       {
-        "index": 12,
+        "index": 13,
         "kind": "summary",
         "stream": true,
         "options": {
@@ -2379,9 +2694,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "6793a419a1e7",
+        "systemSha": "71de452d6d69",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 11105,
+        "userChars": 11416,
         "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: [This convers"
       }
     ],
@@ -2390,10 +2705,11 @@
       "2 of 2 tool distillation call(s) failed (the provider returned an error) — those tool output(s) stay verbatim and the compaction continues.",
       "Tool distillation: distilled 0 of 3 oversized tool output(s) (~1298 tokens of prefill of a 4096-token budget; 2 call(s) failed and stay verbatim)",
       "Tool distillation is capped at 2 model call(s) for a 4096-token context — 1 oversized tool output(s) the call cap left verbatim (1 in the preserved window, 0 in the older history).",
-      "History is too large for a single pass (4179 tokens) — splitting into 3 chunks for map-reduce compaction.",
-      "chunk 1/3 — AI is summarizing... (10593 chars)",
-      "chunk 2/3 — AI is summarizing... (10593 chars)",
-      "chunk 3/3 — AI is summarizing... (10593 chars)",
+      "History is too large for a single pass (4179 tokens) — splitting into 4 chunks for map-reduce compaction.",
+      "chunk 1/4 — AI is summarizing... (10593 chars)",
+      "chunk 2/4 — AI is summarizing... (10593 chars)",
+      "chunk 3/4 — AI is summarizing... (10593 chars)",
+      "chunk 4/4 — AI is summarizing... (10593 chars)",
       "Reducing chunk summaries...",
       "Reducing reduction group 1/2...",
       "AI is summarizing... (10593 chars)",
@@ -2401,18 +2717,18 @@
       "AI is summarizing... (10593 chars)",
       "Reducing summaries...",
       "AI is summarizing... (10593 chars)",
-      "Dropped the 2 oldest preserved message(s) (~380 tokens) to make room — the history was trimmed rather than re-summarised. Still 4048 tokens against a 3686-token target.",
+      "Dropped the 2 oldest preserved message(s) (~380 tokens) to make room — the history was trimmed rather than re-summarised. Still 4114 tokens against a 3686-token target.",
       "Distilling tool output 5/5 (run_command)... (9 chars)",
       "Distilled tool output 1/1 (run_command)",
-      "Spent the leftover distillation budget on 1 more oversized tool output(s) of the preserved window (~614 tokens of prefill) — the compacted history is still over budget (4046 tokens against a 3686-token budget).",
-      "Compacted to 4046 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
+      "Spent the leftover distillation budget on 1 more oversized tool output(s) of the preserved window (~614 tokens of prefill) — the compacted history is still over budget (4112 tokens against a 3686-token budget).",
+      "Compacted to 4112 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
       "Preparing compaction: summarizing 1 messages, preserving 5 recent messages",
       "Distilling tool output 3/5 (run_command)... (9 chars)",
       "Distilled tool output 1/2 (run_command)",
       "Distilling tool output 4/5 (run_command)... (9 chars)",
       "Distilled tool output 2/2 (run_command)",
       "Tool distillation: distilled 2 of 2 oversized tool output(s) (~1298 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
-      "History is too large for a single pass (3922 tokens) — splitting into 1 chunks for map-reduce compaction.",
+      "History is too large for a single pass (3988 tokens) — splitting into 1 chunks for map-reduce compaction.",
       "chunk 1/1 — AI is summarizing... (13 chars)",
       "Reducing chunk summaries..."
     ],
@@ -2423,8 +2739,8 @@
         "method": "local-estimate",
         "numCtx": 4096,
         "acceptanceBudget": 3686,
-        "oldTokenCount": 4046,
-        "estimatedNewTokens": 190,
+        "oldTokenCount": 4112,
+        "estimatedNewTokens": 256,
         "systemPromptTokens": 11,
         "retried": false,
         "retry": false
@@ -2436,7 +2752,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 4684,
-        "estimatedNewTokens": 190,
+        "estimatedNewTokens": 256,
         "systemPromptTokens": 11,
         "windowTrim": {
           "droppedCount": 2,
@@ -2453,14 +2769,14 @@
     ],
     "stats": {
       "oldTokenCount": 4684,
-      "newTokenCount": 190
+      "newTokenCount": 256
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 360,
+        "chars": 671,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": "ive context for continuing the conversation.]\n\nSMALL SUMMARY"
+        "tail": "s from the summary, go by the newer message.]\n\nSMALL SUMMARY"
       },
       {
         "role": "user",
@@ -2506,9 +2822,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3737d06e69cb",
+        "systemSha": "54580969da0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -2521,10 +2837,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1ab2baa17fb1",
+        "systemSha": "5b82cd1955fd",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 3,
@@ -2536,10 +2852,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c8c48f37de73",
+        "systemSha": "4ec288cf243f",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2287,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 4,
@@ -2553,7 +2869,7 @@
         "tools": [],
         "systemSha": "c1d77c31cf31",
         "systemHead": "You are a conversation summariser working in a map-reduce pi",
-        "userChars": 4086,
+        "userChars": 4088,
         "userHead": "Combine the following partial summaries into one coherent summary:\n\n[PART 1]:\nsu"
       },
       {
@@ -2566,43 +2882,28 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c345e07ed5a6",
+        "systemSha": "faf414c02deb",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2242,
+        "userChars": 2553,
         "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: [This convers"
       },
       {
         "index": 6,
-        "kind": "measure",
-        "stream": false,
-        "options": {
-          "num_ctx": 32768,
-          "temperature": 0,
-          "num_predict": 1
-        },
-        "tools": [],
-        "systemSha": "e3b0c44298fc",
-        "systemHead": "",
-        "userChars": 435,
-        "userHead": "Message 23.\nm22 line 0: value=0 token-0\nm22 line 1: value=856 token-1\nm22 line 2"
-      },
-      {
-        "index": 7,
         "kind": "summary",
         "stream": true,
         "options": {
           "num_ctx": 4096,
           "temperature": 0,
-          "num_predict": 360
+          "num_predict": 466
         },
         "tools": [],
-        "systemSha": "1d95400d4f5c",
+        "systemSha": "c07612391260",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 1348,
+        "userChars": 1820,
         "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: [This convers"
       },
       {
-        "index": 8,
+        "index": 7,
         "kind": "measure",
         "stream": false,
         "options": {
@@ -2621,24 +2922,23 @@
       "Preparing compaction: summarizing 21 messages, preserving 3 recent messages",
       "Tool distillation: distilled 0 of 0 oversized tool output(s) (~0 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
       "History is too large for a single pass (3988 tokens) — splitting into 3 chunks for map-reduce compaction.",
-      "chunk 1/3 — AI is summarizing... (1477 chars)",
-      "chunk 2/3 — AI is summarizing... (1541 chars)",
-      "chunk 3/3 — AI is summarizing... (966 chars)",
+      "chunk 1/3 — AI is summarizing... (1318 chars)",
+      "chunk 2/3 — AI is summarizing... (1318 chars)",
+      "chunk 3/3 — AI is summarizing... (1350 chars)",
       "Reducing chunk summaries...",
       "Reducing summaries...",
       "AI is summarizing... (1733 chars)",
-      "Dropped the 1 oldest preserved message(s) (~190 tokens) to make room — the history was trimmed rather than re-summarised. Still 4201 tokens against a 3686-token target.",
+      "Dropped the 1 oldest preserved message(s) (~190 tokens) to make room — the history was trimmed rather than re-summarised. Still 4267 tokens against a 3686-token target.",
       "No un-digested oversized tool output(s) left in the preserved window — the leftover distillation budget (~4096 tokens) has nothing to spend on.",
-      "Compacted to 4201 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
+      "Compacted to 4267 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
       "Preparing compaction: summarizing 1 messages, preserving 2 recent messages",
       "Tool distillation: distilled 0 of 0 oversized tool output(s) (~0 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
-      "AI is summarizing... (934 chars)",
-      "Measuring conversation tokens...",
+      "AI is summarizing... (1095 chars)",
       "No un-digested oversized tool output(s) left in the preserved window — the leftover distillation budget (~4096 tokens) has nothing to spend on.",
-      "Compacted to 3879 tokens but limit is 4096 — retrying with 1.5x stronger compression (1 attempt(s) left)...",
+      "Compacted to 4006 tokens but limit is 4096 — retrying with 1.5x stronger compression (1 attempt(s) left)...",
       "Preparing compaction: summarizing 1 messages, preserving 2 recent messages",
       "Tool distillation: distilled 0 of 0 oversized tool output(s) (~0 tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
-      "AI is summarizing... (551 chars)",
+      "AI is summarizing... (775 chars)",
       "Measuring conversation tokens...",
       "No un-digested oversized tool output(s) left in the preserved window — the leftover distillation budget (~4096 tokens) has nothing to spend on."
     ],
@@ -2649,10 +2949,10 @@
         "method": "live-confirmed",
         "numCtx": 4096,
         "acceptanceBudget": 3686,
-        "oldTokenCount": 3879,
-        "estimatedNewTokens": 3735,
+        "oldTokenCount": 4006,
+        "estimatedNewTokens": 3885,
         "systemPromptTokens": 3068,
-        "confirmedNewTokens": 3735,
+        "confirmedNewTokens": 3885,
         "extraDistill": {
           "distilledCount": 0,
           "prefillTokens": 0
@@ -2663,13 +2963,12 @@
       {
         "layer": "compact",
         "phase": "compaction_size",
-        "method": "live-confirmed",
+        "method": "local-estimate",
         "numCtx": 4096,
         "acceptanceBudget": 3686,
-        "oldTokenCount": 4201,
-        "estimatedNewTokens": 3735,
+        "oldTokenCount": 4267,
+        "estimatedNewTokens": 3885,
         "systemPromptTokens": 3068,
-        "confirmedNewTokens": 3879,
         "extraDistill": {
           "distilledCount": 0,
           "prefillTokens": 0
@@ -2684,7 +2983,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 7628,
-        "estimatedNewTokens": 3735,
+        "estimatedNewTokens": 3885,
         "systemPromptTokens": 3068,
         "windowTrim": {
           "droppedCount": 1,
@@ -2701,14 +3000,14 @@
     ],
     "stats": {
       "oldTokenCount": 7628,
-      "newTokenCount": 3735
+      "newTokenCount": 3885
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 898,
+        "chars": 1433,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": " line 16: value=579 token-16\nsum line 17: value=426 token-17"
+        "tail": " line 23: value=517 token-23\nsum line 24: value=364 token-24"
       },
       {
         "role": "user",
@@ -2736,7 +3035,7 @@
           "num_predict": 982
         },
         "tools": [],
-        "systemSha": "e80a47e6254d",
+        "systemSha": "8f677800208e",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
         "userChars": 3512,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
@@ -2774,9 +3073,9 @@
     "messages": [
       {
         "role": "assistant",
-        "chars": 358,
+        "chars": 669,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": "ative context for continuing the conversation.]\n\nSUMMARY ONE"
+        "tail": "ers from the summary, go by the newer message.]\n\nSUMMARY ONE"
       },
       {
         "role": "assistant",
@@ -2834,9 +3133,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3737d06e69cb",
+        "systemSha": "54580969da0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -2849,10 +3148,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1ab2baa17fb1",
+        "systemSha": "5b82cd1955fd",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 3,
@@ -2864,10 +3163,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c8c48f37de73",
+        "systemSha": "4ec288cf243f",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2287,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 4,
@@ -2954,7 +3253,7 @@
         "numCtx": 4096,
         "acceptanceBudget": 3686,
         "oldTokenCount": 4571,
-        "estimatedNewTokens": 3714,
+        "estimatedNewTokens": 3780,
         "systemPromptTokens": 11,
         "confirmedNewTokens": 3001,
         "retried": false,
@@ -2963,12 +3262,12 @@
     ],
     "stats": {
       "oldTokenCount": 4571,
-      "newTokenCount": 3714
+      "newTokenCount": 3780
     },
     "messages": [
       {
         "role": "assistant",
-        "chars": 8768,
+        "chars": 9079,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
         "tail": "e 253: value=642 token-253\nsum line 254: value=489 token-254"
       },
@@ -3004,9 +3303,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3737d06e69cb",
+        "systemSha": "54580969da0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -3019,10 +3318,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1ab2baa17fb1",
+        "systemSha": "5b82cd1955fd",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 3,
@@ -3034,10 +3333,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c8c48f37de73",
+        "systemSha": "4ec288cf243f",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2287,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 4,
@@ -3094,9 +3393,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "7340c1c9b2df",
+        "systemSha": "0b6d80c8ef1a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 10457,
+        "userChars": 10768,
         "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: [This convers"
       }
     ],
@@ -3114,12 +3413,12 @@
       "AI is summarizing... (9948 chars)",
       "Reducing summaries...",
       "AI is summarizing... (9948 chars)",
-      "Dropped the 1 oldest preserved message(s) (~<n> tokens) to make room — the history was trimmed rather than re-summarised. Still 4086 tokens against a 3686-token target.",
+      "Dropped the 1 oldest preserved message(s) (~<n> tokens) to make room — the history was trimmed rather than re-summarised. Still 4152 tokens against a 3686-token target.",
       "No un-digested oversized tool output(s) left in the preserved window — the leftover distillation budget (~<n> tokens) has nothing to spend on.",
-      "Compacted to 4086 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
+      "Compacted to 4152 tokens but limit is 4096 — retrying with 1.5x stronger compression (2 attempt(s) left)...",
       "Preparing compaction: summarizing 1 messages, preserving 2 recent messages",
       "Tool distillation: distilled 0 of 0 oversized tool output(s) (~<n> tokens of prefill of a 4096-token budget; 0 call(s) failed and stay verbatim)",
-      "History is too large for a single pass (3693 tokens) — splitting into 1 chunks for map-reduce compaction.",
+      "History is too large for a single pass (3759 tokens) — splitting into 1 chunks for map-reduce compaction.",
       "chunk 1/1 — AI is summarizing... (13 chars)",
       "Reducing chunk summaries...",
       "Re-attached the 2 most recently touched files with whole-file excerpts (~<n> tokens)."
@@ -3131,7 +3430,7 @@
         "method": "local-estimate",
         "numCtx": 4096,
         "acceptanceBudget": 3686,
-        "oldTokenCount": 4086,
+        "oldTokenCount": 4152,
         "estimatedNewTokens": "<n>",
         "systemPromptTokens": 11,
         "retried": false,
@@ -3171,9 +3470,9 @@
     "messages": [
       {
         "role": "assistant",
-        "chars": 360,
+        "chars": 671,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
-        "tail": "ive context for continuing the conversation.]\n\nSMALL SUMMARY"
+        "tail": "s from the summary, go by the newer message.]\n\nSMALL SUMMARY"
       },
       {
         "role": "assistant",
@@ -3207,9 +3506,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3737d06e69cb",
+        "systemSha": "54580969da0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -3222,10 +3521,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1ab2baa17fb1",
+        "systemSha": "5b82cd1955fd",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 3,
@@ -3237,10 +3536,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c8c48f37de73",
+        "systemSha": "4ec288cf243f",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2287,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 4,
@@ -3330,7 +3629,7 @@
     "messages": [
       {
         "role": "assistant",
-        "chars": 5382,
+        "chars": 5693,
         "head": "[This conversation history has been compacted. What follows is a structured document with named sect",
         "tail": "e 153: value=807 token-153\nsum line 154: value=654 token-154"
       },
@@ -3378,9 +3677,9 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "3737d06e69cb",
+        "systemSha": "54580969da0a",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3512,
+        "userChars": 3077,
         "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 1.\nm0 line"
       },
       {
@@ -3393,10 +3692,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "1ab2baa17fb1",
+        "systemSha": "5b82cd1955fd",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 3603,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 9.\nm8 line"
+        "userChars": 3143,
+        "userHead": "Please summarise the following conversation history:\n\n[ASSISTANT]: Message 8.\nm7"
       },
       {
         "index": 3,
@@ -3408,10 +3707,10 @@
           "num_predict": 600
         },
         "tools": [],
-        "systemSha": "c8c48f37de73",
+        "systemSha": "4ec288cf243f",
         "systemHead": "You are a conversation summariser. You will be given OLDER c",
-        "userChars": 2287,
-        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 17.\nm16 li"
+        "userChars": 3182,
+        "userHead": "Please summarise the following conversation history:\n\n[USER]: Message 15.\nm14 li"
       },
       {
         "index": 4,
@@ -3475,6 +3774,6 @@
       "AI is summarizing... (10898 chars)"
     ],
     "diagnostics": [],
-    "error": "Compaction failed to reduce history size (old: 4571, new: 4592 tokens). Aborting to avoid increasing context usage."
+    "error": "Compaction failed to reduce history size (old: 4571, new: 4658 tokens). Aborting to avoid increasing context usage."
   }
 }

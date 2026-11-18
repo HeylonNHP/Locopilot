@@ -162,6 +162,125 @@ describe('a history that does not fit is split, summarised per chunk and reduced
   });
 });
 
+/**
+ * An item the older turns leave open must not be written as "pending".
+ *
+ * The summariser reads only the older slice, and the cut can fall between a
+ * question and its answer; the answer then sits in the preserved window, which
+ * the summariser cannot see. These tests read the SYSTEM PROMPT the provider
+ * received on every path, with the sentences typed out by hand.
+ */
+describe('the summariser is told that unseen turns may have settled an open item', () => {
+  const MAY_HAVE_SETTLED =
+    'may already have settled something that the turns you are given left open';
+  const OPEN_WORK = 'Open work: what was still unfinished at the end of what you are given';
+
+  const systemOf = (request) => request.body.messages[0].content;
+
+  test('a single pass with newer turns says they may have settled an item, and why it cannot tell', async () => {
+    const { fake, error } = await scenario(
+      () => ({ text: 'SUMMARY ONE' }),
+      (ctx, log) => summarise(ctx, log, SMALL_HISTORY, 8192, { preservedRecentTokens: 1234 })
+    );
+    expect(error).toBeUndefined();
+    const system = systemOf(fake.requests[0]);
+    expect(system).toContain(`Those newer turns ${MAY_HAVE_SETTLED}, and you cannot see them.`);
+    expect(system).toContain('open at the end of these turns');
+    expect(system).toContain('never as a flat "pending" or "still to do"');
+    expect(system).toContain(OPEN_WORK);
+  });
+
+  test('a single pass with NO newer turns does not claim any exist', async () => {
+    const { fake, error } = await scenario(
+      () => ({ text: 'SUMMARY ONE' }),
+      (ctx, log) => summarise(ctx, log, SMALL_HISTORY, 8192, { preservedRecentTokens: 0 })
+    );
+    expect(error).toBeUndefined();
+    const system = systemOf(fake.requests[0]);
+    expect(system).not.toContain(MAY_HAVE_SETTLED);
+    // The purpose line is shared, so the summariser still words the item as open at the end.
+    expect(system).toContain(OPEN_WORK);
+  });
+
+  test('every chunk of a map-reduce is told, and the combine step is left as it was', async () => {
+    const { fake, error } = await scenario(
+      ({ index }) => ({ text: `PART ${index}` }),
+      (ctx, log) => summarise(ctx, log, bigHistory(14, 1200), 4096, { preservedRecentTokens: 600 })
+    );
+    expect(error).toBeUndefined();
+
+    const combine = buildReductionCombineSystemPrompt();
+    const chunkRequests = fake.requests.filter((request) => systemOf(request) !== combine);
+    const combineRequests = fake.requests.filter((request) => systemOf(request) === combine);
+    expect(chunkRequests.length).toBeGreaterThan(1);
+    expect(combineRequests.length).toBeGreaterThanOrEqual(1);
+    for (const request of chunkRequests) {
+      expect(systemOf(request)).toContain(
+        `The later slices and those newer turns ${MAY_HAVE_SETTLED}`
+      );
+    }
+    // The combine prompt's cost sets the reduction's batching, and it merges
+    // summaries that already say "open at the end of these turns".
+    for (const request of combineRequests) {
+      expect(systemOf(request)).not.toContain(MAY_HAVE_SETTLED);
+    }
+  });
+
+  test('a chunk with no newer turns is still told that LATER SLICES may have settled an item', async () => {
+    const { fake, error } = await scenario(
+      ({ index }) => ({ text: `PART ${index}` }),
+      (ctx, log) => summarise(ctx, log, bigHistory(14, 1200), 4096, { preservedRecentTokens: 0 })
+    );
+    expect(error).toBeUndefined();
+    const combine = buildReductionCombineSystemPrompt();
+    const chunkRequests = fake.requests.filter((request) => systemOf(request) !== combine);
+    expect(chunkRequests.length).toBeGreaterThan(1);
+    for (const request of chunkRequests) {
+      expect(systemOf(request)).toContain(`The later slices ${MAY_HAVE_SETTLED}`);
+      expect(systemOf(request)).not.toContain('Those newer turns');
+    }
+  });
+
+  test('the short prompt carries the purpose line and makes no claim about newer turns', async () => {
+    // A 2048-token window cannot pay for the full prompt, so the pipeline uses the short one.
+    const { fake, error } = await scenario(
+      () => ({ text: 'SUMMARY ONE' }),
+      (ctx, log) => summarise(ctx, log, SMALL_HISTORY, 2048, { preservedRecentTokens: 1234 })
+    );
+    expect(error).toBeUndefined();
+    const system = systemOf(fake.requests[0]);
+    expect(system).toMatch(
+      /^You are a conversation summariser\. Write ONE summary of the text below/
+    );
+    expect(system).toContain(OPEN_WORK);
+    expect(system).not.toContain('newer turns');
+  });
+
+  test('the empty-answer retry carries the purpose line too', async () => {
+    const { fake, error } = await scenario(
+      ({ index }) => ({ text: index === 1 ? '' : 'RETRIED SUMMARY' }),
+      (ctx, log) => summarise(ctx, log, SMALL_HISTORY, 8192, { preservedRecentTokens: 1234 })
+    );
+    expect(error).toBeUndefined();
+    expect(fake.requests).toHaveLength(2);
+    expect(systemOf(fake.requests[1])).toContain(OPEN_WORK);
+  });
+
+  test('the prompt never says that an unseen turn settled anything', async () => {
+    // The model has not seen those turns, so a statement about what they
+    // contain would be invented. "settled" may only appear after "may already have".
+    const { fake } = await scenario(
+      () => ({ text: 'SUMMARY ONE' }),
+      (ctx, log) => summarise(ctx, log, SMALL_HISTORY, 8192, { preservedRecentTokens: 1234 })
+    );
+    const system = systemOf(fake.requests[0]);
+    const settled = system.match(/settled/g) ?? [];
+    const hedged = system.match(/may already have settled/g) ?? [];
+    expect(settled.length).toBeGreaterThan(0);
+    expect(settled).toHaveLength(hedged.length);
+  });
+});
+
 describe('the reduction terminates', () => {
   const NUM_CTX = 2048;
 
