@@ -39,7 +39,9 @@ const moduleUrl = (relative) => pathToFileURL(path.join(here, relative)).href;
 
 let tmp;
 let POST;
+let acknowledgeModelSwitch;
 let peekModelSwitch;
+let requestModelSwitch;
 let registerActiveTurn;
 let unregisterActiveTurn;
 let buildMidTurnSwitch;
@@ -53,9 +55,13 @@ beforeAll(async () => {
   // `history.ts` builds `DB_PATH` at module load, so the cwd moves FIRST.
   process.chdir(tmp);
   ({ POST } = await import(moduleUrl('../src/app/api/chat/switch-model/route.ts')));
-  ({ peekModelSwitch, registerActiveTurn, unregisterActiveTurn } = await import(
-    moduleUrl('../src/app/lib/modelSwitchRegistry.ts')
-  ));
+  ({
+    acknowledgeModelSwitch,
+    peekModelSwitch,
+    registerActiveTurn,
+    requestModelSwitch,
+    unregisterActiveTurn,
+  } = await import(moduleUrl('../src/app/lib/modelSwitchRegistry.ts')));
   ({
     buildMidTurnSwitch,
     isEmptyMidTurnSwitch,
@@ -234,6 +240,76 @@ describe('a refusal is reported, not swallowed', () => {
     ).toBe('named cause');
     expect(await readErrorMessage({ text: async () => 'plain text' })).toBe('plain text');
     expect(await readErrorMessage({ text: async () => '   ' })).toBeNull();
+  });
+});
+
+describe('a switch requested while another is being applied (A14)', () => {
+  const inherit = { kind: 'inherit-default' };
+  const sameAsMain = { kind: 'same-as-main' };
+  const turn = (sessionId) => registerActiveTurn(sessionId, 'turn');
+  const endTurn = (sessionId) => unregisterActiveTurn(sessionId, 'turn');
+
+  test('a request that merged after the peek survives the acknowledgement, alone', () => {
+    turn(5001);
+    requestModelSwitch(5001, { model: 'refused-model', providerId: 'p1' });
+    const peeked = peekModelSwitch(5001); // the loop starts answering this one...
+    requestModelSwitch(5001, { compaction: sameAsMain }); // ...and a second one arrives
+    expect(acknowledgeModelSwitch(5001, peeked)).toBe(false);
+    // Only the newer request is left: the answered model must not come back.
+    expect(peekModelSwitch(5001)).toStrictEqual({ compaction: sameAsMain });
+    endTurn(5001);
+  });
+
+  test('the second request is then acknowledged normally', () => {
+    turn(5002);
+    requestModelSwitch(5002, { model: 'a' });
+    const first = peekModelSwitch(5002);
+    requestModelSwitch(5002, { compaction: inherit });
+    acknowledgeModelSwitch(5002, first);
+    const second = peekModelSwitch(5002);
+    expect(acknowledgeModelSwitch(5002, second)).toBe(true);
+    expect(peekModelSwitch(5002)).toBeNull();
+    endTurn(5002);
+  });
+
+  test('a field the newer request REWROTE is kept, with the newer value', () => {
+    turn(5003);
+    requestModelSwitch(5003, { model: 'old', providerId: 'p1' });
+    const peeked = peekModelSwitch(5003);
+    requestModelSwitch(5003, { model: 'new' });
+    expect(acknowledgeModelSwitch(5003, peeked)).toBe(false);
+    // providerId was answered; the model is the newer request's.
+    expect(peekModelSwitch(5003)).toStrictEqual({ model: 'new' });
+    endTurn(5003);
+  });
+
+  test('re-sending the SAME value after the peek is still a new request', () => {
+    turn(5004);
+    requestModelSwitch(5004, { model: 'same' });
+    const peeked = peekModelSwitch(5004);
+    requestModelSwitch(5004, { model: 'same' });
+    expect(acknowledgeModelSwitch(5004, peeked)).toBe(false);
+    expect(peekModelSwitch(5004)).toStrictEqual({ model: 'same' });
+    endTurn(5004);
+  });
+
+  test('with nothing merged, the acknowledgement clears the entry', () => {
+    turn(5005);
+    requestModelSwitch(5005, { model: 'm', compaction: inherit });
+    expect(acknowledgeModelSwitch(5005, peekModelSwitch(5005))).toBe(true);
+    expect(peekModelSwitch(5005)).toBeNull();
+    endTurn(5005);
+  });
+
+  test('an absent field does not erase a pending one, and a peek is a copy', () => {
+    turn(5006);
+    requestModelSwitch(5006, { model: 'm' });
+    requestModelSwitch(5006, { providerId: undefined, compaction: inherit });
+    const peeked = peekModelSwitch(5006);
+    expect(peeked).toStrictEqual({ model: 'm', compaction: inherit });
+    peeked.model = 'tampered';
+    expect(peekModelSwitch(5006).model).toBe('m');
+    endTurn(5006);
   });
 });
 

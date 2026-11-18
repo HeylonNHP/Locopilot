@@ -1,6 +1,6 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A4, A12 and A13. Of the A-table backlog, A5, A6, A7, A8, A9 and A10 are done and committed, and A1 is done (2026-11-18, `8d48a58`) A2, A3 and A11 are done (2026-11-18); A14 is open. See section 5.1.
+Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A4, A12 and A13. Of the A-table backlog, A5, A6, A7, A8, A9 and A10 are done and committed, and A1 is done (2026-11-18, `8d48a58`) A2, A3, A11 and A14 are done (2026-11-18); the A-table backlog is closed. See section 5.1.
 
 Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
 (merge-base == `origin/dev` tip). The branch is several commits ahead of the
@@ -62,7 +62,8 @@ the per-item status):
   an unusable `model-changed` frame is ignored and reported; A3 is done
   (2026-11-18): a dangling COMPACTION provider pin is reset to "use the
   default", saved and reported, by `APPLY_SESSION_SELECTION` - no new
-  store action was needed), A14 (a narrow switch-registry race).
+  store action was needed; A14 is done: `acknowledgeModelSwitch` drops
+  only the fields the caller peeked).
 
 Before closing the branch, check that the model index matches what Ollama
 Cloud and NVIDIA actually list: no live provider has exercised any refusal.
@@ -929,7 +930,7 @@ the fix.
 | A11 | **done** | The two `context-window.test.mjs` dispatches now use the whole selection and defaults, and assert the store holds a compaction selection afterwards.                                                                                                                                                                                                                                                                                                                                                                                        |
 | A12 | **done** | `11011df` - a "not served" answer kicks the index refresh too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | A13 | **done** | `d893ddf` - `done` and `error` clear the "(switching...)" flag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| A14 | open     | `acknowledgeModelSwitch` race: a merged entry can carry a refused half forward and be refused again.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| A14 | **done** | `acknowledgeModelSwitch` drops only the fields the caller peeked (per-field stamps in `modelSwitchRegistry.ts`); a request that merged after the peek stays pending alone, so a refused half no longer drags it down. See `docs/CHANGELOG.md` 2026-11-18.                                                                                                                                                                                                                                                                                   |
 
 Every fix in this round was checked by an independent sub-agent before it was
 committed; the reviews found a test that could not see half of its own fix

@@ -36,8 +36,29 @@ export interface ModelSwitchRequest {
   compaction?: CompactionSelection;
 }
 
+type SwitchField = keyof ModelSwitchRequest;
+const SWITCH_FIELDS: readonly SwitchField[] = ['model', 'providerId', 'compaction'];
+
+/**
+ * Which request last wrote each field of a pending entry. A field is
+ * "answered" when the caller that peeked it acknowledges it, and a later
+ * request that rewrote the field has a newer stamp, so it is NOT answered
+ * and must survive the acknowledgement.
+ */
+type FieldStamps = Partial<Record<SwitchField, number>>;
+
+interface PendingSwitch {
+  request: ModelSwitchRequest;
+  stamps: FieldStamps;
+}
+
 /** Pending switches, keyed by session ID. At most one per session. */
-const pendingSwitches = new Map<number, ModelSwitchRequest>();
+const pendingSwitches = new Map<number, PendingSwitch>();
+
+/** The stamps each peeked snapshot was taken at, for `acknowledgeModelSwitch`. */
+const peekedStamps = new WeakMap<ModelSwitchRequest, FieldStamps>();
+
+let nextStamp = 1;
 
 /** Request IDs of the turns currently streaming, keyed by session ID. */
 const activeTurns = new Map<number, Set<string>>();
@@ -54,7 +75,18 @@ const activeTurns = new Map<number, Set<string>>();
 export function requestModelSwitch(sessionId: number, request: ModelSwitchRequest): boolean {
   if (!activeTurns.has(sessionId)) return false;
   const existing = pendingSwitches.get(sessionId);
-  pendingSwitches.set(sessionId, { ...existing, ...request });
+  const entry: PendingSwitch = {
+    request: { ...existing?.request },
+    stamps: { ...existing?.stamps },
+  };
+  const stamp = nextStamp++;
+  for (const field of SWITCH_FIELDS) {
+    // An absent field leaves the pending value alone, as documented.
+    if (request[field] === undefined) continue;
+    Object.assign(entry.request, { [field]: request[field] });
+    entry.stamps[field] = stamp;
+  }
+  pendingSwitches.set(sessionId, entry);
   return true;
 }
 
@@ -68,7 +100,13 @@ export function requestModelSwitch(sessionId: number, request: ModelSwitchReques
  * consumed by a sub-agent while the main loop is parked on the batch.
  */
 export function peekModelSwitch(sessionId: number): ModelSwitchRequest | null {
-  return pendingSwitches.get(sessionId) ?? null;
+  const entry = pendingSwitches.get(sessionId);
+  if (!entry) return null;
+  // A snapshot, not the stored object: the caller works on it across awaits
+  // while a newer request may merge into the entry.
+  const snapshot: ModelSwitchRequest = { ...entry.request };
+  peekedStamps.set(snapshot, { ...entry.stamps });
+  return snapshot;
 }
 
 /**
@@ -77,18 +115,31 @@ export function peekModelSwitch(sessionId: number): ModelSwitchRequest | null {
  * to the request context.
  *
  * `peeked` is the exact object the caller received from `peekModelSwitch`.
- * It guards against the race where a new `requestModelSwitch` merges
- * into the entry between our peek and acknowledge (which can happen if
- * `applyPendingModelSwitch` awaits on something — e.g. a numCtx probe —
- * between the two calls). In that case we refuse to drop the entry so a
- * later iteration picks up the merged request instead of losing it.
+ * A new `requestModelSwitch` can merge into the entry between our peek and
+ * acknowledge (`applyPendingModelSwitch` awaits a config read and the model
+ * probes in between). Only the fields the caller actually peeked are
+ * dropped: a field a newer request wrote has a newer stamp and stays, so it
+ * is answered by a later iteration. Dropping the whole entry would lose that
+ * newer request; keeping the whole entry would answer the old fields again,
+ * and a switch that was refused would drag the newer one down with it
+ * (bug hunt A14).
  *
- * Returns `true` when the entry was removed, `false` when a newer
- * request has since merged into it.
+ * Returns `true` when nothing is left pending, `false` when a newer request
+ * wrote a field after the peek (it stays pending).
  */
 export function acknowledgeModelSwitch(sessionId: number, peeked: ModelSwitchRequest): boolean {
-  const current = pendingSwitches.get(sessionId);
-  if (current !== peeked) return false;
+  const entry = pendingSwitches.get(sessionId);
+  if (!entry) return true;
+  const peekedAt = peekedStamps.get(peeked);
+  // An object this registry did not hand out answers nothing.
+  if (!peekedAt) return false;
+  for (const field of SWITCH_FIELDS) {
+    if (entry.stamps[field] !== peekedAt[field]) continue;
+     
+    delete entry.request[field];
+    delete entry.stamps[field];
+  }
+  if (SWITCH_FIELDS.some((field) => entry.request[field] !== undefined)) return false;
   pendingSwitches.delete(sessionId);
   return true;
 }
@@ -104,7 +155,7 @@ export function consumeModelSwitch(sessionId: number): ModelSwitchRequest | null
   const pending = pendingSwitches.get(sessionId);
   if (!pending) return null;
   pendingSwitches.delete(sessionId);
-  return pending;
+  return pending.request;
 }
 
 /**
