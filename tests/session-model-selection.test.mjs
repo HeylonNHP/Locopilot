@@ -54,6 +54,7 @@ let mergeSessionSelection;
 let resolveCreationSelection;
 let parseCompactionSelection;
 let compactionSelectionToPair;
+let danglingCompactionProviderId;
 let chatReducer;
 let initialState;
 let parseSessionEvent;
@@ -73,6 +74,7 @@ beforeAll(async () => {
     resolveCreationSelection,
     parseCompactionSelection,
     compactionSelectionToPair,
+    danglingCompactionProviderId,
   } = await import(moduleUrl('../src/services/sessionSelection.ts')));
   ({ chatReducer, initialState } = await import(moduleUrl('../src/app/lib/chatStore.ts')));
   ({ parseSessionEvent } = await import(moduleUrl('../src/app/hooks/useSessionEvents.ts')));
@@ -461,6 +463,54 @@ describe('the selection in the database', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0].compaction).toStrictEqual(INHERIT_DEFAULT);
+  });
+});
+
+describe('a compaction pin that names a removed provider (A3)', () => {
+  const providers = [{ id: 'openai' }, { id: 'minimax' }];
+
+  test.each([
+    ['an explicit pin on a configured provider', explicit('cheap', 'openai'), providers, null],
+    ['an explicit pin on a removed provider', explicit('cheap', 'gone'), providers, 'gone'],
+    ['inherit-default names no provider', INHERIT_DEFAULT, providers, null],
+    ['same-as-main names no provider', SAME_AS_MAIN, providers, null],
+    // An empty list is "not loaded yet" (or nothing configured), never "all removed".
+    ['an empty provider list is not evidence of removal', explicit('cheap', 'gone'), [], null],
+  ])('%s', (_name, compaction, list, expected) => {
+    expect(danglingCompactionProviderId(compaction, list)).toBe(expected);
+  });
+
+  test('resetting the pin through APPLY_SESSION_SELECTION fixes the row AND the screen', () => {
+    // The repair needs no action of its own: APPLY patches the row and, for
+    // the conversation on screen, the mirror.
+    let state = chatReducer(initialState, {
+      type: 'SET_SESSIONS',
+      sessions: [
+        row(1, { compaction_model: 'cheap', compaction_provider_id: 'gone' }),
+        row(2, { compaction_model: 'cheap', compaction_provider_id: 'gone' }),
+      ],
+    });
+    state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 1 });
+    expect(state.compaction).toStrictEqual(explicit('cheap', 'gone'));
+
+    state = chatReducer(state, {
+      type: 'APPLY_SESSION_SELECTION',
+      sessionId: 1,
+      selection: {
+        model: state.model,
+        providerId: state.activeProviderId,
+        compaction: INHERIT_DEFAULT,
+        reasoningEffort: state.reasoningEffort ?? null,
+        compactionReasoningEffort: state.compactionReasoningEffort ?? null,
+      },
+    });
+
+    expect(state.compaction).toStrictEqual(INHERIT_DEFAULT);
+    const rowOne = state.sessions.find((s) => s.id === 1);
+    expect(rowOne.compaction_model).toBeNull();
+    expect(rowOne.compaction_provider_id).toBeNull();
+    // A conversation that is not on screen is left alone until it is opened.
+    expect(state.sessions.find((s) => s.id === 2).compaction_provider_id).toBe('gone');
   });
 });
 

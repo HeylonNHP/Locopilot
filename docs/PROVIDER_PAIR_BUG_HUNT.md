@@ -1,6 +1,6 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A4, A12 and A13. Of the A-table backlog, A5, A6, A7, A8, A9 and A10 are done and committed, and A1 is done (2026-11-18, `8d48a58`) and A2 is done (2026-11-18); A3, A11 and A14 are open. See section 5.1.
+Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A4, A12 and A13. Of the A-table backlog, A5, A6, A7, A8, A9 and A10 are done and committed, and A1 is done (2026-11-18, `8d48a58`) A2 and A3 are done (2026-11-18); A11 and A14 are open. See section 5.1.
 
 Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
 (merge-base == `origin/dev` tip). The branch is several commits ahead of the
@@ -58,11 +58,11 @@ the per-item status):
 - **A11** (two tests in `tests/context-window.test.mjs` still dispatch the
   pre-2.3 flat shape) is a test-only fix.
 - **The remaining behaviour changes, each needing its own review:** (A1 is
-  done: one fallback model, `legacyCompactionFallbackModel`), A2
-  (a silent client repair of a `model-changed` frame in
-  `useSessionEvents.ts`), A3 (a dangling COMPACTION provider id is not
-  repaired on the client; deliberately not done with BUG 5, needs a new
-  store action), A14 (a narrow switch-registry race).
+  done: one fallback model, `legacyCompactionFallbackModel`; A2 is done:
+  an unusable `model-changed` frame is ignored and reported; A3 is done
+  (2026-11-18): a dangling COMPACTION provider pin is reset to "use the
+  default", saved and reported, by `APPLY_SESSION_SELECTION` - no new
+  store action was needed), A14 (a narrow switch-registry race).
 
 Before closing the branch, check that the model index matches what Ollama
 Cloud and NVIDIA actually list: no live provider has exercised any refusal.

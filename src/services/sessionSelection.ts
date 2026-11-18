@@ -87,6 +87,31 @@ export function explicitCompactionSelection(
 }
 
 /**
+ * The provider id a conversation's compaction pin names when no configured
+ * provider has that id — or `null` when the pin can run.
+ *
+ * This is the client's copy of the server's one refusal
+ * (`resolveCompactionSelection`'s `problem`), so the page can repair what the
+ * server would answer with a 409. Only a PINNED provider counts: `explicit`
+ * is the only kind that names one, and the global default is a `config.json`
+ * matter the user fixes there.
+ *
+ * An EMPTY provider list means "not loaded yet" (or nothing configured, in
+ * which case the whole conversation is refused anyway), never "every provider
+ * was removed", so it never reports a dangling id. The list is the configured
+ * providers, not the models that answered: a provider that is merely down
+ * returns no models and is still configured.
+ */
+export function danglingCompactionProviderId(
+  compaction: CompactionSelection,
+  providers: readonly { id: string }[]
+): string | null {
+  if (compaction.kind !== 'explicit') return null;
+  if (providers.length === 0) return null;
+  return providers.some((p) => p.id === compaction.providerId) ? null : compaction.providerId;
+}
+
+/**
  * The selection a pair of loose fields describes — or the reason the pair is
  * incoherent.
  *

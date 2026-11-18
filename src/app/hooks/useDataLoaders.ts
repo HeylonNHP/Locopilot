@@ -6,6 +6,7 @@ import { hasLiveTranscript, useChat } from '@/app/lib/chatStore';
 import { isStaleNumCtxAnswer, positiveInteger } from '@/app/lib/contextWindow';
 import { createLatestGate } from '@/app/lib/latestGate';
 import { fetchModelList } from '@/app/lib/modelsClient';
+import { saveFailureMessage, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import {
   DEFAULT_WEB_SEARCH_SETTINGS,
   resolveWebSearchRequestTimeoutMs,
@@ -13,6 +14,8 @@ import {
 import {
   compactionSelectionEquals,
   compactionSelectionFromLoosePair,
+  danglingCompactionProviderId,
+  inheritDefaultCompactionSelection,
 } from '@/services/sessionSelection';
 
 import type { StableRefs } from './useStableRefs';
@@ -369,6 +372,55 @@ export function useDataLoaders(refs: StableRefs) {
       }
     }
   }, [state.models, state.model, state.activeProviderId, state.defaultModel, dispatch]);
+
+  // Repair a COMPACTION provider pin that names a provider which is no longer
+  // configured. The main provider is repaired above; this is the other half.
+  // Left alone, every turn of that conversation answers 409 until the user
+  // finds the compaction picker. The conversation goes back to "use the
+  // default" - which always names a model and a provider that belong together
+  // - and the change is SAVED, because a repair that lives only on screen
+  // comes back with the next reload. The user is told: the pin was theirs.
+  const compactionRepairingRef = useRef<number | null>(null);
+  useEffect(() => {
+    const sessionId = state.currentSessionId;
+    if (sessionId === null) return;
+    const missing = danglingCompactionProviderId(state.compaction, state.providers);
+    if (missing === null || compactionRepairingRef.current === sessionId) return;
+    compactionRepairingRef.current = sessionId;
+    const repaired = inheritDefaultCompactionSelection();
+    dispatch({
+      type: 'APPLY_SESSION_SELECTION',
+      sessionId,
+      selection: {
+        model: state.model,
+        providerId: state.activeProviderId,
+        compaction: repaired,
+        reasoningEffort: state.reasoningEffort ?? null,
+        compactionReasoningEffort: state.compactionReasoningEffort ?? null,
+      },
+    });
+    void saveSessionPatch(sessionId, { compaction: repaired }).then((saved) => {
+      compactionRepairingRef.current = null;
+      dispatch({
+        type: 'SET_ERROR',
+        error: saved.ok
+          ? `This conversation's compaction provider "${missing}" is no longer configured, so it now uses the default compaction model. Pick a compaction model in the model menu if you want a different one.`
+          : saveFailureMessage(
+              `This conversation's compaction provider "${missing}" is no longer configured. It now uses the default compaction model on screen, but that could not be saved.`,
+              saved
+            ),
+      });
+    });
+  }, [
+    state.currentSessionId,
+    state.compaction,
+    state.providers,
+    state.model,
+    state.activeProviderId,
+    state.reasoningEffort,
+    state.compactionReasoningEffort,
+    dispatch,
+  ]);
 
   /**
    * Ask the server for the context window of the model that is selected now
