@@ -27,7 +27,9 @@
  *                     `promptEvalCount` out and the pipeline records no
  *                     calibration sample, which keeps token counts at their
  *                     local estimates;
- * - `status`          an HTTP status (>= 400) to fail the request with.
+ * - `status`          an HTTP status (>= 400) to fail the request with;
+ * - `toolCalls`       Ollama-shaped tool calls (`[{ id, function: { name,
+ *                     arguments } }]`) sent with the first chunk.
  *
  * `kind` comes from `classify(body)`; the default calls a request with
  * `num_predict === 1` a `'measure'` request (that is how `measure.ts` asks)
@@ -110,6 +112,9 @@ export async function startFakeOllama(respond, options = {}) {
 
       const text = reply.text ?? '';
       const parts = reply.chunks ?? [text];
+      // Tool calls ride on the FIRST chunk, as Ollama sends them. A call needs
+      // an `id`: a tool result without one is display-only and is not saved.
+      const toolCalls = Array.isArray(reply.toolCalls) ? { tool_calls: reply.toolCalls } : {};
       const stats = {
         ...(reply.promptEvalCount === undefined
           ? {}
@@ -122,9 +127,16 @@ export async function startFakeOllama(respond, options = {}) {
 
       if (body.stream === true) {
         res.writeHead(200, { 'content-type': 'application/x-ndjson' });
-        for (const part of parts) {
+        for (const [partIndex, part] of parts.entries()) {
           res.write(
-            `${JSON.stringify({ message: { role: 'assistant', content: part }, done: false })}\n`
+            `${JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: part,
+                ...(partIndex === 0 ? toolCalls : {}),
+              },
+              done: false,
+            })}\n`
           );
         }
         res.end(
@@ -136,7 +148,7 @@ export async function startFakeOllama(respond, options = {}) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
         `${JSON.stringify({
-          message: { role: 'assistant', content: parts.join('') },
+          message: { role: 'assistant', content: parts.join(''), ...toolCalls },
           done: true,
           ...stats,
         })}\n`
@@ -176,7 +188,14 @@ export function enterScratchCwd(prefix) {
     dir,
     leave() {
       process.chdir(previous);
-      rmSync(dir, { recursive: true, force: true });
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch (err) {
+        // Windows keeps the SQLite file open while `history.ts` holds it, so
+        // the directory is busy (EBUSY) and failing the suite over it would
+        // report green tests as red. It lives in the OS temp folder.
+        if (err?.code !== 'EBUSY' && err?.code !== 'EPERM') throw err;
+      }
     },
   };
 }

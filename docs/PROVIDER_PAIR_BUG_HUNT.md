@@ -1,6 +1,6 @@
 # Provider pair integrity - bug hunt scratchpad
 
-Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A4, A12 and A13. Of the A-table backlog, A5, A6, A7, A8, A9 and A10 are done and committed, and A1 is done (2026-11-18, `8d48a58`) A2, A3, A11 and A14 are done (2026-11-18); the A-table backlog is closed. See section 5.1.
+Status: **10 bugs triaged, 10 fixed** (2026-11-17), plus A4, A12 and A13. Of the A-table backlog, A5, A6, A7, A8, A9 and A10 are done and committed, and A1 (`8d48a58`), A2 (`c7e7b60`), A3 (`71580cc`, `f27a156`), A11 (`f27a156`) and A14 (`d8203fe`) are done (2026-11-18). The A-table backlog is closed. See section 5.1.
 
 Branch: `feature/provider-pair-integrity`, based on `origin/dev` @ `5dd33ac`
 (merge-base == `origin/dev` tip). The branch is several commits ahead of the
@@ -915,22 +915,22 @@ the fix.
 
 ### 5.1 Progress on the A-table (2026-11-17)
 
-| #   | Status   | Commit / note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | **done** | Decided: the global compaction model, else the main model (what the old runtime resolved). `legacyCompactionFallbackModel` is called by chat, compact, title, `POST /api/sessions` and `switch-model`. See `docs/CHANGELOG.md` 2026-11-18.                                                                                                                                                                                                                                                                                                  |
-| A2  | **done** | `src/app/hooks/useSessionEvents.ts`: a frame with no usable compaction selection is ignored and warned about; the dead legacy field declarations are gone. Reading the legacy flat fields was NOT done (needs a server older than the browser; does not happen).                                                                                                                                                                                                                                                                            |
-| A3  | **done** | `71580cc` - a dangling compaction provider pin is reset to "use the default", saved and reported (`APPLY_SESSION_SELECTION`, no new action). The decision is `planCompactionRepair` (`src/app/lib/compactionRepair.ts`), tested; the effect that calls it is not.                                                                                                                                                                                                                                                                           |
-| A4  | **done** | `5db11d1` (with BUG 1).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| A5  | **done** | `50c39c2` - the legacy-path assertions are `toStrictEqual` on the whole selection.                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| A6  | **done** | `484d4a6` - the three `not.toBeNull()` refusal assertions check the message text. One more candidate, outside this branch: `compact-receipt.test.mjs:156`.                                                                                                                                                                                                                                                                                                                                                                                  |
-| A7  | **done** | `test(chat): drive the real chat route for the provider and switch gates` - `tests/chat-route-pair-gates.test.mjs` replaces three source-grep tests with end-to-end ones. The review found that title-generation calls leaked into the next test's request log and made the model assertion vacuous; fixed (named sessions, streaming calls only). KNOWN GAPS, covered by no test: a refused switch that still applies its COMPACTION selection, and one that nulls `activeProvider` (the old source greps did not catch the first either). |
-| A8  | **done** | `039a084` - reframed to what it proves; a behavioural test of the client request bodies needs pure body builders first (bodies are built inline in React callbacks). The comment's type-check claim is limited to object literals.                                                                                                                                                                                                                                                                                                          |
-| A9  | **done** | `b43a7bf` - unit tests for every branch of `legacyCompactionPairPatchProblem`.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| A10 | **done** | `56eca27` - the plan's Verification section lists every suite and the measured baseline.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| A11 | **done** | The two `context-window.test.mjs` dispatches now use the whole selection and defaults, and assert the store holds a compaction selection afterwards.                                                                                                                                                                                                                                                                                                                                                                                        |
-| A12 | **done** | `11011df` - a "not served" answer kicks the index refresh too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| A13 | **done** | `d893ddf` - `done` and `error` clear the "(switching...)" flag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| A14 | **done** | `acknowledgeModelSwitch` drops only the fields the caller peeked (per-field stamps in `modelSwitchRegistry.ts`); a request that merged after the peek stays pending alone, so a refused half no longer drags it down. See `docs/CHANGELOG.md` 2026-11-18.                                                                                                                                                                                                                                                                                   |
+| #   | Status   | Commit / note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | **done** | Decided: the global compaction model, else the main model (what the old runtime resolved). `legacyCompactionFallbackModel` is called by chat, compact, title, `POST /api/sessions` and `switch-model`. See `docs/CHANGELOG.md` 2026-11-18.                                                                                                                                                                                                                                                                                                                                              |
+| A2  | **done** | `src/app/hooks/useSessionEvents.ts`: a frame with no usable compaction selection is ignored and warned about; the dead legacy field declarations are gone. Reading the legacy flat fields was NOT done (needs a server older than the browser; does not happen).                                                                                                                                                                                                                                                                                                                        |
+| A3  | **done** | `71580cc`, `f27a156` and the follow-up commit - a dangling compaction provider pin is reset to "use the default", saved and reported (`APPLY_SESSION_SELECTION`, no new action). The whole repair is `planCompactionRepair` + `applyCompactionRepair` (`src/app/lib/compactionRepair.ts`, `dispatch` and `save` injected), tested end to end through the real reducer; the `useEffect` in `useDataLoaders.ts` that calls them is thin wiring and is not run by any test.                                                                                                                |
+| A4  | **done** | `5db11d1` (with BUG 1).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| A5  | **done** | `50c39c2` - the legacy-path assertions are `toStrictEqual` on the whole selection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| A6  | **done** | `484d4a6` - the three `not.toBeNull()` refusal assertions check the message text. One more candidate, outside this branch: `compact-receipt.test.mjs:156`.                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| A7  | **done** | `test(chat): drive the real chat route for the provider and switch gates` - `tests/chat-route-pair-gates.test.mjs` replaces three source-grep tests with end-to-end ones. The two gaps the review listed are now covered (2026-11-18): a refused switch that still applies its COMPACTION selection (the compaction that fires at the top of the loop must still go to the old compaction model on its own provider) and one that clears the turn's provider (a model-only second switch must stay on the provider the turn is on). Each fails with the matching mutation in the route. |
+| A8  | **done** | `039a084` - reframed to what it proves; a behavioural test of the client request bodies needs pure body builders first (bodies are built inline in React callbacks). The comment's type-check claim is limited to object literals.                                                                                                                                                                                                                                                                                                                                                      |
+| A9  | **done** | `b43a7bf` - unit tests for every branch of `legacyCompactionPairPatchProblem`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| A10 | **done** | `56eca27` - the plan's Verification section lists every suite and the measured baseline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| A11 | **done** | The two `context-window.test.mjs` dispatches now use the whole selection and defaults, and assert the store holds a compaction selection afterwards.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| A12 | **done** | `11011df` - a "not served" answer kicks the index refresh too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| A13 | **done** | `d893ddf` - `done` and `error` clear the "(switching...)" flag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| A14 | **done** | `acknowledgeModelSwitch` drops only the fields the caller peeked (per-field stamps in `modelSwitchRegistry.ts`); a request that merged after the peek stays pending alone, so a refused half no longer drags it down. See `docs/CHANGELOG.md` 2026-11-18.                                                                                                                                                                                                                                                                                                                               |
 
 Every fix in this round was checked by an independent sub-agent before it was
 committed; the reviews found a test that could not see half of its own fix
@@ -989,28 +989,30 @@ committed; the reviews found a test that could not see half of its own fix
 
 ---
 
-## 7. SUGGESTED ORDER OF WORK
+## 7. ORDER OF WORK (ALL DONE)
 
-1. **BUG 1** - DONE (2026-11-17, `5db11d1`). The branch's own C-025(b)
-   criterion; the original production incident.
-2. **BUG 2 + BUG 3** - DONE (2026-11-17, `6a1e98b`), together with BUG 8.
-   The switch is checked as a pair, a refused switch is refused whole, and
-   the refusal is reported.
-3. **BUG 6 + BUG 10** - DONE (2026-11-17, `7ca24ad`), together: the write
-   path normalises and the test reads the raw row.
-4. **BUG 7** - **NEXT.** Surface the server's refusal messages on the two
-   write paths in `src/app/lib/sessionSelectionClient.ts`. `readErrorMessage`
-   and `switchFailureMessage` already exist (added by BUG 8's fix) - this is a
-   reuse, not new machinery.
-5. **BUG 5 (+ A3)** - refuse an unconfigured compaction provider at write
-   time, and let the client repair a dangling COMPACTION provider the way it
-   already repairs a dangling main one.
-6. **BUG 4** - make `/api/dump` work again: it resolves the provider by
-   model name because the client sends no provider id, so the new pair check
-   judges the model against `providers[0]`.
-7. **BUG 9** - LOW. A one-line `=== undefined` guard; unreachable in
-   production.
-8. The "Also found" list (A1-A14), of which A4 is done.
+Everything below is done and committed on this branch (2026-11-17 and
+2026-11-18). The list is kept as the record of the order it was done in.
+
+1. **BUG 1** - DONE (`5db11d1`). The branch's own C-025(b) criterion; the
+   original production incident.
+2. **BUG 2 + BUG 3 + BUG 8** - DONE (`6a1e98b`). The switch is checked as a
+   pair, a refused switch is refused whole, and the refusal is reported.
+3. **BUG 6 + BUG 10** - DONE (`7ca24ad`), together: the write path
+   normalises and the test reads the raw row.
+4. **BUG 7** - DONE (`1faba56`). The server's refusal message reaches the
+   user on the two write paths in `sessionSelectionClient.ts`
+   (`SaveResult`, `saveFailureMessage`). `f564fc2` fixed the banner that
+   promised the next turn after a refused switch.
+5. **BUG 5 + A12** - DONE (`11011df`). A selection is checked as a pair
+   before it is written, and a stale "not served" answer heals. The client
+   half for a dangling COMPACTION provider is A3 (`71580cc`).
+6. **BUG 4 + A13 + BUG 9** - DONE (`d893ddf`). `/api/dump` resolves the
+   conversation's own provider and never refuses for the configuration; the
+   switching badge is released at the end of the turn; a defaults object
+   that omits the global compaction provider no longer wipes it.
+7. **The "Also found" list (A1-A14)** - ALL DONE. See section 5.1 for the
+   commit of each.
 
 ## 8. PROGRESS TRACKER
 
@@ -1208,9 +1210,27 @@ restore/reset`, and that `git status --short` must be identical at the end.
 
 ## 13. WHAT THE BRANCH LOOKS LIKE NOW
 
-Nine commits on top of `origin/dev`:
+Twenty-six commits on top of `origin/dev` (`git log --oneline origin/dev..HEAD`
+is the authority; this list is a snapshot of 2026-11-18, newest first):
 
 ```
+d8203fe fix(switch): a mid-turn switch that merges during an apply is answered on its own (A14)
+f27a156 test(client): test the A3 repair decision, and stop two tests using the flat shape (A11)
+71580cc fix(client): reset a compaction pin that names a removed provider (A3)
+c7e7b60 fix(client): ignore a model-changed frame with no usable compaction selection (A2)
+c8c3fa8 docs(provider-pair): record the A1 commit in the bug hunt status line
+8d48a58 fix(compaction): one fallback model for a legacy provider-only pin, at every endpoint (A1)
+8cdea95 test(chat): drive the real chat route for the provider and switch gates (A7)
+039a084 test(selection): the flat-pair persistence test claims only what it proves (A8)
+b43a7bf test(selection): unit-pin the refusal of a half-pair in a legacy patch (A9)
+484d4a6 test(selection): the refusal tests check what the message says (A6)
+50c39c2 test(selection): the legacy-path assertions compare the whole object (A5)
+56eca27 docs(provider-pair): the plan's Verification section lists every suite and the current baseline
+d893ddf fix(dump): the dump never refuses for the configuration
+11011df fix(sessions): check a selection as a pair before it is written
+1faba56 fix(client): report the server's refusal when a selection cannot be saved
+f564fc2 fix(compaction): a refused mid-turn switch no longer promises the next turn
+f92fc8f docs(provider-pair): the bug hunt scratchpad becomes the handoff for the next session
 7ca24ad fix(compaction): the WRITE path normalises the compaction pair
 6a1e98b fix(compaction): a mid-turn switch is checked as a pair, and a refusal is reported
 5db11d1 fix(compaction): the inherited global pair is checked against the chat's provider
@@ -1222,9 +1242,17 @@ b65f097 feat(compaction): the compaction model and its provider are ONE value
 6de53ed feat(compaction): one rule decides the compaction model AND its provider
 ```
 
-The three `fix(compaction)` commits at the top are THIS work. The five below
-them are the branch itself.
+The five `feat`/`fix(provider)` commits at the bottom (`6de53ed` to
+`1efe87e`) are the branch itself; everything above `293577e` is the bug hunt.
 
-Current numbers: the branch's 11 suites are **337/337 green**; the full
-suite fails the **same 21 environmental suites** as the base branch, with
-1899 passing of 1997.
+Test numbers: the last FULL `npm test` run was 86 suites, 2196 passed, 2
+skipped (the BUG 4 round, 2026-11-17; 2200 passed at the start of the A5-A10
+round, see `docs/PROVIDER_PAIR_PLAN.md` "Verification" for the baseline). The
+A1, A2, A3, A11 and A14 commits ran only the suites they touched, and the
+earlier "21 failing suites" figure was a Windows measurement, not the Linux
+baseline. `tests/chat-route-pair-gates.test.mjs` used to be one of the suites
+that cannot load on the Windows development machine (Node 22); it now stubs
+jsdom, runs there (7 passed, 2026-11-18) and also covers the two A7 gaps.
+`tests/subagent-traces-route.test.mjs` still fails to load on Node 22, with
+the identical error on the original helper; run it on Node 24.9+ before the
+branch closes.

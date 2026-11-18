@@ -15,8 +15,10 @@
  * which is before any model call.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { enterScratchCwd, startFakeOllama } from './helpers/fakeOllama.mjs';
 
@@ -24,7 +26,13 @@ const MAIN_MODEL = 'main-model';
 const GOOD_MODEL = 'good-model';
 const REFUSED_MODEL = 'beam';
 
+/** Per-test scripted replies, by provider. Reset before every test. */
+const scripts = { a: null, b: null };
+
 let scratch;
+let fakeHome;
+let stopMCPConfigWatcher;
+let getClientManager;
 let providerA;
 let providerB;
 let POST;
@@ -39,8 +47,20 @@ let providerNotConfiguredMessage;
 
 beforeAll(async () => {
   scratch = enterScratchCwd('locopilot-chat-gates');
-  providerA = await startFakeOllama(() => ({ text: 'ANSWER-FROM-A' }));
-  providerB = await startFakeOllama(() => ({ text: 'ANSWER-FROM-B' }));
+  // The route starts the user's MCP servers and loads their skills from the
+  // home directory. Against the real one, the suite connected to whatever the
+  // developer has configured (OAuth servers, subprocesses) and then never
+  // exited. An empty home keeps it hermetic.
+  fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'locopilot-chat-gates-home-'));
+  jest.spyOn(os, 'homedir').mockReturnValue(fakeHome);
+  // A test may script a provider's replies (`scripts.b = (call) => ...`);
+  // without a script it answers with a fixed text.
+  providerA = await startFakeOllama((call) =>
+    scripts.a ? scripts.a(call) : { text: 'ANSWER-FROM-A' }
+  );
+  providerB = await startFakeOllama((call) =>
+    scripts.b ? scripts.b(call) : { text: 'ANSWER-FROM-B' }
+  );
   fs.writeFileSync(
     `${scratch.dir}/config.json`,
     JSON.stringify({
@@ -61,7 +81,20 @@ beforeAll(async () => {
       maxPromptLoopIterations: 3,
     })
   );
+  // The route reaches `jsdom` only through the web tools (HTML extraction),
+  // which these tests never call. jsdom's dependency `@exodus/bytes` is
+  // ESM-only, and Jest can `require()` it only on Node 24.9+, so on an older
+  // Node (the Windows development machine runs 22) merely IMPORTING the route
+  // failed with "Must use import to load ES Module" and the whole suite was
+  // lost. A stub keeps the suite runnable everywhere and changes nothing it
+  // asserts. It must be registered before the route is imported.
+  jest.unstable_mockModule('jsdom', () => ({
+    JSDOM: class {},
+    VirtualConsole: class {},
+  }));
   ({ POST } = await import('../src/app/api/chat/route.ts'));
+  ({ stopMCPConfigWatcher } = await import('../src/mcp/configWatcher.ts'));
+  ({ getClientManager } = await import('../src/mcp/clientManager.ts'));
   ({ createSession } = await import('../src/services/history.ts'));
   ({ registerActiveTurn, unregisterActiveTurn, requestModelSwitch } =
     await import('../src/app/lib/modelSwitchRegistry.ts'));
@@ -79,7 +112,19 @@ afterAll(async () => {
   setModelIndexDeps(null);
   await providerA?.close();
   await providerB?.close();
+  // The route starts the MCP config watcher and client manager, and both
+  // outlive the tests. They must stop BEFORE the fake home goes away and the
+  // real one comes back: deleting the home fires the watcher, which would
+  // reload `mcp.json` from the real home and connect to its servers.
+  stopMCPConfigWatcher?.();
+  await getClientManager?.().closeAll();
   scratch?.leave();
+  jest.restoreAllMocks();
+  try {
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  } catch {
+    // Best effort: it is an empty directory in the OS temp folder.
+  }
 });
 
 beforeEach(() => {
@@ -90,6 +135,8 @@ beforeEach(() => {
   recordProviderModels('b', providerB.baseUrl, [GOOD_MODEL]);
   providerA.requests.length = 0;
   providerB.requests.length = 0;
+  scripts.a = null;
+  scripts.b = null;
 });
 
 /**
@@ -220,5 +267,98 @@ describe('a mid-turn switch', () => {
     )?.[1];
     expect(refused?.reason).toContain('ghost-provider');
     expect(chatModels(providerA)).toStrictEqual([MAIN_MODEL]);
+  }, 30_000);
+
+  test('a refused switch does not apply its compaction selection either (A7)', async () => {
+    // The switch is refused for its MAIN half (provider B does not serve
+    // `beam`), but its compaction half is perfectly valid: GOOD_MODEL on B.
+    // A refused switch is refused WHOLE, so the compaction must stay what the
+    // conversation had - inherit-default, which with no global compaction
+    // model means the main model on the main provider (A). The history is
+    // long enough to fire the auto-compaction at the top of the loop, which
+    // is a real model call whose destination shows what was applied.
+    const filler = (word) => Array.from({ length: 5000 }, (_, i) => `${word}${i}`).join(' ');
+    const sessionId = namedSession();
+    registerActiveTurn(sessionId, 'probe');
+    let events;
+    try {
+      expect(
+        requestModelSwitch(sessionId, {
+          providerId: 'b',
+          model: REFUSED_MODEL,
+          compaction: { kind: 'explicit', model: GOOD_MODEL, providerId: 'b' },
+        })
+      ).toBe(true);
+      ({ events } = await turn({
+        sessionId,
+        messages: [
+          { role: 'user', content: filler('alpha') },
+          { role: 'assistant', content: filler('beta') },
+          { role: 'user', content: 'hello' },
+        ],
+      }));
+    } finally {
+      unregisterActiveTurn(sessionId, 'probe');
+    }
+
+    expect(
+      events.some(([event, data]) => event === 'status' && data.phase === 'model_switch_refused')
+    ).toBe(true);
+    // The compaction really ran (otherwise this test proves nothing)...
+    expect(events.some(([event]) => event === 'compact')).toBe(true);
+    // ...and every call it made, like the turn's own, went to A on the main
+    // model. B, the provider of the refused compaction selection, saw nothing.
+    expect(providerB.requests).toHaveLength(0);
+    expect(new Set(providerA.requests.map((request) => request.body.model))).toStrictEqual(
+      new Set([MAIN_MODEL])
+    );
+  }, 60_000);
+
+  test('a refused switch does not make the turn forget its provider (A7)', async () => {
+    // The turn runs on provider B. The first switch asks for a model that
+    // provider A does not serve, and is refused. While the first model call
+    // is in flight a SECOND switch names a model and NO provider: it must
+    // move the model on the provider the turn is still on. Had the refusal
+    // cleared the turn's provider, the model-only switch would resolve its
+    // provider from the model name and land on A (the first provider).
+    const SECOND_MODEL = 'good-model-2';
+    recordProviderModels('b', providerB.baseUrl, [GOOD_MODEL, SECOND_MODEL]);
+    const sessionId = createSession('gates-forget', {
+      model: GOOD_MODEL,
+      providerId: 'b',
+      compaction: { kind: 'inherit-default' },
+      reasoningEffort: null,
+      compactionReasoningEffort: null,
+    });
+    registerActiveTurn(sessionId, 'probe');
+    scripts.b = (call) => {
+      if (call.body.stream !== true) return { text: 'ANSWER-FROM-B' };
+      if (call.index === 1) {
+        // Iteration 1's model call: queue the second switch, then ask for a
+        // tool so the loop comes round again and applies it.
+        requestModelSwitch(sessionId, { model: SECOND_MODEL });
+        return {
+          toolCalls: [{ id: 'call_unknown_1', function: { name: 'no_such_tool', arguments: {} } }],
+        };
+      }
+      return { text: 'ANSWER-FROM-B' };
+    };
+    let events;
+    try {
+      expect(requestModelSwitch(sessionId, { providerId: 'a', model: REFUSED_MODEL })).toBe(true);
+      ({ events } = await turn({ sessionId, model: GOOD_MODEL, providerId: 'b' }));
+    } finally {
+      unregisterActiveTurn(sessionId, 'probe');
+    }
+
+    const phases = events
+      .filter(([event]) => event === 'status')
+      .map(([, data]) => data.phase)
+      .filter((phase) => phase === 'model_switch_refused' || phase === 'model_switched');
+    expect(phases).toStrictEqual(['model_switch_refused', 'model_switched']);
+    // Both model calls went to B: the first on the old model, the second on
+    // the model the second switch asked for. A never saw a request.
+    expect(chatModels(providerB)).toStrictEqual([GOOD_MODEL, SECOND_MODEL]);
+    expect(providerA.requests).toHaveLength(0);
   }, 30_000);
 });

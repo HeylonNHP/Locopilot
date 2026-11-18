@@ -56,6 +56,7 @@ let parseCompactionSelection;
 let compactionSelectionToPair;
 let danglingCompactionProviderId;
 let planCompactionRepair;
+let applyCompactionRepair;
 let chatReducer;
 let initialState;
 let parseSessionEvent;
@@ -77,7 +78,9 @@ beforeAll(async () => {
     compactionSelectionToPair,
     danglingCompactionProviderId,
   } = await import(moduleUrl('../src/services/sessionSelection.ts')));
-  ({ planCompactionRepair } = await import(moduleUrl('../src/app/lib/compactionRepair.ts')));
+  ({ planCompactionRepair, applyCompactionRepair } = await import(
+    moduleUrl('../src/app/lib/compactionRepair.ts')
+  ));
   ({ chatReducer, initialState } = await import(moduleUrl('../src/app/lib/chatStore.ts')));
   ({ parseSessionEvent } = await import(moduleUrl('../src/app/hooks/useSessionEvents.ts')));
 });
@@ -514,6 +517,120 @@ describe('a compaction pin that names a removed provider (A3)', () => {
       ['an inherited compaction', { compaction: INHERIT_DEFAULT }],
     ])('plans nothing when %s', (_name, change) => {
       expect(planCompactionRepair({ ...onScreen, ...change })).toBeNull();
+    });
+
+    describe('carrying it out', () => {
+      /** The dependencies, recording what the repair did and in what order. */
+      function harness(save) {
+        const calls = [];
+        const inFlight = { current: null };
+        return {
+          calls,
+          inFlight,
+          deps: {
+            inFlight,
+            dispatch: (action) => calls.push(['dispatch', action]),
+            save: async (sessionId, patch) => {
+              calls.push(['save', sessionId, patch]);
+              return save();
+            },
+          },
+        };
+      }
+
+      test('puts the reset on screen, THEN saves it, then tells the user', async () => {
+        const { calls, inFlight, deps } = harness(async () => ({ ok: true }));
+        expect(await applyCompactionRepair(planCompactionRepair(onScreen), deps)).toBe(true);
+
+        expect(calls.map(([kind]) => kind)).toStrictEqual(['dispatch', 'save', 'dispatch']);
+        expect(calls[0][1]).toMatchObject({ type: 'APPLY_SESSION_SELECTION', sessionId: 7 });
+        expect(calls[0][1].selection.compaction).toStrictEqual(INHERIT_DEFAULT);
+        expect(calls[1]).toStrictEqual(['save', 7, { compaction: INHERIT_DEFAULT }]);
+        expect(calls[2][1].type).toBe('SET_ERROR');
+        expect(calls[2][1].error).toContain('"gone"');
+        expect(calls[2][1].error).toContain('now uses the default compaction model');
+        expect(inFlight.current).toBeNull();
+      });
+
+      test("a failed save is reported with the server's reason, not swallowed", async () => {
+        const { calls, inFlight, deps } = harness(async () => ({
+          ok: false,
+          message: 'the selection names a provider that is not configured',
+        }));
+        await applyCompactionRepair(planCompactionRepair(onScreen), deps);
+
+        const banner = calls.at(-1)[1].error;
+        expect(banner).toContain('that could not be saved');
+        expect(banner).toContain('the selection names a provider that is not configured');
+        // The reset stays on screen even though the row could not be written.
+        expect(calls[0][1].type).toBe('APPLY_SESSION_SELECTION');
+        expect(inFlight.current).toBeNull();
+      });
+
+      test('nothing to repair means nothing is dispatched or saved', async () => {
+        const { calls, deps } = harness(async () => ({ ok: true }));
+        expect(await applyCompactionRepair(null, deps)).toBe(false);
+        expect(calls).toStrictEqual([]);
+      });
+
+      test('a repair already running for the conversation is not started twice', async () => {
+        let release;
+        const gate = new Promise((resolve) => {
+          release = resolve;
+        });
+        const { calls, inFlight, deps } = harness(() => gate.then(() => ({ ok: true })));
+        const plan = planCompactionRepair(onScreen);
+
+        const first = applyCompactionRepair(plan, deps);
+        expect(inFlight.current).toBe(7);
+        expect(await applyCompactionRepair(plan, deps)).toBe(false);
+        expect(calls.filter(([kind]) => kind === 'save')).toHaveLength(1);
+
+        release();
+        expect(await first).toBe(true);
+        expect(inFlight.current).toBeNull();
+      });
+
+      test('the in-flight marker is released even if the save throws', async () => {
+        const { inFlight, deps } = harness(async () => {
+          throw new Error('boom');
+        });
+        await expect(applyCompactionRepair(planCompactionRepair(onScreen), deps)).rejects.toThrow(
+          'boom'
+        );
+        expect(inFlight.current).toBeNull();
+      });
+
+      test('through the real reducer: the row, the screen and the banner all end up right', async () => {
+        let state = chatReducer(initialState, {
+          type: 'SET_SESSIONS',
+          sessions: [row(7, { compaction_model: 'cheap', compaction_provider_id: 'gone' })],
+        });
+        state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 7 });
+        const plan = planCompactionRepair({
+          currentSessionId: state.currentSessionId,
+          compaction: state.compaction,
+          providers,
+          model: state.model,
+          activeProviderId: state.activeProviderId,
+          reasoningEffort: state.reasoningEffort,
+          compactionReasoningEffort: state.compactionReasoningEffort,
+        });
+        await applyCompactionRepair(plan, {
+          inFlight: { current: null },
+          dispatch: (action) => {
+            state = chatReducer(state, action);
+          },
+          save: async () => ({ ok: true }),
+        });
+
+        expect(state.compaction).toStrictEqual(INHERIT_DEFAULT);
+        expect(state.sessions.find((s) => s.id === 7).compaction_provider_id).toBeNull();
+        expect(state.error).toContain('"gone"');
+        // The model the conversation runs on was not moved by the repair.
+        expect(state.model).toBe('minimax-m3.1-flash');
+        expect(state.activeProviderId).toBe('minimax');
+      });
     });
 
     test('once repaired, the same state plans nothing again (no loop)', () => {

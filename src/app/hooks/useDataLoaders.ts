@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { hasLiveTranscript, useChat } from '@/app/lib/chatStore';
-import { planCompactionRepair } from '@/app/lib/compactionRepair';
+import { applyCompactionRepair, planCompactionRepair } from '@/app/lib/compactionRepair';
 import { isStaleNumCtxAnswer, positiveInteger } from '@/app/lib/contextWindow';
 import { createLatestGate } from '@/app/lib/latestGate';
 import { fetchModelList } from '@/app/lib/modelsClient';
-import { saveFailureMessage, saveSessionPatch } from '@/app/lib/sessionSelectionClient';
+import { saveSessionPatch } from '@/app/lib/sessionSelectionClient';
 import {
   DEFAULT_WEB_SEARCH_SETTINGS,
   resolveWebSearchRequestTimeoutMs,
@@ -390,21 +390,10 @@ export function useDataLoaders(refs: StableRefs) {
       reasoningEffort: state.reasoningEffort,
       compactionReasoningEffort: state.compactionReasoningEffort,
     });
-    if (repair === null || compactionRepairingRef.current === repair.sessionId) return;
-    const { sessionId, missingProviderId: missing, selection } = repair;
-    compactionRepairingRef.current = sessionId;
-    dispatch({ type: 'APPLY_SESSION_SELECTION', sessionId, selection });
-    void saveSessionPatch(sessionId, { compaction: selection.compaction }).then((saved) => {
-      compactionRepairingRef.current = null;
-      dispatch({
-        type: 'SET_ERROR',
-        error: saved.ok
-          ? `This conversation's compaction provider "${missing}" is no longer configured, so it now uses the default compaction model. Pick a compaction model in the model menu if you want a different one.`
-          : saveFailureMessage(
-              `This conversation's compaction provider "${missing}" is no longer configured. It now uses the default compaction model on screen, but that could not be saved.`,
-              saved
-            ),
-      });
+    void applyCompactionRepair(repair, {
+      dispatch,
+      save: saveSessionPatch,
+      inFlight: compactionRepairingRef,
     });
   }, [
     state.currentSessionId,
