@@ -1,3 +1,9 @@
+- 2026-11-19: `web_search` reports its query limit, the duplicate queries it removed and the queries it did not run
+  - Files: `src/tools/impl/webSearchTool.ts` (`planQueries`, `describeQueryPlan`, the three argument descriptions), `tests/web-search-queries.test.mjs`, `docs/CHANGELOG.md`
+  - Why: hidden-rule audit. Explicit queries were de-duplicated and cut to the limit without a word, the limit came from a config value (`webSearch.maxQueries`, 3 by default) the model could not see, and a `prompt` was silently split into queries.
+  - The result header now has `query_limit: N` and, when they apply, `duplicate_queries_removed: [...]`, `queries_not_run (over the limit of N): [...]` with a line saying how to run them, and `queries_derived_from_prompt: true`. A duplicate does not use up the limit. The descriptions of `max_queries`, `queries` and `prompt` state the same rules, including how a prompt is split (line breaks, sentence punctuation, commas, semicolons, "and", "or"; the whole prompt is also one query).
+  - Verification: `npm test -- tests/web-search-queries` 10 passed (no network: the two I/O seams are replaced as in `web-search-parallel.test.mjs`); eslint, prettier and `tsc --noEmit` clean. The test stubs `jsdom` because its ESM-only dependency cannot be required on Node 22; `tests/web-search-parallel.test.mjs` does not stub it and fails to load on this machine for that reason (it did before this change).
+  - Not changed: the query limit and the derivation rules themselves.
 - 2026-11-19: `write_file` states its default mode and that it creates missing folders
   - Files: `src/tools/impl/writeFileTool.ts`, `tests/write-file-tool.test.mjs`, `docs/CHANGELOG.md`
   - Why: hidden-rule audit. `mode` defaults to `overwrite` (an existing file is replaced with no check and no backup) and missing parent folders are created (`mkdir -p`); the description said neither.
