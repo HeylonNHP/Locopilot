@@ -7,10 +7,15 @@ import { countTextTokens } from '@/services/tokenizer';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import { resolveAgentPath, type WorkingDirectoryScope } from '@/tools/workingDirectory';
 
+/** What read_file does to the bytes it reads, for the description. */
+const READ_FILE_BYTES_SENTENCE = String.raw`The file is read as UTF-8 and returned exactly as it is on disk: nothing is converted, so in a file with Windows line endings every line keeps its trailing \r (\r\n is not turned into \n). Lines are split at \n only, so a file that ends with a line break has a final empty line.`;
+
+/** The size rule: there is no cap, only a notice. */
+const READ_FILE_SIZE_SENTENCE = `There is no size limit: the whole file (or the range you ask for) is returned. When it is about ${READ_FILE_TOKEN_WARN_PCT}% or more of your context window, a token notice is added above the result, and at ${READ_FILE_TOKEN_CRITICAL_PCT}% or more a stronger warning. Prefer a range for a large file.`;
+
 export const readFileToolSchema: ToolSchema = {
   name: 'read_file',
-  description:
-    'Reads a file from the host filesystem. Use head_chars to read the first N characters, tail_chars to read the last N characters, start/length to read a specific character range, or start_line/end_line to read by line number (1-based). Supports absolute paths, relative paths (resolved against the agent working directory), and ~/ paths.',
+  description: `Reads a file from the host filesystem. Use head_chars to read the first N characters, tail_chars to read the last N characters, start/length to read a specific character range, or start_line/end_line to read by line number (1-based). Supports absolute paths, relative paths (resolved against the agent working directory), and ~/ paths. ${READ_FILE_BYTES_SENTENCE} ${READ_FILE_SIZE_SENTENCE}`,
   parameters: {
     type: 'object',
     properties: {
