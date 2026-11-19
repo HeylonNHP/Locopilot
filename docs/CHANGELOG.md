@@ -1,3 +1,8 @@
+- 2026-11-19: `write_file` states its default mode and that it creates missing folders
+  - Files: `src/tools/impl/writeFileTool.ts`, `tests/write-file-tool.test.mjs`, `docs/CHANGELOG.md`
+  - Why: hidden-rule audit. `mode` defaults to `overwrite` (an existing file is replaced with no check and no backup) and missing parent folders are created (`mkdir -p`); the description said neither.
+  - The tool description and the `mode` description now say both, `mode` is an `enum` (`overwrite`, `append`, `create`), and the `create` text says it writes nothing and reports a warning when the file exists. The behaviour is unchanged. The system-prompt section is built from the same strings.
+  - Verification: `npm test -- tests/write-file-tool` 10 passed (each stated claim is checked against the real tool: the default replaces a file, folders are created, `create` leaves an existing file alone, `append` creates and extends, a bad mode writes nothing); eslint, prettier and `tsc --noEmit` clean. Not changed: a mode is still trimmed and lower-cased before it is checked, which the `enum` does not describe.
 - 2026-11-19: `run_command` says what is done to its output and whether secret redaction is on for this conversation
   - Files: `src/tools/impl/runCommandTool.ts` (`OUTPUT_CLEANING_SENTENCE`, `describeRedactionState`, `withRunCommandRedactionState`), `src/app/api/chat/route.ts`, `tests/run-command-redaction.test.mjs`, `docs/CHANGELOG.md`
   - Why: hidden-rule audit. The capture removes terminal control sequences and carriage returns and, by default, replaces secrets with `[REDACTED]`; the description mentioned none of it, and the model could not tell a redacted value from the real one.
