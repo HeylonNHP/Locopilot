@@ -163,7 +163,7 @@ import {
 import { maybeInjectPromptTimestamp } from '@/services/userMessageStamp';
 import { recordDiscoveredNonVision } from '@/services/visionCache';
 import { filterGrantedMCPTools, isAutoApprovedMCPTarget } from '@/tools/impl/mcpTool';
-import { enterRequestScope } from '@/tools/impl/runCommandTool';
+import { enterRequestScope, withRunCommandRedactionState } from '@/tools/impl/runCommandTool';
 import { canonicalSubagentId } from '@/tools/toolOutput';
 import {
   handleToolCall,
@@ -1458,6 +1458,10 @@ export async function POST(req: NextRequest): Promise<Response> {
           // MCP tool discovery is best-effort: fall back to native tools only.
           mergedTools = [...TOOLS];
         }
+        // The user can switch secret redaction off in Settings, so the model is
+        // told which it is for this conversation (the standing description only
+        // says what can be redacted).
+        mergedTools = withRunCommandRedactionState(mergedTools, config?.redactSecrets ?? true);
 
         // Phase 3.4 (sub-agent MCP tool exposure): swap the
         // sub-agent's `tools` list for the SAME `mergedTools` used

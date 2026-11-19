@@ -37,6 +37,14 @@ const isWindows = os.platform() === 'win32';
 const APPROVAL_SENTENCE = 'The user will be asked to approve the command before it runs.';
 
 /**
+ * What the capture does to the output before the model reads it. The setting
+ * that switches the redaction is the user's ("Redact Secrets in Command
+ * Output"), so the standing text says what CAN be redacted and the request
+ * adds whether it is on now (see {@link withRunCommandRedactionState}).
+ */
+const OUTPUT_CLEANING_SENTENCE = String.raw`The output is cleaned before you see it: terminal colour and cursor control sequences and carriage returns (\r) are removed, and when the user's "Redact secrets in command output" setting is on, secrets are replaced with [REDACTED]. That covers API keys and tokens (OpenAI, GitHub, GitLab, Slack, AWS, Google), bearer tokens and Authorization headers, JSON web tokens, private key blocks, passwords in URLs, and values assigned to names like PASSWORD, SECRET, TOKEN and API_KEY in environment lines, query strings and YAML. A [REDACTED] in the output is not the real value.`;
+
+/**
  * Bounds of the capture that backs a `run_command` result. The inline budget
  * is what the model reads verbatim; the head and tail budgets are the preview
  * that stands in for the omitted middle, which always stays on disk.
@@ -50,7 +58,7 @@ const SPOOL_LIMITS: SpoolLimits = {
 
 export const runCommandToolSchema: ToolSchema = {
   name: 'run_command',
-  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns the captured stdout/stderr. A large output is kept in a file: the result shows an excerpt of it and the line range to read with read_file(path, start_line, end_line).`,
+  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns the captured stdout/stderr. ${OUTPUT_CLEANING_SENTENCE} A large output is kept in a file: the result shows an excerpt of it and the line range to read with read_file(path, start_line, end_line).`,
   parameters: {
     type: 'object',
     properties: {
@@ -733,6 +741,37 @@ export async function checkProcessOutput(
 
   onProgress?.('check_process_output: returning partial output.');
   return buildOutput(entry, false, processId);
+}
+
+/**
+ * The sentence that says whether secret redaction is on for this conversation.
+ * The user can toggle it in Settings, so it is added per request, not kept in
+ * the standing schema.
+ */
+export function describeRedactionState(redactSecrets: boolean): string {
+  return redactSecrets
+    ? 'Secret redaction is currently ON for this conversation: matching values in the output are replaced with [REDACTED].'
+    : 'Secret redaction is currently OFF for this conversation: the output is raw, secrets included.';
+}
+
+/**
+ * Returns the tool list with the run_command description saying whether secret
+ * redaction is on. Other tools, and the list itself, are left as they are.
+ */
+export function withRunCommandRedactionState<
+  T extends { function: { name: string; description: string } },
+>(tools: readonly T[], redactSecrets: boolean): T[] {
+  return tools.map((tool) =>
+    tool.function.name === runCommandToolSchema.name
+      ? {
+          ...tool,
+          function: {
+            ...tool.function,
+            description: `${tool.function.description} ${describeRedactionState(redactSecrets)}`,
+          },
+        }
+      : tool
+  );
 }
 
 /**
