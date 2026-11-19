@@ -433,6 +433,14 @@ Entry format: `C-nnn` for open confirmations, `A-nnn` for pending actions. Use t
 - **How to confirm:** repeat the 2026-11-18 run: a conversation of about 12 messages of dummy text with two numbered questions, the cut between the second question and its answer (compact on a cloud model with a window that preserves only the last few messages), then read the summary's "Open work" and send one more turn. Pass if "Open work" does not say Question 2 is pending (or says it was open at the end of the older turns) and the next turn does not answer it again. It needs a few cloud calls, so ask the owner first.
 - **Related, not fixed:** the reduction's combine prompt keeps "every ... unresolved task that appears in any part" (`src/services/compact/constants.ts`, the combine prompt), so a task opened in an early chunk and answered in a later chunk stays listed as open after the merge. Read from the code only; not reproduced. Its fix is separate because the combine prompt's size sets the reduction's batching and `tests/compact-summary-pipeline.test.mjs` pins those counts.
 
+### C-032 - Was the patch_file indentation-mapping bug the cause of the `- ` bullet damage in session 728?
+
+- **Status:** Not verified (2026-11-19).
+- **Claim (confirmed by probe):** `normalizeForMatching` in `src/tools/impl/patchFileTool.ts` mapped a whitespace-tolerant match back to the file without counting the trimmed leading indent, so a match starting or ending inside an indented line landed off by the indent width, and an astral character shifted the whole map. Fixed in commit 9db20c5 (`tests/patch-file-tool.test.mjs`).
+- **Claim (NOT verified):** that this is what damaged markdown bullets in production session 728 (a doubled `-` marker, two bullets joined, lost blank lines). The same kind of damage is reproduced by the mapping bug, but the exact edits from the session were not replayed.
+- **Why it matters:** if another cause exists (for example a different matching path), the model will keep falling back to scripts to edit markdown.
+- **How to confirm:** read the `patch_file` calls around messages 4680740-4680760 of session 728 in the production `locopilot.db` (read-only), rebuild each target file's state from git history, apply each patch with the fixed tool, and check the output has no joined lines or doubled markers. Mask any personal data.
+
 ## Confirmed
 
 - **OpenAI output-cap field.** `max_output_tokens` is the cap on the Responses API (`/v1/responses`) and covers visible and reasoning tokens. Chat Completions uses `max_completion_tokens`. Source: OpenAI API reference, read through a mirror on 2026-11-11 (`platform.openai.com` returned 403). The installed `openai` SDK (6.48.0) types agree.
