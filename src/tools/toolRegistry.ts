@@ -273,6 +273,7 @@ export interface ToolCallArguments {
   shell?: string;
   timeout_seconds?: number;
   timeout_ms?: number;
+  full_description?: boolean;
   cwd?: string;
   process_id?: number;
   poll_interval_seconds?: number;
