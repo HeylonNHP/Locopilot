@@ -57,6 +57,11 @@ import {
   runCommand,
   runCommandToolSchema,
 } from './impl/runCommandTool';
+import {
+  SearchFilesTool,
+  type SearchFilesToolArgs,
+  searchFilesToolSchema,
+} from './impl/searchFilesTool';
 import { runSearchMCPTools } from './impl/searchMcpToolsTool';
 import {
   type WebSearchSettings,
@@ -285,6 +290,13 @@ export interface ToolCallArguments {
   url?: string;
   source?: string;
   path?: string;
+  pattern?: string;
+  file_filter?: string;
+  literal?: boolean;
+  case_insensitive?: boolean;
+  max_results?: number;
+  max_line_chars?: number;
+  max_listed?: number;
   /** An array, or (as some models send it) a JSON-encoded string of one. */
   patches?: PatchFilePatch[] | string;
   head_chars?: number;
@@ -453,6 +465,15 @@ async function runReadFile(
   signal?: AbortSignal
 ): Promise<string> {
   const tool = new ReadFileTool({ output, scope, model, numCtx });
+  return tool.run(args, signal);
+}
+
+async function runSearchFiles(
+  args: SearchFilesToolArgs,
+  scope: WorkingDirectoryScope | undefined,
+  signal?: AbortSignal
+): Promise<string> {
+  const tool = new SearchFilesTool({ scope });
   return tool.run(args, signal);
 }
 
@@ -693,6 +714,31 @@ export const toolRegistry = new Map<string, IToolCommand>([
             signal
           ),
         };
+      },
+    },
+  ],
+  [
+    'search_files',
+    {
+      async execute(args, _onProgress, _output = noopToolOutputSink, context, signal) {
+        const permErr = checkToolAllowed('search_files', context);
+        if (permErr) return { content: permErr };
+        const searchOutput = await runSearchFiles(
+          {
+            pattern: args.pattern,
+            path: args.path,
+            file_filter: args.file_filter,
+            literal: args.literal,
+            case_insensitive: args.case_insensitive,
+            max_results: args.max_results,
+            timeout_seconds: args.timeout_seconds,
+            max_line_chars: args.max_line_chars,
+            max_listed: args.max_listed,
+          },
+          context?.workingDirectoryScope,
+          signal
+        );
+        return { content: withUnknownArgumentNote(searchOutput, args, searchFilesToolSchema) };
       },
     },
   ],
