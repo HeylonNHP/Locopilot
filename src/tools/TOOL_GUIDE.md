@@ -29,6 +29,7 @@ The actual tool behavior is delegated to modules in `tools/impl/`:
 - `tools/impl/fetchUrlTool.ts`
 - `tools/impl/fetchImageTool.ts`
 - `tools/impl/readFileTool.ts`
+- `tools/impl/searchFilesTool.ts` (with `tools/fileGlob.ts` for the `file_filter` glob, `tools/lineReader.ts` for reading a file in pieces and splitting it into lines, and `tools/lineScanner.ts` for the time-limited regular-expression scan)
 - `tools/impl/readPdfTool.ts`
 - `tools/impl/patchFileTool.ts`
 - `tools/impl/writeFileTool.ts`
@@ -132,6 +133,7 @@ When changing an existing tool:
   - `fetch_url`
   - `fetch_image`
   - `read_file`
+  - `search_files`
   - `read_pdf`
   - `patch_file`
   - `write_file`

@@ -25,7 +25,15 @@ import {
 
 import type { WorkingDirectoryScope } from './workingDirectory';
 
-import { parsePositiveInteger, parsePositiveTimeoutMs, parseQueriesInput } from './commandHelpers';
+import { withUnknownArgumentNote } from './argumentCheck';
+import {
+  MAX_TIMEOUT_MS,
+  MAX_TIMEOUT_SECONDS,
+  parsePositiveInteger,
+  parsePositiveTimeoutMs,
+  parsePositiveTimeoutMsFromMs,
+  parseQueriesInput,
+} from './commandHelpers';
 import {
   type FetchImageResult,
   FetchImageTool,
@@ -33,11 +41,27 @@ import {
 } from './impl/fetchImageTool';
 import { FetchUrlTool, type FetchUrlToolArgs } from './impl/fetchUrlTool';
 import { runMCPCall } from './impl/mcpTool';
-import { type PatchFilePatch, PatchFileTool, type PatchFileToolArgs } from './impl/patchFileTool';
+import {
+  parsePatchesArgument,
+  type PatchFilePatch,
+  PatchFileTool,
+  type PatchFileToolArgs,
+  patchFileToolSchema,
+} from './impl/patchFileTool';
 import { ReadFileTool, type ReadFileToolArgs } from './impl/readFileTool';
 import { ReadPdfTool, type ReadPdfToolArgs } from './impl/readPdfTool';
 import { RenderMermaidTool } from './impl/renderMermaidTool';
-import { checkProcessOutput, DEFAULT_TIMEOUT_MS, runCommand } from './impl/runCommandTool';
+import {
+  checkProcessOutput,
+  DEFAULT_TIMEOUT_MS,
+  runCommand,
+  runCommandToolSchema,
+} from './impl/runCommandTool';
+import {
+  SearchFilesTool,
+  type SearchFilesToolArgs,
+  searchFilesToolSchema,
+} from './impl/searchFilesTool';
 import { runSearchMCPTools } from './impl/searchMcpToolsTool';
 import {
   type WebSearchSettings,
@@ -253,6 +277,8 @@ export interface ToolCallArguments {
   command?: string;
   shell?: string;
   timeout_seconds?: number;
+  timeout_ms?: number;
+  full_description?: boolean;
   cwd?: string;
   process_id?: number;
   poll_interval_seconds?: number;
@@ -264,7 +290,15 @@ export interface ToolCallArguments {
   url?: string;
   source?: string;
   path?: string;
-  patches?: PatchFilePatch[];
+  pattern?: string;
+  file_filter?: string;
+  literal?: boolean;
+  case_insensitive?: boolean;
+  max_results?: number;
+  max_line_chars?: number;
+  max_listed?: number;
+  /** An array, or (as some models send it) a JSON-encoded string of one. */
+  patches?: PatchFilePatch[] | string;
   head_chars?: number;
   tail_chars?: number;
   start?: number;
@@ -434,6 +468,15 @@ async function runReadFile(
   return tool.run(args, signal);
 }
 
+async function runSearchFiles(
+  args: SearchFilesToolArgs,
+  scope: WorkingDirectoryScope | undefined,
+  signal?: AbortSignal
+): Promise<string> {
+  const tool = new SearchFilesTool({ scope });
+  return tool.run(args, signal);
+}
+
 async function runPatchFile(
   args: PatchFileToolArgs,
   output: ToolOutputSink = noopToolOutputSink,
@@ -491,12 +534,25 @@ export const toolRegistry = new Map<string, IToolCommand>([
         if (permErr) return { content: permErr };
         if (!args.command) return { content: '[Error: missing required argument "command"]' };
         let timeoutMs = DEFAULT_TIMEOUT_MS;
+        if (args.timeout_seconds !== undefined && args.timeout_ms !== undefined) {
+          return {
+            content:
+              '[Error: send either "timeout_seconds" or "timeout_ms", not both. Nothing was run.]',
+          };
+        }
         if (args.timeout_seconds !== undefined) {
           const parsedTimeoutMs = parsePositiveTimeoutMs(args.timeout_seconds);
           if (parsedTimeoutMs === null) {
             return {
-              content:
-                '[Error: invalid argument "timeout_seconds" (expected a positive finite number)]',
+              content: `[Error: invalid argument "timeout_seconds" (expected a positive finite number, at most ${MAX_TIMEOUT_SECONDS})]`,
+            };
+          }
+          timeoutMs = parsedTimeoutMs;
+        } else if (args.timeout_ms !== undefined) {
+          const parsedTimeoutMs = parsePositiveTimeoutMsFromMs(args.timeout_ms);
+          if (parsedTimeoutMs === null) {
+            return {
+              content: `[Error: invalid argument "timeout_ms" (expected a positive finite number of milliseconds, at most ${MAX_TIMEOUT_MS})]`,
             };
           }
           timeoutMs = parsedTimeoutMs;
@@ -506,21 +562,20 @@ export const toolRegistry = new Map<string, IToolCommand>([
         if (args.cwd !== undefined && cwd === undefined) {
           return { content: '[Error: invalid argument "cwd" (expected a non-empty string)]' };
         }
-        return {
-          content: await runCommand(
-            args.command,
-            args.shell,
-            timeoutMs,
-            onProgress,
-            cwd,
-            output,
-            context?.workingDirectoryScope,
-            context?.yoloMode ?? false,
-            signal,
-            context?.sessionId,
-            context?.redactSecrets ?? true
-          ),
-        };
+        const commandOutput = await runCommand(
+          args.command,
+          args.shell,
+          timeoutMs,
+          onProgress,
+          cwd,
+          output,
+          context?.workingDirectoryScope,
+          context?.yoloMode ?? false,
+          signal,
+          context?.sessionId,
+          context?.redactSecrets ?? true
+        );
+        return { content: withUnknownArgumentNote(commandOutput, args, runCommandToolSchema) };
       },
     },
   ],
@@ -538,8 +593,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
           const parsedWaitMs = parsePositiveTimeoutMs(args.poll_interval_seconds);
           if (parsedWaitMs === null) {
             return {
-              content:
-                '[Error: invalid argument "poll_interval_seconds" (expected a positive finite number)]',
+              content: `[Error: invalid argument "poll_interval_seconds" (expected a positive finite number, at most ${MAX_TIMEOUT_SECONDS})]`,
             };
           }
           waitMs = parsedWaitMs;
@@ -664,6 +718,31 @@ export const toolRegistry = new Map<string, IToolCommand>([
     },
   ],
   [
+    'search_files',
+    {
+      async execute(args, _onProgress, _output = noopToolOutputSink, context, signal) {
+        const permErr = checkToolAllowed('search_files', context);
+        if (permErr) return { content: permErr };
+        const searchOutput = await runSearchFiles(
+          {
+            pattern: args.pattern,
+            path: args.path,
+            file_filter: args.file_filter,
+            literal: args.literal,
+            case_insensitive: args.case_insensitive,
+            max_results: args.max_results,
+            timeout_seconds: args.timeout_seconds,
+            max_line_chars: args.max_line_chars,
+            max_listed: args.max_listed,
+          },
+          context?.workingDirectoryScope,
+          signal
+        );
+        return { content: withUnknownArgumentNote(searchOutput, args, searchFilesToolSchema) };
+      },
+    },
+  ],
+  [
     'patch_file',
     {
       async execute(args, _onProgress, output = noopToolOutputSink, context, signal) {
@@ -672,20 +751,18 @@ export const toolRegistry = new Map<string, IToolCommand>([
         if (typeof args.path !== 'string' || args.path.trim().length === 0) {
           return { content: '[Error: missing required argument "path"]' };
         }
-        if (!Array.isArray(args.patches) || args.patches.length === 0) {
-          return { content: '[Error: missing required argument "patches"]' };
-        }
-        return {
-          content: await runPatchFile(
-            {
-              path: args.path,
-              patches: args.patches,
-            },
-            output,
-            context?.workingDirectoryScope,
-            signal
-          ),
-        };
+        const parsedPatches = parsePatchesArgument(args.patches);
+        if ('error' in parsedPatches) return { content: parsedPatches.error };
+        const patchOutput = await runPatchFile(
+          {
+            path: args.path,
+            patches: parsedPatches.patches,
+          },
+          output,
+          context?.workingDirectoryScope,
+          signal
+        );
+        return { content: withUnknownArgumentNote(patchOutput, args, patchFileToolSchema) };
       },
     },
   ],

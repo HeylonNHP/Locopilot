@@ -750,20 +750,16 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
         `(If the redirect fails, paste the full redirect URL or just the "code" query parameter into the chat.)\n`
     );
 
-    // Auto-launch the user's default browser.
-    // Cross-platform: use `start` on Windows, `open` on macOS/Linux.
-    const browserLaunchSuccess = await launchBrowser(url);
-    if (!browserLaunchSuccess) {
-      // Fall back to stderr — the user can still copy/paste.
-      console.error(
-        `[mcp-oauth:${this.serverName}] Note: Could not auto-launch browser. Open the URL above manually in your browser.\n`
-      );
-    }
-
     if (this.loopbackPort === 0) {
-      // No listener available (serverless / port probe
-      // failed). The chat UI / API route is expected to
-      // expose the URL and let the user paste the code back.
+      // No listener available (serverless / port allocation failed). Keep
+      // the existing URL-print/manual-paste fallback; no callback can be
+      // captured automatically in this mode.
+      const browserLaunchSuccess = await launchBrowser(url);
+      if (!browserLaunchSuccess) {
+        console.error(
+          `[mcp-oauth:${this.serverName}] Note: Could not auto-launch browser. Open the URL above manually in your browser.\n`
+        );
+      }
       return;
     }
 
@@ -778,13 +774,28 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     }
     this.flowInFlight = true;
 
-    // F9: capture the CSRF nonce now and run the listener in the
-    // background. We deliberately do NOT await: blocking here for up
-    // to 5 minutes is the bug being fixed. The SDK call that invoked
-    // us throws `UnauthorizedError` as soon as we return, which is the
-    // intended `auth_required` transition.
-    const expectedState = this.currentState;
-    void this.runCallbackFlow(expectedState);
+    // Bind the actual callback server before opening the authorization page.
+    // The earlier port probe is only a hint: this bind is authoritative and
+    // prevents sending a user to consent when the callback cannot be received.
+    const callback = this.startCallbackServer(this.currentState, this.flow?.signal);
+    void this.runCallbackFlow(callback.completion);
+    try {
+      await callback.ready;
+    } catch {
+      // runCallbackFlow owns failure reporting and verifier cleanup.
+      return;
+    }
+
+    // F9 remains non-blocking: after the listener is listening (rather than
+    // after the callback completes), let the SDK proceed with auth_required.
+    const browserLaunchSuccess = await launchBrowser(url);
+    if (!browserLaunchSuccess) {
+      // Do not leave a five-minute listener behind when launch itself failed.
+      callback.cancel(new Error('Could not launch browser for OAuth authorization'));
+      console.error(
+        `[mcp-oauth:${this.serverName}] Note: Could not auto-launch browser. Open the URL above manually in your browser.\n`
+      );
+    }
   }
 
   /**
@@ -803,9 +814,11 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
    * captured code runs on this same provider instance and must still
    * resolve this flow's PKCE verifier.
    */
-  private async runCallbackFlow(expectedState: string | null): Promise<void> {
+  private async runCallbackFlow(
+    completion: Promise<{ codeCaptured: boolean }>
+  ): Promise<void> {
     try {
-      const result = await this.startCallbackServer(expectedState, this.flow?.signal);
+      const result = await completion;
       if (!result.codeCaptured) {
         // Timeout / abort / IdP-reported error: no exchange will run,
         // so this flow's verifier is dead weight.
@@ -819,8 +832,11 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       } else {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[mcp-oauth:${this.serverName}] OAuth callback flow failed: ${message}`);
-        await this.clearVerifier();
+        // Report before awaiting verifier cleanup so callers observing only a
+        // macrotask (e.g. a `setImmediate`) see the failure promptly; the
+        // verifier cleanup remains non-fatal cleanup work either way.
         this.flow?.onFailure(message);
+        await this.clearVerifier();
       }
     } finally {
       this.currentState = null;
@@ -891,8 +907,20 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
   private startCallbackServer(
     expectedState: string | null,
     signal?: AbortSignal
-  ): Promise<{ codeCaptured: boolean }> {
-    return new Promise<{ codeCaptured: boolean }>((resolve, reject) => {
+  ): {
+    ready: Promise<void>;
+    completion: Promise<{ codeCaptured: boolean }>;
+    cancel: (error: Error) => void;
+  } {
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+    let readySettled = false;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    let cancelFlow: (error: Error) => void = () => undefined;
+    const completion = new Promise<{ codeCaptured: boolean }>((resolve, reject) => {
       // Track the active server so the cleanup paths can
       // close it exactly once.
       let server: http.Server | null = null;
@@ -912,7 +940,7 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
         if (server !== null) {
           const s = server;
           server = null;
-          s.close();
+          if (s.listening) s.close();
         }
       };
 
@@ -926,9 +954,14 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       const settleReject = (err: Error): void => {
         if (settled) return;
         settled = true;
+        if (!readySettled) {
+          readySettled = true;
+          rejectReady(err);
+        }
         cleanup();
         reject(err);
       };
+      cancelFlow = settleReject;
 
       server = http.createServer((req, res) => {
         try {
@@ -982,14 +1015,23 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
           // `finishAuthAndRetry`) can pick it up.
           stashAuthorizationCode(this.serverName, code, expectedState);
           sendOk(res);
-          // F9: close the listener BEFORE the token exchange runs, so
-          // the port is free (and a retry that re-binds it does not
-          // hit EADDRINUSE). `settleResolve` tears the server down;
-          // `onCode` then hands the flow back to the client manager.
-          setImmediate(() => {
-            settleResolve(true);
-            this.flow?.onCode(code, expectedState);
-          });
+          // F9: close the listener BEFORE the token exchange runs, but
+          // only after the IdP-facing response has actually been flushed,
+          // so any client reading the HTTP reply observes the final status
+          // (e.g. 200) before `onCode` kicks off the next step of the flow.
+          // `settleResolve` / `this.flow.onCode` run on the next tick after
+          // that proof that the response completed delivery.
+          const deliverCode = (): void => {
+            setTimeout(() => {
+              settleResolve(true);
+              this.flow?.onCode(code, expectedState);
+            }, 0);
+          };
+          if (res.writableEnded) {
+            deliverCode();
+          } else {
+            res.on('finish', deliverCode);
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           sendError(res, 500, message);
@@ -1030,13 +1072,30 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       }
 
       server.listen(this.loopbackPort, LOOPBACK_HOST, () => {
-        // Listening. The Promise resolves on first
-        // valid request, on timeout, on error, or on
-        // AbortSignal. (We don't need to do anything
-        // here — the request handler will drive the
-        // resolve/reject path.)
+        // This is the readiness barrier: redirectToAuthorization must not
+        // launch the browser until the actual callback port is claimed.
+        if (!readySettled) {
+          readySettled = true;
+          resolveReady();
+        }
       });
     });
+    // Avoid an unhandled readiness rejection when callers are only observing
+    // completion (the redirect path also explicitly awaits readiness).
+    void ready.catch(() => undefined);
+    return {
+      ready,
+      completion,
+      cancel: (error) => {
+        if (!readySettled) {
+          readySettled = true;
+          rejectReady(error);
+        }
+        // settleReject is captured inside the completion executor, so use
+        // the server error pathway through the cancellation closure below.
+        cancelFlow(error);
+      },
+    };
   }
 
   async invalidateCredentials(

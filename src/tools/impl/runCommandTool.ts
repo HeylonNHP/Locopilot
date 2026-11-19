@@ -14,6 +14,7 @@ import {
   RUN_COMMAND_TIMEOUT_MS,
   RUN_OUTPUT_SWEEP_INTERVAL_MS,
 } from '@/constants';
+import { MAX_TIMEOUT_MS, MAX_TIMEOUT_SECONDS } from '@/tools/commandHelpers';
 import { isRunOutputSpillEnabled, OutputSpool, type SpoolLimits } from '@/tools/outputSpool';
 import { killProcessTree } from '@/tools/processTree';
 import {
@@ -22,6 +23,7 @@ import {
   type OutputScope,
   runOutputDirectory,
 } from '@/tools/runCommandOutputStore';
+import { availableShells, resolveShell } from '@/tools/shells';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import {
   getAgentWorkingDirectory,
@@ -33,6 +35,14 @@ import {
 const isWindows = os.platform() === 'win32';
 
 const APPROVAL_SENTENCE = 'The user will be asked to approve the command before it runs.';
+
+/**
+ * What the capture does to the output before the model reads it. The setting
+ * that switches the redaction is the user's ("Redact Secrets in Command
+ * Output"), so the standing text says what CAN be redacted and the request
+ * adds whether it is on now (see {@link withRunCommandRedactionState}).
+ */
+const OUTPUT_CLEANING_SENTENCE = String.raw`The output is cleaned before you see it: terminal colour and cursor control sequences and carriage returns (\r) are removed, and when the user's "Redact secrets in command output" setting is on, secrets are replaced with [REDACTED]. That covers API keys and tokens (OpenAI, GitHub, GitLab, Slack, AWS, Google), bearer tokens and Authorization headers, JSON web tokens, private key blocks, passwords in URLs, and values assigned to names like PASSWORD, SECRET, TOKEN and API_KEY in environment lines, query strings and YAML. A [REDACTED] in the output is not the real value.`;
 
 /**
  * Bounds of the capture that backs a `run_command` result. The inline budget
@@ -48,18 +58,26 @@ const SPOOL_LIMITS: SpoolLimits = {
 
 export const runCommandToolSchema: ToolSchema = {
   name: 'run_command',
-  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns the captured stdout/stderr. A large output is kept in a file: the result shows an excerpt of it and the line range to read with read_file(path, start_line, end_line).`,
+  description: `Executes a terminal command in the specified shell on the host machine. ${APPROVAL_SENTENCE} Returns the captured stdout/stderr. ${OUTPUT_CLEANING_SENTENCE} A large output is kept in a file: the result shows an excerpt of it and the line range to read with read_file(path, start_line, end_line).`,
   parameters: {
     type: 'object',
     properties: {
       command: { type: 'string', description: 'The shell command to execute.' },
       shell: {
         type: 'string',
-        description: `Shell to use. Defaults to '${defaultShell()}'. Supported values: bash, sh, zsh, powershell, cmd.`,
+        description: `Shell to use. Defaults to '${defaultShell()}'. Available on this machine: ${availableShells()
+          .map((shell) => shell.name)
+          .join(
+            ', '
+          )}. The command runs in exactly the shell you name; a shell that is not in this list is refused with an error, never replaced by another.`,
       },
       timeout_seconds: {
         type: 'number',
-        description: 'How many seconds to wait before returning partial output. Defaults to 30.',
+        description: `How many seconds to wait before returning partial output. Defaults to 30. The command is not stopped when the wait ends: you get what it has printed so far and a process_id for check_process_output. There is no other limit, up to ${MAX_TIMEOUT_SECONDS} seconds (the longest wait the runtime can hold); a larger value is refused, not shortened. Use this OR timeout_ms, not both.`,
+      },
+      timeout_ms: {
+        type: 'number',
+        description: `The same wait in milliseconds (always milliseconds, whatever the value), up to ${MAX_TIMEOUT_MS}. Use this OR timeout_seconds, not both.`,
       },
       cwd: {
         type: 'string',
@@ -81,8 +99,7 @@ export const checkProcessOutputToolSchema: ToolSchema = {
       process_id: { type: 'number', description: 'The process_id returned by run_command.' },
       poll_interval_seconds: {
         type: 'number',
-        description:
-          'Optional seconds to wait before sampling stdout/stderr again. Use a higher value when the command is expected to run for a long time.',
+        description: `Optional seconds to wait before sampling stdout/stderr again, up to ${MAX_TIMEOUT_SECONDS}. Use a higher value when the command is expected to run for a long time.`,
       },
     },
     required: ['process_id'],
@@ -169,43 +186,21 @@ export function defaultShell(): string {
 }
 
 /**
- * Determines the effective shell to use, accounting for platform-specific overrides.
+ * Returns spawning configuration (binary and stdin flags) for a resolved shell.
  */
-function getEffectiveShell(
-  requestedShell?: string,
-  output: ToolOutputSink = noopToolOutputSink
-): string {
-  const shell = (requestedShell || defaultShell()).toLowerCase();
-  if (isWindows) {
-    // If the model requested a POSIX-style shell on Windows, override to
-    // powershell and warn so the model understands the environment.
-    const posixShells = new Set(['bash', 'sh', 'zsh', 'ksh', 'fish']);
-    if (posixShells.has(shell) && shell !== 'powershell') {
-      output.writeLine(
-        `Warning: requested shell '${shell}' is not native on Windows; using 'powershell' instead.`
-      );
-      return 'powershell';
-    }
-  }
-  return shell;
-}
-
-/**
- * Returns spawning configuration (binary and stdin flags) for a given shell.
- */
-function getShellConfig(shell: string): { bin: string; args: string[] } {
-  if (shell === 'powershell') {
-    return { bin: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', '-'] };
+function getShellConfig(shell: { name: string; bin: string }): { bin: string; args: string[] } {
+  if (shell.name === 'powershell') {
+    return { bin: shell.bin, args: ['-NoProfile', '-NonInteractive', '-Command', '-'] };
   }
 
   // cmd.exe needs explicit flags for predictable stdin-driven script execution.
   // /D disables AutoRun; /Q turns echo off for cleaner output.
-  if (shell === 'cmd' || shell === 'cmd.exe') {
-    return { bin: 'cmd.exe', args: ['/D', '/Q'] };
+  if (shell.name === 'cmd') {
+    return { bin: shell.bin, args: ['/D', '/Q'] };
   }
 
   // bash, sh, zsh, fish, etc. can read commands directly from stdin.
-  return { bin: shell, args: [] };
+  return { bin: shell.bin, args: [] };
 }
 
 function appendWorkingDirectoryProbe(
@@ -213,7 +208,7 @@ function appendWorkingDirectoryProbe(
   shell: string,
   workdirMarker: string
 ): string {
-  if (shell === 'cmd' || shell === 'cmd.exe') {
+  if (shell === 'cmd') {
     // cmd.exe: run the probe, then branch on the runtime errorlevel so the
     // final exit code reflects whether the *command* failed (0 vs non-zero).
     // `echo` does not modify errorlevel, so the `if errorlevel` check below
@@ -248,7 +243,10 @@ function appendWorkingDirectoryProbe(
   // shell's exit status was always the probe's (0) — every command looked
   // successful. Using a newline (rather than `;`) also avoids a bash syntax
   // error when the command itself ends in `&`.
-  return `${command}\n__lc_exit=$?\nprintf '%s\n' "${workdirMarker}$PWD"\nexit $__lc_exit`;
+  // On Windows a POSIX shell's $PWD is an MSYS path (/c/git/...), which the
+  // tool cannot use as a working directory; `pwd -W` prints the Windows path.
+  const pwd = isWindows ? '$(pwd -W 2>/dev/null || pwd)' : '$PWD';
+  return `${command}\n__lc_exit=$?\nprintf '%s\n' "${workdirMarker}${pwd}"\nexit $__lc_exit`;
 }
 
 /**
@@ -394,7 +392,9 @@ export async function runCommand(
   sessionId?: number,
   redactSecrets: boolean = true
 ): Promise<string> {
-  const effectiveShell = getEffectiveShell(shell, output);
+  const resolvedShell = resolveShell(shell, defaultShell());
+  if (!resolvedShell.ok) return resolvedShell.error;
+  const effectiveShell = resolvedShell.name;
   const approvedYolo = yoloMode;
   const trimmedCwd = cwd?.trim();
   const workingDirectory = trimmedCwd
@@ -457,7 +457,7 @@ export async function runCommand(
   };
   store.registry.set(processId, entry);
 
-  const config = getShellConfig(effectiveShell);
+  const config = getShellConfig(resolvedShell);
 
   // The abort handler has to be registered BEFORE the spawn. `spawn` installs
   // Node's own abort listener, and that listener emits the child's 'error'
@@ -744,10 +744,41 @@ export async function checkProcessOutput(
 }
 
 /**
+ * The sentence that says whether secret redaction is on for this conversation.
+ * The user can toggle it in Settings, so it is added per request, not kept in
+ * the standing schema.
+ */
+export function describeRedactionState(redactSecrets: boolean): string {
+  return redactSecrets
+    ? 'Secret redaction is currently ON for this conversation: matching values in the output are replaced with [REDACTED].'
+    : 'Secret redaction is currently OFF for this conversation: the output is raw, secrets included.';
+}
+
+/**
+ * Returns the tool list with the run_command description saying whether secret
+ * redaction is on. Other tools, and the list itself, are left as they are.
+ */
+export function withRunCommandRedactionState<
+  T extends { function: { name: string; description: string } },
+>(tools: readonly T[], redactSecrets: boolean): T[] {
+  return tools.map((tool) =>
+    tool.function.name === runCommandToolSchema.name
+      ? {
+          ...tool,
+          function: {
+            ...tool.function,
+            description: `${tool.function.description} ${describeRedactionState(redactSecrets)}`,
+          },
+        }
+      : tool
+  );
+}
+
+/**
  * Returns the run_command and check_process_output tool section for the system prompt.
  */
 export function getToolPrompt(isYolo: boolean): string {
-  const cmdLine = `1. ${runCommandToolSchema.name}(command, shell?, timeout_seconds?, cwd?)`;
+  const cmdLine = `1. ${runCommandToolSchema.name}(command, shell?, timeout_seconds? | timeout_ms?, cwd?)`;
   const cmdDesc = runCommandToolSchema.description.replace(
     APPROVAL_SENTENCE,
     isYolo

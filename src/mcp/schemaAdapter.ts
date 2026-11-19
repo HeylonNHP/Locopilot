@@ -213,12 +213,17 @@ export async function buildMCPToolStubs(): Promise<MCPToolStub[]> {
  * path to the real schema.
  */
 export function mcpToolStubToOllamaTool(stub: MCPToolStub): ToolDefinition {
-  const description = (stub.description ?? '').slice(0, MAX_STUB_DESCRIPTION_CHARS);
+  const full = stub.description ?? '';
+  // A cut is marked, so a description that just ends is not read as complete.
+  const description =
+    full.length > MAX_STUB_DESCRIPTION_CHARS
+      ? `${full.slice(0, MAX_STUB_DESCRIPTION_CHARS)}…`
+      : full;
   return {
     type: 'function',
     function: {
       name: stub.namespacedName,
-      description: `[MCP:${stub.server}] ${description} — call search_mcp_tools(name="${stub.namespacedName}") for full schema.`,
+      description: `[MCP:${stub.server}] ${description} — call search_mcp_tools(name="${stub.namespacedName}") for the full schema (add full_description=true for the whole description).`,
       parameters: { type: 'object', properties: {}, required: [] },
     },
   };

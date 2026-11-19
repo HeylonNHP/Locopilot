@@ -8,7 +8,7 @@ import { resolveAgentPath, type WorkingDirectoryScope } from '@/tools/workingDir
 export const writeFileToolSchema: ToolSchema = {
   name: 'write_file',
   description:
-    'Writes text to a file on the host filesystem. Supports overwrite, append, and create-only semantics. If a target file already exists and overwrite is requested, the tool will replace it immediately. Use mode to control behavior: overwrite (create or replace), append (add to existing or create), or create (only if missing).',
+    'Writes text to a file on the host filesystem. Supports overwrite, append, and create-only semantics. When mode is left out it is overwrite: an existing file is replaced immediately, with no check and no backup. Missing parent folders are created. Use mode to control behavior: overwrite (create or replace), append (add to existing or create), or create (only if missing).',
   parameters: {
     type: 'object',
     properties: {
@@ -21,7 +21,8 @@ export const writeFileToolSchema: ToolSchema = {
       mode: {
         type: 'string',
         description:
-          'The write mode: overwrite (create or replace), append (add to existing or create), or create (only if the file does not already exist).',
+          'The write mode. Defaults to overwrite when left out. overwrite: create the file or replace it entirely. append: add to the end of the file, creating it if missing. create: write only if the file does not already exist, and report a warning (writing nothing) if it does.',
+        enum: ['overwrite', 'append', 'create'],
       },
     },
     required: ['path', 'content'],

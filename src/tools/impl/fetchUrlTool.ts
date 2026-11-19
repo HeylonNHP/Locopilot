@@ -3,7 +3,7 @@ import type { ToolSchema } from '@/tools/tools';
 export const fetchUrlToolSchema: ToolSchema = {
   name: 'fetch_url',
   description:
-    'Fetches content from a specific URL and returns extracted page text. Use this for known URLs, not for searching. Useful for retrieving article content, documentation, or specific web pages.',
+    'Fetches content from a specific URL and returns extracted page text. Use this for known URLs, not for searching. Useful for retrieving article content, documentation, or specific web pages. A page longer than the per-page character limit set by the user is replaced by a summary written by a model (or, if that fails, cut to its first characters) unless full_content is true; a note under the page says when that happened. The page is always read live, never from the web_search cache.',
   parameters: {
     type: 'object',
     properties: {

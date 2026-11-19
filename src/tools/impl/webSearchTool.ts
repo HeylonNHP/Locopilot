@@ -10,6 +10,7 @@ import {
   DEFAULT_WEB_REQUEST_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES,
   WEB_SEARCH_MAX_CONCURRENT_SEARCHES,
+  WEB_SEARCH_PAGE_CACHE_TTL_MS,
   WEB_SEARCH_QUERY_START_STAGGER_MS,
 } from '@/constants';
 import { abortableSleep } from '@/services/retryable';
@@ -29,23 +30,28 @@ export const webSearchToolSchema: ToolSchema = {
     'Do not rely solely on your training knowledge — DuckDuckGo gives you the live web. ' +
     'When using search results, ALWAYS cite the full URL inline immediately after the relevant sentence(s). ' +
     'Do NOT use generic "result_N" placeholders. ' +
-    'Use use_playwright=true for JavaScript-heavy pages (SPAs, sites requiring client-side rendering) where standard fetching misses content.',
+    'Use use_playwright=true for JavaScript-heavy pages (SPAs, sites requiring client-side rendering) where standard fetching misses content. ' +
+    "A page longer than the user's per-page character limit is replaced by a summary written by a model (or, if that fails, cut to its first characters); a note under the page says which. " +
+    `A page already fetched by web_search in the last ${Math.round(WEB_SEARCH_PAGE_CACHE_TTL_MS / 60_000)} minutes may come from a cache, and a note says so. ` +
+    'For the exact, complete text of a page, call fetch_url with full_content=true.',
   parameters: {
     type: 'object',
     properties: {
       prompt: {
         type: 'string',
         description:
-          'User request text for deriving search queries if explicit queries are not supplied.',
+          'User request text for deriving search queries if explicit queries are not supplied. The whole text is searched as one query, and it is also split at line breaks, sentence punctuation, commas, semicolons, "and" and "or" into further queries (up to the query limit).',
       },
       queries: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Optional list of explicit search queries to run.',
+        description:
+          'Optional list of explicit search queries to run. Identical queries are run once. Queries beyond the query limit (see max_queries) are not run; the result lists them under queries_not_run.',
       },
       max_queries: {
         type: 'number',
-        description: 'Maximum number of queries to run for this call.',
+        description:
+          "Maximum number of queries to run for this call, 1 to 10. When left out, the user's configured limit is used (3 unless they changed it in Settings); the result reports the limit used as query_limit.",
       },
       use_playwright: {
         type: 'boolean',
@@ -129,6 +135,35 @@ export interface WebSearchSettings {
    */
   apiKey?: string;
   output?: ToolOutputSink;
+}
+
+/** The queries a call will run, and what became of the ones that will not. */
+export interface QueryPlan {
+  queries: string[];
+  /** Where the queries came from: the model's own list, or the prompt text. */
+  source: 'explicit' | 'prompt';
+  /** Explicit queries that were identical to an earlier one. */
+  duplicatesRemoved: string[];
+  /** Explicit queries over the query limit, so not run. */
+  notRun: string[];
+}
+
+/** The result lines that say what happened to the requested queries. */
+export function describeQueryPlan(plan: QueryPlan, limit: number): string[] {
+  const lines: string[] = [];
+  if (plan.source === 'prompt') {
+    lines.push('queries_derived_from_prompt: true');
+  }
+  if (plan.duplicatesRemoved.length > 0) {
+    lines.push(`duplicate_queries_removed: ${JSON.stringify(plan.duplicatesRemoved)}`);
+  }
+  if (plan.notRun.length > 0) {
+    lines.push(
+      `queries_not_run (over the limit of ${limit}): ${JSON.stringify(plan.notRun)}`,
+      'To run them, search again with just these, or raise max_queries.'
+    );
+  }
+  return lines;
 }
 
 export interface WebSearchToolArgs {
@@ -236,7 +271,8 @@ export class WebSearchTool {
       );
       const effectiveResultsPerQuery = this.settings.resultsPerQuery;
 
-      const queries = this.generateQueries(args, effectiveMaxQueries);
+      const plan = this.planQueries(args, effectiveMaxQueries);
+      const queries = plan.queries;
       if (queries.length === 0) {
         return '[Web search error: no prompt/queries were provided.]';
       }
@@ -349,6 +385,8 @@ export class WebSearchTool {
         'web_search_results:',
         'REMINDER: When citing these results, use the REAL URLs (e.g. https://example.com) immediately after the relevant text. Do NOT use result_N placeholders or special tags.',
         `queries_used: ${queries.length}`,
+        `query_limit: ${effectiveMaxQueries}`,
+        ...describeQueryPlan(plan, effectiveMaxQueries),
         `results_per_query: ${effectiveResultsPerQuery}`,
         '',
         querySections.join('\n\n---\n\n'),
@@ -380,7 +418,10 @@ export class WebSearchTool {
     signal: AbortSignal | undefined
   ): Promise<QueryOutcome> {
     try {
-      if (queryIndex > 0 && (await abortableSleep(queryIndex * WEB_SEARCH_QUERY_START_STAGGER_MS, signal))) {
+      if (
+        queryIndex > 0 &&
+        (await abortableSleep(queryIndex * WEB_SEARCH_QUERY_START_STAGGER_MS, signal))
+      ) {
         throw new DOMException('Aborted', 'AbortError');
       }
       this.progress(
@@ -413,13 +454,25 @@ export class WebSearchTool {
     }
   }
 
-  private generateQueries(args: WebSearchToolArgs, maxQueries: number): string[] {
+  private planQueries(args: WebSearchToolArgs, maxQueries: number): QueryPlan {
     const provided = (args.queries ?? []).map((q) => q.trim()).filter((q) => q.length > 0);
 
     if (provided.length > 0) {
-      return [...new Set(provided)].slice(0, maxQueries);
+      const unique = [...new Set(provided)];
+      const duplicates = provided.filter((query, index) => provided.indexOf(query) !== index);
+      return {
+        queries: unique.slice(0, maxQueries),
+        source: 'explicit',
+        duplicatesRemoved: [...new Set(duplicates)],
+        notRun: unique.slice(maxQueries),
+      };
     }
 
+    const derived = this.deriveQueriesFromPrompt(args, maxQueries);
+    return { queries: derived, source: 'prompt', duplicatesRemoved: [], notRun: [] };
+  }
+
+  private deriveQueriesFromPrompt(args: WebSearchToolArgs, maxQueries: number): string[] {
     const prompt = (args.prompt ?? '').trim();
     if (!prompt) return [];
 

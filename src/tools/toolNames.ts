@@ -19,6 +19,7 @@ export type ToolName =
   | 'fetch_url'
   | 'fetch_image'
   | 'read_file'
+  | 'search_files'
   | 'patch_file'
   | 'write_file'
   | 'run_subagents'
@@ -37,6 +38,7 @@ export const TOOL_NAMES = [
   'fetch_url',
   'fetch_image',
   'read_file',
+  'search_files',
   'patch_file',
   'write_file',
   'run_subagents',

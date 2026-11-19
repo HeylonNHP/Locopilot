@@ -31,6 +31,12 @@ import {
   parseMCPToolName,
 } from '@/mcp';
 
+/**
+ * A tool's description is cut to this many characters in the result unless
+ * the caller asks for `full_description`. The cut is always marked.
+ */
+export const MCP_DESCRIPTION_CUT_CHARS = 240;
+
 function isPlainString(value: unknown): value is string {
   return typeof value === 'string';
 }
@@ -85,6 +91,7 @@ export const searchMcpToolsToolSchema: ToolSchema = {
     'Use this before calling an MCP tool when only the tool name is available ' +
     '(the stub schemas from mcp__<server>__<tool> do not include the full parameter list). ' +
     'Pass either a single full name (e.g. "mcp__github__list_issues") or a server name to return all tools from that server. ' +
+    `Each description in the result is cut to ${MCP_DESCRIPTION_CUT_CHARS} characters, and a cut is marked in the result; set full_description to true to get descriptions in full. ` +
     'No approval is required — this tool only reads schema metadata, it does not invoke anything.',
   parameters: {
     type: 'object',
@@ -99,6 +106,10 @@ export const searchMcpToolsToolSchema: ToolSchema = {
         description:
           'Optional: server name. If provided (and "name" is not), every tool from that server is returned.',
       },
+      full_description: {
+        type: 'boolean',
+        description: `Optional, default false. Descriptions are cut to ${MCP_DESCRIPTION_CUT_CHARS} characters (the result says when one was cut); set true to get each description in full.`,
+      },
     },
     required: [],
   },
@@ -110,10 +121,11 @@ export function getToolPrompt(): string {
   const nameDesc = props.name?.description ?? '';
   const serverDesc = props.server?.description ?? '';
   return (
-    `14. ${s.name}(name?, server?)\n` +
+    `14. ${s.name}(name?, server?, full_description?)\n` +
     `   ${s.description}\n\n` +
     `   - name: ${nameDesc}\n` +
     `   - server: ${serverDesc}\n` +
+    `   - full_description: ${props.full_description?.description ?? ''}\n` +
     `   At least one of "name" or "server" is required.\n`
   );
 }
@@ -129,10 +141,17 @@ interface FormattedToolBlock {
  * Markdown headers, no code fences around the JSON Schema) so the
  * model can parse it cleanly.
  */
-function formatToolBlock(stub: MCPToolStub, tool: MCPToolInfo | undefined): FormattedToolBlock {
+function formatToolBlock(
+  stub: MCPToolStub,
+  tool: MCPToolInfo | undefined,
+  fullDescription = false
+): FormattedToolBlock {
   const description =
     tool?.description ?? stub.description ?? '(no description provided by the server)';
-  const truncatedDesc = description.length > 240 ? `${description.slice(0, 240)}…` : description;
+  const cut = !fullDescription && description.length > MCP_DESCRIPTION_CUT_CHARS;
+  const shownDescription = cut
+    ? `${description.slice(0, MCP_DESCRIPTION_CUT_CHARS)}… [description cut at ${MCP_DESCRIPTION_CUT_CHARS} of ${description.length} characters; call search_mcp_tools again with full_description=true for the rest]`
+    : description;
 
   const params = tool?.inputSchema ?? { type: 'object' as const };
   let paramsText: string;
@@ -145,7 +164,7 @@ function formatToolBlock(stub: MCPToolStub, tool: MCPToolInfo | undefined): Form
   const text = [
     `Tool: ${stub.namespacedName}`,
     `Server: ${stub.server}`,
-    `Description: ${truncatedDesc}`,
+    `Description: ${shownDescription}`,
     `Parameters (JSON Schema):`,
     paramsText,
     '',
@@ -206,6 +225,13 @@ export async function runSearchMCPTools(
     };
   }
 
+  if (raw.full_description !== undefined && typeof raw.full_description !== 'boolean') {
+    return {
+      content: '[Error: search_mcp_tools: "full_description" must be true or false]',
+    };
+  }
+  const fullDescription = raw.full_description === true;
+
   const nameErr = validateNameArg(raw.name);
   if (nameErr) return { content: nameErr };
   const serverErr = validateServerArg(raw.server);
@@ -245,7 +271,7 @@ export async function runSearchMCPTools(
         content: `[Error: search_mcp_tools: tool "${name}" not found on server "${parsed.serverName}". Available tools: ${liveToolNames || '(none)'}. Use /mcp list to refresh.]`,
       };
     }
-    const block = formatToolBlock(lookup.stub, lookup.tool);
+    const block = formatToolBlock(lookup.stub, lookup.tool, fullDescription);
     return { content: block.text };
   }
 
@@ -286,7 +312,7 @@ export async function runSearchMCPTools(
 
   const blocks: string[] = stubsForServer.map((stub) => {
     const full = handle.tools.find((t) => t.name === stub.name);
-    return formatToolBlock(stub, full).text;
+    return formatToolBlock(stub, full, fullDescription).text;
   });
 
   return {

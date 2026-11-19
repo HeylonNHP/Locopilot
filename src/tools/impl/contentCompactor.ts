@@ -249,6 +249,37 @@ export function buildTruncationNote(result: CompactionResult): string {
   );
 }
 
+/**
+ * The sentence appended to a page that was replaced by a model-written summary,
+ * so the LLM does not read the summary as the page's own text. (A page that
+ * was cut instead is marked by {@link buildTruncationNote}.)
+ */
+export function buildSummaryNote(result: CompactionResult): string {
+  return (
+    `[Note: this page's ${result.originalLength} characters were over the ${result.limit}-character limit, so the text above is a summary written by a model, not the page itself. ` +
+    `Details may be missing or reworded; call fetch_url with this page's URL and full_content=true for the exact text.]`
+  );
+}
+
+/**
+ * The page text the model reads: the compaction's text, followed by the note
+ * that says what was done to it. A summary and a cut page both read like the
+ * page itself, so each carries a note; a page that fitted carries none.
+ */
+export function annotateCompactedText(result: CompactionResult): string {
+  switch (result.outcome) {
+    case 'truncated': {
+      return `${result.text}\n\n${buildTruncationNote(result)}`;
+    }
+    case 'compacted': {
+      return `${result.text}\n\n${buildSummaryNote(result)}`;
+    }
+    default: {
+      return result.text;
+    }
+  }
+}
+
 /** A compaction request that ran past `WEB_COMPACTION_REQUEST_TIMEOUT_MS`. */
 class CompactionTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -479,10 +510,12 @@ export class ContentCompactor {
     };
     try {
       const text = await this.streamCompactionResponse(requestParams);
-      if (deadline.aborted && !signal?.aborted) throw new CompactionTimeoutError(this.requestTimeoutMs);
+      if (deadline.aborted && !signal?.aborted)
+        throw new CompactionTimeoutError(this.requestTimeoutMs);
       return text;
     } catch (err) {
-      if (deadline.aborted && !signal?.aborted) throw new CompactionTimeoutError(this.requestTimeoutMs);
+      if (deadline.aborted && !signal?.aborted)
+        throw new CompactionTimeoutError(this.requestTimeoutMs);
       throw err;
     }
   }
