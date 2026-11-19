@@ -15,7 +15,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { findUnknownArguments, withUnknownArgumentNote } from '../src/tools/argumentCheck.ts';
-import { parsePositiveTimeoutMsFromMs } from '../src/tools/commandHelpers.ts';
+import {
+  MAX_TIMEOUT_MS,
+  MAX_TIMEOUT_SECONDS,
+  parsePositiveTimeoutMs,
+  parsePositiveTimeoutMsFromMs,
+} from '../src/tools/commandHelpers.ts';
 import { parsePatchesArgument, patchFileToolSchema } from '../src/tools/impl/patchFileTool.ts';
 import { enterRequestScope, runCommandToolSchema } from '../src/tools/impl/runCommandTool.ts';
 
@@ -138,17 +143,54 @@ describe('parsePositiveTimeoutMsFromMs', () => {
     [1500.9, 1500],
     [120, 120], // always milliseconds: no unit guessing for small values
     [1, 1],
-    [99_999_999, 3_600_000], // the same ceiling as timeout_seconds
+    [99_999_999, 99_999_999], // no cap at one hour: the value is used as given
+    [7_200_000, 7_200_000], // two hours
+    [MAX_TIMEOUT_MS, MAX_TIMEOUT_MS], // the runtime's own timer limit is allowed
   ])('%j ms -> %d ms', (raw, expected) => {
     expect(parsePositiveTimeoutMsFromMs(raw)).toBe(expected);
   });
 
-  test.each([0, -5, 0.5, 'soon', '60000', '', null, undefined, {}, Number.NaN, Infinity])(
-    '%j is rejected',
+  test.each([
+    0,
+    -5,
+    0.5,
+    'soon',
+    '60000',
+    '',
+    null,
+    undefined,
+    {},
+    Number.NaN,
+    Infinity,
+    MAX_TIMEOUT_MS + 1, // above the timer limit: refused, never shortened
+  ])('%j is rejected', (raw) => {
+    expect(parsePositiveTimeoutMsFromMs(raw)).toBeNull();
+  });
+});
+
+describe('parsePositiveTimeoutMs (seconds)', () => {
+  test.each([
+    [30, 30_000],
+    [3600, 3_600_000],
+    [7200, 7_200_000], // two hours: the old one-hour cap is gone
+    [86_400, 86_400_000], // a day
+    [MAX_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS * 1000],
+    [0.5, 500],
+  ])('%j s -> %d ms', (raw, expected) => {
+    expect(parsePositiveTimeoutMs(raw)).toBe(expected);
+  });
+
+  test.each([0, -1, 'soon', null, Number.NaN, Infinity, MAX_TIMEOUT_SECONDS + 1])(
+    '%j is rejected, not shortened',
     (raw) => {
-      expect(parsePositiveTimeoutMsFromMs(raw)).toBeNull();
+      expect(parsePositiveTimeoutMs(raw)).toBeNull();
     }
   );
+
+  test('the ceiling is the timer limit and nothing smaller', () => {
+    expect(MAX_TIMEOUT_MS).toBe(2 ** 31 - 1);
+    expect(MAX_TIMEOUT_SECONDS).toBe(2_147_483);
+  });
 });
 
 describe('run_command timeout arguments', () => {
@@ -177,6 +219,29 @@ describe('run_command timeout arguments', () => {
     const { content } = await run({ command: echo, timeout_seconds: 60 });
     expect(content).toContain('12345');
     expect(content).not.toContain('[Note');
+  });
+
+  test('a timeout over an hour is accepted as given', async () => {
+    const { content } = await run({ command: echo, timeout_seconds: 7200 });
+    expect(content).toContain('12345');
+    expect(content).not.toContain('invalid argument');
+  });
+
+  test('a timeout over the timer limit is refused and the message states the limit', async () => {
+    const seconds = await run({ command: echo, timeout_seconds: MAX_TIMEOUT_SECONDS + 1 });
+    expect(seconds.content).toContain('invalid argument "timeout_seconds"');
+    expect(seconds.content).toContain(`at most ${MAX_TIMEOUT_SECONDS}`);
+    expect(seconds.content).not.toContain('12345');
+    const ms = await run({ command: echo, timeout_ms: MAX_TIMEOUT_MS + 1 });
+    expect(ms.content).toContain(`at most ${MAX_TIMEOUT_MS}`);
+  });
+
+  test('the schema states the one real limit and that a longer value is refused', () => {
+    const props = runCommandToolSchema.parameters.properties;
+    expect(props.timeout_seconds.description).toContain(String(MAX_TIMEOUT_SECONDS));
+    expect(props.timeout_seconds.description).toMatch(/refused, not shortened/);
+    expect(props.timeout_ms.description).toContain(String(MAX_TIMEOUT_MS));
+    expect(props.timeout_seconds.description).not.toMatch(/3600|one hour|1 hour/i);
   });
 
   test('sending both is refused, and nothing is run', async () => {

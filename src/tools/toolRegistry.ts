@@ -27,6 +27,8 @@ import type { WorkingDirectoryScope } from './workingDirectory';
 
 import { withUnknownArgumentNote } from './argumentCheck';
 import {
+  MAX_TIMEOUT_MS,
+  MAX_TIMEOUT_SECONDS,
   parsePositiveInteger,
   parsePositiveTimeoutMs,
   parsePositiveTimeoutMsFromMs,
@@ -520,8 +522,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
           const parsedTimeoutMs = parsePositiveTimeoutMs(args.timeout_seconds);
           if (parsedTimeoutMs === null) {
             return {
-              content:
-                '[Error: invalid argument "timeout_seconds" (expected a positive finite number)]',
+              content: `[Error: invalid argument "timeout_seconds" (expected a positive finite number, at most ${MAX_TIMEOUT_SECONDS})]`,
             };
           }
           timeoutMs = parsedTimeoutMs;
@@ -529,8 +530,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
           const parsedTimeoutMs = parsePositiveTimeoutMsFromMs(args.timeout_ms);
           if (parsedTimeoutMs === null) {
             return {
-              content:
-                '[Error: invalid argument "timeout_ms" (expected a positive finite number of milliseconds)]',
+              content: `[Error: invalid argument "timeout_ms" (expected a positive finite number of milliseconds, at most ${MAX_TIMEOUT_MS})]`,
             };
           }
           timeoutMs = parsedTimeoutMs;
@@ -571,8 +571,7 @@ export const toolRegistry = new Map<string, IToolCommand>([
           const parsedWaitMs = parsePositiveTimeoutMs(args.poll_interval_seconds);
           if (parsedWaitMs === null) {
             return {
-              content:
-                '[Error: invalid argument "poll_interval_seconds" (expected a positive finite number)]',
+              content: `[Error: invalid argument "poll_interval_seconds" (expected a positive finite number, at most ${MAX_TIMEOUT_SECONDS})]`,
             };
           }
           waitMs = parsedWaitMs;

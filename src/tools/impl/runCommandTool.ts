@@ -14,6 +14,7 @@ import {
   RUN_COMMAND_TIMEOUT_MS,
   RUN_OUTPUT_SWEEP_INTERVAL_MS,
 } from '@/constants';
+import { MAX_TIMEOUT_MS, MAX_TIMEOUT_SECONDS } from '@/tools/commandHelpers';
 import { isRunOutputSpillEnabled, OutputSpool, type SpoolLimits } from '@/tools/outputSpool';
 import { killProcessTree } from '@/tools/processTree';
 import {
@@ -64,13 +65,11 @@ export const runCommandToolSchema: ToolSchema = {
       },
       timeout_seconds: {
         type: 'number',
-        description:
-          'How many seconds to wait before returning partial output. Defaults to 30. Use this OR timeout_ms, not both.',
+        description: `How many seconds to wait before returning partial output. Defaults to 30. The command is not stopped when the wait ends: you get what it has printed so far and a process_id for check_process_output. There is no other limit, up to ${MAX_TIMEOUT_SECONDS} seconds (the longest wait the runtime can hold); a larger value is refused, not shortened. Use this OR timeout_ms, not both.`,
       },
       timeout_ms: {
         type: 'number',
-        description:
-          'The same wait in milliseconds (always milliseconds, whatever the value). Use this OR timeout_seconds, not both.',
+        description: `The same wait in milliseconds (always milliseconds, whatever the value), up to ${MAX_TIMEOUT_MS}. Use this OR timeout_seconds, not both.`,
       },
       cwd: {
         type: 'string',
@@ -92,8 +91,7 @@ export const checkProcessOutputToolSchema: ToolSchema = {
       process_id: { type: 'number', description: 'The process_id returned by run_command.' },
       poll_interval_seconds: {
         type: 'number',
-        description:
-          'Optional seconds to wait before sampling stdout/stderr again. Use a higher value when the command is expected to run for a long time.',
+        description: `Optional seconds to wait before sampling stdout/stderr again, up to ${MAX_TIMEOUT_SECONDS}. Use a higher value when the command is expected to run for a long time.`,
       },
     },
     required: ['process_id'],
