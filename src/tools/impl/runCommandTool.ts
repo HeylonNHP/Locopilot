@@ -22,6 +22,7 @@ import {
   type OutputScope,
   runOutputDirectory,
 } from '@/tools/runCommandOutputStore';
+import { availableShells, resolveShell } from '@/tools/shells';
 import { noopToolOutputSink, type ToolOutputSink } from '@/tools/toolOutput';
 import {
   getAgentWorkingDirectory,
@@ -55,7 +56,11 @@ export const runCommandToolSchema: ToolSchema = {
       command: { type: 'string', description: 'The shell command to execute.' },
       shell: {
         type: 'string',
-        description: `Shell to use. Defaults to '${defaultShell()}'. Supported values: bash, sh, zsh, powershell, cmd.`,
+        description: `Shell to use. Defaults to '${defaultShell()}'. Available on this machine: ${availableShells()
+          .map((shell) => shell.name)
+          .join(
+            ', '
+          )}. The command runs in exactly the shell you name; a shell that is not in this list is refused with an error, never replaced by another.`,
       },
       timeout_seconds: {
         type: 'number',
@@ -175,43 +180,21 @@ export function defaultShell(): string {
 }
 
 /**
- * Determines the effective shell to use, accounting for platform-specific overrides.
+ * Returns spawning configuration (binary and stdin flags) for a resolved shell.
  */
-function getEffectiveShell(
-  requestedShell?: string,
-  output: ToolOutputSink = noopToolOutputSink
-): string {
-  const shell = (requestedShell || defaultShell()).toLowerCase();
-  if (isWindows) {
-    // If the model requested a POSIX-style shell on Windows, override to
-    // powershell and warn so the model understands the environment.
-    const posixShells = new Set(['bash', 'sh', 'zsh', 'ksh', 'fish']);
-    if (posixShells.has(shell) && shell !== 'powershell') {
-      output.writeLine(
-        `Warning: requested shell '${shell}' is not native on Windows; using 'powershell' instead.`
-      );
-      return 'powershell';
-    }
-  }
-  return shell;
-}
-
-/**
- * Returns spawning configuration (binary and stdin flags) for a given shell.
- */
-function getShellConfig(shell: string): { bin: string; args: string[] } {
-  if (shell === 'powershell') {
-    return { bin: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', '-'] };
+function getShellConfig(shell: { name: string; bin: string }): { bin: string; args: string[] } {
+  if (shell.name === 'powershell') {
+    return { bin: shell.bin, args: ['-NoProfile', '-NonInteractive', '-Command', '-'] };
   }
 
   // cmd.exe needs explicit flags for predictable stdin-driven script execution.
   // /D disables AutoRun; /Q turns echo off for cleaner output.
-  if (shell === 'cmd' || shell === 'cmd.exe') {
-    return { bin: 'cmd.exe', args: ['/D', '/Q'] };
+  if (shell.name === 'cmd') {
+    return { bin: shell.bin, args: ['/D', '/Q'] };
   }
 
   // bash, sh, zsh, fish, etc. can read commands directly from stdin.
-  return { bin: shell, args: [] };
+  return { bin: shell.bin, args: [] };
 }
 
 function appendWorkingDirectoryProbe(
@@ -219,7 +202,7 @@ function appendWorkingDirectoryProbe(
   shell: string,
   workdirMarker: string
 ): string {
-  if (shell === 'cmd' || shell === 'cmd.exe') {
+  if (shell === 'cmd') {
     // cmd.exe: run the probe, then branch on the runtime errorlevel so the
     // final exit code reflects whether the *command* failed (0 vs non-zero).
     // `echo` does not modify errorlevel, so the `if errorlevel` check below
@@ -254,7 +237,10 @@ function appendWorkingDirectoryProbe(
   // shell's exit status was always the probe's (0) — every command looked
   // successful. Using a newline (rather than `;`) also avoids a bash syntax
   // error when the command itself ends in `&`.
-  return `${command}\n__lc_exit=$?\nprintf '%s\n' "${workdirMarker}$PWD"\nexit $__lc_exit`;
+  // On Windows a POSIX shell's $PWD is an MSYS path (/c/git/...), which the
+  // tool cannot use as a working directory; `pwd -W` prints the Windows path.
+  const pwd = isWindows ? '$(pwd -W 2>/dev/null || pwd)' : '$PWD';
+  return `${command}\n__lc_exit=$?\nprintf '%s\n' "${workdirMarker}${pwd}"\nexit $__lc_exit`;
 }
 
 /**
@@ -400,7 +386,9 @@ export async function runCommand(
   sessionId?: number,
   redactSecrets: boolean = true
 ): Promise<string> {
-  const effectiveShell = getEffectiveShell(shell, output);
+  const resolvedShell = resolveShell(shell, defaultShell());
+  if (!resolvedShell.ok) return resolvedShell.error;
+  const effectiveShell = resolvedShell.name;
   const approvedYolo = yoloMode;
   const trimmedCwd = cwd?.trim();
   const workingDirectory = trimmedCwd
@@ -463,7 +451,7 @@ export async function runCommand(
   };
   store.registry.set(processId, entry);
 
-  const config = getShellConfig(effectiveShell);
+  const config = getShellConfig(resolvedShell);
 
   // The abort handler has to be registered BEFORE the spawn. `spawn` installs
   // Node's own abort listener, and that listener emits the child's 'error'
