@@ -59,7 +59,13 @@ export const runCommandToolSchema: ToolSchema = {
       },
       timeout_seconds: {
         type: 'number',
-        description: 'How many seconds to wait before returning partial output. Defaults to 30.',
+        description:
+          'How many seconds to wait before returning partial output. Defaults to 30. Use this OR timeout_ms, not both.',
+      },
+      timeout_ms: {
+        type: 'number',
+        description:
+          'The same wait in milliseconds (always milliseconds, whatever the value). Use this OR timeout_seconds, not both.',
       },
       cwd: {
         type: 'string',
@@ -747,7 +753,7 @@ export async function checkProcessOutput(
  * Returns the run_command and check_process_output tool section for the system prompt.
  */
 export function getToolPrompt(isYolo: boolean): string {
-  const cmdLine = `1. ${runCommandToolSchema.name}(command, shell?, timeout_seconds?, cwd?)`;
+  const cmdLine = `1. ${runCommandToolSchema.name}(command, shell?, timeout_seconds? | timeout_ms?, cwd?)`;
   const cmdDesc = runCommandToolSchema.description.replace(
     APPROVAL_SENTENCE,
     isYolo

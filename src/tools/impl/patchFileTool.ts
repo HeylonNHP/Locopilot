@@ -49,6 +49,60 @@ export interface PatchFilePatch {
   replace_all?: boolean;
 }
 
+export type PatchesArgument = { patches: PatchFilePatch[] } | { error: string };
+
+function describeJsonType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+/**
+ * Turns the raw `patches` argument into a list of patches, or says exactly
+ * what is wrong with it.
+ *
+ * Models sometimes send the array as a JSON-encoded string, and a string with
+ * a stray bracket used to be reported as "missing required argument", which
+ * sent the model round the same call four times. A string that parses to an
+ * array (or to a single patch object) is accepted; one that does not parse
+ * reports the parser's own message, with the position when the engine gives
+ * one.
+ */
+export function parsePatchesArgument(raw: unknown): PatchesArgument {
+  if (raw === undefined || raw === null) {
+    return { error: '[patch_file error: missing required argument "patches".]' };
+  }
+
+  let value: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      value = JSON.parse(raw);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return {
+        error: `[patch_file error: "patches" was sent as a string that is not valid JSON (${reason}). Send an array of {"old", "new"} objects, not a string.]`,
+      };
+    }
+  }
+
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    value = [value];
+  }
+
+  if (!Array.isArray(value)) {
+    return {
+      error: `[patch_file error: "patches" must be an array of {"old", "new"} objects, but got ${describeJsonType(value)}.]`,
+    };
+  }
+  if (value.length === 0) {
+    return {
+      error:
+        '[patch_file error: "patches" is an empty array. Send at least one {"old", "new"} object.]',
+    };
+  }
+  return { patches: value as PatchFilePatch[] };
+}
+
 export interface PatchFileToolArgs {
   path?: string;
   patches?: PatchFilePatch[];

@@ -63,3 +63,16 @@ export function parseQueriesInput(raw: unknown): string[] {
 
   return [];
 }
+
+/**
+ * Milliseconds -> the wait `run_command` uses, or null when `value` is not a
+ * positive finite number. The same ceiling as `parsePositiveTimeoutMs`.
+ * `timeout_ms` is always milliseconds; there is no unit guessing.
+ */
+export function parsePositiveTimeoutMsFromMs(value: unknown): number | null {
+  const parsed = parseFiniteNumber(value);
+  if (parsed === null || parsed <= 0) return null;
+  const ms = Math.floor(parsed);
+  if (ms < 1) return null;
+  return Math.min(ms, 3_600_000);
+}
