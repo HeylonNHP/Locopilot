@@ -10,6 +10,7 @@ import {
   DEFAULT_WEB_REQUEST_TIMEOUT_MS,
   DEFAULT_WEB_SEARCH_PARALLEL_PAGE_FETCHES,
   WEB_SEARCH_MAX_CONCURRENT_SEARCHES,
+  WEB_SEARCH_PAGE_CACHE_TTL_MS,
   WEB_SEARCH_QUERY_START_STAGGER_MS,
 } from '@/constants';
 import { abortableSleep } from '@/services/retryable';
@@ -29,7 +30,10 @@ export const webSearchToolSchema: ToolSchema = {
     'Do not rely solely on your training knowledge — DuckDuckGo gives you the live web. ' +
     'When using search results, ALWAYS cite the full URL inline immediately after the relevant sentence(s). ' +
     'Do NOT use generic "result_N" placeholders. ' +
-    'Use use_playwright=true for JavaScript-heavy pages (SPAs, sites requiring client-side rendering) where standard fetching misses content.',
+    'Use use_playwright=true for JavaScript-heavy pages (SPAs, sites requiring client-side rendering) where standard fetching misses content. ' +
+    "A page longer than the user's per-page character limit is replaced by a summary written by a model (or, if that fails, cut to its first characters); a note under the page says which. " +
+    `A page already fetched by web_search in the last ${Math.round(WEB_SEARCH_PAGE_CACHE_TTL_MS / 60_000)} minutes may come from a cache, and a note says so. ` +
+    'For the exact, complete text of a page, call fetch_url with full_content=true.',
   parameters: {
     type: 'object',
     properties: {

@@ -20,7 +20,7 @@ import type { ToolOutputSink } from '@/tools/toolOutput';
 
 import { DEFAULT_WEB_REQUEST_TIMEOUT_MS } from '@/constants';
 import { buildLlmRequestContext, type LlmRequestContext } from '@/services/llm';
-import { buildTruncationNote, ContentCompactor } from '@/tools/impl/contentCompactor';
+import { annotateCompactedText, ContentCompactor } from '@/tools/impl/contentCompactor';
 
 import { type ExtractedLink, extractLinks } from './linkExtractor';
 import {
@@ -300,10 +300,8 @@ export async function fetchAndExtract(
   const compaction = await compactor.compact(text, effectiveSignal);
   // A page that was cut instead of summarised must say so: the model would
   // otherwise read the first `perPageCharLimit` characters as the whole page.
-  const processedText =
-    compaction.outcome === 'truncated'
-      ? `${compaction.text}\n\n${buildTruncationNote(compaction)}`
-      : compaction.text;
+  // A page that was summarised says so as well: the summary reads like the page.
+  const processedText = annotateCompactedText(compaction);
 
   return {
     title,
