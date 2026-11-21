@@ -1525,9 +1525,16 @@ async function runSingleAgent(
             maxAttempts: MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS,
           });
           agentOutput.writeLine(
-            `[empty response #${emptyResponseRecovery.attemptsUsed}/${MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS}] retrying with a direct-answer nudge`
+            `[empty response #${emptyResponseRecovery.attemptsUsed}/${MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS}] retrying with a tool-call nudge`
           );
-          messages.push(assistantMessage, buildEmptyResponseRecoveryNudge());
+          // The nudge names the tools this agent was actually given (the
+          // same array the request carries), so the next call is inside the
+          // request's tool list — a call whose name is not in that list
+          // never runs, and a model that cannot see the names invents one.
+          messages.push(
+            assistantMessage,
+            buildEmptyResponseRecoveryNudge(tools.map((tool) => tool.function.name))
+          );
           continue;
         }
         messages.push(assistantMessage);

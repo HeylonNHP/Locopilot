@@ -29,6 +29,16 @@ import { stripSpecialTokens } from '@/services/textUtils';
 export const MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS = 3;
 
 /**
+ * How many tool names the recovery nudge lists. The callers pass the tools
+ * in the order they were sent to the provider, so the native tools come
+ * first and this keeps all of them plus the first few MCP stubs; the rest
+ * are reported as a count rather than dropped silently. The count matters:
+ * a name the model invents is not a tool, so a list that quietly lost
+ * entries would push the model back into guessing.
+ */
+export const MAX_RECOVERY_NUDGE_TOOL_NAMES = 24;
+
+/**
  * Matches content that is nothing but a reasoning-channel label. Some
  * providers emit the bare channel name as the visible content while the real
  * text rides in a reasoning field; such content is not a meaningful reply.
@@ -62,16 +72,54 @@ export function hasMeaningfulAssistantContent(message: ChatMessage): boolean {
 }
 
 /**
+ * Format the tool names for the nudge. The list is capped so a large MCP
+ * catalogue cannot flood the prompt, but a shortened list says how many
+ * names were left out — a list that silently lost entries reads as a
+ * complete one, and the model would then pick a name that is not in the
+ * request's tool array (and such a call never runs).
+ */
+function formatToolNames(toolNames: readonly string[]): string {
+  const unique = [...new Set(toolNames)];
+  if (unique.length === 0) return '';
+  const shown = unique.slice(0, MAX_RECOVERY_NUDGE_TOOL_NAMES);
+  const omitted = unique.length - shown.length;
+  return omitted > 0 ? `${shown.join(', ')} (+${omitted} more)` : shown.join(', ');
+}
+
+/**
  * Build the synthetic user-role nudge injected after an empty assistant
  * response. Returns a fresh object each call — never share one instance
  * across messages, since message arrays are mutated by their owning loops.
+ *
+ * The nudge is TOOL-CALL-PRESERVING. It leads with the tool call and names
+ * the tools available in this turn, rather than leading with an instruction
+ * to answer in prose: a model that reads "provide a direct answer" as its
+ * next action stops calling tools and narrates the call instead ("I'll run
+ * a quick live check now"), which yields another empty turn and spends an
+ * attempt. Naming the tools is what keeps the next call inside the request's
+ * tool array — a call whose name is not in that array never runs, so a model
+ * that cannot see the names tends to invent one.
+ *
+ * `toolNames` must be the names of the tools actually sent to the provider
+ * for this turn (the same array the request carries), not a static list.
  */
-export function buildEmptyResponseRecoveryNudge(): ChatMessage {
+export function buildEmptyResponseRecoveryNudge(toolNames: readonly string[]): ChatMessage {
+  const list = formatToolNames(toolNames);
+  if (!list) {
+    return {
+      role: 'user',
+      content:
+        `${SYNTHETIC_NUDGE_MARKER}Your last response was empty. ` +
+        `No tool is available in this turn, so reply with the answer itself.${SYNTHETIC_NUDGE_END}`,
+    };
+  }
   return {
     role: 'user',
     content:
-      `${SYNTHETIC_NUDGE_MARKER}Your last response was empty. Provide a direct answer now. ` +
-      `If commands are needed, call run_command. If commands already ran, summarize their output and errors.${
+      `${SYNTHETIC_NUDGE_MARKER}Your last response was empty. ` +
+      `If the task needs a tool, call the tool now — make the call itself, do not describe what you would do in prose. ` +
+      `The tools available in this turn are: ${list}. Call one of them by its exact name — a call whose name is not one of this turn's tools does not run. ` +
+      `If the tool already ran and only its result is left to report, reply with a summary of that output and any errors instead.${
         SYNTHETIC_NUDGE_END
       }`,
   };

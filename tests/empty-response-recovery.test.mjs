@@ -20,6 +20,7 @@ import {
   EmptyResponseRecoveryTracker,
   hasMeaningfulAssistantContent,
   MAX_EMPTY_RESPONSE_RECOVERY_ATTEMPTS,
+  MAX_RECOVERY_NUDGE_TOOL_NAMES,
   sanitizeAssistantTextFragment,
 } from '../src/services/emptyResponseRecovery.ts';
 
@@ -97,20 +98,65 @@ describe('EmptyResponseRecoveryTracker', () => {
 });
 
 describe('buildEmptyResponseRecoveryNudge', () => {
+  const TOOLS = ['run_command', 'web_search', 'read_file'];
+
   test('is a user-role message, marked so that the compaction anchor skips it', () => {
-    const nudge = buildEmptyResponseRecoveryNudge();
+    const nudge = buildEmptyResponseRecoveryNudge(TOOLS);
     expect(nudge.role).toBe('user');
     expect(nudge.content.startsWith(SYNTHETIC_NUDGE_MARKER)).toBe(true);
     expect(nudge.content.endsWith(SYNTHETIC_NUDGE_END)).toBe(true);
   });
 
   test('states that the response was empty', () => {
-    expect(buildEmptyResponseRecoveryNudge().content).toContain('Your last response was empty');
+    expect(buildEmptyResponseRecoveryNudge(TOOLS).content).toContain(
+      'Your last response was empty'
+    );
+  });
+
+  test('leads with the tool call, not with an instruction to answer in prose', () => {
+    const content = buildEmptyResponseRecoveryNudge(TOOLS).content;
+    // The old wording ("Provide a direct answer now") read to a model as
+    // "stop calling tools and write prose" - it then narrated the call
+    // ("I'll run a quick live check now") and never called anything.
+    expect(content).not.toContain('Provide a direct answer');
+    expect(content).not.toContain('summarize their output and errors');
+    expect(content).toContain('call the tool now');
+  });
+
+  test('names the exact tools available this turn', () => {
+    const content = buildEmptyResponseRecoveryNudge(TOOLS).content;
+    for (const name of TOOLS) {
+      expect(content).toContain(name);
+    }
+  });
+
+  test('a name that is not one of the given tools is never listed', () => {
+    const content = buildEmptyResponseRecoveryNudge(['run_command']).content;
+    expect(content).not.toContain('web_search');
+  });
+
+  test('duplicate names are listed once', () => {
+    const content = buildEmptyResponseRecoveryNudge(['run_command', 'run_command']).content;
+    expect(content.match(/run_command/g)).toHaveLength(1);
+  });
+
+  test('a long tool list is capped and says how many names were left out', () => {
+    const many = Array.from({ length: MAX_RECOVERY_NUDGE_TOOL_NAMES + 5 }, (_, i) => `tool_${i}`);
+    const content = buildEmptyResponseRecoveryNudge(many).content;
+    expect(content).toContain('tool_0');
+    expect(content).not.toContain(`tool_${MAX_RECOVERY_NUDGE_TOOL_NAMES}`);
+    expect(content).toContain('(+5 more)');
+  });
+
+  test('with no tools available it asks for an answer instead of a call', () => {
+    const content = buildEmptyResponseRecoveryNudge([]).content;
+    expect(content).not.toContain('call the tool now');
+    expect(content).toContain('No tool is available');
   });
 
   test('is deterministic, and each call returns a fresh object', () => {
-    const first = buildEmptyResponseRecoveryNudge();
-    const second = buildEmptyResponseRecoveryNudge();
+    const first = buildEmptyResponseRecoveryNudge(TOOLS);
+    const second = buildEmptyResponseRecoveryNudge(TOOLS);
     // no shared mutable state
     expect(first).not.toBe(second);
     expect(second.content).toBe(first.content);

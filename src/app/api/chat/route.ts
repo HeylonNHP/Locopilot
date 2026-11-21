@@ -2947,7 +2947,13 @@ export async function POST(req: NextRequest): Promise<Response> {
             emptyResponseRecovery.reset();
           } else if (emptyResponseRecovery.shouldRecover()) {
             emptyResponseRecovery.recordAttempt();
-            const recoveryMessage: ChatMessage = buildEmptyResponseRecoveryNudge();
+            // The nudge names the tools this turn actually sent (the same
+            // array the request carries), so the next call is inside the
+            // request's tool list — a call whose name is not in that list
+            // never runs, and a model that cannot see the names invents one.
+            const recoveryMessage: ChatMessage = buildEmptyResponseRecoveryNudge(
+              params.tools.map((tool) => tool.function.name)
+            );
             currentMessages.push(recoveryMessage);
             // Note: the recovery nudge is intentionally NOT pushed to
             // `pendingAppends`. The post-compaction nudge (above) follows
