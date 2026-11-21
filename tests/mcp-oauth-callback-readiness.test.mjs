@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, jest, test } from '@jest/globals';
 import { EventEmitter } from 'node:events';
-import { createServer, request } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -21,7 +21,6 @@ jest.unstable_mockModule('node:child_process', () => {
 });
 
 const { buildOAuthProvider } = await import('../src/mcp/oauthProvider.ts');
-const { saveOAuthState } = await import('../src/mcp/oauthTokenStore.ts');
 
 const configFor = (name) => ({
   name,
@@ -29,6 +28,8 @@ const configFor = (name) => ({
 });
 
 function launchChild(onLaunch) {
+  // The code under test attaches `.once('spawn' | 'error')` to a ChildProcess, which is an EventEmitter.
+  // eslint-disable-next-line unicorn/prefer-event-target
   const child = new EventEmitter();
   child.unref = () => {};
   setImmediate(() => {
@@ -88,9 +89,12 @@ describe('OAuth callback listener readiness barrier', () => {
     });
     const hookedState = await hookedProvider.state();
     const hookedCallbackUrl = new URL(hookedProvider.redirectUrl);
-    spawnBehavior = (...args) =>
+    spawnBehavior = () =>
       launchChild(async () => {
-        const target = new URL(hookedCallbackUrl.pathname, `http://127.0.0.1:${hookedCallbackUrl.port}`);
+        const target = new URL(
+          hookedCallbackUrl.pathname,
+          `http://127.0.0.1:${hookedCallbackUrl.port}`
+        );
         target.searchParams.set('state', hookedState);
         target.searchParams.set('code', 'readiness-code');
         callbackStatus = await get(target);
@@ -149,6 +153,8 @@ describe('OAuth callback listener readiness barrier', () => {
     const address = new URL(provider.redirectUrl);
     await provider.state();
     spawnBehavior = () => {
+      // The code under test attaches `.once('spawn' | 'error')` to a ChildProcess, which is an EventEmitter.
+      // eslint-disable-next-line unicorn/prefer-event-target
       const child = new EventEmitter();
       child.unref = () => {};
       setImmediate(() => child.emit('error', new Error('browser unavailable')));

@@ -814,9 +814,7 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
    * captured code runs on this same provider instance and must still
    * resolve this flow's PKCE verifier.
    */
-  private async runCallbackFlow(
-    completion: Promise<{ codeCaptured: boolean }>
-  ): Promise<void> {
+  private async runCallbackFlow(completion: Promise<{ codeCaptured: boolean }>): Promise<void> {
     try {
       const result = await completion;
       if (!result.codeCaptured) {
@@ -919,7 +917,7 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
       resolveReady = resolve;
       rejectReady = reject;
     });
-    let cancelFlow: (error: Error) => void = () => undefined;
+    let cancelFlow: (error: Error) => void = () => {};
     const completion = new Promise<{ codeCaptured: boolean }>((resolve, reject) => {
       // Track the active server so the cleanup paths can
       // close it exactly once.
@@ -1082,7 +1080,7 @@ class LocopilotOAuthProvider implements OAuthClientProvider {
     });
     // Avoid an unhandled readiness rejection when callers are only observing
     // completion (the redirect path also explicitly awaits readiness).
-    void ready.catch(() => undefined);
+    void ready.catch(() => {});
     return {
       ready,
       completion,
