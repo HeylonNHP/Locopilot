@@ -21,6 +21,7 @@ import { NEW_SESSION_KEY } from '@/app/lib/streamKey';
 export default function SteerInput() {
   const { state, dispatch, abortControllersRef } = useChat();
   const { currentSessionId, streamingSessions, activeSubagentId, steerDrafts, messages } = state;
+  const queued = currentSessionId === null ? 0 : (steerDrafts.get(currentSessionId)?.length ?? 0);
 
   const streamingSessionId =
     currentSessionId !== null && streamingSessions.has(currentSessionId) ? currentSessionId : null;
@@ -34,9 +35,9 @@ export default function SteerInput() {
     setTarget(activeSubagentId ? 'subagent' : 'main');
   }, [activeSubagentId]);
 
-  // Only THIS conversation's own pending steer locks the box; another
-  // conversation's steer waiting for its acknowledgement does not.
-  const sending = streamingSessionId !== null && steerDrafts.has(streamingSessionId);
+  // Only the request being sent right now locks the box; steering messages
+  // already accepted wait in the server's queue and never block another one.
+  const [sending, setSending] = useState(false);
 
   const handleSend = useCallback(async () => {
     const trimmed = text.trim();
@@ -48,15 +49,21 @@ export default function SteerInput() {
     // whether the server saved the steer itself.
     const copiesAtSend = messages.filter((m) => m.role === 'user' && m.content === trimmed).length;
     const signal = abortControllersRef.current.get(streamingSessionId)?.signal;
-    const id = await requestSteerMessage(
-      streamingSessionId,
-      {
-        text: trimmed,
-        target: chosenTarget,
-        ...(chosenTarget === 'subagent' && activeSubagentId ? { agentId: activeSubagentId } : {}),
-      },
-      signal
-    );
+    setSending(true);
+    let id: string | null;
+    try {
+      id = await requestSteerMessage(
+        streamingSessionId,
+        {
+          text: trimmed,
+          target: chosenTarget,
+          ...(chosenTarget === 'subagent' && activeSubagentId ? { agentId: activeSubagentId } : {}),
+        },
+        signal
+      );
+    } finally {
+      setSending(false);
+    }
 
     if (id === null) {
       // Not accepted (no active turn, or the request failed) — leave the
@@ -67,7 +74,7 @@ export default function SteerInput() {
     // Bound to the conversation the request was sent for, not to whichever
     // conversation is on screen when the answer arrives.
     dispatch({
-      type: 'SET_STEER_DRAFT',
+      type: 'ADD_STEER_DRAFT',
       sessionId: streamingSessionId,
       draft: {
         id,
@@ -143,8 +150,9 @@ export default function SteerInput() {
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={sending ? 'Sending…' : 'Steer the conversation…'}
-        disabled={sending}
+        placeholder={
+          queued > 0 ? `Steer the conversation… (${queued} waiting)` : 'Steer the conversation…'
+        }
         className="steer-input-field"
         aria-label="Steering message"
       />

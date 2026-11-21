@@ -320,7 +320,10 @@ export function useChatStream(
         subagentOwner: owner,
         // The draft of the session this frame belongs to — never another
         // conversation's, so an ack cannot release the wrong draft.
-        pendingSteerDraft: owner === undefined ? undefined : refs.steerDraftsRef.current.get(owner),
+        pendingSteerDraft:
+          owner === undefined
+            ? undefined
+            : refs.steerDraftsRef.current.get(owner)?.find((d) => d.id === data.steerId),
       });
 
       if (outcome.markFailed) {

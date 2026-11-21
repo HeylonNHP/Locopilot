@@ -424,7 +424,8 @@ export interface ChatState {
    * `STOP_STREAMING` case below). Per session: one conversation's pending
    * steer must not lock another conversation's steer box.
    */
-  steerDrafts: Map<number, PendingSteerDraft>;
+  /** Per session, the steering messages sent but not yet acknowledged, oldest first. */
+  steerDrafts: Map<number, PendingSteerDraft[]>;
   /**
    * Text of a steering message that never got an acknowledgement AND is not
    * in the saved history, kept for the user to see again, by the session it
@@ -597,7 +598,8 @@ export type ChatAction =
       >;
     }
   | { type: 'SET_ACTIVE_SUBAGENT'; agentId: string | null; targetSessionId?: number }
-  | { type: 'SET_STEER_DRAFT'; sessionId: number; draft: PendingSteerDraft | null }
+  | { type: 'ADD_STEER_DRAFT'; sessionId: number; draft: PendingSteerDraft }
+  | { type: 'RELEASE_STEER_DRAFT'; sessionId: number; id: string }
   | { type: 'CLEAR_STEER_RESTORE'; sessionId: number }
   | { type: 'SET_MODEL_SWITCH_PENDING'; sessionId: number; pending: boolean }
   | {
@@ -898,19 +900,41 @@ function settleSteerDraft(
   state: ChatState,
   sessionId: number
 ): Partial<Pick<ChatState, 'steerDrafts' | 'steerRestoreTexts'>> {
-  const draft = state.steerDrafts.get(sessionId);
-  if (!draft) {
+  const drafts = state.steerDrafts.get(sessionId);
+  if (!drafts || drafts.length === 0) {
     return {};
   }
   const steerDrafts = new Map(state.steerDrafts);
   steerDrafts.delete(sessionId);
-  const alreadySaved =
-    countUserCopies(messagesOfSession(state, sessionId), draft.text) > draft.copiesAtSend;
-  if (alreadySaved) {
+  const messages = messagesOfSession(state, sessionId);
+  // Several drafts may carry the same text. For each text, the copies the
+  // history gained since the earliest of them was sent are the ones the server
+  // saved; they are matched to the OLDEST drafts of that text, the rest are
+  // put back.
+  const savedLeft = new Map<string, number>();
+  for (const draft of drafts) {
+    if (!savedLeft.has(draft.text)) {
+      const base = Math.min(
+        ...drafts.filter((d) => d.text === draft.text).map((d) => d.copiesAtSend)
+      );
+      savedLeft.set(draft.text, Math.max(0, countUserCopies(messages, draft.text) - base));
+    }
+  }
+  const unsaved: string[] = [];
+  for (const draft of drafts) {
+    const left = savedLeft.get(draft.text) ?? 0;
+    if (left > 0) {
+      savedLeft.set(draft.text, left - 1);
+    } else {
+      unsaved.push(draft.text);
+    }
+  }
+  if (unsaved.length === 0) {
     return { steerDrafts };
   }
   const steerRestoreTexts = new Map(state.steerRestoreTexts);
-  steerRestoreTexts.set(sessionId, draft.text);
+  const earlier = state.steerRestoreTexts.get(sessionId);
+  steerRestoreTexts.set(sessionId, [...(earlier ? [earlier] : []), ...unsaved].join('\n'));
   return { steerDrafts, steerRestoreTexts };
 }
 
@@ -1592,15 +1616,25 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       }
       return { ...state, activeSubagentId: action.agentId };
     }
-    case 'SET_STEER_DRAFT': {
-      if (action.draft === null && !state.steerDrafts.has(action.sessionId)) {
+    case 'ADD_STEER_DRAFT': {
+      const steerDrafts = new Map(state.steerDrafts);
+      steerDrafts.set(action.sessionId, [
+        ...(state.steerDrafts.get(action.sessionId) ?? []),
+        action.draft,
+      ]);
+      return { ...state, steerDrafts };
+    }
+    case 'RELEASE_STEER_DRAFT': {
+      const current = state.steerDrafts.get(action.sessionId);
+      if (!current?.some((d) => d.id === action.id)) {
         return state;
       }
       const steerDrafts = new Map(state.steerDrafts);
-      if (action.draft === null) {
+      const rest = current.filter((d) => d.id !== action.id);
+      if (rest.length === 0) {
         steerDrafts.delete(action.sessionId);
       } else {
-        steerDrafts.set(action.sessionId, action.draft);
+        steerDrafts.set(action.sessionId, rest);
       }
       return { ...state, steerDrafts };
     }
@@ -2043,7 +2077,7 @@ export const initialState: ChatState = {
   visionState: 'unknown',
   modelSwitchPendingSessions: new Set<number>(),
   activeSubagentId: null,
-  steerDrafts: new Map<number, PendingSteerDraft>(),
+  steerDrafts: new Map<number, PendingSteerDraft[]>(),
   steerRestoreTexts: new Map<number, string>(),
 };
 

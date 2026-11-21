@@ -175,7 +175,7 @@ describe('RENAME_STREAMING', () => {
     });
     state = chatReducer(state, { type: 'SET_MODEL_SWITCH_PENDING', sessionId: 42, pending: true });
     state = chatReducer(state, {
-      type: 'SET_STEER_DRAFT',
+      type: 'ADD_STEER_DRAFT',
       sessionId: 42,
       draft: { id: 'd1', text: 'go on', target: 'main', copiesAtSend: 0 },
     });
@@ -188,7 +188,7 @@ describe('RENAME_STREAMING', () => {
     // rename must leave all of this alone.
     expect(state.activeSubagentId).toBe('research');
     expect(state.modelSwitchPendingSessions.has(42)).toBe(true);
-    expect(state.steerDrafts.get(42)?.id).toBe('d1');
+    expect(state.steerDrafts.get(42)?.[0]?.id).toBe('d1');
   });
 });
 
@@ -701,34 +701,76 @@ describe('steering drafts, restore text and the model-switch flag', () => {
 
   test('a steering draft belongs to the session it was sent for', () => {
     let state = twoStreaming();
-    state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 9, draft: steerDraft('d1') });
+    state = chatReducer(state, { type: 'ADD_STEER_DRAFT', sessionId: 9, draft: steerDraft('d1') });
     expect(state.steerDrafts.has(9)).toBe(true);
     expect(state.steerDrafts.has(5)).toBe(false);
   });
 
   test('releasing a draft that does not exist changes nothing', () => {
     const state = twoStreaming();
-    expect(chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 5, draft: null })).toBe(state);
+    expect(chatReducer(state, { type: 'RELEASE_STEER_DRAFT', sessionId: 5, id: 'd5' })).toBe(state);
+  });
+
+  test('several steers can be pending at once and are released one by one', () => {
+    let state = twoStreaming();
+    state = chatReducer(state, {
+      type: 'ADD_STEER_DRAFT',
+      sessionId: 5,
+      draft: steerDraft('a', 'one'),
+    });
+    state = chatReducer(state, {
+      type: 'ADD_STEER_DRAFT',
+      sessionId: 5,
+      draft: steerDraft('b', 'two'),
+    });
+    expect(state.steerDrafts.get(5)?.map((d) => d.id)).toEqual(['a', 'b']);
+    state = chatReducer(state, { type: 'RELEASE_STEER_DRAFT', sessionId: 5, id: 'a' });
+    expect(state.steerDrafts.get(5)?.map((d) => d.id)).toEqual(['b']);
+    state = chatReducer(state, { type: 'RELEASE_STEER_DRAFT', sessionId: 5, id: 'b' });
+    expect(state.steerDrafts.has(5)).toBe(false);
+  });
+
+  test('at the end of a turn, unsaved steers are put back together and saved ones are not', () => {
+    let state = twoStreaming();
+    state = chatReducer(state, {
+      type: 'ADD_STEER_DRAFT',
+      sessionId: 5,
+      draft: steerDraft('a', 'one'),
+    });
+    state = chatReducer(state, {
+      type: 'ADD_STEER_DRAFT',
+      sessionId: 5,
+      draft: steerDraft('b', 'two'),
+    });
+    state = chatReducer(state, {
+      type: 'ADD_STEER_DRAFT',
+      sessionId: 5,
+      draft: steerDraft('c', 'one'),
+    });
+    // The server saved one copy of 'one' (the oldest) and nothing else.
+    state = chatReducer(state, { type: 'ADD_MESSAGE', message: userMessage('one') });
+    state = chatReducer(state, { type: 'STOP_STREAMING', sessionId: 5 });
+    expect(state.steerRestoreTexts.get(5)).toBe('two\none');
   });
 
   test('a turn ending settles only ITS session’s draft', () => {
     let state = twoStreaming();
-    state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
+    state = chatReducer(state, { type: 'ADD_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
     state = chatReducer(state, {
-      type: 'SET_STEER_DRAFT',
+      type: 'ADD_STEER_DRAFT',
       sessionId: 9,
       draft: steerDraft('d9', 'other'),
     });
     state = chatReducer(state, { type: 'STOP_STREAMING', sessionId: 5 });
     expect(state.steerDrafts.has(5)).toBe(false);
-    expect(state.steerDrafts.get(9)?.id).toBe('d9');
+    expect(state.steerDrafts.get(9)?.[0]?.id).toBe('d9');
     expect(state.steerRestoreTexts.has(9)).toBe(false);
   });
 
   test('an unacknowledged steer that is not in the history is put back, for its own session', () => {
     let state = twoStreaming();
     state = chatReducer(state, { type: 'ADD_MESSAGE', message: userMessage('hello') });
-    state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
+    state = chatReducer(state, { type: 'ADD_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
     state = chatReducer(state, { type: 'STOP_STREAMING', sessionId: 5 });
     expect(state.steerRestoreTexts.get(5)).toBe(STEER_TEXT);
     expect(state.steerRestoreTexts.has(9)).toBe(false);
@@ -736,7 +778,7 @@ describe('steering drafts, restore text and the model-switch flag', () => {
 
   test('a steer the server already saved is NOT put back (conversation on screen)', () => {
     let state = twoStreaming();
-    state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
+    state = chatReducer(state, { type: 'ADD_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
     // The turn's end reloads the transcript from the database before STOP: the
     // server saved the steer as a user message.
     state = chatReducer(state, { type: 'ADD_MESSAGE', message: userMessage(STEER_TEXT) });
@@ -747,7 +789,7 @@ describe('steering drafts, restore text and the model-switch flag', () => {
 
   test('a steer the server already saved is NOT put back (conversation in the background)', () => {
     let state = twoStreaming();
-    state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 9, draft: steerDraft('d9') });
+    state = chatReducer(state, { type: 'ADD_STEER_DRAFT', sessionId: 9, draft: steerDraft('d9') });
     state = chatReducer(state, {
       type: 'ADD_MESSAGE',
       message: userMessage(STEER_TEXT),
@@ -763,7 +805,7 @@ describe('steering drafts, restore text and the model-switch flag', () => {
     // The transcript already held one copy when the steer was sent.
     state = chatReducer(state, { type: 'ADD_MESSAGE', message: userMessage(STEER_TEXT) });
     state = chatReducer(state, {
-      type: 'SET_STEER_DRAFT',
+      type: 'ADD_STEER_DRAFT',
       sessionId: 5,
       draft: steerDraft('d5', STEER_TEXT, 1),
     });
@@ -775,7 +817,7 @@ describe('steering drafts, restore text and the model-switch flag', () => {
     let state = twoStreaming();
     state = chatReducer(state, { type: 'ADD_MESSAGE', message: userMessage(STEER_TEXT) });
     state = chatReducer(state, {
-      type: 'SET_STEER_DRAFT',
+      type: 'ADD_STEER_DRAFT',
       sessionId: 5,
       draft: steerDraft('d5', STEER_TEXT, 1),
     });
@@ -786,15 +828,15 @@ describe('steering drafts, restore text and the model-switch flag', () => {
 
   test('an acknowledged draft has nothing left to settle', () => {
     let state = twoStreaming();
-    state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
-    state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 5, draft: null });
+    state = chatReducer(state, { type: 'ADD_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
+    state = chatReducer(state, { type: 'RELEASE_STEER_DRAFT', sessionId: 5, id: 'd5' });
     state = chatReducer(state, { type: 'STOP_STREAMING', sessionId: 5 });
     expect(state.steerRestoreTexts.has(5)).toBe(false);
   });
 
   test('restored text stays with its conversation when the user switches', () => {
     let state = twoStreaming();
-    state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
+    state = chatReducer(state, { type: 'ADD_STEER_DRAFT', sessionId: 5, draft: steerDraft('d5') });
     state = chatReducer(state, { type: 'SET_CURRENT_SESSION', id: 9 });
     state = chatReducer(state, { type: 'STOP_STREAMING', sessionId: 5 });
     // The user is looking at 9; the text belongs to 5 and is filed under 5.
@@ -874,7 +916,7 @@ describe('steering drafts, restore text and the model-switch flag', () => {
 
   test('discarding a session drops its steer and switch state', () => {
     let state = twoStreaming();
-    state = chatReducer(state, { type: 'SET_STEER_DRAFT', sessionId: 9, draft: steerDraft('d9') });
+    state = chatReducer(state, { type: 'ADD_STEER_DRAFT', sessionId: 9, draft: steerDraft('d9') });
     state = chatReducer(state, { type: 'SET_MODEL_SWITCH_PENDING', sessionId: 9, pending: true });
     state = chatReducer(state, { type: 'DISCARD_SESSION', sessionId: 9 });
     expect(state.steerDrafts.has(9)).toBe(false);
@@ -893,7 +935,7 @@ describe('the wiring the components must keep', () => {
   test('the steer box files its draft under the session it sent to, not the one on screen later', () => {
     expect(steerInputSource).toContain('sessionId: streamingSessionId');
     expect(steerInputSource).toContain('copiesAtSend');
-    expect(steerInputSource).toContain('steerDrafts.has(streamingSessionId)');
+    expect(steerInputSource).toContain("type: 'ADD_STEER_DRAFT'");
   });
 
   test('the composer only takes the restore text of the conversation it shows', () => {
@@ -1046,7 +1088,7 @@ describe('background updates go through the batched dispatcher', () => {
       { action: { type: 'SET_CURRENT_SESSION', id: 5 } },
       { action: { type: 'START_STREAMING', sessionId: 5 } },
       { action: { type: 'START_STREAMING', sessionId: 7 } },
-      { action: { type: 'SET_STEER_DRAFT', sessionId: 7, draft: steerDraft('d7') } },
+      { action: { type: 'ADD_STEER_DRAFT', sessionId: 7, draft: steerDraft('d7') } },
       { frame: ['chunk', { content: 'the final ' }, 7] },
       { frame: ['chunk', { content: 'reply' }, 7] },
       // The turn ends: the transcript is reloaded from the database, then settled.

@@ -409,7 +409,7 @@ describe('status', () => {
         message: { role: 'user', content: 'go on' },
         targetSessionId: 7,
       },
-      { type: 'SET_STEER_DRAFT', sessionId: 7, draft: null },
+      { type: 'RELEASE_STEER_DRAFT', sessionId: 7, id: 'draft-1' },
     ]);
   });
 

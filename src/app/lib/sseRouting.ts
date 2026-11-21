@@ -419,7 +419,7 @@ export function routeSseEvent(
               message: { role: 'user', content: pendingSteerDraft.text },
               targetSessionId,
             },
-            { type: 'SET_STEER_DRAFT', sessionId: targetSessionId, draft: null }
+            { type: 'RELEASE_STEER_DRAFT', sessionId: targetSessionId, id: steerId }
           );
         }
       }
